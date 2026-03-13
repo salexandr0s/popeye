@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../engine-pi"
+    },
+    {
+      "path": "../instructions"
+    },
+    {
+      "path": "../memory"
+    },
+    {
+      "path": "../observability"
+    },
+    {
+      "path": "../receipts"
+    },
+    {
+      "path": "../scheduler"
+    },
+    {
+      "path": "../sessions"
+    },
+    {
+      "path": "../telegram"
+    }
+  ]
+}
