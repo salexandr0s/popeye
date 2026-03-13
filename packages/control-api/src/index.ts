@@ -1,7 +1,14 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
 
-import { PathIdParamSchema, TaskCreateInputSchema } from '@popeye/contracts';
+import {
+  AgentProfileRecordSchema,
+  PathIdParamSchema,
+  ProjectRecordSchema,
+  TaskCreateInputSchema,
+  WorkspaceRecordSchema,
+} from '@popeye/contracts';
+import { z } from 'zod';
 import {
   MessageIngressError,
   issueCsrfToken,
@@ -57,9 +64,15 @@ export async function createControlApi(
   app.get('/v1/status', async () => dependencies.runtime.getStatus());
   app.get('/v1/daemon/state', async () => dependencies.runtime.getDaemonState());
   app.get('/v1/daemon/scheduler', async () => dependencies.runtime.getSchedulerStatus());
-  app.get('/v1/workspaces', async () => dependencies.runtime.listWorkspaces());
-  app.get('/v1/projects', async () => dependencies.runtime.listProjects());
-  app.get('/v1/agent-profiles', async () => dependencies.runtime.listAgentProfiles());
+  app.get('/v1/workspaces', async () =>
+    z.array(WorkspaceRecordSchema).parse(dependencies.runtime.listWorkspaces()),
+  );
+  app.get('/v1/projects', async () =>
+    z.array(ProjectRecordSchema).parse(dependencies.runtime.listProjects()),
+  );
+  app.get('/v1/agent-profiles', async () =>
+    z.array(AgentProfileRecordSchema).parse(dependencies.runtime.listAgentProfiles()),
+  );
 
   app.get('/v1/tasks', async () => dependencies.runtime.listTasks());
   app.get('/v1/tasks/:id', async (request, reply) => {

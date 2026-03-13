@@ -6,13 +6,16 @@ import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 
 import {
+  AgentProfileRecordSchema,
   CsrfTokenResponseSchema,
   DaemonStatusResponseSchema,
   JobRecordSchema,
+  ProjectRecordSchema,
   RunRecordSchema,
   SchedulerStatusResponseSchema,
   TaskRecordSchema,
   UsageSummarySchema,
+  WorkspaceRecordSchema,
 } from '@popeye/contracts';
 import { createRuntimeService, initAuthStore } from '@popeye/runtime-core';
 
@@ -173,6 +176,64 @@ describe('API contract tests', () => {
     expect(response.statusCode).toBe(200);
     const parsed = CsrfTokenResponseSchema.parse(response.json());
     expect(parsed.token).toBeTruthy();
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/workspaces conforms to WorkspaceRecord array', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/workspaces',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = z.array(WorkspaceRecordSchema).parse(response.json());
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBeGreaterThan(0);
+    expect(parsed[0]).toHaveProperty('id');
+    expect(parsed[0]).toHaveProperty('name');
+    expect(parsed[0]).toHaveProperty('createdAt');
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/projects conforms to ProjectRecord array', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/projects',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = z.array(ProjectRecordSchema).parse(response.json());
+    expect(Array.isArray(parsed)).toBe(true);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/agent-profiles conforms to AgentProfileRecord array', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/agent-profiles',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = z.array(AgentProfileRecordSchema).parse(response.json());
+    expect(Array.isArray(parsed)).toBe(true);
 
     await runtime.close();
     await app.close();

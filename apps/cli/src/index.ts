@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
+import type { RunRecord } from '@popeye/contracts';
 import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
+import { renderReceipt } from '@popeye/receipts';
 import { tryConnectDaemon } from './api-client.js';
 import {
   createBackup,
@@ -24,7 +26,26 @@ import {
   verifyBackup,
 } from '@popeye/runtime-core';
 
-const [, , command, subcommand, arg1, arg2] = process.argv;
+// --json flag: when present, output raw JSON instead of human-readable text
+const jsonFlag = process.argv.includes('--json');
+const positionalArgs = process.argv.filter((a) => a !== '--json');
+const [, , command, subcommand, arg1, arg2] = positionalArgs;
+
+function formatRun(run: RunRecord): string {
+  const lines = [
+    `Run ${run.id}`,
+    `  State:      ${run.state}`,
+    `  Job:        ${run.jobId}`,
+    `  Task:       ${run.taskId}`,
+    `  Workspace:  ${run.workspaceId}`,
+    `  Session:    ${run.sessionRootId}`,
+    `  Started:    ${run.startedAt}`,
+  ];
+  if (run.finishedAt) lines.push(`  Finished:   ${run.finishedAt}`);
+  if (run.error) lines.push(`  Error:      ${run.error}`);
+  return lines.join('\n');
+}
+
 const configPath = process.env.POPEYE_CONFIG_PATH;
 
 if (!configPath) {
@@ -147,7 +168,17 @@ async function main(): Promise<void> {
         source: 'manual',
         autoEnqueue: true,
       });
-      console.info('[daemon]', JSON.stringify(result, null, 2));
+      if (jsonFlag) {
+        console.info(JSON.stringify(result, null, 2));
+      } else {
+        const lines = [
+          `Task: ${result.task.title} (${result.task.id})`,
+          `  Status: ${result.task.status}`,
+        ];
+        if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
+        if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);
+        console.info(lines.join('\n'));
+      }
     } else {
       const runtime = createRuntimeService(config);
       runtime.startScheduler();
@@ -160,7 +191,20 @@ async function main(): Promise<void> {
         autoEnqueue: true,
       });
       const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 10_000) : null;
-      console.info('[direct]', JSON.stringify({ ...created, terminal }, null, 2));
+      if (jsonFlag) {
+        console.info(JSON.stringify({ ...created, terminal }, null, 2));
+      } else {
+        const lines = [
+          `Task: ${created.task.title} (${created.task.id})`,
+          `  Status: ${created.task.status}`,
+        ];
+        if (created.job) lines.push(`  Job:    ${created.job.status} (${created.job.id})`);
+        if (created.run) lines.push(`  Run:    ${created.run.state} (${created.run.id})`);
+        if (terminal?.job) lines.push(`  Final:  ${terminal.job.status}`);
+        if (terminal?.run) lines.push(`  Run:    ${terminal.run.state}`);
+        if (terminal?.receipt) lines.push('', renderReceipt(terminal.receipt));
+        console.info(lines.join('\n'));
+      }
       await runtime.close();
     }
     return;
@@ -168,10 +212,22 @@ async function main(): Promise<void> {
   if (command === 'run' && subcommand === 'show' && arg1) {
     const client = await tryConnectDaemon(config);
     if (client) {
-      console.info('[daemon]', JSON.stringify(await client.getRun(arg1), null, 2));
+      const run = await client.getRun(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(run, null, 2));
+      } else {
+        console.info(formatRun(run));
+      }
     } else {
       const runtime = createRuntimeService(config);
-      console.info('[direct]', JSON.stringify(runtime.getRun(arg1), null, 2));
+      const run = runtime.getRun(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(run, null, 2));
+      } else if (run) {
+        console.info(formatRun(run));
+      } else {
+        console.info(`Run not found: ${arg1}`);
+      }
       await runtime.close();
     }
     return;
@@ -179,10 +235,22 @@ async function main(): Promise<void> {
   if (command === 'receipt' && subcommand === 'show' && arg1) {
     const client = await tryConnectDaemon(config);
     if (client) {
-      console.info('[daemon]', JSON.stringify(await client.getReceipt(arg1), null, 2));
+      const receipt = await client.getReceipt(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(receipt, null, 2));
+      } else {
+        console.info(renderReceipt(receipt));
+      }
     } else {
       const runtime = createRuntimeService(config);
-      console.info('[direct]', JSON.stringify(runtime.getReceipt(arg1), null, 2));
+      const receipt = runtime.getReceipt(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(receipt, null, 2));
+      } else if (receipt) {
+        console.info(renderReceipt(receipt));
+      } else {
+        console.info(`Receipt not found: ${arg1}`);
+      }
       await runtime.close();
     }
     return;

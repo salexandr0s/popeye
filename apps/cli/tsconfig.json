@@ -8,6 +8,9 @@
   ],
   "references": [
     {
+      "path": "../../packages/contracts"
+    },
+    {
       "path": "../../packages/runtime-core"
     },
     {
@@ -15,6 +18,9 @@
     },
     {
       "path": "../../packages/engine-pi"
+    },
+    {
+      "path": "../../packages/receipts"
     }
   ]
 }

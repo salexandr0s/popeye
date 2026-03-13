@@ -1,5 +1,7 @@
 import type { ReceiptRecord } from '@popeye/contracts';
 
+export { readReceiptArtifact, writeReceiptArtifact } from './receipt-artifacts.js';
+
 export function renderReceipt(receipt: ReceiptRecord): string {
   return [
     `Receipt ${receipt.id}`,

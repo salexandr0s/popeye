@@ -71,9 +71,15 @@ importers:
       '@popeye/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@popeye/engine-pi':
         specifier: workspace:*
         version: link:../../packages/engine-pi
+      '@popeye/receipts':
+        specifier: workspace:*
+        version: link:../../packages/receipts
       '@popeye/runtime-core':
         specifier: workspace:*
         version: link:../../packages/runtime-core

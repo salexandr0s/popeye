@@ -223,40 +223,131 @@ function defaultUsage(provider: string, model: string, _input: string): UsageMet
   };
 }
 
+export interface FakeEngineConfig {
+  mode?: 'success' | 'transient_failure' | 'permanent_failure' | 'timeout' | 'protocol_error';
+  delayMs?: number;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function asyncTick(): Promise<void> {
+  return new Promise((resolve) => queueMicrotask(resolve));
+}
+
 export class FakeEngineAdapter implements EngineAdapter {
-  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const completion: EngineRunCompletion = {
-      engineSessionRef: `fake:${randomUUID()}`,
-      usage: {
-        provider: 'fake',
-        model: 'fake-engine',
-        tokensIn: input.length,
-        tokensOut: input.length,
-        estimatedCostUsd: 0,
-      },
-      failureClassification: null,
+  private readonly config: Required<FakeEngineConfig>;
+
+  constructor(config: FakeEngineConfig = {}) {
+    this.config = {
+      mode: config.mode ?? 'success',
+      delayMs: config.delayMs ?? 0,
     };
+  }
+
+  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const sessionRef = `fake:${randomUUID()}`;
+    const usage: UsageMetrics = {
+      provider: 'fake',
+      model: 'fake-engine',
+      tokensIn: input.length,
+      tokensOut: input.length,
+      estimatedCostUsd: 0,
+    };
+
+    let cancelled = false;
+    let completionResolve: ((value: EngineRunCompletion) => void) | undefined;
+    const completionPromise = new Promise<EngineRunCompletion>((resolve) => {
+      completionResolve = resolve;
+    });
+
+    const emitAsync = async (event: NormalizedEngineEvent): Promise<void> => {
+      await asyncTick();
+      if (this.config.delayMs > 0) await delay(this.config.delayMs);
+      options.onEvent?.(event);
+    };
+
     const handle: EngineRunHandle = {
       pid: null,
-      cancel: async () => Promise.resolve(),
-      wait: async () => completion,
-      isAlive: () => false,
-    };
-    options.onHandle?.(handle);
-    options.onEvent?.({ type: 'started', payload: { input } });
-    options.onEvent?.({ type: 'session', payload: { sessionRef: completion.engineSessionRef } });
-    options.onEvent?.({ type: 'message', payload: { text: `echo:${input}` } });
-    options.onEvent?.({ type: 'completed', payload: { output: `echo:${input}` } });
-    options.onEvent?.({
-      type: 'usage',
-      payload: {
-        provider: completion.usage.provider,
-        model: completion.usage.model,
-        tokensIn: completion.usage.tokensIn,
-        tokensOut: completion.usage.tokensOut,
-        estimatedCostUsd: completion.usage.estimatedCostUsd,
+      cancel: async () => {
+        cancelled = true;
       },
-    });
+      wait: () => completionPromise,
+      isAlive: () => !cancelled && completionResolve !== undefined,
+    };
+
+    options.onHandle?.(handle);
+
+    // Schedule async event emission
+    const runEvents = async (): Promise<void> => {
+      const { mode } = this.config;
+
+      await emitAsync({ type: 'started', payload: { input } });
+
+      if (mode === 'timeout') {
+        // Never complete — for timeout testing. The promise stays pending.
+        return;
+      }
+
+      if (mode === 'protocol_error') {
+        // Emit a malformed event (type not in valid set)
+        await asyncTick();
+        if (this.config.delayMs > 0) await delay(this.config.delayMs);
+        options.onEvent?.({ type: 'started' as NormalizedEngineEvent['type'], payload: { '': undefined as unknown as string } });
+        completionResolve?.({
+          engineSessionRef: sessionRef,
+          usage,
+          failureClassification: 'protocol_error',
+        });
+        return;
+      }
+
+      if (mode === 'transient_failure' || mode === 'permanent_failure') {
+        const classification: EngineFailureClassification = mode;
+        await emitAsync({ type: 'failed', payload: { classification } });
+        await emitAsync({
+          type: 'usage',
+          payload: {
+            provider: usage.provider,
+            model: usage.model,
+            tokensIn: usage.tokensIn,
+            tokensOut: 0,
+            estimatedCostUsd: usage.estimatedCostUsd,
+          },
+        });
+        completionResolve?.({
+          engineSessionRef: sessionRef,
+          usage: { ...usage, tokensOut: 0 },
+          failureClassification: classification,
+        });
+        return;
+      }
+
+      // success mode (default)
+      await emitAsync({ type: 'session', payload: { sessionRef } });
+      await emitAsync({ type: 'message', payload: { text: `echo:${input}` } });
+      await emitAsync({ type: 'completed', payload: { output: `echo:${input}` } });
+      await emitAsync({
+        type: 'usage',
+        payload: {
+          provider: usage.provider,
+          model: usage.model,
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+          estimatedCostUsd: usage.estimatedCostUsd,
+        },
+      });
+      completionResolve?.({
+        engineSessionRef: sessionRef,
+        usage,
+        failureClassification: null,
+      });
+    };
+
+    // Fire event sequence asynchronously (don't await here — caller gets handle immediately)
+    void runEvents();
+
     return handle;
   }
 
@@ -494,16 +585,18 @@ export class PiEngineAdapter implements EngineAdapter {
       ...options,
       onEvent: (event) => {
         events.push(event);
-        if (event.type === 'failed') {
+        if (event.type === 'failed' && typeof event.payload.message === 'string') {
           failureMessage = event.payload.message;
         }
         options.onEvent?.(event);
       },
     });
     const completion = await handle.wait();
+    const sessionEvent = events.find((event) => event.type === 'session');
+    const sessionRef = sessionEvent?.payload.engineSessionRef ?? sessionEvent?.payload.sessionId ?? sessionEvent?.payload.sessionRef;
     return {
       events,
-      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionId ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      engineSessionRef: completion.engineSessionRef ?? (typeof sessionRef === 'string' ? sessionRef : null),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
       failureMessage,

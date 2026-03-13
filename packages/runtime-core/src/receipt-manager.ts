@@ -8,9 +8,9 @@ import type {
 import {
   ReceiptRecordSchema,
 } from '@popeye/contracts';
-import { renderReceipt } from '@popeye/receipts';
+import { readReceiptArtifact, renderReceipt, writeReceiptArtifact } from '@popeye/receipts';
 
-import { readReceiptArtifact, writeReceiptArtifact, type RuntimeDatabases } from './database.js';
+import type { RuntimeDatabases } from './database.js';
 import type { MemoryLifecycleService } from './memory-lifecycle.js';
 
 function nowIso(): string {

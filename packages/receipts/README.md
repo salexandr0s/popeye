@@ -1,18 +1,48 @@
 # @popeye/receipts
 
-Human-readable receipt rendering for completed runs. Transforms structured
-receipt records into formatted text output that includes run status, duration,
-token usage metrics, cost breakdown, and error summaries. Every run is receipted,
-including failures and cancellations.
+Receipt rendering and artifact I/O for the Popeye platform. Every run is
+receipted -- including failures and cancellations -- to maintain a complete
+operational audit trail.
 
-## Key exports
+## Purpose
 
-- `renderReceipt(receipt)` -- format a receipt record as human-readable text
-
-## Dependencies
-
-- `@popeye/contracts`
+Transforms structured `ReceiptRecord` objects into human-readable text output
+showing run status, provider, model, token usage, and estimated cost. Also
+provides file-based artifact storage for persisting receipt JSON to the runtime
+data directory, organized by run ID.
 
 ## Layer
 
-Runtime domain. Pure rendering logic with no I/O or side effects.
+Runtime domain. Rendering is pure logic; artifact I/O is a thin filesystem
+wrapper.
+
+## Provenance
+
+New platform implementation.
+
+## Key exports
+
+| Export                   | Description                                              |
+| ------------------------ | -------------------------------------------------------- |
+| `renderReceipt(receipt)` | Format a `ReceiptRecord` as human-readable text          |
+| `writeReceiptArtifact()` | Persist receipt JSON to `receipts/by-run/<id>.json`      |
+| `readReceiptArtifact()`  | Read a persisted receipt artifact by ID                  |
+
+## Dependencies
+
+- `@popeye/contracts` -- `ReceiptRecord`, `RuntimePaths` types
+
+## Usage
+
+```ts
+import { renderReceipt, writeReceiptArtifact } from '@popeye/receipts';
+
+console.log(renderReceipt(receipt));
+// Receipt abc-123
+// Run: run-456
+// Status: succeeded
+// Tokens: 1500/800
+// Estimated cost: $0.0230
+
+writeReceiptArtifact(paths, receipt.id, JSON.stringify(receipt));
+```

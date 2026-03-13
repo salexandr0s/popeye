@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@popeye/api-client": "workspace:*",
+    "@popeye/contracts": "workspace:*",
     "@popeye/engine-pi": "workspace:*",
+    "@popeye/receipts": "workspace:*",
     "@popeye/runtime-core": "workspace:*"
   },
   "exports": {

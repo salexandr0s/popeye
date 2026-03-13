@@ -5,4 +5,5 @@ export type {
   EngineRunOptions,
   EngineRunResult,
   EngineRunCompletion,
+  FakeEngineConfig,
 } from '@popeye/engine-pi';

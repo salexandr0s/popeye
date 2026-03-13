@@ -2,11 +2,11 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 
 import type {
+  AgentProfileRecord,
   AppConfig,
   CompiledInstructionBundle,
   DaemonStateRecord,
   DaemonStatusResponse,
-  IngestMessageInput,
   InterventionRecord,
   JobLeaseRecord,
   JobRecord,
@@ -14,11 +14,10 @@ import type {
   MemoryRecord,
   MemorySearchQuery,
   MemorySearchResponse,
-  MessageIngressRecord,
   MessageIngressResponse,
   MessageRecord,
-  MessageIngressDecisionCode,
   NormalizedEngineEvent,
+  ProjectRecord,
   ReceiptRecord,
   RunEventRecord,
   RunRecord,
@@ -27,19 +26,11 @@ import type {
   TaskCreateInput,
   TaskRecord,
   UsageSummary,
+  WorkspaceRecord,
 } from '@popeye/contracts';
 import {
-  CompiledInstructionBundleSchema,
-  IngestMessageInputSchema,
-  JobLeaseRecordSchema,
-  MessageIngressRecordSchema,
-  MessageIngressResponseSchema,
-  MessageRecordSchema,
-  ReceiptRecordSchema,
   RunEventRecordSchema,
   RunRecordSchema,
-  TaskCreateInputSchema,
-  TaskRecordSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
@@ -48,24 +39,20 @@ import {
   type EngineRunCompletion,
   type EngineRunHandle,
 } from '@popeye/engine-pi';
-import { compileInstructionBundle } from '@popeye/instructions';
 import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, loadSqliteVec } from '@popeye/memory';
 import { redactText } from '@popeye/observability';
-import { renderReceipt } from '@popeye/receipts';
 import { calculateRetryDelaySeconds } from '@popeye/scheduler';
 import { selectSessionRoot } from '@popeye/sessions';
 
-import { readAuthStore, issueCsrfToken as issueCsrfTokenFromStore } from './auth.js';
-import { openRuntimeDatabases, readReceiptArtifact, writeReceiptArtifact, type RuntimeDatabases } from './database.js';
+import { openRuntimeDatabases, type RuntimeDatabases } from './database.js';
 import { MemoryLifecycleService } from './memory-lifecycle.js';
-import { scanPrompt } from './prompt.js';
+import { MessageIngestionService, MessageIngressError } from './message-ingestion.js';
+import { QueryService } from './query-service.js';
+import { ReceiptManager } from './receipt-manager.js';
+import { TaskManager } from './task-manager.js';
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function readJson<T>(value: string): T {
-  return JSON.parse(value) as T;
 }
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
@@ -92,49 +79,11 @@ function selectSessionKind(source: TaskRecord['source']): Parameters<typeof sele
   return 'interactive_main';
 }
 
-function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
-  if (input.source !== 'telegram' || !input.chatId || typeof input.telegramMessageId !== 'number') {
-    return null;
-  }
-
-  return `${input.source}:${input.chatId}:${input.telegramMessageId}`;
-}
-
-function readStringField(input: Record<string, unknown>, key: string): string | undefined {
-  const value = input[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function readNumberField(input: Record<string, unknown>, key: string): number | undefined {
-  const value = input[key];
-  return typeof value === 'number' ? value : undefined;
-}
-
-function readTelegramChatTypeField(input: Record<string, unknown>, key: string): IngestMessageInput['chatType'] | undefined {
-  const value = input[key];
-  if (value === 'private' || value === 'group' || value === 'supergroup' || value === 'channel') {
-    return value;
-  }
-  return undefined;
-}
+export { MessageIngressError };
 
 export interface RuntimeEvent {
   event: string;
   data: string;
-}
-
-export class MessageIngressError extends Error {
-  readonly statusCode: number;
-  readonly decisionCode: MessageIngressDecisionCode;
-  readonly response: MessageIngressResponse;
-
-  constructor(response: MessageIngressResponse) {
-    super(response.decisionReason);
-    this.name = 'MessageIngressError';
-    this.statusCode = response.httpStatus;
-    this.decisionCode = response.decisionCode;
-    this.response = response;
-  }
 }
 
 interface ActiveRunContext {
@@ -186,6 +135,12 @@ export class PopeyeRuntimeService {
 
   readonly startupProfile: { dbReadyMs: number; reconcileMs: number; schedulerReadyMs: number };
 
+  // --- Delegate modules ---
+  private readonly receiptManager: ReceiptManager;
+  private readonly messageIngestion: MessageIngestionService;
+  private readonly taskManager: TaskManager;
+  private readonly queryService: QueryService;
+
   constructor(config: AppConfig, engineOverride?: EngineAdapter) {
     const startupStart = performance.now();
     this.config = config;
@@ -209,6 +164,27 @@ export class PopeyeRuntimeService {
     // Try loading sqlite-vec (non-blocking)
     void loadSqliteVec(this.databases.memory).then((loaded) => {
       this.vecAvailable = loaded;
+    });
+
+    // Initialize delegate modules
+    this.receiptManager = new ReceiptManager(this.databases, config, this.memoryLifecycle);
+    this.taskManager = new TaskManager(this.databases, {
+      emit: (event, payload) => this.emit(event, payload),
+      processSchedulerTick: () => this.processSchedulerTick(),
+    });
+    this.messageIngestion = new MessageIngestionService(this.databases, config, {
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      createTask: (input) => this.createTask(input),
+      createIntervention: (code, runId, reason) => this.createIntervention(code, runId, reason),
+    });
+    const self = this;
+    this.queryService = new QueryService(this.databases, config, {
+      get schedulerRunning() { return self.scheduler.running; },
+      get activeRunsCount() { return self.activeRuns.size; },
+      get startedAt() { return self.startedAt; },
+      get lastSchedulerTickAt() { return self.scheduler.lastSchedulerTickAt; },
+      get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
+      computeNextHeartbeatDueAt: () => this.computeNextHeartbeatDueAt(),
     });
 
     this.seedReferenceData();
@@ -238,14 +214,230 @@ export class PopeyeRuntimeService {
     await this.close();
   }
 
-  startScheduler(): void {
-    if (this.scheduler.running) return;
-    this.scheduler.running = true;
-    this.ensureConfiguredHeartbeatSchedules();
-    this.scheduler.tickTimer = setInterval(() => void this.processSchedulerTick(), this.scheduler.tickIntervalMs);
-    this.scheduler.leaseTimer = setInterval(() => void this.processLeaseSweep(), this.scheduler.leaseRefreshIntervalMs);
-    void this.processSchedulerTick();
-    void this.processLeaseSweep();
+  // --- Delegated: TaskManager ---
+
+  createTask(input: TaskCreateInput): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null } {
+    return this.taskManager.createTask(input);
+  }
+
+  enqueueTask(taskId: string, options?: { availableAt?: string; retryCount?: number }): JobRecord | null {
+    return this.taskManager.enqueueTask(taskId, options);
+  }
+
+  enqueueJob(jobId: string): JobRecord | null {
+    return this.taskManager.enqueueJob(jobId);
+  }
+
+  requeueJob(jobId: string): JobRecord | null {
+    return this.taskManager.requeueJob(jobId);
+  }
+
+  executeJob(jobId: string): JobRecord | null {
+    return this.taskManager.executeJob(jobId);
+  }
+
+  listTasks(): TaskRecord[] {
+    return this.taskManager.listTasks();
+  }
+
+  getTask(taskId: string): TaskRecord | null {
+    return this.taskManager.getTask(taskId);
+  }
+
+  listJobs(): JobRecord[] {
+    return this.taskManager.listJobs();
+  }
+
+  getJobLease(jobId: string): JobLeaseRecord | null {
+    return this.taskManager.getJobLease(jobId);
+  }
+
+  pauseJob(jobId: string): JobRecord | null {
+    return this.taskManager.pauseJob(jobId);
+  }
+
+  resumeJob(jobId: string): JobRecord | null {
+    return this.taskManager.resumeJob(jobId);
+  }
+
+  // --- Delegated: ReceiptManager ---
+
+  listReceipts(): ReceiptRecord[] {
+    return this.receiptManager.listReceipts();
+  }
+
+  getReceipt(receiptId: string): ReceiptRecord | null {
+    return this.receiptManager.getReceipt(receiptId);
+  }
+
+  getUsageSummary(): UsageSummary {
+    return this.receiptManager.getUsageSummary();
+  }
+
+  // --- Delegated: QueryService ---
+
+  getStatus(): DaemonStatusResponse {
+    return this.queryService.getStatus();
+  }
+
+  getDaemonState(): DaemonStateRecord {
+    return this.queryService.getDaemonState();
+  }
+
+  getSchedulerStatus(): SchedulerStatusResponse {
+    return this.queryService.getSchedulerStatus();
+  }
+
+  listWorkspaces(): WorkspaceRecord[] {
+    return this.queryService.listWorkspaces();
+  }
+
+  listProjects(): ProjectRecord[] {
+    return this.queryService.listProjects();
+  }
+
+  listAgentProfiles(): AgentProfileRecord[] {
+    return this.queryService.listAgentProfiles();
+  }
+
+  listSessionRoots(): Array<{ id: string; kind: string; scope: string; createdAt: string }> {
+    return this.queryService.listSessionRoots();
+  }
+
+  getInstructionPreview(scope: string): CompiledInstructionBundle {
+    return this.queryService.getInstructionPreview(scope);
+  }
+
+  listInterventions(): InterventionRecord[] {
+    return this.queryService.listInterventions();
+  }
+
+  resolveIntervention(interventionId: string): InterventionRecord | null {
+    return this.queryService.resolveIntervention(interventionId);
+  }
+
+  getSecurityAuditFindings(): Array<{ code: string; severity: string; message: string }> {
+    return this.queryService.getSecurityAuditFindings();
+  }
+
+  issueCsrfToken(): string {
+    return this.queryService.issueCsrfToken();
+  }
+
+  // --- Delegated: MessageIngestion ---
+
+  ingestMessage(input: unknown): MessageIngressResponse {
+    return this.messageIngestion.ingestMessage(input);
+  }
+
+  getMessage(messageId: string): MessageRecord | null {
+    return this.messageIngestion.getMessage(messageId);
+  }
+
+  // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---
+
+  getRun(runId: string): RunRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Record<string, string | null> | undefined;
+    if (!row) return null;
+    return RunRecordSchema.parse({
+      id: row.id,
+      jobId: row.job_id,
+      taskId: row.task_id,
+      workspaceId: row.workspace_id,
+      sessionRootId: row.session_root_id,
+      engineSessionRef: row.engine_session_ref,
+      state: row.state,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      error: row.error,
+    });
+  }
+
+  listRuns(): RunRecord[] {
+    const rows = this.databases.app.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as Array<Record<string, string | null>>;
+    return rows.map((row) =>
+      RunRecordSchema.parse({
+        id: row.id,
+        jobId: row.job_id,
+        taskId: row.task_id,
+        workspaceId: row.workspace_id,
+        sessionRootId: row.session_root_id,
+        engineSessionRef: row.engine_session_ref,
+        state: row.state,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        error: row.error,
+      }),
+    );
+  }
+
+  listFailedRuns(): RunRecord[] {
+    const rows = this.databases.app.prepare("SELECT * FROM runs WHERE state IN ('failed_retryable', 'failed_final', 'abandoned') ORDER BY started_at DESC").all() as Array<Record<string, string | null>>;
+    return rows.map((row) =>
+      RunRecordSchema.parse({
+        id: row.id,
+        jobId: row.job_id,
+        taskId: row.task_id,
+        workspaceId: row.workspace_id,
+        sessionRootId: row.session_root_id,
+        engineSessionRef: row.engine_session_ref,
+        state: row.state,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        error: row.error,
+      }),
+    );
+  }
+
+  listRunEvents(runId: string): RunEventRecord[] {
+    const rows = this.databases.app.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC').all(runId) as Array<Record<string, string>>;
+    return rows.map((row) => RunEventRecordSchema.parse({ id: row.id, runId: row.run_id, type: row.type, payload: row.payload, createdAt: row.created_at }));
+  }
+
+  retryRun(runId: string): JobRecord | null {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    return this.enqueueTask(run.taskId);
+  }
+
+  async cancelRun(runId: string): Promise<RunRecord | null> {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    if (isTerminalRunState(run.state)) return run;
+    const activeRun = this.activeRuns.get(runId);
+    if (activeRun) {
+      await activeRun.handle.cancel();
+      return this.getRun(runId);
+    }
+    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ? WHERE id = ?').run('cancelled', nowIso(), runId);
+    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
+    this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(run.jobId);
+    const receipt = this.receiptManager.writeReceipt({
+      runId,
+      jobId: run.jobId,
+      taskId: run.taskId,
+      workspaceId: run.workspaceId,
+      status: 'cancelled',
+      summary: 'Run cancelled',
+      details: '',
+      usage: { provider: this.config.engine.kind, model: 'n/a', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
+    });
+    this.receiptManager.captureMemoryFromReceipt(receipt);
+    return this.getRun(runId);
+  }
+
+  async waitForJobTerminalState(jobId: string, timeoutMs = 10_000): Promise<{ job: JobRecord; run: RunRecord | null; receipt: ReceiptRecord | null } | null> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const job = this.listJobs().find((candidate) => candidate.id === jobId);
+      if (job && isTerminalJobStatus(job.status)) {
+        const run = job.lastRunId ? this.getRun(job.lastRunId) : null;
+        const receipt = run ? this.listReceipts().find((candidate) => candidate.runId === run.id) ?? null : null;
+        return { job, run, receipt };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return null;
   }
 
   async waitForTaskTerminalReceipt(taskId: string, timeoutMs = 10_000): Promise<ReceiptRecord | null> {
@@ -256,6 +448,18 @@ export class PopeyeRuntimeService {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     return null;
+  }
+
+  // --- Scheduler (stays in facade -- tightly coupled to run lifecycle) ---
+
+  startScheduler(): void {
+    if (this.scheduler.running) return;
+    this.scheduler.running = true;
+    this.ensureConfiguredHeartbeatSchedules();
+    this.scheduler.tickTimer = setInterval(() => void this.processSchedulerTick(), this.scheduler.tickIntervalMs);
+    this.scheduler.leaseTimer = setInterval(() => void this.processLeaseSweep(), this.scheduler.leaseRefreshIntervalMs);
+    void this.processSchedulerTick();
+    void this.processLeaseSweep();
   }
 
   async runSchedulerCycle(): Promise<void> {
@@ -290,9 +494,103 @@ export class PopeyeRuntimeService {
     await Promise.all(waiters);
   }
 
+  // --- Memory public API ---
+
+  searchMemories(
+    query: string,
+  ): Array<{
+    id: string;
+    description: string;
+    confidence: number;
+    scope: string;
+    sourceType: string;
+    createdAt: string;
+    snippet: string;
+  }> {
+    const rows = this.databases.memory
+      .prepare(
+        `SELECT m.id, m.description, m.confidence, m.scope, m.source_type, m.created_at,
+                snippet(memories_fts, 1, '<b>', '</b>', '...', 32) AS snippet
+         FROM memories_fts
+         JOIN memories m ON m.rowid = memories_fts.rowid
+         WHERE memories_fts MATCH ?
+         ORDER BY rank
+         LIMIT 20`,
+      )
+      .all(query) as Array<Record<string, string | number>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      description: String(row.description),
+      confidence: Number(row.confidence),
+      scope: String(row.scope),
+      sourceType: String(row.source_type),
+      createdAt: String(row.created_at),
+      snippet: String(row.snippet ?? ''),
+    }));
+  }
+
+  async searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse> {
+    return this.memorySearch.search(query);
+  }
+
+  getMemoryContent(memoryId: string): MemoryRecord | null {
+    return this.memorySearch.getMemoryContent(memoryId);
+  }
+
+  getMemoryAudit(): MemoryAuditResponse {
+    return this.memoryLifecycle.getMemoryAudit();
+  }
+
+  listMemories(options?: { type?: string; scope?: string; limit?: number }): MemoryRecord[] {
+    const conditions: string[] = ['archived_at IS NULL'];
+    const params: unknown[] = [];
+    if (options?.type) { conditions.push('memory_type = ?'); params.push(options.type); }
+    if (options?.scope) { conditions.push('scope = ?'); params.push(options.scope); }
+    const limit = options?.limit ?? 50;
+    params.push(limit);
+    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
+    const rows = this.databases.memory.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      description: row.description as string,
+      classification: row.classification as MemoryRecord['classification'],
+      sourceType: row.source_type as MemoryRecord['sourceType'],
+      content: row.content as string,
+      confidence: row.confidence as number,
+      scope: row.scope as string,
+      memoryType: (row.memory_type as MemoryRecord['memoryType']) ?? 'episodic',
+      dedupKey: (row.dedup_key as string) ?? null,
+      lastReinforcedAt: (row.last_reinforced_at as string) ?? null,
+      archivedAt: (row.archived_at as string) ?? null,
+      createdAt: row.created_at as string,
+    }));
+  }
+
+  getMemory(memoryId: string): MemoryRecord | null {
+    return this.memorySearch.getMemoryContent(memoryId);
+  }
+
+  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
+    const decay = this.memoryLifecycle.runConfidenceDecay();
+    const consolidation = this.memoryLifecycle.runConsolidation();
+    return { decayed: decay.decayed, archived: decay.archived, merged: consolidation.merged, deduped: consolidation.deduped };
+  }
+
+  proposeMemoryPromotion(memoryId: string, targetPath: string) {
+    return this.memoryLifecycle.proposePromotion(memoryId, targetPath);
+  }
+
+  executeMemoryPromotion(request: { memoryId: string; targetPath: string; diff: string; approved: boolean; promoted: boolean }) {
+    return this.memoryLifecycle.executePromotion(request);
+  }
+
+  // --- Internal: event emission ---
+
   private emit(event: string, payload: unknown): void {
     this.events.emit('event', { event, data: JSON.stringify(payload) } satisfies RuntimeEvent);
   }
+
+  // --- Internal: startup & seeding ---
 
   private seedDaemonState(): void {
     this.databases.app
@@ -349,6 +647,8 @@ export class PopeyeRuntimeService {
     }
   }
 
+  // --- Internal: reconciliation ---
+
   private reconcileStartupState(): void {
     const reconciledAt = nowIso();
     const staleRuns = this.databases.app
@@ -357,7 +657,7 @@ export class PopeyeRuntimeService {
 
     for (const row of staleRuns) {
       const runId = String(row.id);
-      this.writeAbandonedReceiptIfMissing(
+      this.receiptManager.writeAbandonedReceiptIfMissing(
         runId,
         String(row.job_id),
         String(row.task_id),
@@ -399,331 +699,29 @@ export class PopeyeRuntimeService {
     this.emit('security_audit', event);
   }
 
-  private getMessageIngressByKey(idempotencyKey: string): MessageIngressRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM message_ingress WHERE idempotency_key = ?').get(idempotencyKey) as Record<string, string | number | null> | undefined;
-    if (!row) return null;
-    return MessageIngressRecordSchema.parse({
-      id: String(row.id),
-      source: row.source,
-      senderId: row.sender_id,
-      chatId: row.chat_id ? String(row.chat_id) : null,
-      chatType: row.chat_type ?? null,
-      telegramMessageId: typeof row.telegram_message_id === 'number' ? row.telegram_message_id : row.telegram_message_id === null ? null : Number(row.telegram_message_id),
-      idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : null,
-      workspaceId: row.workspace_id,
-      body: row.body,
-      accepted: Boolean(row.accepted),
-      decisionCode: row.decision_code,
-      decisionReason: row.decision_reason,
-      httpStatus: Number(row.http_status),
-      messageId: row.message_id ? String(row.message_id) : null,
-      taskId: row.task_id ? String(row.task_id) : null,
-      jobId: row.job_id ? String(row.job_id) : null,
-      runId: row.run_id ? String(row.run_id) : null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    });
-  }
-
-  private insertMessageIngress(record: MessageIngressRecord): void {
-    this.databases.app
-      .prepare(`
-        INSERT INTO message_ingress (
-          id, source, sender_id, chat_id, chat_type, telegram_message_id, idempotency_key, workspace_id, body, accepted,
-          decision_code, decision_reason, http_status, message_id, task_id, job_id, run_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        record.id,
-        record.source,
-        record.senderId,
-        record.chatId,
-        record.chatType,
-        record.telegramMessageId,
-        record.idempotencyKey,
-        record.workspaceId,
-        record.body,
-        record.accepted ? 1 : 0,
-        record.decisionCode,
-        record.decisionReason,
-        record.httpStatus,
-        record.messageId,
-        record.taskId,
-        record.jobId,
-        record.runId,
-        record.createdAt,
-        record.updatedAt,
-      );
-  }
-
-  private updateMessageIngressLinks(recordId: string, updates: Pick<MessageIngressRecord, 'messageId' | 'taskId' | 'jobId' | 'runId'>): void {
-    this.databases.app
-      .prepare('UPDATE message_ingress SET message_id = ?, task_id = ?, job_id = ?, run_id = ?, updated_at = ? WHERE id = ?')
-      .run(updates.messageId, updates.taskId, updates.jobId, updates.runId, nowIso(), recordId);
-  }
-
-  private buildIngressResponse(record: MessageIngressRecord, duplicate: boolean): MessageIngressResponse {
-    return MessageIngressResponseSchema.parse({
-      accepted: record.accepted,
-      duplicate,
-      httpStatus: record.httpStatus,
-      decisionCode: duplicate && record.accepted ? 'duplicate_replayed' : record.decisionCode,
-      decisionReason: duplicate ? `duplicate delivery replayed: ${record.decisionReason}` : record.decisionReason,
-      message: record.messageId ? this.getMessage(record.messageId) : null,
-      taskId: record.taskId,
-      jobId: record.jobId,
-      runId: record.runId,
-    });
-  }
-
-  private persistDeniedIngress(
-    input: IngestMessageInput,
-    body: string,
-    decisionCode: Extract<MessageIngressDecisionCode, 'telegram_disabled' | 'telegram_private_chat_required' | 'telegram_not_allowlisted' | 'telegram_rate_limited' | 'telegram_prompt_injection' | 'telegram_invalid_message'>,
-    decisionReason: string,
-    httpStatus: number,
-  ): MessageIngressRecord {
-    const timestamp = nowIso();
-    const record = MessageIngressRecordSchema.parse({
+  private createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void {
+    const intervention: InterventionRecord = {
       id: randomUUID(),
-      source: input.source,
-      senderId: input.senderId,
-      chatId: input.chatId ?? null,
-      chatType: input.chatType ?? null,
-      telegramMessageId: input.telegramMessageId ?? null,
-      idempotencyKey: buildMessageIngressKey(input),
-      workspaceId: input.workspaceId,
-      body,
-      accepted: false,
-      decisionCode,
-      decisionReason,
-      httpStatus,
-      messageId: null,
-      taskId: null,
-      jobId: null,
-      runId: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    this.insertMessageIngress(record);
-    this.recordSecurityAudit({
-      code: decisionCode,
-      severity: decisionCode === 'telegram_rate_limited' ? 'warn' : 'error',
-      message: decisionReason,
-      component: 'runtime-core',
-      timestamp,
-      details: {
-        source: input.source,
-        senderId: input.senderId,
-        chatId: input.chatId ?? '',
-        telegramMessageId: String(input.telegramMessageId ?? ''),
-      },
-    });
-    return record;
-  }
-
-  private countRecentTelegramIngressAttempts(senderId: string, chatId: string): number {
-    const windowStart = new Date(Date.now() - this.config.telegram.rateLimitWindowSeconds * 1000).toISOString();
-    const row = this.databases.app
-      .prepare(`
-        SELECT COUNT(*) AS count
-        FROM message_ingress
-        WHERE source = 'telegram'
-          AND created_at >= ?
-          AND (sender_id = ? OR chat_id = ?)
-      `)
-      .get(windowStart, senderId, chatId) as { count: number };
-    return row.count;
-  }
-
-  getStatus(): DaemonStatusResponse {
-    const runningJobs = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'running'`).get() as { count: number };
-    const queuedJobs = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'queued'`).get() as { count: number };
-    const openInterventions = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM interventions WHERE status = 'open'`).get() as { count: number };
-    const activeLeases = this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
-    const daemonState = this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get() as { last_shutdown_at: string | null } | undefined;
-    return {
-      ok: true,
-      runningJobs: runningJobs.count,
-      queuedJobs: queuedJobs.count,
-      openInterventions: openInterventions.count,
-      activeLeases: activeLeases.count,
-      engineKind: this.config.engine.kind,
-      schedulerRunning: this.scheduler.running,
-      startedAt: this.startedAt,
-      lastShutdownAt: daemonState?.last_shutdown_at ?? null,
+      code,
+      runId,
+      status: 'open',
+      reason,
+      createdAt: nowIso(),
+      resolvedAt: null,
     };
-  }
-
-  getDaemonState(): DaemonStateRecord {
-    const daemonState = this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get() as { last_shutdown_at: string | null } | undefined;
-    return {
-      schedulerRunning: this.scheduler.running,
-      activeWorkers: this.activeRuns.size,
-      lastSchedulerTickAt: this.scheduler.lastSchedulerTickAt,
-      lastLeaseSweepAt: this.scheduler.lastLeaseSweepAt,
-      lastShutdownAt: daemonState?.last_shutdown_at ?? null,
-    };
-  }
-
-  getSchedulerStatus(): SchedulerStatusResponse {
-    const activeLeases = this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
-    const nextHeartbeatDueAt = this.computeNextHeartbeatDueAt();
-    return {
-      running: this.scheduler.running,
-      activeLeases: activeLeases.count,
-      activeRuns: this.activeRuns.size,
-      nextHeartbeatDueAt,
-    };
-  }
-
-  listWorkspaces(): Array<{ id: string; name: string; createdAt: string }> {
-    const rows = this.databases.app.prepare('SELECT * FROM workspaces ORDER BY created_at ASC').all() as Array<Record<string, string>>;
-    return rows.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
-  }
-
-  listProjects(): Array<{ id: string; workspaceId: string; name: string; createdAt: string }> {
-    const rows = this.databases.app.prepare('SELECT * FROM projects ORDER BY created_at ASC').all() as Array<Record<string, string>>;
-    return rows.map((row) => ({ id: row.id, workspaceId: row.workspace_id, name: row.name, createdAt: row.created_at }));
-  }
-
-  listAgentProfiles(): Array<{ id: string; name: string; createdAt: string }> {
-    const rows = this.databases.app.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all() as Array<Record<string, string>>;
-    return rows.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
-  }
-
-  listTasks(): TaskRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all() as Array<Record<string, string>>;
-    return rows.map((row) =>
-      TaskRecordSchema.parse({
-        id: row.id,
-        workspaceId: row.workspace_id,
-        projectId: row.project_id ?? null,
-        title: row.title,
-        prompt: row.prompt,
-        source: row.source,
-        status: row.status,
-        retryPolicy: readJson(row.retry_policy_json),
-        sideEffectProfile: row.side_effect_profile,
-        coalesceKey: row.coalesce_key ?? null,
-        createdAt: row.created_at,
-      }),
+    this.databases.app.prepare('INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      intervention.id,
+      intervention.code,
+      intervention.runId,
+      intervention.status,
+      intervention.reason,
+      intervention.createdAt,
+      intervention.resolvedAt,
     );
+    this.emit('intervention_created', intervention);
   }
 
-  createTask(input: TaskCreateInput): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null } {
-    const parsed = TaskCreateInputSchema.parse(input);
-    const task: TaskRecord = {
-      id: randomUUID(),
-      workspaceId: parsed.workspaceId,
-      projectId: parsed.projectId,
-      title: parsed.title,
-      prompt: parsed.prompt,
-      source: parsed.source,
-      status: 'active',
-      retryPolicy: { maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 },
-      sideEffectProfile: 'read_only',
-      coalesceKey: parsed.coalesceKey ?? null,
-      createdAt: nowIso(),
-    };
-    this.databases.app
-      .prepare('INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(task.id, task.workspaceId, task.projectId, task.title, task.prompt, task.source, task.status, JSON.stringify(task.retryPolicy), task.sideEffectProfile, task.coalesceKey, task.createdAt);
-    this.emit('task_created', task);
-    if (!parsed.autoEnqueue) return { task, job: null, run: null };
-    const job = this.enqueueTask(task.id);
-    return { task, job, run: null };
-  }
-
-  enqueueTask(taskId: string, options?: { availableAt?: string; retryCount?: number }): JobRecord | null {
-    const task = this.databases.app.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, string> | undefined;
-    if (!task) return null;
-    const coalesceKey = (task.coalesce_key as string | null) ?? null;
-    if (coalesceKey) {
-      const active = this.databases.app
-        .prepare(`SELECT j.id FROM jobs j JOIN tasks t ON t.id = j.task_id WHERE t.coalesce_key = ? AND j.status IN ('queued','leased','running','waiting_retry')`)
-        .get(coalesceKey);
-      if (active) return null;
-    }
-    const job: JobRecord = {
-      id: randomUUID(),
-      taskId,
-      workspaceId: task.workspace_id,
-      status: 'queued',
-      retryCount: options?.retryCount ?? 0,
-      availableAt: options?.availableAt ?? nowIso(),
-      lastRunId: null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    };
-    this.databases.app
-      .prepare('INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(job.id, job.taskId, job.workspaceId, job.status, job.retryCount, job.availableAt, job.lastRunId, job.createdAt, job.updatedAt);
-    this.emit('job_queued', job);
-    return job;
-  }
-
-  enqueueJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
-    if (!job) return null;
-    if (!['paused', 'blocked_operator', 'failed_final', 'cancelled'].includes(job.status)) return null;
-    this.databases.app.prepare('UPDATE jobs SET status = ?, available_at = ?, updated_at = ? WHERE id = ?').run('queued', nowIso(), nowIso(), jobId);
-    return this.listJobs().find((j) => j.id === jobId) ?? null;
-  }
-
-  requeueJob(jobId: string): JobRecord | null {
-    const job = this.enqueueJob(jobId);
-    void this.processSchedulerTick();
-    return job;
-  }
-
-  executeJob(jobId: string): JobRecord | null {
-    return this.requeueJob(jobId);
-  }
-
-  listJobs(): JobRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as Array<Record<string, string | number | null>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      taskId: String(row.task_id),
-      workspaceId: String(row.workspace_id),
-      status: row.status as JobRecord['status'],
-      retryCount: Number(row.retry_count),
-      availableAt: String(row.available_at),
-      lastRunId: row.last_run_id ? String(row.last_run_id) : null,
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    }));
-  }
-
-  getJobLease(jobId: string): JobLeaseRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM job_leases WHERE job_id = ?').get(jobId) as Record<string, string> | undefined;
-    if (!row) return null;
-    return JobLeaseRecordSchema.parse({
-      jobId: row.job_id,
-      leaseOwner: row.lease_owner,
-      leaseExpiresAt: row.lease_expires_at,
-      updatedAt: row.updated_at,
-    });
-  }
-
-  pauseJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
-    if (!job) return null;
-    if (!['queued', 'waiting_retry', 'blocked_operator'].includes(job.status)) return null;
-    return this.updateJobStatus(jobId, 'paused');
-  }
-
-  resumeJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
-    if (!job || job.status !== 'paused') return null;
-    return this.updateJobStatus(jobId, 'queued');
-  }
-
-  private updateJobStatus(jobId: string, status: JobRecord['status']): JobRecord | null {
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ?, available_at = ? WHERE id = ?').run(status, nowIso(), nowIso(), jobId);
-    return this.listJobs().find((job) => job.id === jobId) ?? null;
-  }
+  // --- Internal: scheduler tick & lease sweep ---
 
   private async processSchedulerTick(): Promise<void> {
     if (this.closed) return;
@@ -775,6 +773,8 @@ export class PopeyeRuntimeService {
     }
   }
 
+  // --- Internal: workspace locks & leases ---
+
   private workspaceHasActiveExecution(workspaceId: string): boolean {
     const lock = this.databases.app.prepare('SELECT id FROM locks WHERE scope = ?').get(`workspace:${workspaceId}`) as { id: string } | undefined;
     if (lock) return true;
@@ -802,42 +802,7 @@ export class PopeyeRuntimeService {
       .run(jobId, owner, new Date(Date.now() + this.scheduler.leaseTtlMs).toISOString(), nowIso());
   }
 
-  getTask(taskId: string): TaskRecord | null {
-    return this.listTasks().find((task) => task.id === taskId) ?? null;
-  }
-
-  searchMemories(
-    query: string,
-  ): Array<{
-    id: string;
-    description: string;
-    confidence: number;
-    scope: string;
-    sourceType: string;
-    createdAt: string;
-    snippet: string;
-  }> {
-    const rows = this.databases.memory
-      .prepare(
-        `SELECT m.id, m.description, m.confidence, m.scope, m.source_type, m.created_at,
-                snippet(memories_fts, 1, '<b>', '</b>', '...', 32) AS snippet
-         FROM memories_fts
-         JOIN memories m ON m.rowid = memories_fts.rowid
-         WHERE memories_fts MATCH ?
-         ORDER BY rank
-         LIMIT 20`,
-      )
-      .all(query) as Array<Record<string, string | number>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      description: String(row.description),
-      confidence: Number(row.confidence),
-      scope: String(row.scope),
-      sourceType: String(row.source_type),
-      createdAt: String(row.created_at),
-      snippet: String(row.snippet ?? ''),
-    }));
-  }
+  // --- Internal: run execution ---
 
   private async startJobExecution(jobId: string): Promise<RunRecord | null> {
     const job = this.listJobs().find((candidate) => candidate.id === jobId);
@@ -908,7 +873,7 @@ export class PopeyeRuntimeService {
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), message, run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), job.id);
-      const receipt = this.writeReceipt({
+      const receipt = this.receiptManager.writeReceipt({
         runId: run.id,
         jobId: job.id,
         taskId: task.id,
@@ -918,7 +883,7 @@ export class PopeyeRuntimeService {
         details: message,
         usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
       });
-      this.captureMemoryFromReceipt(receipt);
+      this.receiptManager.captureMemoryFromReceipt(receipt);
       this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
       return this.getRun(run.id);
     }
@@ -933,10 +898,10 @@ export class PopeyeRuntimeService {
       createdAt: nowIso(),
     });
     this.databases.app.prepare('INSERT INTO run_events (id, run_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)').run(record.id, record.runId, record.type, record.payload, record.createdAt);
-    if (event.type === 'session' && typeof event.payload?.sessionRef === 'string') {
+    if (event.type === 'session' && event.payload?.sessionRef) {
       this.databases.app.prepare('UPDATE runs SET engine_session_ref = ? WHERE id = ?').run(event.payload.sessionRef, runId);
     }
-    if (event.type === 'compaction' && typeof event.payload?.content === 'string') {
+    if (event.type === 'compaction' && event.payload?.content) {
       const activeRun = this.activeRuns.get(runId);
       const workspaceId = activeRun?.task.workspaceId ?? 'default';
       this.memoryLifecycle.processCompactionFlush(runId, event.payload.content, workspaceId);
@@ -968,7 +933,7 @@ export class PopeyeRuntimeService {
     if (failure === null) {
       this.databases.app.prepare('UPDATE runs SET state = ?, engine_session_ref = ?, finished_at = ?, error = ? WHERE id = ?').run('succeeded', completion.engineSessionRef, nowIso(), null, run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('succeeded', nowIso(), run.jobId);
-      const receipt = this.writeReceipt({
+      const receipt = this.receiptManager.writeReceipt({
         runId: run.id,
         jobId: run.jobId,
         taskId: run.taskId,
@@ -978,7 +943,7 @@ export class PopeyeRuntimeService {
         details: JSON.stringify(this.listRunEvents(run.id)),
         usage: completion.usage,
       });
-      this.captureMemoryFromReceipt(receipt);
+      this.receiptManager.captureMemoryFromReceipt(receipt);
       this.emit('run_completed', receipt);
       this.cleanupActiveRun(activeRun);
       return;
@@ -987,7 +952,7 @@ export class PopeyeRuntimeService {
     if (failure === 'cancelled') {
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('cancelled', nowIso(), 'cancelled', run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
-      const receipt = this.writeReceipt({
+      const receipt = this.receiptManager.writeReceipt({
         runId: run.id,
         jobId: run.jobId,
         taskId: run.taskId,
@@ -997,7 +962,7 @@ export class PopeyeRuntimeService {
         details: 'Cancelled by operator or daemon shutdown',
         usage: completion.usage,
       });
-      this.captureMemoryFromReceipt(receipt);
+      this.receiptManager.captureMemoryFromReceipt(receipt);
       this.cleanupActiveRun(activeRun);
       return;
     }
@@ -1011,7 +976,7 @@ export class PopeyeRuntimeService {
 
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ?, engine_session_ref = ? WHERE id = ?').run('failed_final', nowIso(), failure, completion.engineSessionRef, run.id);
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), run.jobId);
-    const receipt = this.writeReceipt({
+    const receipt = this.receiptManager.writeReceipt({
       runId: run.id,
       jobId: run.jobId,
       taskId: run.taskId,
@@ -1021,7 +986,7 @@ export class PopeyeRuntimeService {
       details: failure,
       usage: completion.usage,
     });
-    this.captureMemoryFromReceipt(receipt);
+    this.receiptManager.captureMemoryFromReceipt(receipt);
     this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
     this.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
     this.cleanupActiveRun(activeRun);
@@ -1042,7 +1007,7 @@ export class PopeyeRuntimeService {
       this.createIntervention('retry_budget_exhausted', job.lastRunId, `Retry budget exhausted for job ${jobId}`);
     }
 
-    const receipt = this.writeReceipt({
+    const receipt = this.receiptManager.writeReceipt({
       runId: job.lastRunId ?? 'unknown',
       jobId,
       taskId: task.id,
@@ -1052,7 +1017,7 @@ export class PopeyeRuntimeService {
       details: reason,
       usage: completion.usage,
     });
-    this.captureMemoryFromReceipt(receipt);
+    this.receiptManager.captureMemoryFromReceipt(receipt);
   }
 
   private cleanupActiveRun(activeRun: ActiveRunContext): void {
@@ -1061,26 +1026,10 @@ export class PopeyeRuntimeService {
     this.releaseWorkspaceLock(activeRun.task.workspaceId);
   }
 
-  private writeAbandonedReceiptIfMissing(runId: string, jobId: string, taskId: string, workspaceId: string, summary: string, details: string): void {
-    const existingReceipt = this.databases.app.prepare('SELECT id FROM receipts WHERE run_id = ? AND status = ?').get(runId, 'abandoned') as { id: string } | undefined;
-    if (existingReceipt) return;
-    const receipt = this.writeReceipt({
-      runId,
-      jobId,
-      taskId,
-      workspaceId,
-      status: 'abandoned',
-      summary,
-      details,
-      usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
-    });
-    this.captureMemoryFromReceipt(receipt);
-  }
-
   private async abandonRun(runId: string, reason: string): Promise<void> {
     const run = this.getRun(runId);
     if (!run || isTerminalRunState(run.state)) return;
-    this.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
+    this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), reason, run.id);
     await this.applyRecoveryDecision(run.jobId, run.id, reason);
     const activeRun = this.activeRuns.get(runId);
@@ -1123,27 +1072,7 @@ export class PopeyeRuntimeService {
     this.createIntervention('retry_budget_exhausted', runId, `Retry budget exhausted for abandoned run ${runId}`);
   }
 
-  private createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void {
-    const intervention: InterventionRecord = {
-      id: randomUUID(),
-      code,
-      runId,
-      status: 'open',
-      reason,
-      createdAt: nowIso(),
-      resolvedAt: null,
-    };
-    this.databases.app.prepare('INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      intervention.id,
-      intervention.code,
-      intervention.runId,
-      intervention.status,
-      intervention.reason,
-      intervention.createdAt,
-      intervention.resolvedAt,
-    );
-    this.emit('intervention_created', intervention);
-  }
+  // --- Internal: heartbeat scheduling ---
 
   private ensureHeartbeatJobs(): void {
     const schedules = this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all() as Array<Record<string, string | number>>;
@@ -1176,514 +1105,7 @@ export class PopeyeRuntimeService {
     return nextDueAt;
   }
 
-  getRun(runId: string): RunRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Record<string, string | null> | undefined;
-    if (!row) return null;
-    return RunRecordSchema.parse({
-      id: row.id,
-      jobId: row.job_id,
-      taskId: row.task_id,
-      workspaceId: row.workspace_id,
-      sessionRootId: row.session_root_id,
-      engineSessionRef: row.engine_session_ref,
-      state: row.state,
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-      error: row.error,
-    });
-  }
-
-  listRuns(): RunRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) =>
-      RunRecordSchema.parse({
-        id: row.id,
-        jobId: row.job_id,
-        taskId: row.task_id,
-        workspaceId: row.workspace_id,
-        sessionRootId: row.session_root_id,
-        engineSessionRef: row.engine_session_ref,
-        state: row.state,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        error: row.error,
-      }),
-    );
-  }
-
-  listSessionRoots(): Array<{ id: string; kind: string; scope: string; createdAt: string }> {
-    return (this.databases.app.prepare('SELECT * FROM session_roots ORDER BY created_at ASC')
-      .all() as Array<Record<string, string>>)
-      .map((row) => ({ id: row.id, kind: row.kind, scope: row.scope, createdAt: row.created_at }));
-  }
-
-  listFailedRuns(): RunRecord[] {
-    const rows = this.databases.app.prepare("SELECT * FROM runs WHERE state IN ('failed_retryable', 'failed_final', 'abandoned') ORDER BY started_at DESC").all() as Array<Record<string, string | null>>;
-    return rows.map((row) =>
-      RunRecordSchema.parse({
-        id: row.id,
-        jobId: row.job_id,
-        taskId: row.task_id,
-        workspaceId: row.workspace_id,
-        sessionRootId: row.session_root_id,
-        engineSessionRef: row.engine_session_ref,
-        state: row.state,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        error: row.error,
-      }),
-    );
-  }
-
-  listRunEvents(runId: string): RunEventRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC').all(runId) as Array<Record<string, string>>;
-    return rows.map((row) => RunEventRecordSchema.parse({ id: row.id, runId: row.run_id, type: row.type, payload: row.payload, createdAt: row.created_at }));
-  }
-
-  retryRun(runId: string): JobRecord | null {
-    const run = this.getRun(runId);
-    if (!run) return null;
-    return this.enqueueTask(run.taskId);
-  }
-
-  async cancelRun(runId: string): Promise<RunRecord | null> {
-    const run = this.getRun(runId);
-    if (!run) return null;
-    if (isTerminalRunState(run.state)) return run;
-    const activeRun = this.activeRuns.get(runId);
-    if (activeRun) {
-      await activeRun.handle.cancel();
-      return this.getRun(runId);
-    }
-    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ? WHERE id = ?').run('cancelled', nowIso(), runId);
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
-    this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(run.jobId);
-    const receipt = this.writeReceipt({
-      runId,
-      jobId: run.jobId,
-      taskId: run.taskId,
-      workspaceId: run.workspaceId,
-      status: 'cancelled',
-      summary: 'Run cancelled',
-      details: '',
-      usage: { provider: this.config.engine.kind, model: 'n/a', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
-    });
-    this.captureMemoryFromReceipt(receipt);
-    return this.getRun(runId);
-  }
-
-  async waitForJobTerminalState(jobId: string, timeoutMs = 10_000): Promise<{ job: JobRecord; run: RunRecord | null; receipt: ReceiptRecord | null } | null> {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      const job = this.listJobs().find((candidate) => candidate.id === jobId);
-      if (job && isTerminalJobStatus(job.status)) {
-        const run = job.lastRunId ? this.getRun(job.lastRunId) : null;
-        const receipt = run ? this.listReceipts().find((candidate) => candidate.runId === run.id) ?? null : null;
-        return { job, run, receipt };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    return null;
-  }
-
-  listReceipts(): ReceiptRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM receipts ORDER BY created_at DESC').all() as Array<Record<string, string>>;
-    return rows.map((row) =>
-      ReceiptRecordSchema.parse({
-        id: row.id,
-        runId: row.run_id,
-        jobId: row.job_id,
-        taskId: row.task_id,
-        workspaceId: row.workspace_id,
-        status: row.status,
-        summary: row.summary,
-        details: row.details,
-        usage: readJson(row.usage_json),
-        createdAt: row.created_at,
-      }),
-    );
-  }
-
-  getReceipt(receiptId: string): ReceiptRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM receipts WHERE id = ?').get(receiptId) as Record<string, string> | undefined;
-    if (!row) return null;
-    return ReceiptRecordSchema.parse({
-      id: row.id,
-      runId: row.run_id,
-      jobId: row.job_id,
-      taskId: row.task_id,
-      workspaceId: row.workspace_id,
-      status: row.status,
-      summary: row.summary,
-      details: readReceiptArtifact(this.databases.paths, receiptId) ?? row.details,
-      usage: readJson(row.usage_json),
-      createdAt: row.created_at,
-    });
-  }
-
-  private writeReceipt(input: Omit<ReceiptRecord, 'id' | 'createdAt'>): ReceiptRecord {
-    const receipt = ReceiptRecordSchema.parse({ ...input, id: randomUUID(), createdAt: nowIso() });
-    this.databases.app.prepare('INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-      receipt.id,
-      receipt.runId,
-      receipt.jobId,
-      receipt.taskId,
-      receipt.workspaceId,
-      receipt.status,
-      receipt.summary,
-      receipt.details,
-      JSON.stringify(receipt.usage),
-      receipt.createdAt,
-    );
-    writeReceiptArtifact(this.databases.paths, receipt.id, JSON.stringify({ receipt, rendered: renderReceipt(receipt) }, null, 2));
-    return receipt;
-  }
-
-  private captureMemoryFromReceipt(receipt: ReceiptRecord): void {
-    this.memoryLifecycle.insertMemory({
-      description: receipt.summary,
-      classification: receipt.status === 'succeeded' ? 'internal' : 'sensitive',
-      sourceType: 'receipt',
-      content: receipt.details,
-      confidence: 1,
-      scope: receipt.workspaceId,
-      memoryType: 'episodic',
-      sourceRef: receipt.id,
-      sourceRefType: 'receipt',
-    });
-  }
-
-  getInstructionPreview(scope: string): CompiledInstructionBundle {
-    const bundle = compileInstructionBundle([
-      { precedence: 2, type: 'popeye_base', contentHash: 'base', content: 'Popeye base instructions' },
-      { precedence: 5, type: 'workspace', contentHash: scope, content: `Scope preview for ${scope}` },
-    ]);
-    this.databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, bundle_json, created_at) VALUES (?, ?, ?, ?)').run(bundle.id, scope, JSON.stringify(bundle), bundle.createdAt);
-    return CompiledInstructionBundleSchema.parse(bundle);
-  }
-
-  listInterventions(): InterventionRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM interventions ORDER BY created_at DESC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      code: row.code as InterventionRecord['code'],
-      runId: row.run_id ? String(row.run_id) : null,
-      status: row.status as InterventionRecord['status'],
-      reason: String(row.reason),
-      createdAt: String(row.created_at),
-      resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
-    }));
-  }
-
-  resolveIntervention(interventionId: string): InterventionRecord | null {
-    this.databases.app.prepare('UPDATE interventions SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', nowIso(), interventionId);
-    return this.listInterventions().find((intervention) => intervention.id === interventionId) ?? null;
-  }
-
-  ingestMessage(input: unknown): MessageIngressResponse {
-    const parsedResult = IngestMessageInputSchema.safeParse(input);
-    if (!parsedResult.success) {
-      const raw = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
-      const source = readStringField(raw, 'source');
-      const telegramCandidate = source === 'telegram';
-      if (telegramCandidate) {
-        const timestamp = nowIso();
-        const record = MessageIngressRecordSchema.parse({
-          id: randomUUID(),
-          source: 'telegram',
-          senderId: readStringField(raw, 'senderId') ?? 'unknown',
-          chatId: readStringField(raw, 'chatId') ?? null,
-          chatType: readTelegramChatTypeField(raw, 'chatType') ?? null,
-          telegramMessageId: readNumberField(raw, 'telegramMessageId') ?? null,
-          idempotencyKey: null,
-          workspaceId: readStringField(raw, 'workspaceId') ?? 'default',
-          body: readStringField(raw, 'text') ?? '',
-          accepted: false,
-          decisionCode: 'telegram_invalid_message',
-          decisionReason: 'Telegram ingress payload failed validation',
-          httpStatus: 400,
-          messageId: null,
-          taskId: null,
-          jobId: null,
-          runId: null,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        this.insertMessageIngress(record);
-        this.recordSecurityAudit({
-          code: 'telegram_invalid_message',
-          severity: 'error',
-          message: 'Telegram ingress payload failed validation',
-          component: 'runtime-core',
-          timestamp,
-          details: { issues: String(parsedResult.error.issues.length) },
-        });
-        throw new MessageIngressError(this.buildIngressResponse(record, false));
-      }
-      throw parsedResult.error;
-    }
-
-    const parsed = parsedResult.data;
-    const idempotencyKey = buildMessageIngressKey(parsed);
-
-    if (idempotencyKey) {
-      const existing = this.getMessageIngressByKey(idempotencyKey);
-      if (existing) {
-        const response = this.buildIngressResponse(existing, true);
-        if (!existing.accepted) {
-          throw new MessageIngressError(response);
-        }
-        return response;
-      }
-    }
-
-    if (parsed.source === 'telegram') {
-      const redacted = redactText(parsed.text, this.config.security.redactionPatterns);
-      for (const event of redacted.events) this.recordSecurityAudit(event);
-
-      if (!this.config.telegram.enabled) {
-        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_disabled', 'Telegram ingress is disabled', 403);
-        throw new MessageIngressError(this.buildIngressResponse(denied, false));
-      }
-
-      if (parsed.chatType !== 'private') {
-        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_private_chat_required', 'Telegram ingress requires a private chat', 403);
-        throw new MessageIngressError(this.buildIngressResponse(denied, false));
-      }
-
-      if (!this.config.telegram.allowedUserId || parsed.senderId !== this.config.telegram.allowedUserId) {
-        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_not_allowlisted', 'Telegram sender is not allowlisted', 403);
-        throw new MessageIngressError(this.buildIngressResponse(denied, false));
-      }
-
-      if (this.countRecentTelegramIngressAttempts(parsed.senderId, parsed.chatId) >= this.config.telegram.maxMessagesPerMinute) {
-        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_rate_limited', 'Telegram rate limit exceeded', 429);
-        throw new MessageIngressError(this.buildIngressResponse(denied, false));
-      }
-
-      const promptScan = scanPrompt(redacted.text);
-      const redactedPrompt = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
-      for (const event of redactedPrompt.events) this.recordSecurityAudit(event);
-
-      if (promptScan.verdict === 'quarantine') {
-        const denied = this.persistDeniedIngress(parsed, redactedPrompt.text, 'telegram_prompt_injection', 'Telegram message was quarantined by prompt-injection detection', 400);
-        this.createIntervention('prompt_injection_quarantined', null, `Prompt scan blocked telegram message ${denied.id}`);
-        throw new MessageIngressError(this.buildIngressResponse(denied, false));
-      }
-
-      const timestamp = nowIso();
-      const message: MessageRecord = MessageRecordSchema.parse({
-        id: randomUUID(),
-        source: parsed.source,
-        senderId: parsed.senderId,
-        body: redactedPrompt.text,
-        accepted: true,
-        relatedRunId: null,
-        createdAt: timestamp,
-      });
-      this.databases.app.prepare('INSERT INTO messages (id, source, sender_id, body, accepted, related_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-        message.id,
-        message.source,
-        message.senderId,
-        message.body,
-        1,
-        message.relatedRunId,
-        message.createdAt,
-      );
-
-      const ingressRecord = MessageIngressRecordSchema.parse({
-        id: randomUUID(),
-        source: parsed.source,
-        senderId: parsed.senderId,
-        chatId: parsed.chatId,
-        chatType: parsed.chatType,
-        telegramMessageId: parsed.telegramMessageId,
-        idempotencyKey,
-        workspaceId: parsed.workspaceId,
-        body: message.body,
-        accepted: true,
-        decisionCode: 'accepted',
-        decisionReason: promptScan.verdict === 'sanitize' ? 'Telegram message accepted after sanitization' : 'Telegram message accepted',
-        httpStatus: 200,
-        messageId: message.id,
-        taskId: null,
-        jobId: null,
-        runId: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      this.insertMessageIngress(ingressRecord);
-
-      const created = this.createTask({
-        workspaceId: parsed.workspaceId,
-        projectId: null,
-        title: `message:${message.id}`,
-        prompt: message.body,
-        source: 'telegram',
-        autoEnqueue: true,
-      });
-      this.updateMessageIngressLinks(ingressRecord.id, {
-        messageId: message.id,
-        taskId: created.task.id,
-        jobId: created.job?.id ?? null,
-        runId: created.run?.id ?? null,
-      });
-
-      return MessageIngressResponseSchema.parse({
-        accepted: true,
-        duplicate: false,
-        httpStatus: 200,
-        decisionCode: 'accepted',
-        decisionReason: ingressRecord.decisionReason,
-        message,
-        taskId: created.task.id,
-        jobId: created.job?.id ?? null,
-        runId: created.run?.id ?? null,
-      });
-    }
-
-    const promptScan = scanPrompt(parsed.text);
-    const redacted = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
-    for (const event of redacted.events) this.recordSecurityAudit(event);
-    if (promptScan.verdict === 'quarantine') {
-      this.createIntervention('prompt_injection_quarantined', null, 'Prompt scan blocked a non-telegram message');
-      throw new MessageIngressError(
-        MessageIngressResponseSchema.parse({
-          accepted: false,
-          duplicate: false,
-          httpStatus: 400,
-          decisionCode: 'telegram_invalid_message',
-          decisionReason: 'Message was quarantined by prompt-injection detection',
-          message: null,
-          taskId: null,
-          jobId: null,
-          runId: null,
-        }),
-      );
-    }
-
-    const message: MessageRecord = MessageRecordSchema.parse({
-      id: randomUUID(),
-      source: parsed.source,
-      senderId: parsed.senderId,
-      body: redacted.text,
-      accepted: true,
-      relatedRunId: null,
-      createdAt: nowIso(),
-    });
-    this.databases.app.prepare('INSERT INTO messages (id, source, sender_id, body, accepted, related_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      message.id,
-      message.source,
-      message.senderId,
-      message.body,
-      1,
-      message.relatedRunId,
-      message.createdAt,
-    );
-    const created = this.createTask({ workspaceId: parsed.workspaceId, projectId: null, title: `message:${message.id}`, prompt: message.body, source: parsed.source === 'manual' ? 'manual' : 'api', autoEnqueue: true });
-    return MessageIngressResponseSchema.parse({
-      accepted: true,
-      duplicate: false,
-      httpStatus: 200,
-      decisionCode: 'accepted',
-      decisionReason: 'Message accepted',
-      message,
-      taskId: created.task.id,
-      jobId: created.job?.id ?? null,
-      runId: created.run?.id ?? null,
-    });
-  }
-
-  getMessage(messageId: string): MessageRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as Record<string, string | number | null> | undefined;
-    if (!row) return null;
-    return MessageRecordSchema.parse({
-      id: row.id,
-      source: row.source,
-      senderId: row.sender_id,
-      body: row.body,
-      accepted: Boolean(row.accepted),
-      relatedRunId: row.related_run_id,
-      createdAt: row.created_at,
-    });
-  }
-
-  getUsageSummary(): UsageSummary {
-    const receipts = this.listReceipts();
-    return {
-      runs: receipts.length,
-      tokensIn: receipts.reduce((sum, receipt) => sum + receipt.usage.tokensIn, 0),
-      tokensOut: receipts.reduce((sum, receipt) => sum + receipt.usage.tokensOut, 0),
-      estimatedCostUsd: receipts.reduce((sum, receipt) => sum + receipt.usage.estimatedCostUsd, 0),
-    };
-  }
-
-  getSecurityAuditFindings(): Array<{ code: string; severity: string; message: string }> {
-    return this.databases.app.prepare('SELECT code, severity, message FROM security_audit ORDER BY timestamp DESC').all() as Array<{ code: string; severity: string; message: string }>;
-  }
-
-  issueCsrfToken(): string {
-    return issueCsrfTokenFromStore(readAuthStore(this.config.authFile));
-  }
-
-  // --- Memory public API ---
-
-  async searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse> {
-    return this.memorySearch.search(query);
-  }
-
-  getMemoryContent(memoryId: string): MemoryRecord | null {
-    return this.memorySearch.getMemoryContent(memoryId);
-  }
-
-  getMemoryAudit(): MemoryAuditResponse {
-    return this.memoryLifecycle.getMemoryAudit();
-  }
-
-  listMemories(options?: { type?: string; scope?: string; limit?: number }): MemoryRecord[] {
-    const conditions: string[] = ['archived_at IS NULL'];
-    const params: unknown[] = [];
-    if (options?.type) { conditions.push('memory_type = ?'); params.push(options.type); }
-    if (options?.scope) { conditions.push('scope = ?'); params.push(options.scope); }
-    const limit = options?.limit ?? 50;
-    params.push(limit);
-    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
-    const rows = this.databases.memory.prepare(sql).all(...params) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      description: row.description as string,
-      classification: row.classification as MemoryRecord['classification'],
-      sourceType: row.source_type as MemoryRecord['sourceType'],
-      content: row.content as string,
-      confidence: row.confidence as number,
-      scope: row.scope as string,
-      sourceRunId: (row.source_run_id as string) ?? null,
-      sourceTimestamp: (row.source_timestamp as string) ?? null,
-      memoryType: (row.memory_type as MemoryRecord['memoryType']) ?? 'episodic',
-      dedupKey: (row.dedup_key as string) ?? null,
-      lastReinforcedAt: (row.last_reinforced_at as string) ?? null,
-      archivedAt: (row.archived_at as string) ?? null,
-      createdAt: row.created_at as string,
-    }));
-  }
-
-  getMemory(memoryId: string): MemoryRecord | null {
-    return this.memorySearch.getMemoryContent(memoryId);
-  }
-
-  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
-    const decay = this.memoryLifecycle.runConfidenceDecay();
-    const consolidation = this.memoryLifecycle.runConsolidation();
-    return { decayed: decay.decayed, archived: decay.archived, merged: consolidation.merged, deduped: consolidation.deduped };
-  }
-
-  proposeMemoryPromotion(memoryId: string, targetPath: string) {
-    return this.memoryLifecycle.proposePromotion(memoryId, targetPath);
-  }
-
-  executeMemoryPromotion(request: { memoryId: string; targetPath: string; diff: string; approved: boolean; promoted: boolean }) {
-    return this.memoryLifecycle.executePromotion(request);
-  }
+  // --- Internal: memory maintenance ---
 
   private startMemoryMaintenance(): void {
     // Check hourly for maintenance tasks
