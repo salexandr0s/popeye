@@ -360,6 +360,7 @@ Create the owned technical baseline.
 - Create initial `@popeye/*` package skeletons.
 - Set up macOS Keychain integration for secret storage.
 - Define secret storage conventions (keychain for system secrets, `.env` for per-project, never committed).
+- Enforce file permissions on runtime data directories: 700 for dirs, 600 for files. This is a day-one requirement, not Phase 10 polish.
 - Write:
   - `docs/adr/0001-repo-topology.md`
   - `docs/adr/0002-pi-fork-strategy.md`
@@ -381,6 +382,7 @@ Create the owned technical baseline.
 - Engine dependency pinning is in place.
 - Fork strategy doc exists.
 - Keychain integration works for storing/retrieving secrets.
+- File permissions (700 dirs, 600 files) are enforced on runtime data paths.
 
 ---
 
@@ -421,6 +423,7 @@ Ship the smallest meaningful vertical slice that proves Popeye can submit and ob
 - Note: memory schemas are created here for migration ordering. Population and retrieval logic is deferred to Phase 5.
 - Add migration runner.
 - Build fake engine adapter for tests.
+- Add Pi compatibility smoke test that validates the adapter against a real Pi instance.
 - Implement real Pi adapter.
 - Capture engine events and persist normalized event records.
 - Write minimal `pop task run`, `pop run show`, `pop receipt show` CLI commands.
@@ -606,7 +609,7 @@ Add durable, inspectable, searchable memory with SQLite-native hybrid retrieval.
 - Memory consolidation (merge redundant, dedup)
 - Provenance tracking (every memory links to source run/receipt)
 - Compaction flush (runtime intercepts Pi compaction, triggers memory extraction)
-- Two-stage retrieval pipeline (fast index then LLM reranking)
+- Two-stage retrieval pipeline (fast index then scoring-function rerank)
 - `pop memory audit` CLI command
 - `pop memory search` CLI command
 - Curated memory file policy (markdown as human-readable layer, explicit promotion)
@@ -621,7 +624,7 @@ Add durable, inspectable, searchable memory with SQLite-native hybrid retrieval.
 - Implement memory type schema (episodic, semantic, procedural) with confidence scores. Working memory is in-memory only and needs no persistence.
 - Implement sqlite-vec embedding storage and retrieval.
 - Build FTS5 indexes for receipts, memory, and docs.
-- Implement two-stage retrieval pipeline: fast index query (FTS5 + sqlite-vec) followed by LLM reranking.
+- Implement two-stage retrieval pipeline: fast index query (FTS5 + sqlite-vec in parallel) followed by scoring-function rerank (relevance × recency × confidence × scope-match). No LLM in the retrieval hot path — the <200ms target applies to the full pipeline.
 - Implement confidence decay mechanism (time-based, configurable).
 - Implement memory consolidation: merge redundant memories, deduplicate, update confidence.
 - Implement provenance tracking: every memory record links to its source run/receipt.
@@ -656,7 +659,7 @@ Add durable, inspectable, searchable memory with SQLite-native hybrid retrieval.
 - Runs retrieve useful workspace/project knowledge via hybrid search.
 - Hybrid search (FTS5 + sqlite-vec) returns relevant results under 200ms.
 - Operator can inspect where retrieved content came from (provenance).
-- Daily summaries are deterministic and readable.
+- Daily summaries are reproducible given the same input receipts, and are human-readable.
 - Memory consolidation merges duplicates without losing provenance.
 - Confidence decay reduces stale memory scores over time.
 - `pop memory audit` shows memory health and provenance chain.
@@ -910,7 +913,7 @@ Turn Popeye into something you can live with for years.
 - Document upgrade procedure.
 - Profile startup, worker spawn, and indexing costs.
 - Conduct security hardening review: file permissions, socket permissions, token rotation, secret exposure.
-- Enforce file permission policy on runtime data directory.
+- Verify file permission policy enforcement (established in Phase 1) across all runtime data paths.
 - Write:
   - `docs/migration/openclaw.md`
   - `docs/migration/qmd-replacement.md`
@@ -935,7 +938,7 @@ Turn Popeye into something you can live with for years.
 - Upgrade runbook exists and is test-backed.
 - Migration path from current OpenClaw setup is explicit.
 - Security hardening review passes with no critical findings.
-- File permissions on runtime data are enforced.
+- File permission enforcement (from Phase 1) verified across all runtime data paths.
 
 ---
 

@@ -272,6 +272,33 @@ type EngineRunHandle = {
   events: AsyncIterable<EngineEvent>;
   cancel(): Promise<void>;
 };
+
+type SessionPolicy =
+  | { type: 'dedicated'; rootId: string }    // use specific SessionRoot
+  | { type: 'ephemeral' }                     // no continuity
+  | { type: 'per_task'; taskId: string };     // one SessionRoot per task
+
+type TriggerDescriptor = {
+  source: 'manual' | 'heartbeat' | 'schedule' | 'telegram' | 'api';
+  originId?: string;       // e.g., Telegram message ID, schedule ID
+  timestamp: string;       // ISO 8601
+};
+
+type RuntimeToolDescriptor = {
+  name: string;            // e.g., 'memory_search', 'receipt_lookup'
+  description: string;
+  inputSchema: unknown;    // Zod-generated JSON Schema at runtime
+};
+
+type EngineEvent =
+  | { type: 'session_started'; sessionRef: string; timestamp: string }
+  | { type: 'tool_call'; toolName: string; input: unknown; timestamp: string }
+  | { type: 'tool_result'; toolName: string; output: unknown; timestamp: string }
+  | { type: 'text_chunk'; content: string; timestamp: string }
+  | { type: 'completion'; result: 'success' | 'error'; summary?: string; timestamp: string }
+  | { type: 'error'; code: string; message: string; retryable: boolean; timestamp: string }
+  | { type: 'compaction'; beforeTokens: number; afterTokens: number; timestamp: string }
+  | { type: 'cost_update'; inputTokens: number; outputTokens: number; model: string; timestamp: string };
 ```
 
 Required adapter responsibilities:
@@ -447,10 +474,18 @@ Later, if needed:
 
 ### Shutdown
 
-- stop taking new leases
-- signal workers
-- persist final state
-- release resources cleanly
+Shutdown procedure on SIGTERM or `pop daemon stop`:
+
+1. **Drain** — stop taking new leases, stop scheduler timers (immediate)
+2. **Signal workers** — send SIGTERM to all active worker child processes
+3. **Grace period** — wait up to 30 seconds for workers to complete or acknowledge cancellation
+4. **Force kill** — SIGKILL any workers still running after grace period
+5. **Persist** — for each in-flight run: write partial receipt with last-known state, mark run as `abandoned` if not cleanly terminated
+6. **Flush** — flush all pending log writes and DB WAL checkpoint
+7. **Release** — close DB connections, release file locks, close HTTP server
+8. **Exit** — exit with code 0 (clean) or 1 (forced/unclean)
+
+If the daemon is killed with SIGKILL (no graceful shutdown), startup reconciliation (Section 19.3) handles recovery.
 
 ## 9.4 launchd integration for macOS
 
@@ -480,10 +515,13 @@ This gives stable, low-noise always-on behavior.
 
 Every running run maintains a **lease heartbeat**:
 
-- daemon records `lease_owner`, `lease_expires_at`
-- worker updates a heartbeat or daemon refreshes based on process liveness
-- if heartbeat stops or process exits unexpectedly, run becomes `abandoned` or `failed_retryable`
-- recovery-supervisor decides what happens next
+- daemon records `lease_owner` (PID) and `lease_expires_at` in `job_leases`
+- lease TTL: **60 seconds** (configurable)
+- daemon refreshes the lease every **15 seconds** by checking worker PID liveness (`kill -0`)
+- if the worker process has exited, the run is immediately marked `abandoned`
+- if the lease expires without refresh (daemon was also down), startup reconciliation handles it (Section 19.3)
+- grace period after worker SIGTERM: **30 seconds** before escalating to SIGKILL
+- recovery decision follows the matrix in Section 19.3
 
 ## 10.3 Manual intervention points
 
@@ -724,7 +762,7 @@ Two-stage retrieval, target latency <200ms:
 
 - **sqlite-vec** for embeddings (lightweight, no external service)
 - Every memory has **provenance** (source run, timestamp, confidence)
-- **Confidence decay** without reinforcement (configurable half-life)
+- **Confidence decay** formula: `score = initial_confidence × 0.5^(days_since_last_reinforcement / half_life_days)`. Default half-life: 30 days. Memories below 0.1 confidence are archived. Reinforcement (re-extraction or manual confirmation) resets `days_since_last_reinforcement` to 0 and may increase `initial_confidence` up to 1.0.
 - Consolidation **merges redundant** memories
 - **Dedup keys** prevent storing the same fact repeatedly
 - **Scope**: workspace, project, or global
@@ -810,35 +848,71 @@ A single attempt with outcomes, receipts, and cost/usage tracking.
 
 ## 15.2 Job state machine
 
-Job states:
+### States
 
-- `queued`
-- `leased`
-- `running`
-- `waiting_retry`
-- `paused`
-- `blocked_operator`
-- `succeeded`
-- `failed_final`
-- `cancelled`
+| State | Terminal? |
+|---|---|
+| `queued` | no |
+| `leased` | no |
+| `running` | no |
+| `waiting_retry` | no |
+| `paused` | no |
+| `blocked_operator` | no |
+| `succeeded` | yes |
+| `failed_final` | yes |
+| `cancelled` | yes |
+
+### Transitions
+
+| From | To | Trigger | Side-effect |
+|---|---|---|---|
+| `queued` | `leased` | scheduler picks job | set `lease_owner`, `lease_expires_at` |
+| `leased` | `running` | worker confirms execution started | create Run record |
+| `running` | `succeeded` | run completes successfully | release lease, write receipt |
+| `running` | `waiting_retry` | run fails with retryable error, retry budget remaining | release lease, increment retry count |
+| `running` | `failed_final` | run fails, retry budget exhausted or non-retryable | release lease, write receipt, create intervention |
+| `running` | `blocked_operator` | run requires operator decision | emit intervention event |
+| `running` | `cancelled` | operator or system cancels | signal worker, release lease, write receipt |
+| `waiting_retry` | `queued` | backoff timer expires | re-enqueue with next backoff delay |
+| `paused` | `queued` | operator resumes | re-enqueue |
+| `blocked_operator` | `queued` | operator resolves intervention | re-enqueue |
+| `queued` | `paused` | operator pauses | — |
+| `queued` | `cancelled` | operator cancels | write receipt |
+| `leased` | `queued` | lease expires without worker confirmation | release stale lease |
 
 ## 15.3 Run state machine
 
-Run states:
+### States
 
-- `starting`
-- `running`
-- `succeeded`
-- `failed_retryable`
-- `failed_final`
-- `cancelled`
-- `abandoned`
+| State | Terminal? |
+|---|---|
+| `starting` | no |
+| `running` | no |
+| `succeeded` | yes |
+| `failed_retryable` | yes |
+| `failed_final` | yes |
+| `cancelled` | yes |
+| `abandoned` | yes |
+
+### Transitions
+
+| From | To | Trigger | Side-effect |
+|---|---|---|---|
+| `starting` | `running` | engine confirms session active | begin event streaming |
+| `starting` | `failed_final` | engine fails to start (bad config, missing model) | write receipt with error |
+| `running` | `succeeded` | engine emits completion event | persist final events, write receipt |
+| `running` | `failed_retryable` | engine error classified as transient | persist events, write receipt, notify parent Job |
+| `running` | `failed_final` | engine error classified as permanent | persist events, write receipt, notify parent Job |
+| `running` | `cancelled` | cancel signal received | call `EngineRunHandle.cancel()`, persist events, write receipt |
+| `running` | `abandoned` | worker process dies or lease expires without completion | mark with last-known event, write partial receipt |
+| `abandoned` | `failed_retryable` | startup reconciliation classifies as retryable | — |
+| `abandoned` | `failed_final` | startup reconciliation classifies as non-retryable | create intervention |
 
 ## 15.4 Scheduling capabilities
 
 - one-shot delayed jobs
 - cron-like recurring jobs
-- retry with exponential backoff
+- retry with exponential backoff: base delay **5 seconds**, multiplier **2×**, max delay **15 minutes**, default retry budget **3 attempts** (configurable per-task)
 - coalescing / dedupe keys
 - pause and resume
 - manual enqueue
@@ -904,15 +978,29 @@ Popeye may also support repo-local `AGENTS.md` via Pi where useful, but that is 
 
 ## 16.3 Compiled instruction bundle
 
-For every run, the runtime generates a **compiled instruction bundle** containing:
+For every run, the runtime generates a **compiled instruction bundle**:
 
-- ordered list of sources
-- source type
-- source path or inline identifier
-- content hash
-- merge order
-- final compiled instruction text
-- warnings/conflicts
+```ts
+interface InstructionSource {
+  precedence: number;         // 1 (lowest, Pi base) to 9 (highest, runtime notes)
+  type: 'pi_base' | 'popeye_base' | 'global_operator' | 'workspace' | 'project' | 'identity' | 'task_brief' | 'trigger_overlay' | 'runtime_notes';
+  path?: string;              // file path for file-based sources
+  inlineId?: string;          // identifier for generated/inline sources
+  contentHash: string;        // SHA-256 of source content
+  content: string;            // raw source text
+}
+
+interface CompiledInstructionBundle {
+  id: string;                 // unique snapshot ID
+  sources: InstructionSource[]; // ordered by precedence (ascending)
+  compiledText: string;       // final merged instruction text
+  bundleHash: string;         // SHA-256 of compiledText
+  warnings: string[];         // e.g., "workspace and project both define conflicting tool policies"
+  createdAt: string;          // ISO 8601
+}
+```
+
+**Merge algorithm:** sources are concatenated in precedence order (lowest first). Higher-precedence sources override lower ones. Conflicts within the same precedence level produce a warning but both are included. The `compiledText` is the final concatenation. Code-level invariants (enforced in runtime code) override all instruction content regardless of precedence.
 
 Stored in `instruction_snapshots`.
 
@@ -1084,8 +1172,20 @@ On daemon startup:
 1. find runs marked `running` or `starting`
 2. inspect associated worker PID or lease state
 3. if liveness cannot be confirmed, mark as `abandoned`
-4. decide whether to create retry job or intervention
-5. preserve all raw evidence
+4. apply recovery decision matrix (below)
+5. preserve all raw evidence (raw events, partial receipts, last-known state)
+
+### Recovery decision matrix
+
+| Condition | Action | Rationale |
+|---|---|---|
+| Run has retries remaining AND last error was transient | create retry Job with backoff | transient failures are worth retrying |
+| Run has retries remaining AND last error was unknown (worker died) | create retry Job with backoff | assume transient unless proven otherwise |
+| Run has no retries remaining | create `retry_budget_exhausted` intervention | operator decides next step |
+| Run error was auth/credentials failure | create `needs_credentials` intervention, do NOT retry | auth failures never auto-retry |
+| Run error was policy violation | create `needs_policy_decision` intervention, do NOT retry | policy issues require human judgment |
+| Run was a heartbeat | re-enqueue silently (heartbeat is self-recovering) | heartbeat runs are low-stakes |
+| No error information available | create `needs_operator_input` intervention | insufficient evidence to auto-recover |
 
 ## 19.4 Operator interventions
 
@@ -1113,7 +1213,6 @@ Narrow extension points only:
 - `EngineAdapter`
 - `InstructionSource`
 - `TriggerSource`
-- `MemoryProvider`
 - `RuntimeTool`
 - `ClientAPI`
 - `ChannelAdapter`
@@ -1200,11 +1299,23 @@ Architecture:
 - Receives responses via SSE or polling the control API
 - Stateless adapter — all state lives in the Popeye runtime
 
+Message flow:
+
+1. Telegram Bot API webhook or long-poll delivers update to `@popeye/telegram`
+2. Adapter extracts sender ID, message text, and metadata
+3. Adapter checks sender against allowlist — reject silently if not listed
+4. Adapter applies rate limit check — reject with backpressure if exceeded
+5. Adapter POSTs to `/v1/messages/ingest` with `{ source: 'telegram', senderId: string, text: string, telegramMessageId: number }`
+6. Runtime creates or reuses a **dedicated SessionRoot per Telegram user** (keyed by sender ID)
+7. Runtime creates a Job/Run for the message
+8. On completion, runtime stores response; adapter polls or receives via SSE
+9. Adapter sends response back through Telegram Bot API `sendMessage`
+
 Security:
 
 - **Allowlist-only** DM policy (no pairing flow, no open registration)
 - All messages treated as untrusted input
-- Rate limiting on message ingress
+- Rate limiting on message ingress (default: 10 messages/minute per user)
 - Prompt injection detection applied to all inbound messages
 
 The adapter is **not** a port of OpenClaw's channel ecosystem.
@@ -1260,10 +1371,21 @@ Popeye operates under these trust assumptions:
 - **Redact-on-write** for sensitive patterns (not just read-path)
 - Configurable redaction patterns per deployment
 
+### Redaction pipeline
+
+Redaction runs **before** any write to logs, receipts, memory, or daily summaries:
+
+1. Apply built-in patterns: API keys (`sk-...`, `key-...`), Bearer tokens, PEM blocks (`-----BEGIN`), JWTs (`eyJ...`), hex secrets (40+ hex chars)
+2. Apply deployment-configured custom patterns (regex list in `config.json` under `redaction.patterns`)
+3. Replace matches with `[REDACTED:<pattern-name>]`
+4. Log redaction event to `security_audit` table (pattern matched, field redacted, no secret content)
+
+Redaction is fail-safe: if the redactor errors, the write is blocked (not written unredacted).
+
 ## 22.4 Trust boundaries
 
 - All external content is untrusted data
-- Prompt injection detection and ignore on all inbound messages
+- Prompt injection detection on all inbound messages — detected injections are logged to `security_audit` and the message content is sanitized before processing
 - Critical instruction files are operator-owned (read-only by default)
 - Retrieved content claims no elevated authority
 - Telegram messages are untrusted input regardless of allowlist status
