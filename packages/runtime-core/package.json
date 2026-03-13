@@ -14,7 +14,6 @@
     "@popeye/receipts": "workspace:*",
     "@popeye/scheduler": "workspace:*",
     "@popeye/sessions": "workspace:*",
-    "@popeye/telegram": "workspace:*",
     "better-sqlite3": "^12.6.2"
   },
   "scripts": {

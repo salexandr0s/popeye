@@ -165,9 +165,6 @@ importers:
       '@popeye/sessions':
         specifier: workspace:*
         version: link:../sessions
-      '@popeye/telegram':
-        specifier: workspace:*
-        version: link:../telegram
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.6.2
@@ -189,9 +186,6 @@ importers:
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@popeye/runtime-core':
-        specifier: workspace:*
-        version: link:../runtime-core
 
   packages/testkit:
     dependencies:
