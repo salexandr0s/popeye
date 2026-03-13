@@ -34,11 +34,14 @@ export function keychainGet(key: string): KeychainResult {
 
 export function keychainSet(key: string, value: string): KeychainResult {
   const service = keychainServiceName(key);
-  // Pass secret via stdin to avoid exposing it in process args (visible in ps)
+  // Note: -w requires the password as an inline argument — macOS `security`
+  // does not support reading -w from stdin. The secret is briefly visible in
+  // `ps` output. This is acceptable for a single-operator daemon; a native
+  // Keychain API binding would avoid this exposure.
   const result = spawnSync(
     'security',
-    ['add-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT, '-w', '-U'],
-    { input: value, encoding: 'utf8' },
+    ['add-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT, '-w', value, '-U'],
+    { encoding: 'utf8' },
   );
   if (result.status === 0) {
     return { ok: true };

@@ -106,6 +106,19 @@ export function verifyBackup(backupRoot: string): BackupVerificationResult {
   return { valid: mismatches.length === 0, manifest, mismatches };
 }
 
+export function migrateBackupManifest(backupRoot: string): BackupVerificationResult {
+  const manifestPath = join(backupRoot, 'manifest.json');
+  const manifest = BackupManifestSchema.parse(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  for (const entry of manifest.entries) {
+    if (entry.kind !== 'file' || entry.path === 'manifest.json') continue;
+    const full = join(backupRoot, entry.path);
+    if (!existsSync(full)) continue;
+    entry.sha256 = sha256(readFileSync(full));
+  }
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return verifyBackup(backupRoot);
+}
+
 export function restoreBackup(backupRoot: string, runtimePaths: RuntimePaths): void {
   const verification = verifyBackup(backupRoot);
   if (!verification.valid) {

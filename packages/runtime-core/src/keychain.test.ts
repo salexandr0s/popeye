@@ -48,14 +48,14 @@ describe('keychain', () => {
     expect(isKeychainAvailable()).toBe(false);
   });
 
-  it('keychainSet passes secret via stdin instead of args', () => {
+  it('keychainSet passes secret as -w argument', () => {
     mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 0 }));
     const result = keychainSet('my-key', 'my-secret');
     expect(result.ok).toBe(true);
     expect(mockSpawnSync).toHaveBeenCalledWith(
       'security',
-      ['add-generic-password', '-s', 'com.popeye.my-key', '-a', KEYCHAIN_ACCOUNT, '-w', '-U'],
-      { input: 'my-secret', encoding: 'utf8' },
+      ['add-generic-password', '-s', 'com.popeye.my-key', '-a', KEYCHAIN_ACCOUNT, '-w', 'my-secret', '-U'],
+      { encoding: 'utf8' },
     );
   });
 

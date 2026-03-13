@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createBackup, restoreBackup, verifyBackup } from './backup.js';
+import { createBackup, migrateBackupManifest, restoreBackup, verifyBackup } from './backup.js';
 import { deriveRuntimePaths } from './config.js';
 
 function setupBackupFixture() {
@@ -78,6 +78,33 @@ describe('backup and restore', () => {
     expect(workspaceBackupFiles).toContain('notes.md');
     const verification = verifyBackup(backupDir);
     expect(verification.valid).toBe(true);
+  });
+
+  it('backs up and verifies files with binary content', () => {
+    const { dir, paths } = setupBackupFixture();
+    // SQLite magic header + some invalid UTF-8 bytes
+    const binaryContent = Buffer.from([
+      0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, // "SQLite"
+      0xff, 0xfe, 0xfd, 0xfc, 0x00, 0x01, // invalid UTF-8
+    ]);
+    writeFileSync(paths.appDbPath, binaryContent);
+    writeFileSync(paths.memoryDbPath, binaryContent);
+    const backupDir = createBackup({ destinationDir: join(dir, 'snapshot'), runtimePaths: paths });
+    const verification = verifyBackup(backupDir);
+    expect(verification.valid).toBe(true);
+    expect(verification.mismatches).toEqual([]);
+  });
+
+  it('migrateBackupManifest re-hashes and validates', () => {
+    const { dir, paths } = setupBackupFixture();
+    // Use binary content to ensure migration handles it correctly
+    const binaryContent = Buffer.from([0xff, 0xfe, 0x00, 0x01]);
+    writeFileSync(paths.appDbPath, binaryContent);
+    const backupDir = createBackup({ destinationDir: join(dir, 'snapshot'), runtimePaths: paths });
+    // Verify migration produces a valid result even on an already-correct backup
+    const result = migrateBackupManifest(backupDir);
+    expect(result.valid).toBe(true);
+    expect(result.mismatches).toEqual([]);
   });
 
   it('handles empty runtime dirs', () => {
