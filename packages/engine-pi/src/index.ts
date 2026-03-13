@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -7,7 +7,7 @@ import type { AppConfig, EngineFailureClassification, NormalizedEngineEvent, Usa
 
 export type { EngineFailureClassification } from '@popeye/contracts';
 
-const ENGINE_EVENT_TYPES = new Set<NormalizedEngineEvent['type']>(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage']);
+const ENGINE_EVENT_TYPES = new Set<NormalizedEngineEvent['type']>(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage', 'compaction']);
 
 export interface EngineRunHandle {
   pid: number | null;
@@ -27,12 +27,14 @@ export interface EngineRunResult {
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
   failureMessage?: string;
+  warnings?: string;
 }
 
 export interface EngineRunCompletion {
   engineSessionRef: string | null;
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
+  warnings?: string;
 }
 
 export interface EngineExecution {
@@ -48,14 +50,17 @@ export interface EngineAdapter {
 
 export interface PiAdapterConfig {
   piPath?: string;
+  piVersion?: string;
   command?: string;
   args?: string[];
+  timeoutMs?: number;
 }
 
 export interface PiCheckoutStatus {
   path: string;
   available: boolean;
   packageJsonPath: string;
+  version: string | null;
 }
 
 export interface PiChildRequest {
@@ -87,10 +92,49 @@ export function resolvePiCheckoutPath(piPath?: string): string {
 export function inspectPiCheckout(piPath?: string): PiCheckoutStatus {
   const path = resolvePiCheckoutPath(piPath);
   const packageJsonPath = resolve(path, 'package.json');
+  const available = existsSync(path) && existsSync(packageJsonPath);
+  let version: string | null = null;
+  if (available) {
+    try {
+      const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+      if (typeof pkg.version === 'string') {
+        version = pkg.version;
+      }
+    } catch {
+      // version stays null if package.json is unreadable
+    }
+  }
   return {
     path,
-    available: existsSync(path) && existsSync(packageJsonPath),
+    available,
     packageJsonPath,
+    version,
+  };
+}
+
+export interface PiVersionCheckResult {
+  ok: boolean;
+  message: string;
+  expected?: string;
+  actual?: string | null;
+}
+
+export function checkPiVersion(expected?: string, piPath?: string): PiVersionCheckResult {
+  if (!expected) {
+    return { ok: true, message: 'No expected version specified — skipping version check' };
+  }
+  const status = inspectPiCheckout(piPath);
+  if (!status.available) {
+    return { ok: false, message: `Pi checkout not available at ${status.path}`, expected, actual: null };
+  }
+  if (status.version === expected) {
+    return { ok: true, message: `Pi version matches: ${expected}`, expected, actual: status.version };
+  }
+  return {
+    ok: false,
+    message: `Pi version mismatch — expected ${expected}, found ${status.version ?? 'unknown'}`,
+    expected,
+    actual: status.version,
   };
 }
 
@@ -226,16 +270,85 @@ export class FakeEngineAdapter implements EngineAdapter {
   }
 }
 
+
+export class FailingFakeEngineAdapter implements EngineAdapter {
+  private readonly failureClassification: EngineFailureClassification;
+
+  constructor(failureClassification: EngineFailureClassification) {
+    this.failureClassification = failureClassification;
+  }
+
+  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const completion: EngineRunCompletion = {
+      engineSessionRef: `fake:${randomUUID()}`,
+      usage: {
+        provider: 'fake',
+        model: 'fake-engine',
+        tokensIn: input.length,
+        tokensOut: 0,
+        estimatedCostUsd: 0,
+      },
+      failureClassification: this.failureClassification,
+    };
+    const handle: EngineRunHandle = {
+      pid: null,
+      cancel: async () => Promise.resolve(),
+      wait: async () => completion,
+      isAlive: () => false,
+    };
+    options.onHandle?.(handle);
+    options.onEvent?.({ type: 'started', payload: { input } });
+    options.onEvent?.({ type: 'failed', payload: { classification: this.failureClassification } });
+    options.onEvent?.({
+      type: 'usage',
+      payload: {
+        provider: completion.usage.provider,
+        model: completion.usage.model,
+        tokensIn: String(completion.usage.tokensIn),
+        tokensOut: String(completion.usage.tokensOut),
+        estimatedCostUsd: String(completion.usage.estimatedCostUsd),
+      },
+    });
+    return handle;
+  }
+
+  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+    const events: NormalizedEngineEvent[] = [];
+    const handle = await this.startRun(input, {
+      ...options,
+      onEvent: (event) => {
+        events.push(event);
+        options.onEvent?.(event);
+      },
+    });
+    const completion = await handle.wait();
+    return {
+      events,
+      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      usage: completion.usage,
+      failureClassification: completion.failureClassification,
+    };
+  }
+}
+
 export class PiEngineAdapter implements EngineAdapter {
   private readonly piPath: string;
   private readonly command: string;
   private readonly args: string[];
+  private readonly timeoutMs: number | undefined;
 
   constructor(config: PiAdapterConfig = {}) {
     const status = assertPiCheckoutAvailable(config.piPath);
     this.piPath = status.path;
     this.command = config.command ?? 'node';
     this.args = config.args ?? [];
+    this.timeoutMs = config.timeoutMs;
+    if (config.piVersion) {
+      const versionCheck = checkPiVersion(config.piVersion, config.piPath);
+      if (!versionCheck.ok) {
+        console.warn(`[engine-pi] ${versionCheck.message}`);
+      }
+    }
   }
 
   async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
@@ -297,9 +410,32 @@ export class PiEngineAdapter implements EngineAdapter {
     child.stdin.write(`${JSON.stringify({ prompt: input } satisfies PiChildRequest)}\n`);
     child.stdin.end();
 
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    if (this.timeoutMs != null) {
+      const gracePeriodMs = 5_000;
+      timeoutTimer = setTimeout(() => {
+        if (child.exitCode === null) {
+          failureClassification = 'transient_failure';
+          failureMessage = 'engine timeout exceeded';
+          safeEmit({ type: 'failed', payload: { classification: 'transient_failure', message: 'engine timeout exceeded' } });
+          child.kill('SIGTERM');
+          graceTimer = setTimeout(() => {
+            if (child.exitCode === null) {
+              child.kill('SIGKILL');
+            }
+          }, gracePeriodMs);
+        }
+      }, this.timeoutMs);
+    }
+
     const completionPromise = new Promise<EngineRunCompletion>((resolveCompletion, rejectCompletion) => {
       child.on('error', rejectCompletion);
       child.on('close', (code) => {
+        if (timeoutTimer != null) clearTimeout(timeoutTimer);
+        if (graceTimer != null) clearTimeout(graceTimer);
+
         const exitCode = code ?? 0;
 
         if (stdoutBuffer.trim().length > 0) {
@@ -325,10 +461,13 @@ export class PiEngineAdapter implements EngineAdapter {
           safeEmit({ type: 'completed', payload: { output: '' } });
         }
 
+        const warnings = stderr.trim() || undefined;
+
         resolveCompletion({
           engineSessionRef,
           usage,
           failureClassification,
+          warnings,
         });
       });
     });
@@ -358,6 +497,7 @@ export class PiEngineAdapter implements EngineAdapter {
       usage: completion.usage,
       failureClassification: completion.failureClassification,
       failureMessage,
+      warnings: completion.warnings,
     };
   }
 }
@@ -376,7 +516,7 @@ export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | P
 export function createEngineAdapter(config: AppConfig): EngineAdapter {
   if (config.engine.kind === 'pi') {
     assertPiCheckoutAvailable(config.engine.piPath);
-    return new PiEngineAdapter({ piPath: config.engine.piPath, command: config.engine.command, args: config.engine.args });
+    return new PiEngineAdapter({ piPath: config.engine.piPath, piVersion: config.engine.piVersion, command: config.engine.command, args: config.engine.args });
   }
   return new FakeEngineAdapter();
 }

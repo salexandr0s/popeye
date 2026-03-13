@@ -4,13 +4,13 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FakeEngineAdapter, PiEngineAdapter, PiEngineAdapterNotConfiguredError, inspectPiCheckout, runPiCompatibilityCheck } from './index.js';
+import { FakeEngineAdapter, PiEngineAdapter, PiEngineAdapterNotConfiguredError, checkPiVersion, inspectPiCheckout, runPiCompatibilityCheck } from './index.js';
 
 function createFakePiRepo(script: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-'));
   chmodSync(dir, 0o700);
   mkdirSync(join(dir, 'bin'));
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', private: true }, null, 2));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '0.1.0', private: true }, null, 2));
   writeFileSync(join(dir, 'bin', 'pi.js'), script, 'utf8');
   return dir;
 }
@@ -59,5 +59,114 @@ describe('engine-pi', () => {
     const compatibility = await runPiCompatibilityCheck({ piPath, command: 'node', args: ['bin/pi.js'] }, 'hello');
     expect(compatibility.ok).toBe(true);
     expect(compatibility.eventsObserved).toBeGreaterThan(0);
+  });
+
+  it('inspectPiCheckout reads version from package.json', () => {
+    const piPath = createFakePiRepo('');
+    const status = inspectPiCheckout(piPath);
+    expect(status.available).toBe(true);
+    expect(status.version).toBe('0.1.0');
+  });
+
+  it('checkPiVersion returns ok when versions match', () => {
+    const piPath = createFakePiRepo('');
+    const result = checkPiVersion('0.1.0', piPath);
+    expect(result.ok).toBe(true);
+    expect(result.expected).toBe('0.1.0');
+    expect(result.actual).toBe('0.1.0');
+  });
+
+  it('checkPiVersion returns not-ok on mismatch', () => {
+    const piPath = createFakePiRepo('');
+    const result = checkPiVersion('9.9.9', piPath);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('mismatch');
+    expect(result.expected).toBe('9.9.9');
+    expect(result.actual).toBe('0.1.0');
+  });
+
+  it('checkPiVersion returns ok when no expected version', () => {
+    const result = checkPiVersion(undefined);
+    expect(result.ok).toBe(true);
+  });
+
+  it('checkPiVersion returns not-ok when checkout missing', () => {
+    const result = checkPiVersion('0.1.0', '/tmp/definitely-missing-pi');
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('not available');
+  });
+
+  it('kills child process on engine timeout and emits transient_failure', async () => {
+    const piPath = createFakePiRepo(`
+      process.stdin.resume();
+      process.stdin.on('end', () => {
+        // Intentionally hang — never exit
+        setInterval(() => {}, 60_000);
+      });
+    `);
+
+    const adapter = new PiEngineAdapter({ piPath, command: 'node', args: ['bin/pi.js'], timeoutMs: 200 });
+    const result = await adapter.run('hang-forever');
+    expect(result.failureClassification).toBe('transient_failure');
+    expect(result.failureMessage).toBe('engine timeout exceeded');
+    expect(result.events.some((e) => e.type === 'failed' && e.payload.message === 'engine timeout exceeded')).toBe(true);
+  }, 15_000);
+
+  it('captures stderr as warnings on successful runs', async () => {
+    const piPath = createFakePiRepo(`
+      process.stdin.setEncoding('utf8');
+      let body = '';
+      process.stdin.on('data', (chunk) => body += chunk);
+      process.stdin.on('end', () => {
+        const request = JSON.parse(body.trim());
+        process.stderr.write('deprecation warning: old API');
+        for (const line of [
+          JSON.stringify({ type: 'started', payload: {} }),
+          JSON.stringify({ type: 'session', payload: { sessionRef: 'pi:warn-session' } }),
+          JSON.stringify({ type: 'message', payload: { text: request.prompt } }),
+          JSON.stringify({ type: 'completed', payload: { output: 'ok' } }),
+          JSON.stringify({ type: 'usage', payload: { provider: 'pi', model: 'stub', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 } }),
+        ]) process.stdout.write(line + '\\n');
+      });
+    `);
+
+    const adapter = new PiEngineAdapter({ piPath, command: 'node', args: ['bin/pi.js'] });
+    const result = await adapter.run('test-warnings');
+    expect(result.failureClassification).toBeNull();
+    expect(result.warnings).toBe('deprecation warning: old API');
+  });
+
+  it('does not set warnings when stderr is empty', async () => {
+    const piPath = createFakePiRepo(`
+      process.stdin.setEncoding('utf8');
+      let body = '';
+      process.stdin.on('data', (chunk) => body += chunk);
+      process.stdin.on('end', () => {
+        for (const line of [
+          JSON.stringify({ type: 'started', payload: {} }),
+          JSON.stringify({ type: 'session', payload: { sessionRef: 'pi:clean-session' } }),
+          JSON.stringify({ type: 'completed', payload: { output: 'ok' } }),
+          JSON.stringify({ type: 'usage', payload: { provider: 'pi', model: 'stub', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 } }),
+        ]) process.stdout.write(line + '\\n');
+      });
+    `);
+
+    const adapter = new PiEngineAdapter({ piPath, command: 'node', args: ['bin/pi.js'] });
+    const result = await adapter.run('no-warnings');
+    expect(result.failureClassification).toBeNull();
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it('uses __fixtures__/ndjson-child.mjs with correct prompt protocol', async () => {
+    const fixturePath = join(__dirname, '__fixtures__');
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-fixture-'));
+    chmodSync(dir, 0o700);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '0.1.0', private: true }, null, 2));
+
+    const adapter = new PiEngineAdapter({ piPath: dir, command: 'node', args: [join(fixturePath, 'ndjson-child.mjs')] });
+    const result = await adapter.run('hello-fixture');
+    expect(result.failureClassification).toBeNull();
+    expect(result.engineSessionRef).toBe('pi:test-session');
+    expect(result.events.some((e) => e.type === 'message' && e.payload.text === 'processed:hello-fixture')).toBe(true);
   });
 });
