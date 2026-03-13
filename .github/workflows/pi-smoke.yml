@@ -1,0 +1,48 @@
+name: pi-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      pi_repository:
+        description: 'owner/repo for the Pi checkout'
+        required: true
+        type: string
+      pi_ref:
+        description: 'Pi ref, tag, or branch'
+        required: false
+        default: 'main'
+        type: string
+      pi_smoke_command:
+        description: 'Command to launch the Pi child process'
+        required: false
+        default: 'node'
+        type: string
+      pi_smoke_args_json:
+        description: 'JSON array of args for the Pi smoke command'
+        required: false
+        default: '[]'
+        type: string
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pi_repository }}
+          ref: ${{ inputs.pi_ref }}
+          path: external-pi
+          token: ${{ secrets.PI_CHECKOUT_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm typecheck
+      - run: pnpm test:pi-smoke
+        env:
+          POPEYE_ENABLE_PI_SMOKE: '1'
+          POPEYE_PI_SMOKE_PATH: ${{ github.workspace }}/external-pi
+          POPEYE_PI_SMOKE_COMMAND: ${{ inputs.pi_smoke_command }}
+          POPEYE_PI_SMOKE_ARGS: ${{ inputs.pi_smoke_args_json }}

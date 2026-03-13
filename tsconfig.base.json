@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@popeye/contracts": ["packages/contracts/src/index.ts"],
+      "@popeye/engine-pi": ["packages/engine-pi/src/index.ts"],
+      "@popeye/runtime-core": ["packages/runtime-core/src/index.ts"],
+      "@popeye/scheduler": ["packages/scheduler/src/index.ts"],
+      "@popeye/sessions": ["packages/sessions/src/index.ts"],
+      "@popeye/workspace": ["packages/workspace/src/index.ts"],
+      "@popeye/instructions": ["packages/instructions/src/index.ts"],
+      "@popeye/memory": ["packages/memory/src/index.ts"],
+      "@popeye/receipts": ["packages/receipts/src/index.ts"],
+      "@popeye/observability": ["packages/observability/src/index.ts"],
+      "@popeye/control-api": ["packages/control-api/src/index.ts"],
+      "@popeye/telegram": ["packages/telegram/src/index.ts"],
+      "@popeye/testkit": ["packages/testkit/src/index.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "exclude": ["dist", "node_modules"]
+}

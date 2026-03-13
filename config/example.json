@@ -1,0 +1,33 @@
+{
+  "runtimeDataDir": "/tmp/popeye-runtime",
+  "authFile": "/tmp/popeye-runtime/config/auth.json",
+  "security": {
+    "bindHost": "127.0.0.1",
+    "bindPort": 3210,
+    "redactionPatterns": []
+  },
+  "telegram": {
+    "enabled": false,
+    "allowedUserId": "operator-telegram-id",
+    "maxMessagesPerMinute": 10,
+    "rateLimitWindowSeconds": 60
+  },
+  "embeddings": {
+    "provider": "disabled",
+    "allowedClassifications": ["embeddable"]
+  },
+  "engine": {
+    "kind": "fake",
+    "piPath": "../pi",
+    "command": "node",
+    "args": []
+  },
+  "workspaces": [
+    {
+      "id": "default",
+      "name": "Default workspace",
+      "heartbeatEnabled": true,
+      "heartbeatIntervalSeconds": 3600
+    }
+  ]
+}
