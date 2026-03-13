@@ -357,6 +357,7 @@ describe('openRuntimeDatabases', () => {
           '002-app-message-ingress',
           '003-app-coalesce-key',
           '004-app-schema-hardening',
+          '005-workspace-project-paths',
         ]);
 
         const memMigrations = databases.memory

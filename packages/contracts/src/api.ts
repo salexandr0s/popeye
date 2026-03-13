@@ -89,6 +89,7 @@ export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 export const WorkspaceListItemSchema = z.object({
   id: z.string(),
   name: z.string(),
+  rootPath: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type WorkspaceListItem = z.infer<typeof WorkspaceListItemSchema>;
@@ -97,6 +98,7 @@ export const ProjectListItemSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   name: z.string(),
+  path: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
@@ -129,3 +131,28 @@ export const PathIdParamSchema = z.object({
   id: z.string().min(1),
 });
 export type PathIdParam = z.infer<typeof PathIdParamSchema>;
+
+export const WorkspaceRegistrationInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  rootPath: z.string().nullable().default(null),
+});
+export type WorkspaceRegistrationInput = z.infer<typeof WorkspaceRegistrationInputSchema>;
+
+export const ProjectRegistrationInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  path: z.string().nullable().default(null),
+  workspaceId: z.string().min(1),
+});
+export type ProjectRegistrationInput = z.infer<typeof ProjectRegistrationInputSchema>;
+
+export const InstructionResolutionContextSchema = z.object({
+  workspaceId: z.string().min(1),
+  projectId: z.string().min(1).optional(),
+  identity: z.string().min(1).optional(),
+  taskBrief: z.string().optional(),
+  triggerOverlay: z.string().optional(),
+  runtimeNotes: z.string().optional(),
+});
+export type InstructionResolutionContext = z.infer<typeof InstructionResolutionContextSchema>;

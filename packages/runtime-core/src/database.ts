@@ -237,6 +237,13 @@ const APP_MIGRATIONS: Migration[] = [
       'DROP TABLE IF EXISTS run_outputs;',
     ],
   },
+  {
+    id: '005-workspace-project-paths',
+    statements: [
+      'ALTER TABLE workspaces ADD COLUMN root_path TEXT;',
+      'ALTER TABLE projects ADD COLUMN path TEXT;',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

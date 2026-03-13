@@ -122,6 +122,7 @@ export const ProjectRecordSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   name: z.string(),
+  path: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;

@@ -18,6 +18,7 @@ import type {
   MessageRecord,
   NormalizedEngineEvent,
   ProjectRecord,
+  ProjectRegistrationInput,
   ReceiptRecord,
   RunEventRecord,
   RunRecord,
@@ -27,10 +28,13 @@ import type {
   TaskRecord,
   UsageSummary,
   WorkspaceRecord,
+  WorkspaceRegistrationInput,
 } from '@popeye/contracts';
 import {
+  ProjectRegistrationInputSchema,
   RunEventRecordSchema,
   RunRecordSchema,
+  WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
@@ -292,8 +296,48 @@ export class PopeyeRuntimeService {
     return this.queryService.listWorkspaces();
   }
 
+  getWorkspace(id: string): WorkspaceRecord | null {
+    return this.queryService.getWorkspace(id);
+  }
+
   listProjects(): ProjectRecord[] {
     return this.queryService.listProjects();
+  }
+
+  getProject(id: string): ProjectRecord | null {
+    return this.queryService.getProject(id);
+  }
+
+  registerWorkspace(input: WorkspaceRegistrationInput): WorkspaceRecord {
+    const parsed = WorkspaceRegistrationInputSchema.parse(input);
+    const now = nowIso();
+    this.databases.app.prepare('INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at) VALUES (?, ?, ?, ?)').run(parsed.id, parsed.name, parsed.rootPath, now);
+    return { id: parsed.id, name: parsed.name, rootPath: parsed.rootPath, createdAt: now };
+  }
+
+  registerProject(input: ProjectRegistrationInput): ProjectRecord {
+    const parsed = ProjectRegistrationInputSchema.parse(input);
+    const workspace = this.getWorkspace(parsed.workspaceId);
+    if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
+    const now = nowIso();
+    this.databases.app.prepare('INSERT OR REPLACE INTO projects (id, workspace_id, name, path, created_at) VALUES (?, ?, ?, ?, ?)').run(parsed.id, parsed.workspaceId, parsed.name, parsed.path, now);
+    return { id: parsed.id, workspaceId: parsed.workspaceId, name: parsed.name, path: parsed.path, createdAt: now };
+  }
+
+  resolveWorkspaceFromCwd(cwd: string): { workspaceId: string; projectId: string | null } | null {
+    const projects = this.databases.app.prepare('SELECT id, workspace_id, path FROM projects WHERE path IS NOT NULL ORDER BY LENGTH(path) DESC').all() as Array<Record<string, string>>;
+    for (const project of projects) {
+      if (cwd.startsWith(project.path)) {
+        return { workspaceId: project.workspace_id, projectId: project.id };
+      }
+    }
+    const workspaces = this.databases.app.prepare('SELECT id, root_path FROM workspaces WHERE root_path IS NOT NULL ORDER BY LENGTH(root_path) DESC').all() as Array<Record<string, string>>;
+    for (const workspace of workspaces) {
+      if (cwd.startsWith(workspace.root_path)) {
+        return { workspaceId: workspace.id, projectId: null };
+      }
+    }
+    return null;
   }
 
   listAgentProfiles(): AgentProfileRecord[] {
@@ -606,6 +650,13 @@ export class PopeyeRuntimeService {
     this.databases.app.prepare('INSERT OR IGNORE INTO agent_profiles (id, name, created_at) VALUES (?, ?, ?)').run('default', 'Default agent profile', this.startedAt);
     for (const workspace of this.config.workspaces) {
       this.databases.app.prepare('INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES (?, ?, ?)').run(workspace.id, workspace.name, this.startedAt);
+      if (workspace.rootPath) {
+        this.databases.app.prepare('UPDATE workspaces SET root_path = ? WHERE id = ?').run(workspace.rootPath, workspace.id);
+      }
+      for (const project of workspace.projects ?? []) {
+        this.databases.app.prepare('INSERT OR IGNORE INTO projects (id, workspace_id, name, created_at) VALUES (?, ?, ?, ?)').run(project.id, workspace.id, project.name, this.startedAt);
+        this.databases.app.prepare('UPDATE projects SET path = ? WHERE id = ?').run(project.path, project.id);
+      }
     }
   }
 
@@ -845,13 +896,17 @@ export class PopeyeRuntimeService {
       run.error,
     );
 
+    const instructionBundle = this.queryService.resolveInstructionsForRun(task);
     const redactedPrompt = redactText(task.prompt, this.config.security.redactionPatterns);
     for (const event of redactedPrompt.events) this.recordSecurityAudit(event);
+    const fullPrompt = instructionBundle.compiledText
+      ? `${instructionBundle.compiledText}\n\n---\n\n${redactedPrompt.text}`
+      : redactedPrompt.text;
 
     this.emit('run_started', run);
 
     try {
-      const handle = await this.engine.startRun(redactedPrompt.text, {
+      const handle = await this.engine.startRun(fullPrompt, {
         onEvent: (event) => this.persistEngineEvent(run.id, event),
       });
       const activeRun: ActiveRunContext = {

@@ -37,9 +37,19 @@ export const EngineConfigSchema = z.object({
 });
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
+export const ProjectConfigSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  path: z.string().nullable().default(null),
+  workspaceId: z.string().min(1).optional(),
+});
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
+
 export const WorkspaceConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  rootPath: z.string().nullable().default(null),
+  projects: z.array(ProjectConfigSchema).default([]),
   heartbeatEnabled: z.boolean().default(true),
   heartbeatIntervalSeconds: z.number().int().positive().default(3600),
 });
@@ -66,6 +76,7 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 export const WorkspaceRecordSchema = z.object({
   id: z.string(),
   name: z.string(),
+  rootPath: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type WorkspaceRecord = z.infer<typeof WorkspaceRecordSchema>;

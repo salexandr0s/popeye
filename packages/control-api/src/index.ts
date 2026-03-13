@@ -5,8 +5,10 @@ import {
   AgentProfileRecordSchema,
   PathIdParamSchema,
   ProjectRecordSchema,
+  ProjectRegistrationInputSchema,
   TaskCreateInputSchema,
   WorkspaceRecordSchema,
+  WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
 import { z } from 'zod';
 import {
@@ -67,9 +69,29 @@ export async function createControlApi(
   app.get('/v1/workspaces', async () =>
     z.array(WorkspaceRecordSchema).parse(dependencies.runtime.listWorkspaces()),
   );
+  app.get('/v1/workspaces/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const workspace = dependencies.runtime.getWorkspace(id);
+    if (!workspace) return reply.code(404).send({ error: 'not_found' });
+    return workspace;
+  });
+  app.post('/v1/workspaces', async (request) => {
+    const input = WorkspaceRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerWorkspace(input);
+  });
   app.get('/v1/projects', async () =>
     z.array(ProjectRecordSchema).parse(dependencies.runtime.listProjects()),
   );
+  app.get('/v1/projects/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const project = dependencies.runtime.getProject(id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+    return project;
+  });
+  app.post('/v1/projects', async (request) => {
+    const input = ProjectRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerProject(input);
+  });
   app.get('/v1/agent-profiles', async () =>
     z.array(AgentProfileRecordSchema).parse(dependencies.runtime.listAgentProfiles()),
   );

@@ -6,6 +6,9 @@ import {
 } from '@popeye/contracts';
 import { sha256 } from '@popeye/observability';
 
+export { resolveInstructionSources } from './resolver.js';
+export type { ResolverDependencies, WorkspaceDescriptor, ProjectDescriptor } from './resolver.js';
+
 export function compileInstructionBundle(sources: InstructionSource[]): CompiledInstructionBundle {
   const orderedSources = [...sources].sort((left, right) => left.precedence - right.precedence);
   const warnings: string[] = [];
