@@ -12,8 +12,6 @@
     "skipLibCheck": true,
     "declaration": true,
     "sourceMap": true,
-    "rootDir": ".",
-    "outDir": "dist",
     "baseUrl": ".",
     "paths": {
       "@popeye/contracts": ["packages/contracts/src/index.ts"],
