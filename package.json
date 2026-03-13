@@ -9,7 +9,6 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "clean": "turbo run clean --concurrency=1 && rm -rf coverage",
     "dev-verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
-    "dev-verify --quick": "pnpm lint && pnpm typecheck && pnpm test",
     "lint": "eslint . --max-warnings=0",
     "security:deps": "pnpm audit --audit-level=high || true",
     "security:sast": "eslint . --max-warnings=0",
@@ -22,10 +21,12 @@
   "devDependencies": {
     "@eslint/js": "^9.23.0",
     "@fastify/sensible": "^6.0.3",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.10",
     "@typescript-eslint/eslint-plugin": "^8.27.0",
     "@typescript-eslint/parser": "^8.27.0",
     "@vitest/coverage-v8": "^3.2.4",
+    "better-sqlite3": "12.6.2",
     "eslint": "^9.23.0",
     "fastify": "^5.2.1",
     "globals": "^15.15.0",
@@ -37,9 +38,5 @@
     "typescript": "^5.8.2",
     "vitest": "^3.0.8",
     "zod": "^3.24.2"
-  },
-  "dependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "12.6.2"
   }
 }
