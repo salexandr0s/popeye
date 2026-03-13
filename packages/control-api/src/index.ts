@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
+import rateLimit from '@fastify/rate-limit';
+import helmet from '@fastify/helmet';
 
 import {
   AgentProfileRecordSchema,
@@ -22,13 +24,16 @@ import {
 
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
+  cspNonce?: string;
+  /** Paths exempt from bearer auth (e.g. nonce exchange). CSRF is also skipped for these. */
+  authExemptPaths?: ReadonlySet<string>;
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 const MemorySearchQueryParamsSchema = z.object({
-  q: z.string().optional(),
-  query: z.string().optional(),
+  q: z.string().max(1000).optional(),
+  query: z.string().max(1000).optional(),
   scope: z.string().optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
   types: z.string().optional(),
@@ -48,22 +53,44 @@ function parseIdParam(params: unknown): string {
 export async function createControlApi(
   dependencies: ControlApiDependencies,
 ): Promise<FastifyInstance> {
-  const app = Fastify();
+  const app = Fastify({
+    bodyLimit: 1_048_576,
+    logger: { level: 'info', redact: ['req.headers.authorization'] },
+  });
   await app.register(sensible);
+  await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: dependencies.cspNonce ? ["'self'", `'nonce-${dependencies.cspNonce}'`] : ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'"],
+      },
+    },
+  });
 
   // Cached auth store to avoid per-request file reads
   let cachedAuthStore: ReturnType<typeof readAuthStore> | null = null;
   let authStoreLastRead = 0;
   function getCachedAuthStore(): ReturnType<typeof readAuthStore> {
     const now = Date.now();
-    if (!cachedAuthStore || now - authStoreLastRead > 5000) {
+    // 1s eventual-consistency window for token revocation (POP-SEC-005)
+    if (!cachedAuthStore || now - authStoreLastRead > 1000) {
       cachedAuthStore = readAuthStore(dependencies.runtime.config.authFile);
       authStoreLastRead = now;
     }
     return cachedAuthStore;
   }
 
+  const authExemptPaths = dependencies.authExemptPaths ?? new Set<string>();
+
   app.addHook('preHandler', async (request, reply) => {
+    // Allow explicitly exempted paths (e.g. nonce exchange) to bypass bearer + CSRF
+    if (authExemptPaths.has(request.url.split('?')[0]!)) {
+      return undefined;
+    }
+
     const authStore = getCachedAuthStore();
     if (!validateBearerToken(request.headers.authorization, authStore)) {
       return reply.code(401).send({ error: 'unauthorized' });
@@ -75,6 +102,8 @@ export async function createControlApi(
       if (!validateCsrfToken(csrf, authStore)) {
         return reply.code(403).send({ error: 'csrf_invalid' });
       }
+      // POP-SEC-007: Sec-Fetch-Site may be absent in non-browser clients.
+      // The bearer token is the primary auth layer; this is defense-in-depth.
       const secFetchSite = request.headers['sec-fetch-site'];
       if (
         typeof secFetchSite === 'string' &&
@@ -221,7 +250,32 @@ export async function createControlApi(
 
   app.post('/v1/memory/maintenance', async () => dependencies.runtime.triggerMemoryMaintenance());
 
+  app.post('/v1/memory/:id/promote/propose', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ targetPath: z.string().min(1) }).parse(request.body);
+    const result = dependencies.runtime.proposeMemoryPromotion(id, body.targetPath);
+    if (!result.diff) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.post('/v1/memory/:id/promote/execute', async (request) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({
+      targetPath: z.string().min(1),
+      diff: z.string(),
+      approved: z.boolean(),
+      promoted: z.boolean(),
+    }).parse(request.body);
+    return dependencies.runtime.executeMemoryPromotion({ memoryId: id, ...body });
+  });
+
+  const MAX_SSE_CONNECTIONS = 10;
+  let sseConnectionCount = 0;
   app.get('/v1/events/stream', async (_request, reply) => {
+    if (sseConnectionCount >= MAX_SSE_CONNECTIONS) {
+      return reply.code(429).send({ error: 'too_many_sse_connections' });
+    }
+    sseConnectionCount++;
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -236,6 +290,7 @@ export async function createControlApi(
       reply.raw.write(': heartbeat\n\n');
     }, 30_000);
     reply.raw.on('close', () => {
+      sseConnectionCount--;
       clearInterval(heartbeat);
       dependencies.runtime.events.off('event', listener);
     });

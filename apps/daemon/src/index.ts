@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -20,7 +21,8 @@ const config = loadAppConfig(configPath);
 ensureRuntimePaths(config);
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
-const app = await createControlApi({ runtime });
+const cspNonce = randomBytes(16).toString('base64');
+const app = await createControlApi({ runtime, cspNonce, authExemptPaths: new Set(['/v1/auth/exchange']) });
 
 // Serve web inspector static files
 const webInspectorDist = resolve(
@@ -33,10 +35,9 @@ if (existsSync(webInspectorDist)) {
     resolve(webInspectorDist, 'index.html'),
     'utf8',
   );
-  const injectedHtml = rawHtml.replace(
-    '__POPEYE_AUTH_TOKEN__',
-    authStore.current.token,
-  );
+  const injectedHtml = rawHtml
+    .replace('__POPEYE_AUTH_TOKEN__', authStore.current.token)
+    .replace(/<script/g, `<script nonce="${cspNonce}"`);
 
   await app.register(fastifyStatic, {
     root: webInspectorDist,

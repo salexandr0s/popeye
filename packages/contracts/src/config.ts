@@ -11,6 +11,8 @@ export const SecurityConfigSchema = z.object({
   bindHost: z.literal('127.0.0.1'),
   bindPort: z.number().int().min(1).max(65535).default(3210),
   redactionPatterns: z.array(z.string()).default([]),
+  promptScanQuarantinePatterns: z.array(z.string()).default([]),
+  promptScanSanitizePatterns: z.array(z.object({ pattern: z.string(), replacement: z.string() })).default([]),
 });
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
@@ -32,6 +34,8 @@ export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
 export const EmbeddingConfigSchema = z.object({
   provider: z.enum(['disabled', 'openai']).default('disabled'),
+  model: z.string().default('text-embedding-3-small'),
+  dimensions: z.number().int().positive().default(1536),
   allowedClassifications: z.array(DataClassificationSchema).default(['embeddable']),
 });
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;

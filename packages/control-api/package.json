@@ -9,7 +9,9 @@
     "@popeye/contracts": "workspace:*",
     "@popeye/runtime-core": "workspace:*",
     "fastify": "^5.2.1",
-    "@fastify/sensible": "^6.0.3"
+    "@fastify/sensible": "^6.0.3",
+    "@fastify/rate-limit": "^10.2.1",
+    "@fastify/helmet": "^13.0.1"
   },
   "scripts": {
     "build": "tsc -b",
