@@ -20,8 +20,13 @@ export interface RedactionResult {
   events: SecurityAuditEvent[];
 }
 
+const INPUT_SIZE_LIMIT = 1_048_576;
+
 export function redactText(input: string, customPatterns: string[] = []): RedactionResult {
   let text = input;
+  if (text.length > INPUT_SIZE_LIMIT) {
+    text = text.slice(0, INPUT_SIZE_LIMIT);
+  }
   const events: SecurityAuditEvent[] = [];
   const allPatterns = [
     ...BUILTIN_PATTERNS,

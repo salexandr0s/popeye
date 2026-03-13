@@ -642,6 +642,12 @@ describe('Config validation', () => {
     expect(result.engine.kind).toBe('fake');
   });
 
+  it('default engine config includes timeoutMs of 300000', () => {
+    const { engine: _eng, ...noEngine } = completeConfig;
+    const result = AppConfigSchema.parse(noEngine);
+    expect(result.engine.timeoutMs).toBe(300_000);
+  });
+
   describe('SecurityConfigSchema', () => {
     it('enforces 127.0.0.1 only', () => {
       expect(SecurityConfigSchema.parse({ bindHost: '127.0.0.1' }).bindHost).toBe('127.0.0.1');

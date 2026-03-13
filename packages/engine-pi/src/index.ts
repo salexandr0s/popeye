@@ -190,8 +190,14 @@ class ProcessHandle implements EngineRunHandle {
   }
 }
 
+const MAX_STDERR_BYTES = 1_048_576;
+const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
+const MAX_EVENTS = 10_000;
+
 function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent, onEvent?: (event: NormalizedEngineEvent) => void): void {
-  events.push(event);
+  if (events.length < MAX_EVENTS) {
+    events.push(event);
+  }
   onEvent?.(event);
 }
 
@@ -495,6 +501,13 @@ export class PiEngineAdapter implements EngineAdapter {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       stdoutBuffer += chunk;
+      if (Buffer.byteLength(stdoutBuffer) > MAX_STDOUT_BUFFER_BYTES) {
+        failureClassification = 'protocol_error';
+        failureMessage = 'stdout buffer exceeded 1MB limit';
+        safeEmit({ type: 'failed', payload: { classification: 'protocol_error', message: failureMessage } });
+        child.kill('SIGKILL');
+        return;
+      }
       const lines = stdoutBuffer.split('\n');
       stdoutBuffer = lines.pop() ?? '';
       for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
@@ -526,7 +539,12 @@ export class PiEngineAdapter implements EngineAdapter {
 
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
+      if (Buffer.byteLength(stderr) < MAX_STDERR_BYTES) {
+        stderr += chunk;
+        if (Buffer.byteLength(stderr) > MAX_STDERR_BYTES) {
+          stderr = stderr.slice(0, MAX_STDERR_BYTES);
+        }
+      }
     });
 
     child.stdin.write(`${JSON.stringify({ prompt: input } satisfies PiChildRequest)}\n`);
@@ -640,7 +658,7 @@ export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | P
 export function createEngineAdapter(config: AppConfig): EngineAdapter {
   if (config.engine.kind === 'pi') {
     assertPiCheckoutAvailable(config.engine.piPath);
-    return new PiEngineAdapter({ piPath: config.engine.piPath, piVersion: config.engine.piVersion, command: config.engine.command, args: config.engine.args });
+    return new PiEngineAdapter({ piPath: config.engine.piPath, piVersion: config.engine.piVersion, command: config.engine.command, args: config.engine.args, timeoutMs: config.engine.timeoutMs });
   }
   return new FakeEngineAdapter();
 }

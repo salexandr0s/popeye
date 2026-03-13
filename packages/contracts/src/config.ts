@@ -42,6 +42,7 @@ export const EngineConfigSchema = z.object({
   piVersion: z.string().optional(),
   command: z.string().default('node'),
   args: z.array(z.string()).default([]),
+  timeoutMs: z.number().int().positive().default(300_000),
 });
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 

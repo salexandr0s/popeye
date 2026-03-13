@@ -14,7 +14,9 @@
     "@popeye/receipts": "workspace:*",
     "@popeye/scheduler": "workspace:*",
     "@popeye/sessions": "workspace:*",
-    "better-sqlite3": "^12.6.2"
+    "@popeye/workspace": "workspace:*",
+    "better-sqlite3": "^12.6.2",
+    "safe-regex2": "^4.0.0"
   },
   "scripts": {
     "build": "tsc -b",

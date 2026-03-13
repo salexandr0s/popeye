@@ -33,4 +33,10 @@ describe('redactText', () => {
     expect(result.text).toContain('[REDACTED:slack-webhook]');
     expect(result.events.length).toBeGreaterThan(0);
   });
+
+  it('truncates oversized input', () => {
+    const bigInput = 'x'.repeat(2_000_000);
+    const result = redactText(bigInput);
+    expect(result.text.length).toBeLessThanOrEqual(1_048_576);
+  });
 });

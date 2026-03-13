@@ -77,6 +77,18 @@ describe('security audit', () => {
     expect(findings.some((f) => f.code === 'redaction_pattern_invalid')).toBe(true);
   });
 
+  it('reports unsafe ReDoS redaction pattern', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
+    chmodSync(dir, 0o700);
+    setupDirs(dir);
+    initAuthStore(join(dir, 'config', 'auth.json'));
+    const config = makeConfig(dir, {
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: ['(a+)+b'] },
+    });
+    const findings = runLocalSecurityAudit(config);
+    expect(findings.some((f) => f.code === 'redaction_pattern_unsafe')).toBe(true);
+  });
+
   it('accepts valid redaction pattern', () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
     chmodSync(dir, 0o700);

@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 
 import Database from 'better-sqlite3';
+import safe from 'safe-regex2';
 import type { AppConfig, SecurityAuditFinding } from '@popeye/contracts';
 import { checkPiVersion } from '@popeye/engine-pi';
 
@@ -93,10 +94,12 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
     }
   }
 
-  // TODO(security): validate custom patterns for catastrophic backtracking
   for (const pattern of config.security.redactionPatterns) {
     try {
-      new RegExp(pattern, 'g');
+      const re = new RegExp(pattern, 'g');
+      if (!safe(re)) {
+        findings.push({ code: 'redaction_pattern_unsafe', severity: 'error', message: `Redaction pattern is vulnerable to ReDoS: ${pattern}` });
+      }
     } catch {
       findings.push({ code: 'redaction_pattern_invalid', severity: 'error', message: `Invalid redaction pattern: ${pattern}` });
     }
