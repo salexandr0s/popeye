@@ -389,7 +389,8 @@ export class PiEngineAdapter implements EngineAdapter {
         try {
           const event = normalizeEvent(rawLine);
           if (event.type === 'session') {
-            engineSessionRef = event.payload.engineSessionRef ?? event.payload.sessionId ?? event.payload.sessionRef ?? engineSessionRef;
+            const ref = event.payload.engineSessionRef ?? event.payload.sessionId ?? event.payload.sessionRef;
+            if (typeof ref === 'string') engineSessionRef = ref;
           }
           if (event.type === 'usage') {
             usage = {
@@ -402,7 +403,7 @@ export class PiEngineAdapter implements EngineAdapter {
           }
           if (event.type === 'failed') {
             failureClassification = (event.payload.classification as EngineFailureClassification | undefined) ?? 'permanent_failure';
-            failureMessage = event.payload.message ?? failureMessage;
+            if (typeof event.payload.message === 'string') failureMessage = event.payload.message;
           }
           safeEmit(event);
         } catch (error) {
