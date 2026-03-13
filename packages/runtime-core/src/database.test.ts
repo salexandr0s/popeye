@@ -368,6 +368,7 @@ describe('openRuntimeDatabases', () => {
           '001-memory-schema',
           '002-memory-lifecycle',
           '003-memory-schema-enrichment',
+          '004-memory-consolidation-reason',
         ]);
       } finally {
         databases.app.close();

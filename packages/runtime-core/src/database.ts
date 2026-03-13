@@ -278,6 +278,12 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'ALTER TABLE memories ADD COLUMN source_timestamp TEXT;',
     ],
   },
+  {
+    id: '004-memory-consolidation-reason',
+    statements: [
+      "ALTER TABLE memory_consolidations ADD COLUMN reason TEXT DEFAULT '';",
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

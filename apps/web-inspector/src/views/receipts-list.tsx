@@ -6,10 +6,7 @@ import { ErrorDisplay } from '../components/error-display';
 import { EmptyState } from '../components/empty-state';
 import { PageHeader } from '../components/page-header';
 import { useReceipts, type ReceiptRecord } from '../api/hooks';
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
+import { formatTime } from '../utils/format';
 
 export function ReceiptsList() {
   const { data: receipts, error, loading } = useReceipts();

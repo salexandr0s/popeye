@@ -29,6 +29,8 @@ export function persistAuthStore(path: string, record: AuthRotationRecord): void
   writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 });
 }
 
+// Security trade-off: default 24h overlap window balances operational continuity
+// against token exposure. Callers can pass a shorter overlapHours for tighter rotation.
 export function rotateAuthStore(path: string, overlapHours = 24): AuthRotationRecord {
   const existing = readAuthStore(path);
   const now = new Date();

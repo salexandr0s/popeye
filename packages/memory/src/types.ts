@@ -1,10 +1,13 @@
 /**
  * Local type definitions for memory package.
- * These types are defined here because the contracts package may not include
- * all memory-specific schemas yet.
+ *
+ * MemoryType is re-exported from contracts. MemoryRecord, MemorySearchResult,
+ * and MemorySearchResponse remain local because the internal field names
+ * (memoryId vs id, loose sourceType) diverge from the contract schemas.
  */
 
-export type MemoryType = 'episodic' | 'semantic' | 'procedural';
+import type { MemoryType as _MemoryType } from '@popeye/contracts';
+export type MemoryType = _MemoryType;
 
 export interface MemoryRecord {
   id: string;

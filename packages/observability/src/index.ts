@@ -8,7 +8,7 @@ const BUILTIN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'bearer-token', pattern: /Bearer\s+[A-Za-z0-9._-]{20,}/g },
   { name: 'pem-block', pattern: /-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----/g },
   { name: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}/g },
-  { name: 'hex-secret', pattern: /\b[a-fA-F0-9]{40,}\b/g },
+  { name: 'hex-secret', pattern: /(?<=(?:key|token|secret|password|credential|api_key|apikey)[=:\s"']+)[a-fA-F0-9]{40,}/gi },
   { name: 'aws-access-key', pattern: /AKIA[A-Z0-9]{16}/g },
   { name: 'github-pat', pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
   { name: 'anthropic-key', pattern: /sk-ant-[A-Za-z0-9-]{20,}/g },
@@ -51,6 +51,6 @@ export function redactText(input: string, customPatterns: string[] = []): Redact
   return { text, events };
 }
 
-export function sha256(value: string): string {
+export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }

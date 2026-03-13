@@ -23,6 +23,7 @@ export const MessageIngressDecisionCodeSchema = z.enum([
   'telegram_rate_limited',
   'telegram_prompt_injection',
   'telegram_invalid_message',
+  'prompt_injection_quarantined',
 ]);
 export type MessageIngressDecisionCode = z.infer<typeof MessageIngressDecisionCodeSchema>;
 

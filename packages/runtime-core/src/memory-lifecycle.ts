@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import type {
   AppConfig,
@@ -21,9 +21,7 @@ import { redactText } from '@popeye/observability';
 
 import type { RuntimeDatabases } from './database.js';
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
+import { nowIso } from './clock.js';
 
 export interface MemoryInsertInput {
   description: string;
@@ -199,7 +197,14 @@ export class MemoryLifecycleService {
         }
 
         // Text overlap merge (O(n^2) but groups should be small)
-        const active = group.filter((r) => !this.databases.memory.prepare('SELECT archived_at FROM memories WHERE id = ?').get(r.id) || !(this.databases.memory.prepare('SELECT archived_at FROM memories WHERE id = ?').get(r.id) as { archived_at: string | null })?.archived_at);
+        // Bulk-fetch archived status to avoid per-row queries
+        const archivedIds = new Set(
+          this.databases.memory
+            .prepare('SELECT id FROM memories WHERE archived_at IS NOT NULL')
+            .all()
+            .map((r: unknown) => (r as { id: string }).id),
+        );
+        const active = group.filter((r) => !archivedIds.has(r.id));
         for (let i = 0; i < active.length; i++) {
           for (let j = i + 1; j < active.length; j++) {
             const overlap = computeTextOverlap(active[i].content, active[j].content);
@@ -385,6 +390,13 @@ export class MemoryLifecycleService {
   executePromotion(request: MemoryPromotionResponse): MemoryPromotionResponse {
     if (!request.approved) {
       return { ...request, promoted: false };
+    }
+
+    // Validate target path is within memory directory to prevent path traversal
+    const resolved = resolve(request.targetPath);
+    const memoryDir = resolve(this.databases.paths.memoryDailyDir, '..');
+    if (!resolved.startsWith(memoryDir)) {
+      throw new Error(`Target path must be within memory directory: ${memoryDir}`);
     }
 
     const row = this.databases.memory.prepare('SELECT content FROM memories WHERE id = ?').get(request.memoryId) as { content: string } | undefined;

@@ -45,7 +45,7 @@ function collectManifestEntries(root: string): BackupManifest['entries'] {
         entries.push({
           kind: 'file',
           path: relative(root, full),
-          sha256: sha256(readFileSync(full, 'utf8')),
+          sha256: sha256(readFileSync(full)),
         });
       }
     }
@@ -98,7 +98,7 @@ export function verifyBackup(backupRoot: string): BackupVerificationResult {
       mismatches.push(`Missing file: ${entry.path}`);
       continue;
     }
-    const actual = sha256(readFileSync(full, 'utf8'));
+    const actual = sha256(readFileSync(full));
     if (actual !== entry.sha256) {
       mismatches.push(`Checksum mismatch: ${entry.path}`);
     }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DataTable, type Column } from '../components/data-table';
 import { Badge } from '../components/badge';
 import { Loading } from '../components/loading';
@@ -6,39 +7,40 @@ import { EmptyState } from '../components/empty-state';
 import { PageHeader } from '../components/page-header';
 import { useJobs, type JobRecord } from '../api/hooks';
 import { useApi } from '../api/provider';
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
+import { formatTime } from '../utils/format';
 
 export function JobsList() {
   const { data: jobs, error, loading, refetch } = useJobs();
   const api = useApi();
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handlePause = async (jobId: string) => {
     try {
+      setActionError(null);
       await api.post(`/v1/jobs/${jobId}/pause`);
       refetch();
-    } catch {
-      // Error handling deferred
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Pause failed');
     }
   };
 
   const handleResume = async (jobId: string) => {
     try {
+      setActionError(null);
       await api.post(`/v1/jobs/${jobId}/resume`);
       refetch();
-    } catch {
-      // Error handling deferred
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Resume failed');
     }
   };
 
   const handleEnqueue = async (jobId: string) => {
     try {
+      setActionError(null);
       await api.post(`/v1/jobs/${jobId}/enqueue`);
       refetch();
-    } catch {
-      // Error handling deferred
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Enqueue failed');
     }
   };
 
@@ -134,6 +136,7 @@ export function JobsList() {
   return (
     <div>
       <PageHeader title="Jobs" description="Scheduled and active jobs" />
+      {actionError ? <ErrorDisplay message={actionError} /> : null}
       {jobs && jobs.length > 0 ? (
         <DataTable
           columns={columns}

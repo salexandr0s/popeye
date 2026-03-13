@@ -54,23 +54,23 @@ if (existsSync(webInspectorDist)) {
 }
 
 let shuttingDown = false;
-const shutdown = async () => {
+const shutdown = async (code = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
   await app.close();
   await runtime.close();
-  process.exit(0);
+  process.exit(code);
 };
 
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());
 process.on('unhandledRejection', (error) => {
   console.error('unhandledRejection', error);
-  void shutdown();
+  void shutdown(1);
 });
 process.on('uncaughtException', (error) => {
   console.error('uncaughtException', error);
-  void shutdown();
+  process.exit(1);
 });
 
 await app.listen({

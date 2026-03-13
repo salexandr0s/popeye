@@ -24,9 +24,11 @@ import {
   MemoryConsolidationRecordSchema,
   MemorySearchResultSchema,
   MemorySearchResponseSchema,
+  MemoryAuditResponseSchema,
 
   // Config domain
   AppConfigSchema,
+  MemoryConfigSchema,
   WorkspaceRecordSchema,
   SecurityConfigSchema,
   DataClassificationSchema,
@@ -56,6 +58,7 @@ import {
   CriticalFileMutationRequestSchema,
 
   // API domain
+  PathIdParamSchema,
   TaskCreateInputSchema,
   TaskCreateResponseSchema,
   DaemonStatusResponseSchema,
@@ -651,6 +654,34 @@ describe('Config validation', () => {
     });
   });
 
+  describe('TelegramConfigSchema — POP-003', () => {
+    it('rejects enabled=true without allowedUserId', () => {
+      expect(() =>
+        AppConfigSchema.parse({
+          ...completeConfig,
+          telegram: { enabled: true },
+        }),
+      ).toThrow('allowedUserId is required when telegram is enabled');
+    });
+
+    it('accepts enabled=true with allowedUserId', () => {
+      const result = AppConfigSchema.parse({
+        ...completeConfig,
+        telegram: { enabled: true, allowedUserId: '123' },
+      });
+      expect(result.telegram.enabled).toBe(true);
+      expect(result.telegram.allowedUserId).toBe('123');
+    });
+
+    it('accepts enabled=false without allowedUserId', () => {
+      const result = AppConfigSchema.parse({
+        ...completeConfig,
+        telegram: { enabled: false },
+      });
+      expect(result.telegram.enabled).toBe(false);
+    });
+  });
+
   describe('WorkspaceConfigSchema', () => {
     it('rejects empty id', () => {
       expect(() => WorkspaceConfigSchema.parse({ id: '', name: 'Ws', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 })).toThrow();
@@ -920,6 +951,7 @@ describe('Additional schema smoke tests', () => {
       receiptsByRunDir: '/tmp/popeye/receipts/by-run',
       receiptsByDayDir: '/tmp/popeye/receipts/by-day',
       backupsDir: '/tmp/popeye/backups',
+      memoryDailyDir: '/tmp/popeye/memory/daily',
     });
     expect(result.appDbPath).toBe('/tmp/popeye/state/app.db');
   });
@@ -1014,9 +1046,125 @@ describe('Additional schema smoke tests', () => {
     expect(result.event).toBe('run:started');
   });
 
+  it('PathIdParamSchema rejects empty string', () => {
+    expect(() => PathIdParamSchema.parse({ id: '' })).toThrow();
+  });
+
+  it('PathIdParamSchema rejects strings over 100 chars', () => {
+    expect(() => PathIdParamSchema.parse({ id: 'x'.repeat(101) })).toThrow();
+  });
+
+  it('PathIdParamSchema accepts strings up to 100 chars', () => {
+    const result = PathIdParamSchema.parse({ id: 'x'.repeat(100) });
+    expect(result.id).toHaveLength(100);
+  });
+
   it('EmbeddingConfigSchema applies defaults', () => {
     const result = EmbeddingConfigSchema.parse({});
     expect(result.provider).toBe('disabled');
     expect(result.allowedClassifications).toEqual(['embeddable']);
+  });
+
+  it('MemoryConfigSchema applies defaults', () => {
+    const result = MemoryConfigSchema.parse({});
+    expect(result.confidenceHalfLifeDays).toBe(30);
+    expect(result.archiveThreshold).toBe(0.1);
+    expect(result.consolidationEnabled).toBe(true);
+    expect(result.compactionFlushConfidence).toBe(0.7);
+    expect(result.dailySummaryHour).toBe(2);
+  });
+
+  it('MemoryConfigSchema rejects invalid values', () => {
+    expect(() => MemoryConfigSchema.parse({ confidenceHalfLifeDays: -1 })).toThrow();
+    expect(() => MemoryConfigSchema.parse({ archiveThreshold: 1.5 })).toThrow();
+    expect(() => MemoryConfigSchema.parse({ dailySummaryHour: 25 })).toThrow();
+  });
+
+  it('AppConfigSchema includes memory config with defaults', () => {
+    const result = AppConfigSchema.parse({
+      runtimeDataDir: '/tmp/popeye-test',
+      authFile: '/tmp/popeye-test/config/auth.json',
+      security: { bindHost: '127.0.0.1' as const },
+      telegram: { enabled: false },
+      embeddings: {},
+    });
+    expect(result.memory.confidenceHalfLifeDays).toBe(30);
+    expect(result.memory.consolidationEnabled).toBe(true);
+  });
+
+  it('MemoryAuditResponseSchema parses valid data', () => {
+    const result = MemoryAuditResponseSchema.parse({
+      totalMemories: 100,
+      activeMemories: 80,
+      archivedMemories: 20,
+      byType: { episodic: 50, semantic: 30 },
+      byScope: { workspace: 80 },
+      byClassification: { internal: 60, embeddable: 20 },
+      averageConfidence: 0.75,
+      staleCount: 5,
+      consolidationsPerformed: 10,
+      lastDecayRunAt: '2026-03-13T00:00:00Z',
+      lastConsolidationRunAt: null,
+      lastDailySummaryAt: null,
+    });
+    expect(result.totalMemories).toBe(100);
+    expect(result.activeMemories).toBe(80);
+    expect(result.byType['episodic']).toBe(50);
+  });
+
+  it('MemoryConsolidationRecordSchema includes reason with default', () => {
+    const result = MemoryConsolidationRecordSchema.parse({
+      id: 'mc-002',
+      memoryId: 'mem-003',
+      mergedIntoId: 'mem-004',
+      createdAt: '2026-03-13T00:00:00Z',
+    });
+    expect(result.reason).toBe('');
+
+    const withReason = MemoryConsolidationRecordSchema.parse({
+      id: 'mc-003',
+      memoryId: 'mem-005',
+      mergedIntoId: 'mem-006',
+      reason: 'exact_dedup',
+      createdAt: '2026-03-13T00:00:00Z',
+    });
+    expect(withReason.reason).toBe('exact_dedup');
+  });
+
+  it('MemoryRecordSchema includes new fields with defaults', () => {
+    const result = MemoryRecordSchema.parse({
+      id: 'mem-new',
+      description: 'Test',
+      classification: 'internal',
+      sourceType: 'receipt',
+      content: 'Content',
+      confidence: 0.5,
+      createdAt: '2026-03-13T00:00:00Z',
+    });
+    expect(result.memoryType).toBe('episodic');
+    expect(result.dedupKey).toBeNull();
+    expect(result.lastReinforcedAt).toBeNull();
+    expect(result.archivedAt).toBeNull();
+  });
+
+  it('MemoryRecordSchema accepts compaction_flush sourceType', () => {
+    const result = MemoryRecordSchema.parse({
+      id: 'mem-flush',
+      description: 'Compaction flush',
+      classification: 'internal',
+      sourceType: 'compaction_flush',
+      content: 'Flushed content',
+      confidence: 0.7,
+      createdAt: '2026-03-13T00:00:00Z',
+    });
+    expect(result.sourceType).toBe('compaction_flush');
+  });
+
+  it('NormalizedEngineEventSchema accepts compaction type', () => {
+    const result = NormalizedEngineEventSchema.parse({
+      type: 'compaction',
+      payload: { size: 1024 },
+    });
+    expect(result.type).toBe('compaction');
   });
 });

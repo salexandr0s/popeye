@@ -19,10 +19,7 @@ import { compileInstructionBundle, resolveInstructionSources, type ResolverDepen
 
 import { readAuthStore, issueCsrfToken as issueCsrfTokenFromStore } from './auth.js';
 import type { RuntimeDatabases } from './database.js';
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
+import { nowIso } from './clock.js';
 
 export interface QueryServiceState {
   schedulerRunning: boolean;

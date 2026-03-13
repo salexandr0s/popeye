@@ -548,6 +548,42 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('POP-001: receipt details are redacted before persistence', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-redact-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.redactionPatterns = ['sk-[A-Za-z0-9]{10,}'];
+    const runtime = createRuntimeService(config);
+
+    // Create a real task+job+run so FK constraints are satisfied
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'redact test', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    if (created.job) await runtime.waitForJobTerminalState(created.job.id, 5_000);
+
+    // Now write a receipt referencing the real run, with a secret in the details
+    const run = runtime.listRuns().find((r) => r.jobId === created.job!.id);
+    const receipt = (runtime as any).receiptManager.writeReceipt({
+      runId: run!.id,
+      jobId: created.job!.id,
+      taskId: created.task.id,
+      workspaceId: 'default',
+      status: 'failed',
+      summary: 'Failed with key sk-abc123def456ghi789jkl',
+      details: 'Error: invalid key sk-abc123def456ghi789jkl used',
+      usage: { provider: 'fake', model: 'fake', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
+    });
+
+    expect(receipt.summary).toContain('[REDACTED:');
+    expect(receipt.summary).not.toContain('sk-abc123def456ghi789jkl');
+    expect(receipt.details).toContain('[REDACTED:');
+    expect(receipt.details).not.toContain('sk-abc123def456ghi789jkl');
+
+    // Verify DB storage is also redacted
+    const dbRow = runtime.databases.app.prepare('SELECT summary, details FROM receipts WHERE id = ?').get(receipt.id) as { summary: string; details: string };
+    expect(dbRow.summary).not.toContain('sk-abc123def456ghi789jkl');
+    expect(dbRow.details).not.toContain('sk-abc123def456ghi789jkl');
+    await runtime.close();
+  });
+
   it('listFailedRuns returns only failed/abandoned runs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-list-'));
     chmodSync(dir, 0o700);

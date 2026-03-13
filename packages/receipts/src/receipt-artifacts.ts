@@ -4,7 +4,7 @@ import type { RuntimePaths } from '@popeye/contracts';
 
 export function writeReceiptArtifact(paths: RuntimePaths, receiptId: string, content: string): string {
   const filePath = `${paths.receiptsByRunDir}/${receiptId}.json`;
-  writeFileSync(filePath, content, 'utf8');
+  writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 });
   return filePath;
 }
 

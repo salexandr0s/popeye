@@ -13,10 +13,7 @@ import {
 } from '@popeye/contracts';
 
 import type { RuntimeDatabases } from './database.js';
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
+import { nowIso } from './clock.js';
 
 function readJson<T>(value: string): T {
   return JSON.parse(value) as T;

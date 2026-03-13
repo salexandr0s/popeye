@@ -55,9 +55,7 @@ import { QueryService } from './query-service.js';
 import { ReceiptManager } from './receipt-manager.js';
 import { TaskManager } from './task-manager.js';
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
+import { nowIso } from './clock.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -160,7 +158,7 @@ export class PopeyeRuntimeService {
     this.memorySearch = new MemorySearchService({
       db: this.databases.memory,
       embeddingClient,
-      vecAvailable: this.vecAvailable,
+      vecAvailable: () => this.vecAvailable,
       halfLifeDays: config.memory.confidenceHalfLifeDays,
     });
     this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch);
@@ -698,6 +696,13 @@ export class PopeyeRuntimeService {
     }
   }
 
+  private redactError(error: string | null): string | null {
+    if (!error) return null;
+    const result = redactText(error, this.config.security.redactionPatterns);
+    for (const event of result.events) this.recordSecurityAudit(event);
+    return result.text;
+  }
+
   // --- Internal: reconciliation ---
 
   private reconcileStartupState(): void {
@@ -716,7 +721,7 @@ export class PopeyeRuntimeService {
         'Run abandoned during daemon startup reconciliation',
         'Daemon restarted before the run reached a terminal state',
       );
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', reconciledAt, 'Daemon restarted before the run reached a terminal state', runId);
+      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', reconciledAt, this.redactError('Daemon restarted before the run reached a terminal state'), runId);
       void this.applyRecoveryDecision(String(row.job_id), runId, 'Daemon restarted before the run reached a terminal state');
     }
 
@@ -923,10 +928,11 @@ export class PopeyeRuntimeService {
       void this.awaitRunCompletion(activeRun);
       return this.getRun(run.id);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const safeMessage = this.redactError(rawMessage) ?? rawMessage;
       this.releaseWorkspaceLock(job.workspaceId);
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), message, run.id);
+      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), safeMessage, run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), job.id);
       const receipt = this.receiptManager.writeReceipt({
         runId: run.id,
@@ -935,11 +941,11 @@ export class PopeyeRuntimeService {
         workspaceId: task.workspaceId,
         status: 'failed',
         summary: 'Run failed during engine startup',
-        details: message,
+        details: safeMessage,
         usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
       });
       this.receiptManager.captureMemoryFromReceipt(receipt);
-      this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
+      this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: safeMessage, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
       return this.getRun(run.id);
     }
   }
@@ -1005,7 +1011,7 @@ export class PopeyeRuntimeService {
     }
 
     if (failure === 'cancelled') {
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('cancelled', nowIso(), 'cancelled', run.id);
+      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('cancelled', nowIso(), this.redactError('cancelled'), run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
       const receipt = this.receiptManager.writeReceipt({
         runId: run.id,
@@ -1023,13 +1029,13 @@ export class PopeyeRuntimeService {
     }
 
     if (failure === 'transient_failure') {
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_retryable', nowIso(), failure, run.id);
+      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_retryable', nowIso(), this.redactError(failure), run.id);
       await this.scheduleRetry(activeRun.task, run.jobId, completion, failure);
       this.cleanupActiveRun(activeRun);
       return;
     }
 
-    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ?, engine_session_ref = ? WHERE id = ?').run('failed_final', nowIso(), failure, completion.engineSessionRef, run.id);
+    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ?, engine_session_ref = ? WHERE id = ?').run('failed_final', nowIso(), this.redactError(failure), completion.engineSessionRef, run.id);
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), run.jobId);
     const receipt = this.receiptManager.writeReceipt({
       runId: run.id,
@@ -1085,7 +1091,7 @@ export class PopeyeRuntimeService {
     const run = this.getRun(runId);
     if (!run || isTerminalRunState(run.state)) return;
     this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
-    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), reason, run.id);
+    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), this.redactError(reason), run.id);
     await this.applyRecoveryDecision(run.jobId, run.id, reason);
     const activeRun = this.activeRuns.get(runId);
     if (activeRun) this.cleanupActiveRun(activeRun);

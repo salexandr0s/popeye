@@ -4,17 +4,31 @@ import { DataClassificationSchema } from './config.js';
 export const MemoryTypeSchema = z.enum(['episodic', 'semantic', 'procedural']);
 export type MemoryType = z.infer<typeof MemoryTypeSchema>;
 
+export const MemorySourceTypeSchema = z.enum([
+  'receipt',
+  'telegram',
+  'daily_summary',
+  'curated_memory',
+  'workspace_doc',
+  'compaction_flush',
+]);
+export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
+
 export const MemoryRecordSchema = z.object({
   id: z.string(),
   description: z.string(),
   classification: DataClassificationSchema,
-  sourceType: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc']),
+  sourceType: MemorySourceTypeSchema,
   content: z.string(),
   confidence: z.number().min(0).max(1),
   scope: z.string().default('workspace'),
   sourceRunId: z.string().nullable().default(null),
   sourceTimestamp: z.string().nullable().default(null),
-  createdAt: z.string().default(''),
+  memoryType: MemoryTypeSchema.default('episodic'),
+  dedupKey: z.string().nullable().default(null),
+  lastReinforcedAt: z.string().nullable().default(null),
+  archivedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
 });
 export type MemoryRecord = z.infer<typeof MemoryRecordSchema>;
 
@@ -76,6 +90,33 @@ export const MemoryConsolidationRecordSchema = z.object({
   id: z.string(),
   memoryId: z.string(),
   mergedIntoId: z.string(),
+  reason: z.string().default(''),
   createdAt: z.string(),
 });
 export type MemoryConsolidationRecord = z.infer<typeof MemoryConsolidationRecordSchema>;
+
+export const MemoryAuditResponseSchema = z.object({
+  totalMemories: z.number().int().nonnegative(),
+  activeMemories: z.number().int().nonnegative(),
+  archivedMemories: z.number().int().nonnegative(),
+  byType: z.record(z.string(), z.number().int().nonnegative()),
+  byScope: z.record(z.string(), z.number().int().nonnegative()),
+  byClassification: z.record(z.string(), z.number().int().nonnegative()),
+  averageConfidence: z.number().nonnegative(),
+  staleCount: z.number().int().nonnegative(),
+  consolidationsPerformed: z.number().int().nonnegative(),
+  lastDecayRunAt: z.string().nullable(),
+  lastConsolidationRunAt: z.string().nullable(),
+  lastDailySummaryAt: z.string().nullable(),
+});
+export type MemoryAuditResponse = z.infer<typeof MemoryAuditResponseSchema>;
+
+export const MemorySearchQuerySchema = z.object({
+  query: z.string(),
+  scope: z.string().optional(),
+  memoryTypes: z.array(MemoryTypeSchema).optional(),
+  minConfidence: z.number().min(0).max(1).optional(),
+  limit: z.number().int().positive().max(100).optional(),
+  includeContent: z.boolean().optional(),
+});
+export type MemorySearchQuery = z.infer<typeof MemorySearchQuerySchema>;

@@ -93,6 +93,7 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
     }
   }
 
+  // TODO(security): validate custom patterns for catastrophic backtracking
   for (const pattern of config.security.redactionPatterns) {
     try {
       new RegExp(pattern, 'g');

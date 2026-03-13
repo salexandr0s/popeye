@@ -23,10 +23,7 @@ import { redactText } from '@popeye/observability';
 
 import type { RuntimeDatabases } from './database.js';
 import { scanPrompt } from './prompt.js';
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
+import { nowIso } from './clock.js';
 
 function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
   if (input.source !== 'telegram' || !input.chatId || typeof input.telegramMessageId !== 'number') {
@@ -403,7 +400,7 @@ export class MessageIngestionService {
           accepted: false,
           duplicate: false,
           httpStatus: 400,
-          decisionCode: 'telegram_invalid_message',
+          decisionCode: 'prompt_injection_quarantined',
           decisionReason: 'Message was quarantined by prompt-injection detection',
           message: null,
           taskId: null,

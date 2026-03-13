@@ -19,6 +19,14 @@ export const TelegramConfigSchema = z.object({
   allowedUserId: z.string().min(1).optional(),
   maxMessagesPerMinute: z.number().int().positive().default(10),
   rateLimitWindowSeconds: z.number().int().positive().default(60),
+}).superRefine((data, ctx) => {
+  if (data.enabled && !data.allowedUserId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'allowedUserId is required when telegram is enabled',
+      path: ['allowedUserId'],
+    });
+  }
 });
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
@@ -55,6 +63,15 @@ export const WorkspaceConfigSchema = z.object({
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 
+export const MemoryConfigSchema = z.object({
+  confidenceHalfLifeDays: z.number().positive().default(30),
+  archiveThreshold: z.number().min(0).max(1).default(0.1),
+  consolidationEnabled: z.boolean().default(true),
+  compactionFlushConfidence: z.number().min(0).max(1).default(0.7),
+  dailySummaryHour: z.number().int().min(0).max(23).default(2),
+});
+export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
+
 export const AppConfigSchema = z.object({
   runtimeDataDir: z.string().min(1),
   authFile: z.string().min(1),
@@ -62,6 +79,7 @@ export const AppConfigSchema = z.object({
   telegram: TelegramConfigSchema,
   embeddings: EmbeddingConfigSchema,
   engine: EngineConfigSchema.default({ kind: 'fake', command: 'node', args: [] }),
+  memory: MemoryConfigSchema.default({}),
   workspaces: z.array(WorkspaceConfigSchema).default([
     {
       id: 'default',
@@ -93,5 +111,6 @@ export const RuntimePathsSchema = z.object({
   receiptsByRunDir: z.string(),
   receiptsByDayDir: z.string(),
   backupsDir: z.string(),
+  memoryDailyDir: z.string(),
 });
 export type RuntimePaths = z.infer<typeof RuntimePathsSchema>;

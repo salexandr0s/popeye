@@ -24,10 +24,23 @@ export interface ScoredCandidate {
   };
 }
 
+/** Pre-fetched metadata for vec-only candidates (not in FTS results). */
+export interface VecOnlyMetadata {
+  memoryId: string;
+  description: string;
+  content: string;
+  memoryType: MemoryType;
+  confidence: number;
+  scope: string;
+  sourceType: string;
+  createdAt: string;
+  lastReinforcedAt: string | null;
+}
+
 export function rerankAndMerge(
   ftsCandidates: FtsCandidate[],
   vecCandidates: VecCandidate[],
-  params: { halfLifeDays: number; queryScope?: string; now?: Date },
+  params: { halfLifeDays: number; queryScope?: string; now?: Date; vecOnlyMetadata?: Map<string, VecOnlyMetadata> },
 ): ScoredCandidate[] {
   const now = params.now ?? new Date();
 
@@ -50,35 +63,38 @@ export function rerankAndMerge(
 
   for (const id of allIds) {
     const fts = ftsMap.get(id);
-    // We need the FTS candidate for metadata; skip if only vec without FTS data
-    if (!fts) continue;
+    const vecMeta = params.vecOnlyMetadata?.get(id);
 
-    const ftsRelevance = normalizeRelevanceScore(fts.ftsRank);
+    // Need metadata from FTS or pre-fetched vec-only metadata
+    const meta = fts ?? vecMeta;
+    if (!meta) continue;
+
+    const ftsRelevance = fts ? normalizeRelevanceScore(fts.ftsRank) : 0;
     const vecDistance = vecMap.get(id);
     const vecRelevance = vecDistance !== undefined ? 1 - vecDistance : 0;
     const relevance = Math.max(ftsRelevance, vecRelevance);
 
-    const recency = computeRecencyScore(fts.createdAt, now);
+    const recency = computeRecencyScore(meta.createdAt, now);
 
-    const referenceDate = fts.lastReinforcedAt ?? fts.createdAt;
+    const referenceDate = meta.lastReinforcedAt ?? meta.createdAt;
     const daysSinceReinforcement = (now.getTime() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
-    const effectiveConfidence = computeConfidenceDecay(fts.confidence, daysSinceReinforcement, params.halfLifeDays);
+    const effectiveConfidence = computeConfidenceDecay(meta.confidence, daysSinceReinforcement, params.halfLifeDays);
 
-    const scopeMatch = computeScopeMatchScore(fts.scope, params.queryScope);
+    const scopeMatch = computeScopeMatchScore(meta.scope, params.queryScope);
 
     const score = (0.4 * relevance) + (0.25 * recency) + (0.2 * effectiveConfidence) + (0.15 * scopeMatch);
 
     results.push({
-      memoryId: fts.memoryId,
-      description: fts.description,
-      content: fts.content,
-      memoryType: fts.memoryType,
-      confidence: fts.confidence,
+      memoryId: meta.memoryId,
+      description: meta.description,
+      content: meta.content,
+      memoryType: meta.memoryType,
+      confidence: meta.confidence,
       effectiveConfidence,
-      scope: fts.scope,
-      sourceType: fts.sourceType,
-      createdAt: fts.createdAt,
-      lastReinforcedAt: fts.lastReinforcedAt,
+      scope: meta.scope,
+      sourceType: meta.sourceType,
+      createdAt: meta.createdAt,
+      lastReinforcedAt: meta.lastReinforcedAt,
       score,
       scoreBreakdown: {
         relevance,
@@ -88,9 +104,6 @@ export function rerankAndMerge(
       },
     });
   }
-
-  // Also handle vec-only candidates if they have metadata from a separate lookup
-  // For now, vec-only candidates without FTS data are skipped (they lack metadata)
 
   results.sort((a, b) => b.score - a.score);
   return results;

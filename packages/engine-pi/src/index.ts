@@ -160,6 +160,18 @@ class ProcessHandle implements EngineRunHandle {
 
   async cancel(): Promise<void> {
     this.child.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      const graceTimer = setTimeout(() => {
+        if (this.child.exitCode === null) {
+          this.child.kill('SIGKILL');
+        }
+        resolve();
+      }, 5000);
+      this.child.on('exit', () => {
+        clearTimeout(graceTimer);
+        resolve();
+      });
+    });
   }
 
   async wait(): Promise<EngineRunCompletion> {
@@ -452,9 +464,18 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 
   async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    // Security: this.command comes from operator-owned config, validated by Zod at startup,
+    // stored in a 0o700 directory. Adding a safelist would break custom deployments.
+    // Sanitize env to avoid leaking parent process secrets to the child.
     const child = spawn(this.command, this.args, {
       cwd: this.piPath,
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        NODE_ENV: process.env.NODE_ENV,
+        TERM: process.env.TERM,
+      },
     });
     const events: NormalizedEngineEvent[] = [];
     let stdoutBuffer = '';
@@ -487,9 +508,9 @@ export class PiEngineAdapter implements EngineAdapter {
             usage = {
               provider: String(event.payload.provider ?? usage.provider),
               model: String(event.payload.model ?? usage.model),
-              tokensIn: (event.payload.tokensIn as number) ?? usage.tokensIn,
-              tokensOut: (event.payload.tokensOut as number) ?? usage.tokensOut,
-              estimatedCostUsd: (event.payload.estimatedCostUsd as number) ?? usage.estimatedCostUsd,
+              tokensIn: Number(event.payload.tokensIn ?? usage.tokensIn),
+              tokensOut: Number(event.payload.tokensOut ?? usage.tokensOut),
+              estimatedCostUsd: Number(event.payload.estimatedCostUsd ?? usage.estimatedCostUsd),
             };
           }
           if (event.type === 'failed') {

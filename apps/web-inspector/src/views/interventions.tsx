@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DataTable, type Column } from '../components/data-table';
 import { Badge } from '../components/badge';
 import { Loading } from '../components/loading';
@@ -6,21 +7,20 @@ import { EmptyState } from '../components/empty-state';
 import { PageHeader } from '../components/page-header';
 import { useInterventions, type InterventionRecord } from '../api/hooks';
 import { useApi } from '../api/provider';
-
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
+import { formatTime } from '../utils/format';
 
 export function Interventions() {
   const { data: interventions, error, loading, refetch } = useInterventions();
   const api = useApi();
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleResolve = async (id: string) => {
     try {
+      setActionError(null);
       await api.post(`/v1/interventions/${id}/resolve`);
       refetch();
-    } catch {
-      // Error handling deferred
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Resolve failed');
     }
   };
 
@@ -85,6 +85,7 @@ export function Interventions() {
         title="Interventions"
         description="Operator-required actions"
       />
+      {actionError ? <ErrorDisplay message={actionError} /> : null}
       {interventions && interventions.length > 0 ? (
         <DataTable
           columns={columns}

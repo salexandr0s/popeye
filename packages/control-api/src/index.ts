@@ -26,6 +26,21 @@ export interface ControlApiDependencies {
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+const MemorySearchQueryParamsSchema = z.object({
+  q: z.string().optional(),
+  query: z.string().optional(),
+  scope: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  types: z.string().optional(),
+  full: z.string().optional(),
+});
+
+const MemoryListQueryParamsSchema = z.object({
+  type: z.string().optional(),
+  scope: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+});
+
 function parseIdParam(params: unknown): string {
   return PathIdParamSchema.parse(params).id;
 }
@@ -36,8 +51,20 @@ export async function createControlApi(
   const app = Fastify();
   await app.register(sensible);
 
+  // Cached auth store to avoid per-request file reads
+  let cachedAuthStore: ReturnType<typeof readAuthStore> | null = null;
+  let authStoreLastRead = 0;
+  function getCachedAuthStore(): ReturnType<typeof readAuthStore> {
+    const now = Date.now();
+    if (!cachedAuthStore || now - authStoreLastRead > 5000) {
+      cachedAuthStore = readAuthStore(dependencies.runtime.config.authFile);
+      authStoreLastRead = now;
+    }
+    return cachedAuthStore;
+  }
+
   app.addHook('preHandler', async (request, reply) => {
-    const authStore = readAuthStore(dependencies.runtime.config.authFile);
+    const authStore = getCachedAuthStore();
     if (!validateBearerToken(request.headers.authorization, authStore)) {
       return reply.code(401).send({ error: 'unauthorized' });
     }
@@ -162,14 +189,14 @@ export async function createControlApi(
   );
 
   app.get('/v1/memory/search', async (request) => {
-    const params = request.query as { q?: string; query?: string; scope?: string; limit?: string; types?: string; full?: string };
+    const params = MemorySearchQueryParamsSchema.parse(request.query);
     const queryText = params.q ?? params.query ?? '';
     if (!queryText) return { query: '', results: [], totalCandidates: 0, latencyMs: 0, searchMode: 'fts_only' };
     return dependencies.runtime.searchMemory({
       query: queryText,
       scope: params.scope,
       memoryTypes: params.types ? (params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>) : undefined,
-      limit: params.limit ? parseInt(params.limit, 10) : 20,
+      limit: params.limit ?? 20,
       includeContent: params.full === 'true',
     });
   });
@@ -184,11 +211,11 @@ export async function createControlApi(
   });
 
   app.get('/v1/memory', async (request) => {
-    const params = request.query as { type?: string; scope?: string; limit?: string };
+    const params = MemoryListQueryParamsSchema.parse(request.query);
     return dependencies.runtime.listMemories({
       type: params.type,
       scope: params.scope,
-      limit: params.limit ? parseInt(params.limit, 10) : 50,
+      limit: params.limit ?? 50,
     });
   });
 
@@ -205,9 +232,13 @@ export async function createControlApi(
       reply.raw.write(`data: ${event.data}\n\n`);
     };
     dependencies.runtime.events.on('event', listener);
-    reply.raw.on('close', () =>
-      dependencies.runtime.events.off('event', listener),
-    );
+    const heartbeat = setInterval(() => {
+      reply.raw.write(': heartbeat\n\n');
+    }, 30_000);
+    reply.raw.on('close', () => {
+      clearInterval(heartbeat);
+      dependencies.runtime.events.off('event', listener);
+    });
   });
 
   app.post('/v1/messages/ingest', async (request, reply) => {
@@ -232,7 +263,7 @@ export async function createControlApi(
     findings: dependencies.runtime.getSecurityAuditFindings(),
   }));
   app.get('/v1/security/csrf-token', async (_request, reply) => {
-    const authStore = readAuthStore(dependencies.runtime.config.authFile);
+    const authStore = getCachedAuthStore();
     const token = issueCsrfToken(authStore);
     reply.header(
       'set-cookie',

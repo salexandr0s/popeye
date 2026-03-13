@@ -23,6 +23,13 @@
     "command": "node",
     "args": []
   },
+  "memory": {
+    "confidenceHalfLifeDays": 30,
+    "archiveThreshold": 0.1,
+    "consolidationEnabled": true,
+    "compactionFlushConfidence": 0.7,
+    "dailySummaryHour": 2
+  },
   "workspaces": [
     {
       "id": "default",

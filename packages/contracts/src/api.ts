@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { EngineKindSchema } from './engine.js';
-import { TaskRecordSchema, JobRecordSchema, RunRecordSchema } from './execution.js';
+import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema, AgentProfileRecordSchema } from './execution.js';
 import { SecurityAuditFindingSchema } from './security.js';
+import { WorkspaceRecordSchema } from './config.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -86,28 +87,13 @@ export const ErrorResponseSchema = z.object({
 });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
-export const WorkspaceListItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  rootPath: z.string().nullable().default(null),
-  createdAt: z.string(),
-});
+export const WorkspaceListItemSchema = WorkspaceRecordSchema;
 export type WorkspaceListItem = z.infer<typeof WorkspaceListItemSchema>;
 
-export const ProjectListItemSchema = z.object({
-  id: z.string(),
-  workspaceId: z.string(),
-  name: z.string(),
-  path: z.string().nullable().default(null),
-  createdAt: z.string(),
-});
+export const ProjectListItemSchema = ProjectRecordSchema;
 export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
 
-export const AgentProfileListItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  createdAt: z.string(),
-});
+export const AgentProfileListItemSchema = AgentProfileRecordSchema;
 export type AgentProfileListItem = z.infer<typeof AgentProfileListItemSchema>;
 
 export const MemorySearchResultItemSchema = z.object({
@@ -128,7 +114,7 @@ export const MemorySearchApiResponseSchema = z.object({
 export type MemorySearchApiResponse = z.infer<typeof MemorySearchApiResponseSchema>;
 
 export const PathIdParamSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).max(100),
 });
 export type PathIdParam = z.infer<typeof PathIdParamSchema>;
 

@@ -98,6 +98,9 @@ importers:
 
   apps/web-inspector:
     dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       react:
         specifier: ^19.1.0
         version: 19.2.4

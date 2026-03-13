@@ -34,10 +34,11 @@ export function keychainGet(key: string): KeychainResult {
 
 export function keychainSet(key: string, value: string): KeychainResult {
   const service = keychainServiceName(key);
+  // Pass secret via stdin to avoid exposing it in process args (visible in ps)
   const result = spawnSync(
     'security',
-    ['add-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT, '-w', value, '-U'],
-    { encoding: 'utf8' },
+    ['add-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT, '-w', '-U'],
+    { input: value, encoding: 'utf8' },
   );
   if (result.status === 0) {
     return { ok: true };

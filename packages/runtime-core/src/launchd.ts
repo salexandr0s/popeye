@@ -30,9 +30,18 @@ export function getLaunchAgentTarget(label = 'dev.popeye.popeyed'): string {
   return `gui/${process.getuid()}/${label}`;
 }
 
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
 export function createLaunchdPlist(options: LaunchdInstallOptions): string {
-  const label = options.label ?? 'dev.popeye.popeyed';
-  const nodeExecutable = options.nodeExecutable ?? process.execPath;
+  const label = xmlEscape(options.label ?? 'dev.popeye.popeyed');
+  const nodeExecutable = xmlEscape(options.nodeExecutable ?? process.execPath);
+  const entryPoint = xmlEscape(options.daemonEntryPoint);
+  const workDir = xmlEscape(options.workingDirectory);
+  const configPath = xmlEscape(options.configPath);
+  const outLog = xmlEscape(join(options.workingDirectory, 'launchd.out.log'));
+  const errLog = xmlEscape(join(options.workingDirectory, 'launchd.err.log'));
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -42,23 +51,23 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
   <key>ProgramArguments</key>
   <array>
     <string>${nodeExecutable}</string>
-    <string>${options.daemonEntryPoint}</string>
+    <string>${entryPoint}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${options.workingDirectory}</string>
+  <string>${workDir}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>POPEYE_CONFIG_PATH</key>
-    <string>${options.configPath}</string>
+    <string>${configPath}</string>
   </dict>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${join(options.workingDirectory, 'launchd.out.log')}</string>
+  <string>${outLog}</string>
   <key>StandardErrorPath</key>
-  <string>${join(options.workingDirectory, 'launchd.err.log')}</string>
+  <string>${errLog}</string>
 </dict>
 </plist>`;
 }

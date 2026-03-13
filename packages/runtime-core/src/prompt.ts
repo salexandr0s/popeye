@@ -1,5 +1,6 @@
 import { type PromptScanResult } from '@popeye/contracts';
 
+// TODO(security): make quarantine/sanitize rules configurable via config
 const SANITIZE_RULES: Array<{ name: string; pattern: RegExp; replacement: string }> = [
   { name: 'ignore-previous', pattern: /ignore previous instructions/gi, replacement: '[sanitized instruction override]' },
   { name: 'system-prompt', pattern: /reveal (the )?system prompt/gi, replacement: '[sanitized secret request]' },

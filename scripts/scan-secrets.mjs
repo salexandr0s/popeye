@@ -14,9 +14,9 @@ const patterns = [
   /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_/]+/g,
 ];
 
-function isFixtureFile(path) {
+function isSkippedFile(path) {
   const name = basename(path);
-  return name.endsWith('.test.ts') || name.endsWith('.spec.ts');
+  return name.endsWith('.test.ts') || name.endsWith('.spec.ts') || name.endsWith('.md');
 }
 
 function walk(dir) {
@@ -29,7 +29,7 @@ function walk(dir) {
       walk(full);
       continue;
     }
-    if (isFixtureFile(full)) {
+    if (isSkippedFile(full)) {
       continue;
     }
     const text = readFileSync(full, 'utf8');

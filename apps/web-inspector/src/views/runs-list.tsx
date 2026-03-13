@@ -6,11 +6,7 @@ import { ErrorDisplay } from '../components/error-display';
 import { EmptyState } from '../components/empty-state';
 import { PageHeader } from '../components/page-header';
 import { useRuns, useTasks, type RunRecord, type TaskRecord } from '../api/hooks';
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '--';
-  return new Date(iso).toLocaleString();
-}
+import { formatTime } from '../utils/format';
 
 export function RunsList() {
   const { data: runs, error, loading } = useRuns();

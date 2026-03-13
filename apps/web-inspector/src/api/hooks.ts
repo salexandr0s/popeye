@@ -1,6 +1,67 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApi } from './provider';
 
+import type {
+  DaemonStatusResponse,
+  RunRecord,
+  RunEventRecord,
+  JobRecord,
+  TaskRecord,
+  ReceiptRecord,
+  InterventionRecord,
+  UsageSummary,
+  SchedulerStatusResponse,
+  SecurityAuditFinding,
+  HealthResponse,
+} from '@popeye/contracts';
+
+// Re-export contract types for view convenience
+export type { RunRecord, RunEventRecord, JobRecord, TaskRecord, ReceiptRecord, InterventionRecord, SecurityAuditFinding };
+
+// Local types — diverge from contracts (API returns memoryId/memoryType, not id/type)
+export interface MemorySearchResult {
+  memoryId: string;
+  description: string;
+  content: string | null;
+  memoryType: string;
+  confidence: number;
+  effectiveConfidence: number;
+  scope: string;
+  sourceType: string;
+  createdAt: string;
+  lastReinforcedAt: string | null;
+  score: number;
+  scoreBreakdown: {
+    relevance: number;
+    recency: number;
+    confidence: number;
+    scopeMatch: number;
+  };
+}
+
+export interface MemorySearchResponse {
+  results: MemorySearchResult[];
+  query: string;
+  totalCandidates: number;
+  latencyMs: number;
+  searchMode: string;
+}
+
+export interface InstructionBundle {
+  id: string;
+  sources: Array<{
+    precedence: number;
+    type: string;
+    path?: string;
+    contentHash: string;
+    content: string;
+  }>;
+  compiledText: string;
+  bundleHash: string;
+  warnings: string[];
+  createdAt: string;
+}
+
 interface PollingResult<T> {
   data: T | null;
   error: string | null;
@@ -65,176 +126,22 @@ function useFetch<T>(path: string | null): PollingResult<T> {
   return { data, error, loading, refetch: fetchData };
 }
 
-// --- Domain types for API responses ---
-
-export interface DaemonStatus {
-  ok: boolean;
-  runningJobs: number;
-  queuedJobs: number;
-  openInterventions: number;
-  activeLeases: number;
-  engineKind: string;
-  schedulerRunning: boolean;
-  startedAt: string;
-  lastShutdownAt: string | null;
-}
-
-export interface RunRecord {
-  id: string;
-  jobId: string;
-  taskId: string;
-  workspaceId: string;
-  sessionRootId: string;
-  engineSessionRef: string | null;
-  state: string;
-  startedAt: string;
-  finishedAt: string | null;
-  error: string | null;
-}
-
-export interface RunEventRecord {
-  id: string;
-  runId: string;
-  type: string;
-  payload: string;
-  createdAt: string;
-}
-
-export interface JobRecord {
-  id: string;
-  taskId: string;
-  workspaceId: string;
-  status: string;
-  retryCount: number;
-  availableAt: string;
-  lastRunId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface TaskRecord {
-  id: string;
-  workspaceId: string;
-  projectId: string | null;
-  title: string;
-  prompt: string;
-  source: string;
-  status: string;
-  createdAt: string;
-}
-
-export interface ReceiptRecord {
-  id: string;
-  runId: string;
-  jobId: string;
-  taskId: string;
-  workspaceId: string;
-  status: string;
-  summary: string;
-  details: string;
-  usage: {
-    provider: string;
-    model: string;
-    tokensIn: number;
-    tokensOut: number;
-    estimatedCostUsd: number;
-  };
-  createdAt: string;
-}
-
-export interface InterventionRecord {
-  id: string;
-  code: string;
-  runId: string | null;
-  status: string;
-  reason: string;
-  createdAt: string;
-  resolvedAt: string | null;
-}
-
-export interface InstructionBundle {
-  id: string;
-  sources: Array<{
-    precedence: number;
-    type: string;
-    path?: string;
-    contentHash: string;
-    content: string;
-  }>;
-  compiledText: string;
-  bundleHash: string;
-  warnings: string[];
-  createdAt: string;
-}
-
-export interface MemorySearchResult {
-  memoryId: string;
-  description: string;
-  content: string | null;
-  memoryType: string;
-  confidence: number;
-  effectiveConfidence: number;
-  scope: string;
-  sourceType: string;
-  createdAt: string;
-  lastReinforcedAt: string | null;
-  score: number;
-  scoreBreakdown: {
-    relevance: number;
-    recency: number;
-    confidence: number;
-    scopeMatch: number;
-  };
-}
-
-export interface MemorySearchResponse {
-  results: MemorySearchResult[];
-  query: string;
-  totalCandidates: number;
-  latencyMs: number;
-  searchMode: string;
-}
-
-export interface UsageSummary {
-  runs: number;
-  tokensIn: number;
-  tokensOut: number;
-  estimatedCostUsd: number;
-}
-
-export interface SchedulerStatus {
-  running: boolean;
-  activeLeases: number;
-  activeRuns: number;
-  nextHeartbeatDueAt: string | null;
-}
-
-export interface SecurityAuditFinding {
-  code: string;
-  severity: string;
-  message: string;
-}
-
-export interface HealthResponse {
-  ok: boolean;
-}
-
 // --- Hooks ---
 
 export function useDaemonStatus() {
-  return usePolling<DaemonStatus>('/v1/status', 5000);
+  return usePolling<DaemonStatusResponse>('/v1/status', 5000);
 }
 
 export function useRuns() {
   return usePolling<RunRecord[]>('/v1/runs', 3000);
 }
 
-export function useRun(id: string) {
-  return useFetch<RunRecord>(`/v1/runs/${id}`);
+export function useRun(id: string | undefined) {
+  return useFetch<RunRecord>(id ? `/v1/runs/${id}` : null);
 }
 
-export function useRunEvents(runId: string) {
-  return useFetch<RunEventRecord[]>(`/v1/runs/${runId}/events`);
+export function useRunEvents(runId: string | undefined) {
+  return useFetch<RunEventRecord[]>(runId ? `/v1/runs/${runId}/events` : null);
 }
 
 export function useJobs() {
@@ -245,8 +152,8 @@ export function useReceipts() {
   return usePolling<ReceiptRecord[]>('/v1/receipts', 5000);
 }
 
-export function useReceipt(id: string) {
-  return useFetch<ReceiptRecord>(`/v1/receipts/${id}`);
+export function useReceipt(id: string | undefined) {
+  return useFetch<ReceiptRecord>(id ? `/v1/receipts/${id}` : null);
 }
 
 export function useInterventions() {
@@ -258,7 +165,7 @@ export function useTasks() {
 }
 
 export function useSchedulerStatus() {
-  return useFetch<SchedulerStatus>('/v1/daemon/scheduler');
+  return useFetch<SchedulerStatusResponse>('/v1/daemon/scheduler');
 }
 
 export function useUsageSummary() {

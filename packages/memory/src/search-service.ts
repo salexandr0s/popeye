@@ -8,18 +8,20 @@ import { classifyMemoryType, computeDedupKey, computeReinforcedConfidence } from
 import type { EmbeddingClient } from './embedding-client.js';
 import { searchFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
 import { rerankAndMerge } from './scoring.js';
-import type { ScoredCandidate } from './scoring.js';
+import type { ScoredCandidate, VecOnlyMetadata } from './scoring.js';
 import { deleteVecEmbedding, insertVecEmbedding, searchVec } from './vec-search.js';
 
 export class MemorySearchService {
   private readonly db: Database.Database;
   private readonly embeddingClient: EmbeddingClient;
-  private readonly vecAvailable: boolean;
+  private readonly getVecAvailable: () => boolean;
+  private readonly halfLifeDays: number;
 
-  constructor(opts: { db: Database.Database; embeddingClient: EmbeddingClient; vecAvailable: boolean }) {
+  constructor(opts: { db: Database.Database; embeddingClient: EmbeddingClient; vecAvailable: boolean | (() => boolean); halfLifeDays?: number }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
-    this.vecAvailable = opts.vecAvailable;
+    this.getVecAvailable = typeof opts.vecAvailable === 'function' ? opts.vecAvailable : () => opts.vecAvailable;
+    this.halfLifeDays = opts.halfLifeDays ?? 30;
   }
 
   async search(query: {
@@ -49,7 +51,7 @@ export class MemorySearchService {
     if (scope !== undefined) ftsFilters.scope = scope;
     if (memoryTypes !== undefined) ftsFilters.memoryTypes = memoryTypes;
 
-    const rerankParams: { halfLifeDays: number; queryScope?: string } = { halfLifeDays: 30 };
+    const rerankParams: { halfLifeDays: number; queryScope?: string } = { halfLifeDays: this.halfLifeDays };
     if (scope !== undefined) rerankParams.queryScope = scope;
 
     const mapResult = (c: ScoredCandidate): MemorySearchResult => ({
@@ -67,7 +69,7 @@ export class MemorySearchService {
       scoreBreakdown: c.scoreBreakdown,
     });
 
-    if (this.vecAvailable && this.embeddingClient.enabled) {
+    if (this.getVecAvailable() && this.embeddingClient.enabled) {
       searchMode = 'hybrid';
 
       // Fire FTS5 + embed in parallel
@@ -81,7 +83,31 @@ export class MemorySearchService {
         ? searchVec(this.db, queryEmbedding, limit * 3)
         : [];
 
-      const scored = rerankAndMerge(ftsCandidates, vecCandidates, rerankParams);
+      // Pre-fetch metadata for vec-only candidates (not in FTS results)
+      const ftsIds = new Set(ftsCandidates.map((c) => c.memoryId));
+      const vecOnlyIds = vecCandidates.filter((v) => !ftsIds.has(v.memoryId)).map((v) => v.memoryId);
+      const vecOnlyMetadata = new Map<string, VecOnlyMetadata>();
+      if (vecOnlyIds.length > 0) {
+        const placeholders = vecOnlyIds.map(() => '?').join(',');
+        const rows = this.db
+          .prepare(`SELECT id, description, content, memory_type, confidence, scope, source_type, created_at, last_reinforced_at FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
+          .all(...vecOnlyIds) as Array<{ id: string; description: string; content: string; memory_type: string; confidence: number; scope: string; source_type: string; created_at: string; last_reinforced_at: string | null }>;
+        for (const row of rows) {
+          vecOnlyMetadata.set(row.id, {
+            memoryId: row.id,
+            description: row.description,
+            content: row.content,
+            memoryType: row.memory_type as MemoryType,
+            confidence: row.confidence,
+            scope: row.scope,
+            sourceType: row.source_type,
+            createdAt: row.created_at,
+            lastReinforcedAt: row.last_reinforced_at,
+          });
+        }
+      }
+
+      const scored = rerankAndMerge(ftsCandidates, vecCandidates, { ...rerankParams, vecOnlyMetadata });
       results = scored.slice(0, limit).map(mapResult);
     } else {
       const ftsCandidates = searchFts5(this.db, queryText, ftsFilters);
@@ -156,7 +182,7 @@ export class MemorySearchService {
 
     // If embeddable and vec available: generate embedding, insert vec
     let embedded = false;
-    if (input.classification === 'embeddable' && this.vecAvailable && this.embeddingClient.enabled) {
+    if (input.classification === 'embeddable' && this.getVecAvailable() && this.embeddingClient.enabled) {
       // Embedding is async — we handle it synchronously for the store call via a flag
       // The caller should handle async embedding separately if needed
       embedded = false; // Will be set true after async embed
@@ -178,7 +204,7 @@ export class MemorySearchService {
   }): Promise<{ memoryId: string; embedded: boolean }> {
     const result = this.storeMemory(input);
 
-    if (input.classification === 'embeddable' && this.vecAvailable && this.embeddingClient.enabled) {
+    if (input.classification === 'embeddable' && this.getVecAvailable() && this.embeddingClient.enabled) {
       try {
         const embeddings = await this.embeddingClient.embed([input.content]);
         const embedding = embeddings[0];

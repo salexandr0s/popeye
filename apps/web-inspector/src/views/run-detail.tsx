@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useRun, useRunEvents } from '../api/hooks';
 import { useApi } from '../api/provider';
@@ -5,17 +6,14 @@ import { Badge } from '../components/badge';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
 import { PageHeader } from '../components/page-header';
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '--';
-  return new Date(iso).toLocaleString();
-}
+import { formatTime } from '../utils/format';
 
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
-  const { data: run, error, loading, refetch } = useRun(id ?? '');
-  const { data: events } = useRunEvents(id ?? '');
+  const { data: run, error, loading, refetch } = useRun(id);
+  const { data: events } = useRunEvents(id);
   const api = useApi();
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (loading) return <Loading />;
   if (error) return <ErrorDisplay message={error} />;
@@ -23,19 +21,21 @@ export function RunDetail() {
 
   const handleCancel = async () => {
     try {
+      setActionError(null);
       await api.post(`/v1/runs/${run.id}/cancel`);
       refetch();
-    } catch {
-      // Error handling deferred to UI feedback iteration
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Cancel failed');
     }
   };
 
   const handleRetry = async () => {
     try {
+      setActionError(null);
       await api.post(`/v1/jobs/${run.jobId}/enqueue`);
       refetch();
-    } catch {
-      // Error handling deferred to UI feedback iteration
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Retry failed');
     }
   };
 
@@ -106,6 +106,7 @@ export function RunDetail() {
         </div>
 
         {/* Actions */}
+        {actionError ? <ErrorDisplay message={actionError} /> : null}
         <div className="flex gap-[8px]">
           {!isTerminal ? (
             <button
