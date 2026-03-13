@@ -1,0 +1,382 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+
+import type { AppConfig, EngineFailureClassification, NormalizedEngineEvent, UsageMetrics } from '@popeye/contracts';
+
+export type { EngineFailureClassification } from '@popeye/contracts';
+
+const ENGINE_EVENT_TYPES = new Set<NormalizedEngineEvent['type']>(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage']);
+
+export interface EngineRunHandle {
+  pid: number | null;
+  cancel(): Promise<void>;
+  wait(): Promise<EngineRunCompletion>;
+  isAlive?(): boolean;
+}
+
+export interface EngineRunOptions {
+  onEvent?: (event: NormalizedEngineEvent) => void;
+  onHandle?: (handle: EngineRunHandle) => void;
+}
+
+export interface EngineRunResult {
+  events: NormalizedEngineEvent[];
+  engineSessionRef: string | null;
+  usage: UsageMetrics;
+  failureClassification: EngineFailureClassification | null;
+  failureMessage?: string;
+}
+
+export interface EngineRunCompletion {
+  engineSessionRef: string | null;
+  usage: UsageMetrics;
+  failureClassification: EngineFailureClassification | null;
+}
+
+export interface EngineExecution {
+  pid: number | null;
+  handle: EngineRunHandle;
+  completed: Promise<EngineRunCompletion>;
+}
+
+export interface EngineAdapter {
+  startRun(input: string, options?: EngineRunOptions): Promise<EngineRunHandle>;
+  run(input: string, options?: EngineRunOptions): Promise<EngineRunResult>;
+}
+
+export interface PiAdapterConfig {
+  piPath?: string;
+  command?: string;
+  args?: string[];
+}
+
+export interface PiCheckoutStatus {
+  path: string;
+  available: boolean;
+  packageJsonPath: string;
+}
+
+export interface PiChildRequest {
+  prompt: string;
+}
+
+export interface PiChildEvent {
+  type: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface PiCompatibilityResult {
+  ok: boolean;
+  eventTypes: string[];
+  eventsObserved: number;
+  engineSessionRef: string | null;
+}
+
+export class PiEngineAdapterNotConfiguredError extends Error {
+  constructor(message = 'Pi engine adapter is not configured in this repository yet') {
+    super(message);
+  }
+}
+
+export function resolvePiCheckoutPath(piPath?: string): string {
+  return resolve(piPath ?? '../pi');
+}
+
+export function inspectPiCheckout(piPath?: string): PiCheckoutStatus {
+  const path = resolvePiCheckoutPath(piPath);
+  const packageJsonPath = resolve(path, 'package.json');
+  return {
+    path,
+    available: existsSync(path) && existsSync(packageJsonPath),
+    packageJsonPath,
+  };
+}
+
+export function assertPiCheckoutAvailable(piPath?: string): PiCheckoutStatus {
+  const status = inspectPiCheckout(piPath);
+  if (!status.available) {
+    throw new PiEngineAdapterNotConfiguredError(
+      `Expected Pi checkout at ${status.path} with package.json present at ${status.packageJsonPath}`,
+    );
+  }
+  return status;
+}
+
+class ProcessHandle implements EngineRunHandle {
+  readonly pid: number | null;
+
+  constructor(
+    private readonly child: ReturnType<typeof spawn>,
+    private readonly completionPromise: Promise<EngineRunCompletion>,
+  ) {
+    this.pid = child.pid ?? null;
+  }
+
+  async cancel(): Promise<void> {
+    this.child.kill('SIGTERM');
+  }
+
+  async wait(): Promise<EngineRunCompletion> {
+    return this.completionPromise;
+  }
+
+  isAlive(): boolean {
+    const pid = this.child.pid;
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent, onEvent?: (event: NormalizedEngineEvent) => void): void {
+  events.push(event);
+  onEvent?.(event);
+}
+
+function parseEventLine(line: string): PiChildEvent {
+  const parsed = JSON.parse(line) as PiChildEvent;
+  if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') {
+    throw new Error('child event missing string type');
+  }
+  return parsed;
+}
+
+function normalizeEvent(line: string): NormalizedEngineEvent {
+  const parsed = parseEventLine(line);
+  if (!ENGINE_EVENT_TYPES.has(parsed.type as NormalizedEngineEvent['type'])) {
+    throw new Error(`unsupported event type: ${parsed.type}`);
+  }
+  const payloadEntries = Object.entries(parsed.payload ?? {}).map(([key, value]) => [key, typeof value === 'string' ? value : JSON.stringify(value)]);
+  return {
+    type: parsed.type as NormalizedEngineEvent['type'],
+    payload: Object.fromEntries(payloadEntries),
+    raw: line,
+  };
+}
+
+function defaultUsage(provider: string, model: string, input: string): UsageMetrics {
+  return {
+    provider,
+    model,
+    tokensIn: input.length,
+    tokensOut: 0,
+    estimatedCostUsd: 0,
+  };
+}
+
+export class FakeEngineAdapter implements EngineAdapter {
+  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const completion: EngineRunCompletion = {
+      engineSessionRef: `fake:${randomUUID()}`,
+      usage: {
+        provider: 'fake',
+        model: 'fake-engine',
+        tokensIn: input.length,
+        tokensOut: input.length,
+        estimatedCostUsd: 0,
+      },
+      failureClassification: null,
+    };
+    const handle: EngineRunHandle = {
+      pid: null,
+      cancel: async () => Promise.resolve(),
+      wait: async () => completion,
+      isAlive: () => false,
+    };
+    options.onHandle?.(handle);
+    options.onEvent?.({ type: 'started', payload: { input } });
+    options.onEvent?.({ type: 'session', payload: { sessionRef: completion.engineSessionRef } });
+    options.onEvent?.({ type: 'message', payload: { text: `echo:${input}` } });
+    options.onEvent?.({ type: 'completed', payload: { output: `echo:${input}` } });
+    options.onEvent?.({
+      type: 'usage',
+      payload: {
+        provider: completion.usage.provider,
+        model: completion.usage.model,
+        tokensIn: String(completion.usage.tokensIn),
+        tokensOut: String(completion.usage.tokensOut),
+        estimatedCostUsd: String(completion.usage.estimatedCostUsd),
+      },
+    });
+    return handle;
+  }
+
+  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+    const events: NormalizedEngineEvent[] = [];
+    const handle = await this.startRun(input, {
+      ...options,
+      onEvent: (event) => {
+        events.push(event);
+        options.onEvent?.(event);
+      },
+    });
+    const completion = await handle.wait();
+    return {
+      events,
+      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      usage: completion.usage,
+      failureClassification: completion.failureClassification,
+    };
+  }
+}
+
+export class PiEngineAdapter implements EngineAdapter {
+  private readonly piPath: string;
+  private readonly command: string;
+  private readonly args: string[];
+
+  constructor(config: PiAdapterConfig = {}) {
+    const status = assertPiCheckoutAvailable(config.piPath);
+    this.piPath = status.path;
+    this.command = config.command ?? 'node';
+    this.args = config.args ?? [];
+  }
+
+  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const child = spawn(this.command, this.args, {
+      cwd: this.piPath,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const events: NormalizedEngineEvent[] = [];
+    let stdoutBuffer = '';
+    let stderr = '';
+    let engineSessionRef: string | null = null;
+    let failureClassification: EngineFailureClassification | null = null;
+    let failureMessage: string | undefined;
+    let usage = defaultUsage('pi', 'external-pi', input);
+
+    const safeEmit = (event: NormalizedEngineEvent) => emitEvent(events, event, options.onEvent);
+    const failProtocol = (line: string, error: Error) => {
+      failureClassification = 'protocol_error';
+      failureMessage = error.message;
+      safeEmit({ type: 'failed', payload: { classification: 'protocol_error', message: error.message }, raw: line });
+    };
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
+        try {
+          const event = normalizeEvent(rawLine);
+          if (event.type === 'session') {
+            engineSessionRef = event.payload.engineSessionRef ?? event.payload.sessionId ?? event.payload.sessionRef ?? engineSessionRef;
+          }
+          if (event.type === 'usage') {
+            usage = {
+              provider: event.payload.provider ?? usage.provider,
+              model: event.payload.model ?? usage.model,
+              tokensIn: Number(event.payload.tokensIn ?? usage.tokensIn),
+              tokensOut: Number(event.payload.tokensOut ?? usage.tokensOut),
+              estimatedCostUsd: Number(event.payload.estimatedCostUsd ?? usage.estimatedCostUsd),
+            };
+          }
+          if (event.type === 'failed') {
+            failureClassification = (event.payload.classification as EngineFailureClassification | undefined) ?? 'permanent_failure';
+            failureMessage = event.payload.message ?? failureMessage;
+          }
+          safeEmit(event);
+        } catch (error) {
+          failProtocol(rawLine, error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    });
+
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.stdin.write(`${JSON.stringify({ prompt: input } satisfies PiChildRequest)}\n`);
+    child.stdin.end();
+
+    const completionPromise = new Promise<EngineRunCompletion>((resolveCompletion, rejectCompletion) => {
+      child.on('error', rejectCompletion);
+      child.on('close', (code) => {
+        const exitCode = code ?? 0;
+
+        if (stdoutBuffer.trim().length > 0) {
+          try {
+            const event = normalizeEvent(stdoutBuffer.trim());
+            safeEmit(event);
+          } catch (error) {
+            failProtocol(stdoutBuffer.trim(), error instanceof Error ? error : new Error(String(error)));
+          }
+        }
+
+        if (exitCode !== 0 && failureClassification === null) {
+          failureClassification = events.some((event) => event.type === 'started') ? 'permanent_failure' : 'startup_failure';
+          failureMessage = stderr || `Pi process failed with code ${exitCode}`;
+          safeEmit({ type: 'failed', payload: { classification: failureClassification, message: failureMessage, exitCode: String(exitCode) } });
+        }
+
+        if (!events.some((event) => event.type === 'usage')) {
+          safeEmit({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: String(usage.tokensIn), tokensOut: String(usage.tokensOut), estimatedCostUsd: String(usage.estimatedCostUsd) } });
+        }
+
+        if (!events.some((event) => event.type === 'completed') && failureClassification === null) {
+          safeEmit({ type: 'completed', payload: { output: '' } });
+        }
+
+        resolveCompletion({
+          engineSessionRef,
+          usage,
+          failureClassification,
+        });
+      });
+    });
+
+    const handle = new ProcessHandle(child, completionPromise);
+    options.onHandle?.(handle);
+    return handle;
+  }
+
+  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+    const events: NormalizedEngineEvent[] = [];
+    let failureMessage: string | undefined;
+    const handle = await this.startRun(input, {
+      ...options,
+      onEvent: (event) => {
+        events.push(event);
+        if (event.type === 'failed') {
+          failureMessage = event.payload.message;
+        }
+        options.onEvent?.(event);
+      },
+    });
+    const completion = await handle.wait();
+    return {
+      events,
+      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionId ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      usage: completion.usage,
+      failureClassification: completion.failureClassification,
+      failureMessage,
+    };
+  }
+}
+
+export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | PiAdapterConfig, prompt = 'compatibility-check'): Promise<PiCompatibilityResult> {
+  const adapter = 'startRun' in adapterOrConfig ? adapterOrConfig : new PiEngineAdapter(adapterOrConfig);
+  const result = await adapter.run(prompt);
+  return {
+    ok: result.failureClassification === null && Boolean(result.engineSessionRef),
+    eventTypes: result.events.map((event) => event.type),
+    eventsObserved: result.events.length,
+    engineSessionRef: result.engineSessionRef,
+  };
+}
+
+export function createEngineAdapter(config: AppConfig): EngineAdapter {
+  if (config.engine.kind === 'pi') {
+    assertPiCheckoutAvailable(config.engine.piPath);
+    return new PiEngineAdapter({ piPath: config.engine.piPath, command: config.engine.command, args: config.engine.args });
+  }
+  return new FakeEngineAdapter();
+}
