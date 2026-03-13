@@ -9,4 +9,28 @@ describe('redactText', () => {
     expect(result.text).toContain('[REDACTED:bearer-token]');
     expect(result.events.length).toBeGreaterThan(0);
   });
+
+  it('redacts AWS access keys', () => {
+    const result = redactText('Config: AKIAIOSFODNN7EXAMPLE is the key');
+    expect(result.text).toContain('[REDACTED:aws-access-key]');
+    expect(result.events.length).toBeGreaterThan(0);
+  });
+
+  it('redacts GitHub PATs', () => {
+    const result = redactText('Token: github_pat_abcdefghijklmnopqrst is set');
+    expect(result.text).toContain('[REDACTED:github-pat]');
+    expect(result.events.length).toBeGreaterThan(0);
+  });
+
+  it('redacts Anthropic keys', () => {
+    const result = redactText('Key: sk-ant-api03-abcdefghijklmnopqrst is configured');
+    expect(result.text).toContain('[REDACTED:anthropic-key]');
+    expect(result.events.length).toBeGreaterThan(0);
+  });
+
+  it('redacts Slack webhooks', () => {
+    const result = redactText('Webhook: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX');
+    expect(result.text).toContain('[REDACTED:slack-webhook]');
+    expect(result.events.length).toBeGreaterThan(0);
+  });
 });

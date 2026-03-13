@@ -9,6 +9,10 @@ const BUILTIN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'pem-block', pattern: /-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----/g },
   { name: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}/g },
   { name: 'hex-secret', pattern: /\b[a-fA-F0-9]{40,}\b/g },
+  { name: 'aws-access-key', pattern: /AKIA[A-Z0-9]{16}/g },
+  { name: 'github-pat', pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
+  { name: 'anthropic-key', pattern: /sk-ant-[A-Za-z0-9-]{20,}/g },
+  { name: 'slack-webhook', pattern: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_/]+/g },
 ];
 
 export interface RedactionResult {
