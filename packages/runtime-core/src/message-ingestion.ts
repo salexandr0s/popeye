@@ -1,0 +1,447 @@
+import { randomUUID } from 'node:crypto';
+
+import type {
+  AppConfig,
+  IngestMessageInput,
+  InterventionRecord,
+  MessageIngressDecisionCode,
+  MessageIngressRecord,
+  MessageIngressResponse,
+  MessageRecord,
+  SecurityAuditEvent,
+  TaskRecord,
+  JobRecord,
+  RunRecord,
+} from '@popeye/contracts';
+import {
+  IngestMessageInputSchema,
+  MessageIngressRecordSchema,
+  MessageIngressResponseSchema,
+  MessageRecordSchema,
+} from '@popeye/contracts';
+import { redactText } from '@popeye/observability';
+
+import type { RuntimeDatabases } from './database.js';
+import { scanPrompt } from './prompt.js';
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
+  if (input.source !== 'telegram' || !input.chatId || typeof input.telegramMessageId !== 'number') {
+    return null;
+  }
+  return `${input.source}:${input.chatId}:${input.telegramMessageId}`;
+}
+
+function readStringField(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumberField(input: Record<string, unknown>, key: string): number | undefined {
+  const value = input[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readTelegramChatTypeField(input: Record<string, unknown>, key: string): IngestMessageInput['chatType'] | undefined {
+  const value = input[key];
+  if (value === 'private' || value === 'group' || value === 'supergroup' || value === 'channel') {
+    return value;
+  }
+  return undefined;
+}
+
+export class MessageIngressError extends Error {
+  readonly statusCode: number;
+  readonly decisionCode: MessageIngressDecisionCode;
+  readonly response: MessageIngressResponse;
+
+  constructor(response: MessageIngressResponse) {
+    super(response.decisionReason);
+    this.name = 'MessageIngressError';
+    this.statusCode = response.httpStatus;
+    this.decisionCode = response.decisionCode;
+    this.response = response;
+  }
+}
+
+export interface MessageIngestionCallbacks {
+  recordSecurityAudit(event: SecurityAuditEvent): void;
+  createTask(input: { workspaceId: string; projectId: string | null; title: string; prompt: string; source: string; autoEnqueue: boolean }): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null };
+  createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void;
+}
+
+export class MessageIngestionService {
+  constructor(
+    private readonly databases: RuntimeDatabases,
+    private readonly config: AppConfig,
+    private readonly callbacks: MessageIngestionCallbacks,
+  ) {}
+
+  getMessageIngressByKey(idempotencyKey: string): MessageIngressRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM message_ingress WHERE idempotency_key = ?').get(idempotencyKey) as Record<string, string | number | null> | undefined;
+    if (!row) return null;
+    return MessageIngressRecordSchema.parse({
+      id: String(row.id),
+      source: row.source,
+      senderId: row.sender_id,
+      chatId: row.chat_id ? String(row.chat_id) : null,
+      chatType: row.chat_type ?? null,
+      telegramMessageId: typeof row.telegram_message_id === 'number' ? row.telegram_message_id : row.telegram_message_id === null ? null : Number(row.telegram_message_id),
+      idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : null,
+      workspaceId: row.workspace_id,
+      body: row.body,
+      accepted: Boolean(row.accepted),
+      decisionCode: row.decision_code,
+      decisionReason: row.decision_reason,
+      httpStatus: Number(row.http_status),
+      messageId: row.message_id ? String(row.message_id) : null,
+      taskId: row.task_id ? String(row.task_id) : null,
+      jobId: row.job_id ? String(row.job_id) : null,
+      runId: row.run_id ? String(row.run_id) : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  insertMessageIngress(record: MessageIngressRecord): void {
+    this.databases.app
+      .prepare(`
+        INSERT INTO message_ingress (
+          id, source, sender_id, chat_id, chat_type, telegram_message_id, idempotency_key, workspace_id, body, accepted,
+          decision_code, decision_reason, http_status, message_id, task_id, job_id, run_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        record.id,
+        record.source,
+        record.senderId,
+        record.chatId,
+        record.chatType,
+        record.telegramMessageId,
+        record.idempotencyKey,
+        record.workspaceId,
+        record.body,
+        record.accepted ? 1 : 0,
+        record.decisionCode,
+        record.decisionReason,
+        record.httpStatus,
+        record.messageId,
+        record.taskId,
+        record.jobId,
+        record.runId,
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
+  updateMessageIngressLinks(recordId: string, updates: Pick<MessageIngressRecord, 'messageId' | 'taskId' | 'jobId' | 'runId'>): void {
+    this.databases.app
+      .prepare('UPDATE message_ingress SET message_id = ?, task_id = ?, job_id = ?, run_id = ?, updated_at = ? WHERE id = ?')
+      .run(updates.messageId, updates.taskId, updates.jobId, updates.runId, nowIso(), recordId);
+  }
+
+  buildIngressResponse(record: MessageIngressRecord, duplicate: boolean): MessageIngressResponse {
+    return MessageIngressResponseSchema.parse({
+      accepted: record.accepted,
+      duplicate,
+      httpStatus: record.httpStatus,
+      decisionCode: duplicate && record.accepted ? 'duplicate_replayed' : record.decisionCode,
+      decisionReason: duplicate ? `duplicate delivery replayed: ${record.decisionReason}` : record.decisionReason,
+      message: record.messageId ? this.getMessage(record.messageId) : null,
+      taskId: record.taskId,
+      jobId: record.jobId,
+      runId: record.runId,
+    });
+  }
+
+  persistDeniedIngress(
+    input: IngestMessageInput,
+    body: string,
+    decisionCode: Extract<MessageIngressDecisionCode, 'telegram_disabled' | 'telegram_private_chat_required' | 'telegram_not_allowlisted' | 'telegram_rate_limited' | 'telegram_prompt_injection' | 'telegram_invalid_message'>,
+    decisionReason: string,
+    httpStatus: number,
+  ): MessageIngressRecord {
+    const timestamp = nowIso();
+    const record = MessageIngressRecordSchema.parse({
+      id: randomUUID(),
+      source: input.source,
+      senderId: input.senderId,
+      chatId: input.chatId ?? null,
+      chatType: input.chatType ?? null,
+      telegramMessageId: input.telegramMessageId ?? null,
+      idempotencyKey: buildMessageIngressKey(input),
+      workspaceId: input.workspaceId,
+      body,
+      accepted: false,
+      decisionCode,
+      decisionReason,
+      httpStatus,
+      messageId: null,
+      taskId: null,
+      jobId: null,
+      runId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    this.insertMessageIngress(record);
+    this.callbacks.recordSecurityAudit({
+      code: decisionCode,
+      severity: decisionCode === 'telegram_rate_limited' ? 'warn' : 'error',
+      message: decisionReason,
+      component: 'runtime-core',
+      timestamp,
+      details: {
+        source: input.source,
+        senderId: input.senderId,
+        chatId: input.chatId ?? '',
+        telegramMessageId: String(input.telegramMessageId ?? ''),
+      },
+    });
+    return record;
+  }
+
+  countRecentTelegramIngressAttempts(senderId: string, chatId: string): number {
+    const windowStart = new Date(Date.now() - this.config.telegram.rateLimitWindowSeconds * 1000).toISOString();
+    const row = this.databases.app
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM message_ingress
+        WHERE source = 'telegram'
+          AND created_at >= ?
+          AND (sender_id = ? OR chat_id = ?)
+      `)
+      .get(windowStart, senderId, chatId) as { count: number };
+    return row.count;
+  }
+
+  getMessage(messageId: string): MessageRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as Record<string, string | number | null> | undefined;
+    if (!row) return null;
+    return MessageRecordSchema.parse({
+      id: row.id,
+      source: row.source,
+      senderId: row.sender_id,
+      body: row.body,
+      accepted: Boolean(row.accepted),
+      relatedRunId: row.related_run_id,
+      createdAt: row.created_at,
+    });
+  }
+
+  ingestMessage(input: unknown): MessageIngressResponse {
+    const parsedResult = IngestMessageInputSchema.safeParse(input);
+    if (!parsedResult.success) {
+      const raw = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
+      const source = readStringField(raw, 'source');
+      const telegramCandidate = source === 'telegram';
+      if (telegramCandidate) {
+        const timestamp = nowIso();
+        const record = MessageIngressRecordSchema.parse({
+          id: randomUUID(),
+          source: 'telegram',
+          senderId: readStringField(raw, 'senderId') ?? 'unknown',
+          chatId: readStringField(raw, 'chatId') ?? null,
+          chatType: readTelegramChatTypeField(raw, 'chatType') ?? null,
+          telegramMessageId: readNumberField(raw, 'telegramMessageId') ?? null,
+          idempotencyKey: null,
+          workspaceId: readStringField(raw, 'workspaceId') ?? 'default',
+          body: readStringField(raw, 'text') ?? '',
+          accepted: false,
+          decisionCode: 'telegram_invalid_message',
+          decisionReason: 'Telegram ingress payload failed validation',
+          httpStatus: 400,
+          messageId: null,
+          taskId: null,
+          jobId: null,
+          runId: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        this.insertMessageIngress(record);
+        this.callbacks.recordSecurityAudit({
+          code: 'telegram_invalid_message',
+          severity: 'error',
+          message: 'Telegram ingress payload failed validation',
+          component: 'runtime-core',
+          timestamp,
+          details: { issues: String(parsedResult.error.issues.length) },
+        });
+        throw new MessageIngressError(this.buildIngressResponse(record, false));
+      }
+      throw parsedResult.error;
+    }
+
+    const parsed = parsedResult.data;
+    const idempotencyKey = buildMessageIngressKey(parsed);
+
+    if (idempotencyKey) {
+      const existing = this.getMessageIngressByKey(idempotencyKey);
+      if (existing) {
+        const response = this.buildIngressResponse(existing, true);
+        if (!existing.accepted) {
+          throw new MessageIngressError(response);
+        }
+        return response;
+      }
+    }
+
+    if (parsed.source === 'telegram') {
+      const redacted = redactText(parsed.text, this.config.security.redactionPatterns);
+      for (const event of redacted.events) this.callbacks.recordSecurityAudit(event);
+
+      if (!this.config.telegram.enabled) {
+        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_disabled', 'Telegram ingress is disabled', 403);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      if (parsed.chatType !== 'private') {
+        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_private_chat_required', 'Telegram ingress requires a private chat', 403);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      if (!this.config.telegram.allowedUserId || parsed.senderId !== this.config.telegram.allowedUserId) {
+        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_not_allowlisted', 'Telegram sender is not allowlisted', 403);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      if (this.countRecentTelegramIngressAttempts(parsed.senderId, parsed.chatId) >= this.config.telegram.maxMessagesPerMinute) {
+        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_rate_limited', 'Telegram rate limit exceeded', 429);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      const promptScan = scanPrompt(redacted.text);
+      const redactedPrompt = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
+      for (const event of redactedPrompt.events) this.callbacks.recordSecurityAudit(event);
+
+      if (promptScan.verdict === 'quarantine') {
+        const denied = this.persistDeniedIngress(parsed, redactedPrompt.text, 'telegram_prompt_injection', 'Telegram message was quarantined by prompt-injection detection', 400);
+        this.callbacks.createIntervention('prompt_injection_quarantined', null, `Prompt scan blocked telegram message ${denied.id}`);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      const timestamp = nowIso();
+      const message: MessageRecord = MessageRecordSchema.parse({
+        id: randomUUID(),
+        source: parsed.source,
+        senderId: parsed.senderId,
+        body: redactedPrompt.text,
+        accepted: true,
+        relatedRunId: null,
+        createdAt: timestamp,
+      });
+      this.databases.app.prepare('INSERT INTO messages (id, source, sender_id, body, accepted, related_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        message.id,
+        message.source,
+        message.senderId,
+        message.body,
+        1,
+        message.relatedRunId,
+        message.createdAt,
+      );
+
+      const ingressRecord = MessageIngressRecordSchema.parse({
+        id: randomUUID(),
+        source: parsed.source,
+        senderId: parsed.senderId,
+        chatId: parsed.chatId,
+        chatType: parsed.chatType,
+        telegramMessageId: parsed.telegramMessageId,
+        idempotencyKey,
+        workspaceId: parsed.workspaceId,
+        body: message.body,
+        accepted: true,
+        decisionCode: 'accepted',
+        decisionReason: promptScan.verdict === 'sanitize' ? 'Telegram message accepted after sanitization' : 'Telegram message accepted',
+        httpStatus: 200,
+        messageId: message.id,
+        taskId: null,
+        jobId: null,
+        runId: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      this.insertMessageIngress(ingressRecord);
+
+      const created = this.callbacks.createTask({
+        workspaceId: parsed.workspaceId,
+        projectId: null,
+        title: `message:${message.id}`,
+        prompt: message.body,
+        source: 'telegram',
+        autoEnqueue: true,
+      });
+      this.updateMessageIngressLinks(ingressRecord.id, {
+        messageId: message.id,
+        taskId: created.task.id,
+        jobId: created.job?.id ?? null,
+        runId: created.run?.id ?? null,
+      });
+
+      return MessageIngressResponseSchema.parse({
+        accepted: true,
+        duplicate: false,
+        httpStatus: 200,
+        decisionCode: 'accepted',
+        decisionReason: ingressRecord.decisionReason,
+        message,
+        taskId: created.task.id,
+        jobId: created.job?.id ?? null,
+        runId: created.run?.id ?? null,
+      });
+    }
+
+    const promptScan = scanPrompt(parsed.text);
+    const redacted = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
+    for (const event of redacted.events) this.callbacks.recordSecurityAudit(event);
+    if (promptScan.verdict === 'quarantine') {
+      this.callbacks.createIntervention('prompt_injection_quarantined', null, 'Prompt scan blocked a non-telegram message');
+      throw new MessageIngressError(
+        MessageIngressResponseSchema.parse({
+          accepted: false,
+          duplicate: false,
+          httpStatus: 400,
+          decisionCode: 'telegram_invalid_message',
+          decisionReason: 'Message was quarantined by prompt-injection detection',
+          message: null,
+          taskId: null,
+          jobId: null,
+          runId: null,
+        }),
+      );
+    }
+
+    const message: MessageRecord = MessageRecordSchema.parse({
+      id: randomUUID(),
+      source: parsed.source,
+      senderId: parsed.senderId,
+      body: redacted.text,
+      accepted: true,
+      relatedRunId: null,
+      createdAt: nowIso(),
+    });
+    this.databases.app.prepare('INSERT INTO messages (id, source, sender_id, body, accepted, related_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      message.id,
+      message.source,
+      message.senderId,
+      message.body,
+      1,
+      message.relatedRunId,
+      message.createdAt,
+    );
+    const created = this.callbacks.createTask({ workspaceId: parsed.workspaceId, projectId: null, title: `message:${message.id}`, prompt: message.body, source: parsed.source === 'manual' ? 'manual' : 'api', autoEnqueue: true });
+    return MessageIngressResponseSchema.parse({
+      accepted: true,
+      duplicate: false,
+      httpStatus: 200,
+      decisionCode: 'accepted',
+      decisionReason: 'Message accepted',
+      message,
+      taskId: created.task.id,
+      jobId: created.job?.id ?? null,
+      runId: created.run?.id ?? null,
+    });
+  }
+}

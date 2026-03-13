@@ -1,0 +1,177 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { sha256 } from '@popeye/observability';
+
+import { compileInstructionBundle } from './index.js';
+import { resolveInstructionSources, type ResolverDependencies } from './resolver.js';
+
+function makeDeps(overrides: Partial<ResolverDependencies> = {}): ResolverDependencies {
+  return {
+    getWorkspace: () => null,
+    getProject: () => null,
+    getPopeyeBaseInstructions: () => null,
+    getGlobalOperatorInstructions: () => null,
+    ...overrides,
+  };
+}
+
+describe('resolveInstructionSources', () => {
+  it('returns only inline sources when workspace has no rootPath', () => {
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws', taskBrief: 'do stuff' },
+      makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: null }) }),
+    );
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.type).toBe('task_brief');
+    expect(sources[0]!.precedence).toBe(7);
+  });
+
+  it('resolves WORKSPACE.md at precedence 4 with correct hash', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-ws-'));
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'workspace instructions');
+
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws' },
+      makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) }),
+    );
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.type).toBe('workspace');
+    expect(sources[0]!.precedence).toBe(4);
+    expect(sources[0]!.contentHash).toBe(sha256('workspace instructions'));
+    expect(sources[0]!.path).toBe(join(dir, 'WORKSPACE.md'));
+  });
+
+  it('resolves workspace + project at precedence 4 and 5', () => {
+    const wsDir = mkdtempSync(join(tmpdir(), 'resolver-wsp-'));
+    const projDir = join(wsDir, 'myproject');
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(wsDir, 'WORKSPACE.md'), 'ws content');
+    writeFileSync(join(projDir, 'PROJECT.md'), 'proj content');
+
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws', projectId: 'proj' },
+      makeDeps({
+        getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: wsDir }),
+        getProject: () => ({ id: 'proj', name: 'My Project', path: projDir, workspaceId: 'ws' }),
+      }),
+    );
+
+    expect(sources).toHaveLength(2);
+    expect(sources[0]!.type).toBe('workspace');
+    expect(sources[0]!.precedence).toBe(4);
+    expect(sources[1]!.type).toBe('project');
+    expect(sources[1]!.precedence).toBe(5);
+  });
+
+  it('resolves identity file at precedence 6', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-id-'));
+    mkdirSync(join(dir, 'identities'), { recursive: true });
+    writeFileSync(join(dir, 'identities', 'default.md'), 'identity content');
+
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws', identity: 'default' },
+      makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) }),
+    );
+
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.type).toBe('identity');
+    expect(sources[0]!.precedence).toBe(6);
+    expect(sources[0]!.path).toBe(join(dir, 'identities', 'default.md'));
+  });
+
+  it('resolves all sources in correct precedence order 2-9', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-full-'));
+    const projDir = join(dir, 'proj');
+    mkdirSync(join(dir, 'identities'), { recursive: true });
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'ws');
+    writeFileSync(join(projDir, 'PROJECT.md'), 'proj');
+    writeFileSync(join(dir, 'identities', 'agent.md'), 'id');
+
+    const sources = resolveInstructionSources(
+      {
+        workspaceId: 'ws',
+        projectId: 'proj',
+        identity: 'agent',
+        taskBrief: 'brief',
+        triggerOverlay: 'overlay',
+        runtimeNotes: 'notes',
+      },
+      makeDeps({
+        getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }),
+        getProject: () => ({ id: 'proj', name: 'Proj', path: projDir, workspaceId: 'ws' }),
+        getPopeyeBaseInstructions: () => 'base',
+        getGlobalOperatorInstructions: () => 'global',
+      }),
+    );
+
+    const precedences = sources.map((s) => s.precedence);
+    expect(precedences).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(sources.map((s) => s.type)).toEqual([
+      'popeye_base',
+      'global_operator',
+      'workspace',
+      'project',
+      'identity',
+      'task_brief',
+      'trigger_overlay',
+      'runtime_notes',
+    ]);
+  });
+
+  it('produces deterministic hashes for same content across calls', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-hash-'));
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'deterministic');
+
+    const deps = makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) });
+    const first = resolveInstructionSources({ workspaceId: 'ws' }, deps);
+    const second = resolveInstructionSources({ workspaceId: 'ws' }, deps);
+
+    expect(first[0]!.contentHash).toBe(second[0]!.contentHash);
+  });
+
+  it('skips missing files gracefully', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-miss-'));
+
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws' },
+      makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) }),
+    );
+
+    expect(sources).toHaveLength(0);
+  });
+
+  it('compile round-trip produces valid bundle from resolved sources', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-rt-'));
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'workspace content');
+
+    const sources = resolveInstructionSources(
+      { workspaceId: 'ws', taskBrief: 'hello' },
+      makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) }),
+    );
+
+    const bundle = compileInstructionBundle(sources);
+    expect(bundle.sources).toHaveLength(2);
+    expect(bundle.compiledText).toContain('workspace content');
+    expect(bundle.compiledText).toContain('hello');
+    expect(bundle.bundleHash).toBeTruthy();
+    expect(bundle.warnings).toHaveLength(0);
+  });
+
+  it('identical resolved sources produce identical bundleHash', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolver-snap-'));
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'stable');
+
+    const deps = makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) });
+    const ctx = { workspaceId: 'ws' };
+    const bundle1 = compileInstructionBundle(resolveInstructionSources(ctx, deps));
+    const bundle2 = compileInstructionBundle(resolveInstructionSources(ctx, deps));
+
+    expect(bundle1.bundleHash).toBe(bundle2.bundleHash);
+  });
+});

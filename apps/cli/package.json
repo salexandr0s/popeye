@@ -12,6 +12,8 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@popeye/api-client": "workspace:*",
+    "@popeye/engine-pi": "workspace:*",
     "@popeye/runtime-core": "workspace:*"
   },
   "exports": {

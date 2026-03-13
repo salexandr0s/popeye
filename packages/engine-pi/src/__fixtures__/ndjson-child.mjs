@@ -17,7 +17,7 @@ process.on('SIGTERM', () => {
 
 process.stdin.on('end', async () => {
   const request = JSON.parse(raw || '{}');
-  const input = request.input ?? '';
+  const input = request.prompt ?? '';
 
   if (input === 'malformed') {
     process.stdout.write('not-json\n');

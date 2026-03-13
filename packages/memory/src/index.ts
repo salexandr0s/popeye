@@ -1,21 +1,35 @@
-import type { DataClassification, EmbeddingEligibility, MemoryRecord } from '@popeye/contracts';
+// Pure functions (no circular deps — everything comes from pure-functions.ts)
+export {
+  decideEmbeddingEligibility,
+  computeConfidenceDecay,
+  shouldPersistClassification,
+  classifyMemoryType,
+  computeDedupKey,
+  computeReinforcedConfidence,
+  shouldArchive,
+  computeTextOverlap,
+  renderDailySummaryMarkdown,
+  buildFts5MatchExpression,
+  normalizeRelevanceScore,
+  computeRecencyScore,
+  computeScopeMatchScore,
+} from './pure-functions.js';
 
-const DENIED_SOURCE_TYPES = new Set(['receipt', 'telegram', 'daily_summary']);
+// Search pipeline
+export { MemorySearchService } from './search-service.js';
+export { rerankAndMerge } from './scoring.js';
+export type { ScoredCandidate } from './scoring.js';
+export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
+export type { FtsCandidate } from './fts5-search.js';
+export { searchVec, insertVecEmbedding, deleteVecEmbedding } from './vec-search.js';
+export type { VecCandidate } from './vec-search.js';
 
-export function decideEmbeddingEligibility(record: MemoryRecord): EmbeddingEligibility {
-  if (record.classification !== 'embeddable') {
-    return 'deny';
-  }
-  if (DENIED_SOURCE_TYPES.has(record.sourceType)) {
-    return 'deny';
-  }
-  return 'allow';
-}
+// Embedding
+export type { EmbeddingClient } from './embedding-client.js';
+export { createOpenAIEmbeddingClient, createDisabledEmbeddingClient } from './embedding-client.js';
 
-export function computeConfidenceDecay(initialConfidence: number, daysSinceLastReinforcement: number, halfLifeDays = 30): number {
-  return initialConfidence * 0.5 ** (daysSinceLastReinforcement / halfLifeDays);
-}
+// Extension loader
+export { loadSqliteVec } from './extension-loader.js';
 
-export function shouldPersistClassification(classification: DataClassification): boolean {
-  return classification !== 'secret';
-}
+// Types
+export type { MemoryType, MemoryRecord, MemorySearchResult, MemorySearchResponse } from './types.js';

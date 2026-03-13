@@ -6,8 +6,10 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 
 import type { AppConfig } from '@popeye/contracts';
+import type { EngineAdapter, EngineRunHandle } from '@popeye/engine-pi';
+import { FailingFakeEngineAdapter } from '@popeye/engine-pi';
 import { initAuthStore } from './auth.js';
-import { createRuntimeService } from './runtime-service.js';
+import { classifyFailureFromMessage, createRuntimeService } from './runtime-service.js';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -17,7 +19,8 @@ function makeConfig(dir: string): AppConfig {
     authFile,
     security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
     telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
-    embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'] },
+    embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+    memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: true, compactionFlushConfidence: 0.7 },
     engine: { kind: 'fake', command: 'node', args: [] },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
   };
@@ -235,6 +238,338 @@ describe('PopeyeRuntimeService', () => {
     );
     expect(schedules.some((schedule) => schedule.task_id === 'task:heartbeat:quiet')).toBe(false);
     expect(runtime.getSchedulerStatus().nextHeartbeatDueAt).toBeTruthy();
+    await runtime.close();
+  });
+
+  // Gap 2: Scheduler tick & lease sweep tests
+
+  it('runSchedulerCycle updates lastSchedulerTickAt and lastLeaseSweepAt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cycle-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await runtime.runSchedulerCycle();
+    const state = runtime.getDaemonState();
+    expect(state.lastSchedulerTickAt).toBeTruthy();
+    expect(state.lastLeaseSweepAt).toBeTruthy();
+    await runtime.close();
+  });
+
+  it('scheduler tick promotes waiting_retry jobs when available_at has passed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-promote-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const pastTime = new Date(Date.now() - 60_000).toISOString();
+    runtime.databases.app.prepare(
+      'INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('task-promote', 'default', null, 'retry task', 'hello', 'manual', 'active', JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 }), 'read_only', pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('job-promote', 'task-promote', 'default', 'waiting_retry', 1, pastTime, null, pastTime, pastTime);
+
+    await runtime.runSchedulerCycle();
+
+    const job = runtime.listJobs().find((j) => j.id === 'job-promote');
+    expect(['queued', 'leased', 'running', 'succeeded'].includes(job!.status)).toBe(true);
+    await runtime.close();
+  });
+
+  it('lease sweep expires stale leases and requeues orphaned jobs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-sweep-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const pastTime = new Date(Date.now() - 120_000).toISOString();
+    runtime.databases.app.prepare(
+      'INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('task-sweep', 'default', null, 'sweep task', 'hello', 'manual', 'active', JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 }), 'read_only', pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('job-sweep', 'task-sweep', 'default', 'leased', 0, pastTime, null, pastTime, pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO job_leases (job_id, lease_owner, lease_expires_at, updated_at) VALUES (?, ?, ?, ?)',
+    ).run('job-sweep', 'popeyed:test', pastTime, pastTime);
+
+    await runtime.runSchedulerCycle();
+
+    const job = runtime.listJobs().find((j) => j.id === 'job-sweep');
+    expect(job!.status).toBe('queued');
+    const lease = runtime.getJobLease('job-sweep');
+    expect(lease).toBeNull();
+    await runtime.close();
+  });
+
+  it('workspace concurrency lock prevents parallel job execution', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-concur-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const first = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'first', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const second = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'second', prompt: 'world', source: 'manual', autoEnqueue: true });
+
+    if (first.job) await runtime.waitForJobTerminalState(first.job.id, 5_000);
+    if (second.job) await runtime.waitForJobTerminalState(second.job.id, 5_000);
+
+    const jobs = runtime.listJobs();
+    const succeededCount = jobs.filter((j) => j.status === 'succeeded').length;
+    expect(succeededCount).toBeGreaterThanOrEqual(2);
+    await runtime.close();
+  });
+
+  // Gap 3: Heartbeat execution tests
+
+  it('heartbeat job is enqueued and executed when interval elapses', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-hb-exec-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 1 }],
+    });
+
+    runtime.databases.app.prepare("UPDATE schedules SET created_at = ? WHERE id = 'schedule:heartbeat:default'").run(new Date(Date.now() - 5_000).toISOString());
+
+    await runtime.runSchedulerCycle();
+
+    const heartbeatJobs = runtime.listJobs().filter((j) => j.taskId === 'task:heartbeat:default');
+    expect(heartbeatJobs.length).toBeGreaterThanOrEqual(1);
+
+    const latestJob = heartbeatJobs[0];
+    if (latestJob) {
+      const terminal = await runtime.waitForJobTerminalState(latestJob.id, 5_000);
+      expect(terminal?.receipt?.status).toBe('succeeded');
+    }
+    await runtime.close();
+  });
+
+  it('heartbeat job is not enqueued when interval has not elapsed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-hb-skip-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+
+    const jobsBefore = runtime.listJobs().filter((j) => j.taskId === 'task:heartbeat:default');
+    await runtime.runSchedulerCycle();
+    const jobsAfter = runtime.listJobs().filter((j) => j.taskId === 'task:heartbeat:default');
+    expect(jobsAfter.length).toBe(jobsBefore.length);
+    await runtime.close();
+  });
+
+  // Gap 4: Graceful shutdown tests
+
+  it('close() with idle runtime cleans up completely', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-clean-close-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 't', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    if (created.job) {
+      await runtime.waitForJobTerminalState(created.job.id, 5_000);
+    }
+
+    await runtime.close();
+
+    const appDb = new Database(join(dir, 'state', 'app.db'));
+    const state = appDb.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get() as { last_shutdown_at: string | null };
+    expect(state.last_shutdown_at).toBeTruthy();
+    const leases = appDb.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
+    expect(leases.count).toBe(0);
+    const locks = appDb.prepare('SELECT COUNT(*) AS count FROM locks').get() as { count: number };
+    expect(locks.count).toBe(0);
+    appDb.close();
+  });
+
+  it('close() cancels in-flight run and writes terminal receipt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-inflight-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    let resolveWait: (() => void) | null = null;
+    const waitPromise = new Promise<void>((r) => { resolveWait = r; });
+    const delayedAdapter: EngineAdapter = {
+      async startRun(input, options) {
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() { resolveWait?.(); },
+          async wait() {
+            await waitPromise;
+            return {
+              engineSessionRef: null,
+              usage: { provider: 'fake', model: 'delayed', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
+              failureClassification: 'cancelled' as const,
+            };
+          },
+          isAlive: () => true,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input } });
+        return handle;
+      },
+      async run() { throw new Error('not implemented'); },
+    };
+    Object.defineProperty(runtime, 'engine', { value: delayedAdapter, writable: false });
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'inflight', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    expect(created.job).toBeTruthy();
+
+    let runReachedRunning = false;
+    for (let i = 0; i < 200; i++) {
+      const runs = runtime.listRuns();
+      if (runs.some((r) => r.state === 'running')) {
+        runReachedRunning = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(runReachedRunning).toBe(true);
+
+    await runtime.close();
+
+    const appDb = new Database(join(dir, 'state', 'app.db'));
+    const runs = appDb.prepare('SELECT state FROM runs').all() as Array<{ state: string }>;
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+    expect(runs.every((r) => ['cancelled', 'abandoned', 'succeeded'].includes(r.state))).toBe(true);
+    const receipts = appDb.prepare('SELECT status FROM receipts').all() as Array<{ status: string }>;
+    expect(receipts.length).toBeGreaterThanOrEqual(1);
+    const leases = appDb.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
+    expect(leases.count).toBe(0);
+    appDb.close();
+  });
+
+  // Phase 7: classifyFailureFromMessage unit tests
+
+  it('classifyFailureFromMessage returns protocol_error for protocol messages', () => {
+    expect(classifyFailureFromMessage('protocol violation detected')).toBe('protocol_error');
+  });
+
+  it('classifyFailureFromMessage returns cancelled for cancel messages', () => {
+    expect(classifyFailureFromMessage('run was cancelled by operator')).toBe('cancelled');
+  });
+
+  it('classifyFailureFromMessage returns transient_failure for timeout/temporary/transient', () => {
+    expect(classifyFailureFromMessage('connection timeout after 30s')).toBe('transient_failure');
+    expect(classifyFailureFromMessage('temporary network error')).toBe('transient_failure');
+    expect(classifyFailureFromMessage('transient upstream failure')).toBe('transient_failure');
+  });
+
+  it('classifyFailureFromMessage returns startup_failure for startup/spawn/not configured', () => {
+    expect(classifyFailureFromMessage('startup error in engine')).toBe('startup_failure');
+    expect(classifyFailureFromMessage('failed to spawn child process')).toBe('startup_failure');
+    expect(classifyFailureFromMessage('engine is not configured')).toBe('startup_failure');
+  });
+
+  it('classifyFailureFromMessage returns permanent_failure for unknown messages', () => {
+    expect(classifyFailureFromMessage('something completely unexpected')).toBe('permanent_failure');
+    expect(classifyFailureFromMessage('')).toBe('permanent_failure');
+  });
+
+  // Phase 7: Failure injection tests
+
+  it('failure injection: cancelled run produces cancelled receipt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-cancel-'));
+    chmodSync(dir, 0o700);
+    const engine = new FailingFakeEngineAdapter('cancelled');
+    const runtime = createRuntimeService(makeConfig(dir), engine);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'cancel-test', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 5_000) : null;
+
+    expect(terminal?.run?.state).toBe('cancelled');
+    expect(terminal?.receipt?.status).toBe('cancelled');
+    await runtime.close();
+  });
+
+  it('failure injection: permanent failure produces failed_final run and receipt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-perm-'));
+    chmodSync(dir, 0o700);
+    const engine = new FailingFakeEngineAdapter('permanent_failure');
+    const runtime = createRuntimeService(makeConfig(dir), engine);
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'perm-fail', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 5_000) : null;
+
+    expect(terminal?.run?.state).toBe('failed_final');
+    expect(terminal?.receipt?.status).toBe('failed');
+    const securityRows = runtime.databases.app.prepare("SELECT code FROM security_audit WHERE code = 'run_failed'").all() as Array<{ code: string }>;
+    expect(securityRows.length).toBeGreaterThanOrEqual(1);
+    await runtime.close();
+  });
+
+  it('failure injection: transient failure schedules retry', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-trans-'));
+    chmodSync(dir, 0o700);
+    const engine = new FailingFakeEngineAdapter('transient_failure');
+    const runtime = createRuntimeService(makeConfig(dir), engine);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'trans-fail', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const receipt = await runtime.waitForTaskTerminalReceipt(created.task.id, 5_000);
+
+    expect(receipt?.status).toBe('failed');
+    const job = runtime.listJobs().find((j) => j.id === created.job!.id);
+    expect(job?.status).toBe('waiting_retry');
+    expect(job?.retryCount).toBe(1);
+    await runtime.close();
+  });
+
+  it('failure injection: retry budget exhaustion creates intervention', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-exhaust-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const engine = new FailingFakeEngineAdapter('transient_failure');
+    const runtime = createRuntimeService(config, engine);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'exhaust-test', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    if (!created.job) throw new Error('no job created');
+
+    // Wait for first failure (transient → waiting_retry, not terminal)
+    await runtime.waitForTaskTerminalReceipt(created.task.id, 5_000);
+
+    // Set retry count to max-1 so next attempt exhausts budget
+    runtime.databases.app.prepare('UPDATE jobs SET status = ?, retry_count = ?, available_at = ? WHERE id = ?').run(
+      'queued', 2, new Date(Date.now() - 1000).toISOString(), created.job.id,
+    );
+
+    // Trigger another scheduler cycle to pick up the queued job
+    await runtime.runSchedulerCycle();
+    await runtime.waitForJobTerminalState(created.job.id, 5_000);
+
+    const job = runtime.listJobs().find((j) => j.id === created.job!.id);
+    expect(job?.status).toBe('failed_final');
+    const interventions = runtime.listInterventions();
+    expect(interventions.some((i) => i.code === 'retry_budget_exhausted')).toBe(true);
+    await runtime.close();
+  });
+
+  it('listFailedRuns returns only failed/abandoned runs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-list-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+
+    // Create a successful run first
+    const runtime = createRuntimeService(config);
+    const success = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'ok', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    if (success.job) await runtime.waitForJobTerminalState(success.job.id, 5_000);
+
+    // Insert a failed run directly
+    const pastTime = new Date(Date.now() - 60_000).toISOString();
+    runtime.databases.app.prepare(
+      'INSERT INTO runs (id, job_id, task_id, workspace_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('run-failed-1', success.job!.id, success.task.id, 'default', 'session-x', null, 'failed_final', pastTime, pastTime, 'test failure');
+
+    const failedRuns = runtime.listFailedRuns();
+    expect(failedRuns.length).toBeGreaterThanOrEqual(1);
+    expect(failedRuns.every((r) => ['failed_retryable', 'failed_final', 'abandoned'].includes(r.state))).toBe(true);
+
+    const allRuns = runtime.listRuns();
+    expect(allRuns.length).toBeGreaterThan(failedRuns.length);
     await runtime.close();
   });
 });

@@ -52,6 +52,13 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_idempotency_key ON message_ingress (idempotency_key);',
     ],
   },
+  {
+    id: '003-app-coalesce-key',
+    statements: [
+      'ALTER TABLE tasks ADD COLUMN coalesce_key TEXT;',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_coalesce_key ON tasks (coalesce_key);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [
@@ -66,6 +73,17 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'CREATE TABLE IF NOT EXISTS memory_consolidations (id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, merged_into_id TEXT NOT NULL, created_at TEXT NOT NULL);',
       'CREATE TABLE IF NOT EXISTS retrieval_cache (id TEXT PRIMARY KEY, query TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL);',
       'CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(description, content);',
+    ],
+  },
+  {
+    id: '002-memory-lifecycle',
+    statements: [
+      "ALTER TABLE memories ADD COLUMN memory_type TEXT DEFAULT 'episodic';",
+      'ALTER TABLE memories ADD COLUMN dedup_key TEXT;',
+      'ALTER TABLE memories ADD COLUMN last_reinforced_at TEXT;',
+      'ALTER TABLE memories ADD COLUMN archived_at TEXT;',
+      "ALTER TABLE memory_events ADD COLUMN payload TEXT DEFAULT '{}';",
+      'CREATE INDEX IF NOT EXISTS idx_memories_dedup_key ON memories(dedup_key);',
     ],
   },
 ];

@@ -9,6 +9,12 @@
   "references": [
     {
       "path": "../../packages/runtime-core"
+    },
+    {
+      "path": "../../packages/api-client"
+    },
+    {
+      "path": "../../packages/engine-pi"
     }
   ]
 }

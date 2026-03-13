@@ -1,0 +1,47 @@
+# Telegram Bot Migration
+
+## Old model (OpenClaw)
+
+- Channel adapter with pairing flow
+- Multi-channel ecosystem support
+- Group chat capability
+- Custom command framework
+- Media pipeline integration
+- Gateway-wide routing
+
+## New model (Popeye)
+
+`@popeye/telegram` is a thin bridge to the control API:
+- Routes all messages through `/v1/messages/ingest`
+- Allowlist-only DM policy (no open registration)
+- DM-only (no group chats)
+- Rate-limited message ingress
+- Stateless adapter — all state in Popeye runtime
+- Prompt injection detection on all inbound messages
+
+## Migration steps
+
+1. **Note your Telegram user ID** — becomes the `allowedUserId` in config
+2. **Set config**:
+   ```json
+   {
+     "telegram": {
+       "enabled": true,
+       "allowedUserId": "<your-telegram-user-id>",
+       "maxMessagesPerMinute": 10,
+       "rateLimitWindowSeconds": 60
+     }
+   }
+   ```
+3. **Set bot token** — via `TELEGRAM_BOT_TOKEN` env var (never in config files)
+4. **Deploy adapter** — authenticates to control API using runtime auth token
+5. **Test** — send a DM, verify it appears in `pop run list`
+6. **Verify ingress** — check runtime logs for message routing
+
+## Intentional omissions
+
+- **Group chats** — single-operator, no group semantics
+- **Multi-user** — allowlist is single-user by design
+- **Media** — text messages only
+- **Custom commands** — all messages are natural language
+- **Pairing** — replaced by static allowlist configuration

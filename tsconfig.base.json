@@ -26,7 +26,8 @@
       "@popeye/observability": ["packages/observability/src/index.ts"],
       "@popeye/control-api": ["packages/control-api/src/index.ts"],
       "@popeye/telegram": ["packages/telegram/src/index.ts"],
-      "@popeye/testkit": ["packages/testkit/src/index.ts"]
+      "@popeye/testkit": ["packages/testkit/src/index.ts"],
+      "@popeye/api-client": ["packages/api-client/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },

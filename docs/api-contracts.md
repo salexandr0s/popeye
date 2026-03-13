@@ -1,35 +1,46 @@
 # API contracts
 
-Current control API routes:
-- `GET /v1/health`
-- `GET /v1/status`
-- `GET /v1/daemon/state`
-- `GET /v1/daemon/scheduler`
-- `GET /v1/workspaces`
-- `GET /v1/projects`
-- `GET /v1/agent-profiles`
-- `GET /v1/tasks`
-- `POST /v1/tasks`
-- `GET /v1/jobs`
-- `GET /v1/jobs/:id/lease`
-- `POST /v1/jobs/:id/pause`
-- `POST /v1/jobs/:id/resume`
-- `POST /v1/jobs/:id/enqueue`
-- `GET /v1/runs`
-- `GET /v1/runs/:id`
-- `GET /v1/runs/:id/events`
-- `POST /v1/runs/:id/retry`
-- `POST /v1/runs/:id/cancel`
-- `GET /v1/receipts/:id`
-- `GET /v1/instruction-previews/:scope`
-- `GET /v1/interventions`
-- `POST /v1/interventions/:id/resolve`
-- `GET /v1/events/stream`
-- `POST /v1/messages/ingest`
-- `GET /v1/messages/:id`
-- `GET /v1/usage/summary`
-- `GET /v1/security/audit`
-- `GET /v1/security/csrf-token`
+Current control API routes with response schema references (all schemas from `@popeye/contracts`):
+
+| Method | Path | Response Schema |
+|--------|------|----------------|
+| GET | `/v1/health` | `HealthResponseSchema` |
+| GET | `/v1/status` | `DaemonStatusResponseSchema` |
+| GET | `/v1/daemon/state` | `DaemonStateRecordSchema` |
+| GET | `/v1/daemon/scheduler` | `SchedulerStatusResponseSchema` |
+| GET | `/v1/workspaces` | `Array<{ id, name, createdAt }>` |
+| GET | `/v1/projects` | `Array<{ id, workspaceId, name, createdAt }>` |
+| GET | `/v1/agent-profiles` | `Array<{ id, name, createdAt }>` |
+| GET | `/v1/tasks` | `TaskRecordSchema[]` |
+| POST | `/v1/tasks` | `TaskCreateResponseSchema` (req: `TaskCreateInputSchema`) |
+| GET | `/v1/jobs` | `JobRecordSchema[]` |
+| GET | `/v1/jobs/:id/lease` | `JobLeaseRecordSchema` |
+| POST | `/v1/jobs/:id/pause` | `JobRecordSchema` |
+| POST | `/v1/jobs/:id/resume` | `JobRecordSchema` |
+| POST | `/v1/jobs/:id/enqueue` | `JobRecordSchema` |
+| GET | `/v1/sessions` | `SessionRootRecord[]` |
+| GET | `/v1/runs` | `RunRecordSchema[]` |
+| GET | `/v1/runs/:id` | `RunRecordSchema` |
+| GET | `/v1/runs/:id/events` | `RunEventRecordSchema[]` |
+| POST | `/v1/runs/:id/retry` | `JobRecordSchema` |
+| POST | `/v1/runs/:id/cancel` | `RunRecordSchema` |
+| GET | `/v1/receipts/:id` | `ReceiptRecordSchema` |
+| GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` |
+| GET | `/v1/interventions` | `InterventionRecordSchema[]` |
+| POST | `/v1/interventions/:id/resolve` | `InterventionRecordSchema` |
+| GET | `/v1/events/stream` | SSE `text/event-stream` |
+| POST | `/v1/messages/ingest` | `MessageIngressResponseSchema` (req: `IngestMessageInputSchema`) |
+| GET | `/v1/messages/:id` | `MessageRecordSchema` |
+| GET | `/v1/usage/summary` | `UsageSummarySchema` |
+| GET | `/v1/security/audit` | `SecurityAuditResponseSchema` |
+| GET | `/v1/security/csrf-token` | `CsrfTokenResponseSchema` |
+| GET | `/v1/memory/search?query=...` | `MemorySearchResponseSchema` |
+| GET | `/v1/memory/audit` | `MemoryAuditResponseSchema` |
+| GET | `/v1/memory/:id` | `MemoryRecordSchema` |
+| GET | `/v1/memory` | `MemoryRecordSchema[]` |
+| POST | `/v1/memory/maintenance` | `{ decayed, archived, merged, deduped }` |
+
+Generated clients: `@popeye/api-client` (TypeScript, Zod-validated) and `generated/swift/PopeyeModels.swift` (Codable structs).
 
 Behavior notes:
 - `POST /v1/tasks` creates the task and may enqueue a job, but does not directly execute the run.

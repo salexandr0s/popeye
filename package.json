@@ -10,12 +10,13 @@
     "clean": "turbo run clean --concurrency=1 && rm -rf coverage",
     "dev-verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
     "lint": "eslint . --max-warnings=0",
-    "security:deps": "pnpm audit --audit-level=high || true",
+    "security:deps": "pnpm audit --audit-level=high",
     "security:sast": "eslint . --max-warnings=0",
     "security:secrets": "node scripts/scan-secrets.mjs",
     "test": "vitest run --coverage",
     "test:pi-smoke": "vitest run packages/engine-pi/src/pi.smoke.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate:swift": "tsx scripts/generate-swift-models.ts",
     "dev-verify:quick": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {

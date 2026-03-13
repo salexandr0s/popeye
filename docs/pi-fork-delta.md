@@ -4,6 +4,8 @@
 - Expected sibling checkout: `../pi`
 - Popeye points to that checkout through `config.engine.piPath`
 - Real Pi mode is selected with `config.engine.kind = "pi"`
+- Engine version is pinned via `config.engine.piVersion` — the runtime reads `package.json` from the Pi checkout and warns on mismatch (does not block startup)
+- `security-audit` reports `pi_version_not_pinned` (warn) when no piVersion is set, and `pi_version_mismatch` (warn) when the checkout version differs
 
 ## Current integration shape
 - Popeye owns all runtime orchestration, receipts, scheduling, auth, CSRF, and backup/restore.
@@ -27,7 +29,6 @@
 - Cancellation via process signal
 
 ## Not yet implemented
-- Upstream baseline pin recording in this file
 - Detailed fork patch inventory
 - Compatibility matrix by upstream tag
 - Smoke suite against a real local `../pi` checkout in CI

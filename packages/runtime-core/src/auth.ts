@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -45,15 +45,25 @@ export function rotateAuthStore(path: string, overlapHours = 24): AuthRotationRe
   return updated;
 }
 
+function constantTimeEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
+
 export function validateBearerToken(header: string | undefined, record: AuthRotationRecord, now = new Date()): boolean {
   if (!header?.startsWith('Bearer ')) {
     return false;
   }
   const token = header.replace('Bearer ', '').trim();
-  if (token === record.current.token) {
+  if (constantTimeEquals(token, record.current.token)) {
     return true;
   }
-  if (record.next && record.overlapEndsAt && now <= new Date(record.overlapEndsAt) && token === record.next.token) {
+  if (record.next && record.overlapEndsAt && now <= new Date(record.overlapEndsAt) && constantTimeEquals(token, record.next.token)) {
     return true;
   }
   return false;
@@ -71,11 +81,11 @@ export function validateCsrfToken(token: string | undefined, record: AuthRotatio
   if (!token) {
     return false;
   }
-  if (token === issueCsrfToken(record)) {
+  if (constantTimeEquals(token, issueCsrfToken(record))) {
     return true;
   }
   if (record.next) {
-    return token === hashCsrfSeed(`csrf:${record.next.token}:${record.next.createdAt}`);
+    return constantTimeEquals(token, hashCsrfSeed(`csrf:${record.next.token}:${record.next.createdAt}`));
   }
   return false;
 }

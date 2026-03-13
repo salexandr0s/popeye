@@ -18,7 +18,8 @@ describe('openRuntimeDatabases', () => {
       authFile,
       security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
       telegram: { enabled: false, allowedUserId: undefined, maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
-      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'] },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: true, compactionFlushConfidence: 0.7 },
       engine: { kind: 'fake', command: 'node', args: [] },
       workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     });

@@ -196,7 +196,14 @@ function normalizeEvent(line: string): NormalizedEngineEvent {
   if (!ENGINE_EVENT_TYPES.has(parsed.type as NormalizedEngineEvent['type'])) {
     throw new Error(`unsupported event type: ${parsed.type}`);
   }
-  const payloadEntries = Object.entries(parsed.payload ?? {}).map(([key, value]) => [key, typeof value === 'string' ? value : JSON.stringify(value)]);
+  const payloadEntries = Object.entries(parsed.payload ?? {}).map(([key, value]) => {
+    // Preserve primitive types (string, number, boolean, null).
+    // Stringify objects/arrays since the schema only allows primitives.
+    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return [key, value];
+    }
+    return [key, JSON.stringify(value)];
+  });
   return {
     type: parsed.type as NormalizedEngineEvent['type'],
     payload: Object.fromEntries(payloadEntries),
@@ -204,11 +211,13 @@ function normalizeEvent(line: string): NormalizedEngineEvent {
   };
 }
 
-function defaultUsage(provider: string, model: string, input: string): UsageMetrics {
+function defaultUsage(provider: string, model: string, _input: string): UsageMetrics {
   return {
     provider,
     model,
-    tokensIn: input.length,
+    // Fallback when engine doesn't emit usage — zero is honest since we
+    // don't know the real token count. input.length is not a valid proxy.
+    tokensIn: 0,
     tokensOut: 0,
     estimatedCostUsd: 0,
   };
@@ -243,9 +252,9 @@ export class FakeEngineAdapter implements EngineAdapter {
       payload: {
         provider: completion.usage.provider,
         model: completion.usage.model,
-        tokensIn: String(completion.usage.tokensIn),
-        tokensOut: String(completion.usage.tokensOut),
-        estimatedCostUsd: String(completion.usage.estimatedCostUsd),
+        tokensIn: completion.usage.tokensIn,
+        tokensOut: completion.usage.tokensOut,
+        estimatedCostUsd: completion.usage.estimatedCostUsd,
       },
     });
     return handle;
@@ -304,9 +313,9 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
       payload: {
         provider: completion.usage.provider,
         model: completion.usage.model,
-        tokensIn: String(completion.usage.tokensIn),
-        tokensOut: String(completion.usage.tokensOut),
-        estimatedCostUsd: String(completion.usage.estimatedCostUsd),
+        tokensIn: completion.usage.tokensIn,
+        tokensOut: completion.usage.tokensOut,
+        estimatedCostUsd: completion.usage.estimatedCostUsd,
       },
     });
     return handle;
@@ -384,11 +393,11 @@ export class PiEngineAdapter implements EngineAdapter {
           }
           if (event.type === 'usage') {
             usage = {
-              provider: event.payload.provider ?? usage.provider,
-              model: event.payload.model ?? usage.model,
-              tokensIn: Number(event.payload.tokensIn ?? usage.tokensIn),
-              tokensOut: Number(event.payload.tokensOut ?? usage.tokensOut),
-              estimatedCostUsd: Number(event.payload.estimatedCostUsd ?? usage.estimatedCostUsd),
+              provider: String(event.payload.provider ?? usage.provider),
+              model: String(event.payload.model ?? usage.model),
+              tokensIn: (event.payload.tokensIn as number) ?? usage.tokensIn,
+              tokensOut: (event.payload.tokensOut as number) ?? usage.tokensOut,
+              estimatedCostUsd: (event.payload.estimatedCostUsd as number) ?? usage.estimatedCostUsd,
             };
           }
           if (event.type === 'failed') {
@@ -450,11 +459,11 @@ export class PiEngineAdapter implements EngineAdapter {
         if (exitCode !== 0 && failureClassification === null) {
           failureClassification = events.some((event) => event.type === 'started') ? 'permanent_failure' : 'startup_failure';
           failureMessage = stderr || `Pi process failed with code ${exitCode}`;
-          safeEmit({ type: 'failed', payload: { classification: failureClassification, message: failureMessage, exitCode: String(exitCode) } });
+          safeEmit({ type: 'failed', payload: { classification: failureClassification, message: failureMessage, exitCode } });
         }
 
         if (!events.some((event) => event.type === 'usage')) {
-          safeEmit({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: String(usage.tokensIn), tokensOut: String(usage.tokensOut), estimatedCostUsd: String(usage.estimatedCostUsd) } });
+          safeEmit({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, estimatedCostUsd: usage.estimatedCostUsd } });
         }
 
         if (!events.some((event) => event.type === 'completed') && failureClassification === null) {

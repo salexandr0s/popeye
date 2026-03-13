@@ -15,6 +15,8 @@
     { "path": "./packages/workspace" },
     { "path": "./packages/receipts" },
     { "path": "./apps/daemon" },
-    { "path": "./apps/cli" }
+    { "path": "./apps/cli" },
+    { "path": "./apps/web-inspector" },
+    { "path": "./packages/api-client" }
   ]
 }

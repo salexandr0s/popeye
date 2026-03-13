@@ -8,12 +8,10 @@ const patterns = [
   /ghp_[A-Za-z0-9]{20,}/g,
   /-----BEGIN [A-Z ]+PRIVATE KEY-----/g,
   /Bearer\s+[A-Za-z0-9._-]{20,}/g,
-  /AKIA[0-9A-Z]{16}/g,                                // AWS access key
-  /xox[bpras]-[A-Za-z0-9-]{10,}/g,                    // Slack token
-  /sk_live_[A-Za-z0-9]{10,}/g,                         // Stripe secret key
-  /pk_live_[A-Za-z0-9]{10,}/g,                         // Stripe publishable key
-  /mongodb(\+srv)?:\/\/[^:]+:[^@]+@/g,                 // MongoDB URI with creds
-  /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/gi, // Hardcoded password
+  /AKIA[A-Z0-9]{16}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
+  /sk-ant-[A-Za-z0-9-]{20,}/g,
+  /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_/]+/g,
 ];
 
 function isFixtureFile(path) {

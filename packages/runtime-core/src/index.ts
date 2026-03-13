@@ -5,8 +5,10 @@ export * from './policy.js';
 export * from './security-audit.js';
 export * from './database.js';
 export * from './backup.js';
+export * from './keychain.js';
 export * from './launchd.js';
 export * from './runtime-service.js';
+export * from './memory-lifecycle.js';
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

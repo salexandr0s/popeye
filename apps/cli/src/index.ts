@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
+import { tryConnectDaemon } from './api-client.js';
 import {
   createBackup,
   createLaunchdPlist,
@@ -136,35 +137,157 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'task' && subcommand === 'run') {
-    const runtime = createRuntimeService(config);
-    runtime.startScheduler();
-    const created = runtime.createTask({
-      workspaceId: 'default',
-      projectId: null,
-      title: arg1 ?? 'cli-task',
-      prompt: arg2 ?? arg1 ?? 'hello from pop',
-      source: 'manual',
-      autoEnqueue: true,
-    });
-    const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 10_000) : null;
-    console.info(JSON.stringify({ ...created, terminal }, null, 2));
-    await runtime.close();
+    const client = await tryConnectDaemon(config);
+    if (client) {
+      const result = await client.createTask({
+        workspaceId: 'default',
+        projectId: null,
+        title: arg1 ?? 'cli-task',
+        prompt: arg2 ?? arg1 ?? 'hello from pop',
+        source: 'manual',
+        autoEnqueue: true,
+      });
+      console.info('[daemon]', JSON.stringify(result, null, 2));
+    } else {
+      const runtime = createRuntimeService(config);
+      runtime.startScheduler();
+      const created = runtime.createTask({
+        workspaceId: 'default',
+        projectId: null,
+        title: arg1 ?? 'cli-task',
+        prompt: arg2 ?? arg1 ?? 'hello from pop',
+        source: 'manual',
+        autoEnqueue: true,
+      });
+      const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 10_000) : null;
+      console.info('[direct]', JSON.stringify({ ...created, terminal }, null, 2));
+      await runtime.close();
+    }
     return;
   }
   if (command === 'run' && subcommand === 'show' && arg1) {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.getRun(arg1), null, 2));
-    await runtime.close();
+    const client = await tryConnectDaemon(config);
+    if (client) {
+      console.info('[daemon]', JSON.stringify(await client.getRun(arg1), null, 2));
+    } else {
+      const runtime = createRuntimeService(config);
+      console.info('[direct]', JSON.stringify(runtime.getRun(arg1), null, 2));
+      await runtime.close();
+    }
     return;
   }
   if (command === 'receipt' && subcommand === 'show' && arg1) {
+    const client = await tryConnectDaemon(config);
+    if (client) {
+      console.info('[daemon]', JSON.stringify(await client.getReceipt(arg1), null, 2));
+    } else {
+      const runtime = createRuntimeService(config);
+      console.info('[direct]', JSON.stringify(runtime.getReceipt(arg1), null, 2));
+      await runtime.close();
+    }
+    return;
+  }
+
+  if (command === 'runs' && subcommand === 'tail') {
     const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.getReceipt(arg1), null, 2));
+    console.info(JSON.stringify(runtime.listRuns().slice(0, 20), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'runs' && subcommand === 'failures') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.listFailedRuns(), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'interventions' && subcommand === 'list') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.listInterventions(), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'recovery' && subcommand === 'retry' && arg1) {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.retryRun(arg1), null, 2));
     await runtime.close();
     return;
   }
 
-  console.info('Usage: pop auth <init|rotate> | pop security audit | pop pi smoke | pop daemon <install|start|load|stop|restart|status|uninstall|plist> | pop backup <create|verify|restore> | pop task run [title] [prompt] | pop run show <runId> | pop receipt show <receiptId>');
+  if (command === 'memory' && subcommand === 'search' && arg1) {
+    const runtime = createRuntimeService(config);
+    const includeContent = process.argv.includes('--full');
+    const result = await runtime.searchMemory({ query: arg1, limit: 20, includeContent });
+    console.info(JSON.stringify(result, null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'memory' && subcommand === 'audit') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.getMemoryAudit(), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'memory' && subcommand === 'list') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.listMemories({ type: arg1, limit: 50 }), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'memory' && subcommand === 'show' && arg1) {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.getMemory(arg1), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'memory' && subcommand === 'maintenance') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.triggerMemoryMaintenance(), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'knowledge' && subcommand === 'search' && arg1) {
+    const runtime = createRuntimeService(config);
+    const result = await runtime.searchMemory({ query: arg1, memoryTypes: ['semantic', 'procedural'], limit: 20, includeContent: process.argv.includes('--full') });
+    console.info(JSON.stringify(result, null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'receipt' && subcommand === 'search' && arg1) {
+    const runtime = createRuntimeService(config);
+    const result = await runtime.searchMemory({ query: arg1, memoryTypes: ['episodic'], limit: 20, includeContent: process.argv.includes('--full') });
+    console.info(JSON.stringify(result, null, 2));
+    await runtime.close();
+    return;
+  }
+
+  if (command === 'jobs' && subcommand === 'list') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.listJobs(), null, 2));
+    await runtime.close();
+    return;
+  }
+  if (command === 'jobs' && subcommand === 'pause' && arg1) {
+    const runtime = createRuntimeService(config);
+    const result = runtime.pauseJob(arg1);
+    console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not in pauseable state');
+    await runtime.close();
+    return;
+  }
+  if (command === 'jobs' && subcommand === 'resume' && arg1) {
+    const runtime = createRuntimeService(config);
+    const result = runtime.resumeJob(arg1);
+    console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not paused');
+    await runtime.close();
+    return;
+  }
+  if (command === 'sessions' && subcommand === 'list') {
+    const runtime = createRuntimeService(config);
+    console.info(JSON.stringify(runtime.listSessionRoots(), null, 2));
+    await runtime.close();
+    return;
+  }
+
+  console.info('Usage: pop auth <init|rotate> | pop security audit | pop pi smoke | pop daemon <install|start|load|stop|restart|status|uninstall|plist> | pop backup <create|verify|restore> | pop task run [title] [prompt] | pop run show <runId> | pop runs <tail|failures> | pop interventions list | pop recovery retry <runId> | pop receipt show <receiptId> | pop memory <search|audit|list|show|maintenance> | pop knowledge search <query> | pop receipt search <query> | pop jobs <list|pause|resume> | pop sessions list');
 }
 
 await main();

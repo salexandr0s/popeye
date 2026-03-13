@@ -22,6 +22,7 @@ export function deriveRuntimePaths(runtimeDataDir: string): RuntimePaths {
     receiptsByRunDir: join(root, 'receipts', 'by-run'),
     receiptsByDayDir: join(root, 'receipts', 'by-day'),
     backupsDir: join(root, 'backups'),
+    memoryDailyDir: join(root, 'memory', 'daily'),
   };
 }
 
@@ -45,6 +46,7 @@ export function ensureRuntimePaths(config: AppConfig): RuntimePaths {
     paths.receiptsByRunDir,
     paths.receiptsByDayDir,
     paths.backupsDir,
+    paths.memoryDailyDir,
     dirname(resolve(config.authFile)),
   ];
 
