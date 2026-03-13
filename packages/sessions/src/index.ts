@@ -10,5 +10,6 @@ export function selectSessionRoot(input: SessionSelectionInput): SessionRootReco
     id: `${input.kind}:${input.scope}`,
     kind: input.kind,
     scope: input.scope,
+    createdAt: new Date().toISOString(),
   };
 }
