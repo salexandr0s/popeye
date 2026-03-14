@@ -43,10 +43,11 @@ jobs:
           ref: ${{ env.PI_REF }}
           path: external-pi
           token: ${{ secrets.PI_CHECKOUT_TOKEN }}
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: corepack enable
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: npm ci
         working-directory: external-pi
