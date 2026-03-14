@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type {
@@ -18,7 +18,7 @@ import {
   shouldArchive,
   type MemorySearchService,
 } from '@popeye/memory';
-import { redactText } from '@popeye/observability';
+import { redactText, sha256 } from '@popeye/observability';
 
 import type { RuntimeDatabases } from './database.js';
 
@@ -450,6 +450,60 @@ export class MemoryLifecycleService {
     }
 
     return results;
+  }
+
+  indexWorkspaceDocs(workspaceId: string, rootPath: string): { indexed: number; skipped: number } {
+    let indexed = 0;
+    let skipped = 0;
+
+    if (!existsSync(rootPath)) return { indexed, skipped };
+
+    const entries = readdirSync(rootPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+
+      const filePath = resolve(rootPath, entry.name);
+      const content = readFileSync(filePath, 'utf-8');
+      const contentHash = sha256(content);
+      const dedupKey = `workspace_doc:${sha256(resolve(filePath))}`;
+
+      // Check if we already have this exact content indexed
+      const existing = this.databases.memory
+        .prepare('SELECT id, content FROM memories WHERE dedup_key = ? AND archived_at IS NULL')
+        .get(dedupKey) as { id: string; content: string } | undefined;
+
+      if (existing) {
+        const existingHash = sha256(existing.content);
+        if (existingHash === contentHash) {
+          skipped++;
+          continue;
+        }
+        // Content changed — archive old, re-index below
+        this.databases.memory
+          .prepare('UPDATE memories SET archived_at = ? WHERE id = ?')
+          .run(nowIso(), existing.id);
+      }
+
+      const redacted = redactText(content, this.config.security.redactionPatterns);
+      const result = this.insertMemory({
+        description: `Workspace doc: ${entry.name}`,
+        classification: 'embeddable',
+        sourceType: 'workspace_doc',
+        content: redacted.text,
+        confidence: 0.9,
+        scope: workspaceId,
+        memoryType: 'semantic',
+      });
+
+      // Override dedup_key to use file-path-based key for stable identity
+      this.databases.memory
+        .prepare('UPDATE memories SET dedup_key = ? WHERE id = ?')
+        .run(dedupKey, result.memoryId);
+
+      indexed++;
+    }
+
+    return { indexed, skipped };
   }
 
   getMemoryAudit(): MemoryAuditResponse {

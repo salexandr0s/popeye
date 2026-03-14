@@ -79,6 +79,8 @@ export const MemoryConfigSchema = z.object({
   consolidationEnabled: z.boolean().default(true),
   compactionFlushConfidence: z.number().min(0).max(1).default(0.7),
   dailySummaryHour: z.number().int().min(0).max(23).default(2),
+  docIndexEnabled: z.boolean().default(true),
+  docIndexIntervalHours: z.number().int().positive().default(6),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

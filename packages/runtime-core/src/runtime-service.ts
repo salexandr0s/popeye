@@ -373,6 +373,7 @@ export class PopeyeRuntimeService {
   private readonly memorySearch: MemorySearchService;
   private readonly memoryLifecycle: MemoryLifecycleService;
   private memoryMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+  private docIndexTimer: ReturnType<typeof setInterval> | null = null;
   private tokenRotationTimer: ReturnType<typeof setInterval> | null = null;
   private vecAvailable = false;
   private readonly vecInitPromise: Promise<void>;
@@ -471,6 +472,7 @@ export class PopeyeRuntimeService {
     this.seedDaemonState();
     this.startScheduler();
     this.startMemoryMaintenance();
+    this.startDocIndexing();
     this.startTokenRotationCheck();
     const schedulerReadyMs = Math.round(performance.now() - startupStart);
     this.startupProfile = { dbReadyMs, reconcileMs, schedulerReadyMs };
@@ -482,6 +484,10 @@ export class PopeyeRuntimeService {
     if (this.memoryMaintenanceTimer) {
       clearInterval(this.memoryMaintenanceTimer);
       this.memoryMaintenanceTimer = null;
+    }
+    if (this.docIndexTimer) {
+      clearInterval(this.docIndexTimer);
+      this.docIndexTimer = null;
     }
     if (this.tokenRotationTimer) {
       clearInterval(this.tokenRotationTimer);
@@ -1294,6 +1300,27 @@ export class PopeyeRuntimeService {
     return { decayed: decay.decayed, archived: decay.archived, merged: consolidation.merged, deduped: consolidation.deduped };
   }
 
+  importMemory(input: {
+    description: string;
+    content: string;
+    sourceType?: string;
+    memoryType?: 'episodic' | 'semantic' | 'procedural';
+    scope?: string;
+    confidence?: number;
+    classification?: 'secret' | 'sensitive' | 'internal' | 'embeddable';
+  }): { memoryId: string; embedded: boolean } {
+    const redacted = redactText(input.content, this.config.security.redactionPatterns).text;
+    return this.memoryLifecycle.insertMemory({
+      description: input.description,
+      content: redacted,
+      sourceType: (input.sourceType ?? 'curated_memory') as MemoryInsertInput['sourceType'],
+      memoryType: input.memoryType,
+      scope: input.scope ?? 'workspace',
+      confidence: input.confidence ?? 0.8,
+      classification: input.classification ?? 'embeddable',
+    });
+  }
+
   proposeMemoryPromotion(memoryId: string, targetPath: string) {
     return this.memoryLifecycle.proposePromotion(memoryId, targetPath);
   }
@@ -1942,6 +1969,22 @@ export class PopeyeRuntimeService {
   }
 
   // --- Internal: memory maintenance ---
+
+  private startDocIndexing(): void {
+    if (!this.config.memory.docIndexEnabled) return;
+
+    const runIndex = () => {
+      if (this.closed) return;
+      for (const ws of this.config.workspaces) {
+        if (!ws.rootPath) continue;
+        this.memoryLifecycle.indexWorkspaceDocs(ws.id, ws.rootPath);
+      }
+    };
+
+    runIndex(); // Run immediately on startup
+    const intervalMs = this.config.memory.docIndexIntervalHours * 3600_000;
+    this.docIndexTimer = setInterval(runIndex, intervalMs);
+  }
 
   private startMemoryMaintenance(): void {
     // Check hourly for maintenance tasks

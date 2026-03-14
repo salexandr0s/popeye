@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -831,6 +831,72 @@ describe('MemoryLifecycleService', () => {
       expect(source).toBeTruthy();
       expect(source!.source_ref).toBe('run-123');
       expect(source!.source_type).toBe('run');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // indexWorkspaceDocs
+  // -----------------------------------------------------------------------
+
+  describe('indexWorkspaceDocs', () => {
+    let docsDir: string;
+
+    beforeEach(() => {
+      docsDir = join(tmpDir, 'workspace-root');
+      mkdirSync(docsDir, { recursive: true });
+    });
+
+    it('indexes markdown files with correct source_type', () => {
+      writeFileSync(join(docsDir, 'README.md'), '# My Project');
+      writeFileSync(join(docsDir, 'NOTES.md'), 'Some notes');
+
+      const result = service.indexWorkspaceDocs('ws-1', docsDir);
+      expect(result.indexed).toBe(2);
+      expect(result.skipped).toBe(0);
+
+      const rows = memoryDb.prepare("SELECT * FROM memories WHERE source_type = 'workspace_doc'").all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(2);
+      expect(rows.some(r => r.description === 'Workspace doc: README.md')).toBe(true);
+      expect(rows.some(r => r.description === 'Workspace doc: NOTES.md')).toBe(true);
+    });
+
+    it('skips unchanged files on re-index (dedup)', () => {
+      writeFileSync(join(docsDir, 'README.md'), '# My Project');
+
+      service.indexWorkspaceDocs('ws-1', docsDir);
+      const result = service.indexWorkspaceDocs('ws-1', docsDir);
+      expect(result.indexed).toBe(0);
+      expect(result.skipped).toBe(1);
+    });
+
+    it('re-indexes when file content changes', () => {
+      writeFileSync(join(docsDir, 'README.md'), '# Version 1');
+      service.indexWorkspaceDocs('ws-1', docsDir);
+
+      writeFileSync(join(docsDir, 'README.md'), '# Version 2');
+      const result = service.indexWorkspaceDocs('ws-1', docsDir);
+      expect(result.indexed).toBe(1);
+      expect(result.skipped).toBe(0);
+
+      const rows = memoryDb
+        .prepare("SELECT content FROM memories WHERE source_type = 'workspace_doc' AND archived_at IS NULL")
+        .all() as Array<{ content: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].content).toContain('Version 2');
+    });
+
+    it('ignores non-markdown files', () => {
+      writeFileSync(join(docsDir, 'README.md'), '# Docs');
+      writeFileSync(join(docsDir, 'data.json'), '{}');
+      writeFileSync(join(docsDir, 'script.ts'), 'console.log()');
+
+      const result = service.indexWorkspaceDocs('ws-1', docsDir);
+      expect(result.indexed).toBe(1);
+    });
+
+    it('returns zeros for non-existent directory', () => {
+      const result = service.indexWorkspaceDocs('ws-1', '/nonexistent/path');
+      expect(result).toEqual({ indexed: 0, skipped: 0 });
     });
   });
 });

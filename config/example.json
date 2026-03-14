@@ -34,7 +34,9 @@
     "archiveThreshold": 0.1,
     "consolidationEnabled": true,
     "compactionFlushConfidence": 0.7,
-    "dailySummaryHour": 2
+    "dailySummaryHour": 2,
+    "docIndexEnabled": true,
+    "docIndexIntervalHours": 6
   },
   "workspaces": [
     {
