@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { MemorySearch } from './memory-search';
 
 const api = vi.hoisted(() => ({
-  post: vi.fn(),
+  get: vi.fn(),
 }));
 
 vi.mock('../api/provider', () => ({
@@ -60,8 +60,8 @@ function renderMemorySearch(initialEntry = '/memory') {
 
 describe('MemorySearch', () => {
   beforeEach(() => {
-    api.post.mockReset();
-    api.post.mockResolvedValue(makeSearchResponse());
+    api.get.mockReset();
+    api.get.mockResolvedValue(makeSearchResponse());
   });
 
   afterEach(() => {
@@ -73,7 +73,7 @@ describe('MemorySearch', () => {
     renderMemorySearch();
 
     expect(screen.getByRole('button', { name: 'Search' })).toHaveProperty('disabled', true);
-    expect(api.post).not.toHaveBeenCalled();
+    expect(api.get).not.toHaveBeenCalled();
   });
 
   it('searches by button click and renders results', async () => {
@@ -83,11 +83,7 @@ describe('MemorySearch', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith('/v1/memory/search', {
-        query: 'alpha',
-        includeContent: true,
-        limit: 20,
-      });
+      expect(api.get).toHaveBeenCalledWith('/v1/memory/search?q=alpha&limit=20&full=true');
     });
 
     expect(screen.getByTestId('location-search').textContent).toBe('?q=alpha');
@@ -102,23 +98,19 @@ describe('MemorySearch', () => {
     fireEvent.keyDown(screen.getByPlaceholderText('Search memories...'), { key: 'Enter' });
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledTimes(1);
+      expect(api.get).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByTestId('location-search').textContent).toBe('?q=alpha');
   });
 
   it('auto-searches from the q query param and renders empty results', async () => {
-    api.post.mockResolvedValueOnce(makeSearchResponse({ results: [], totalCandidates: 0, query: 'from-url' }));
+    api.get.mockResolvedValueOnce(makeSearchResponse({ results: [], totalCandidates: 0, query: 'from-url' }));
 
     renderMemorySearch('/memory?q=from-url');
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith('/v1/memory/search', {
-        query: 'from-url',
-        includeContent: true,
-        limit: 20,
-      });
+      expect(api.get).toHaveBeenCalledWith('/v1/memory/search?q=from-url&limit=20&full=true');
     });
 
     expect(screen.getByPlaceholderText('Search memories...')).toHaveProperty('value', 'from-url');
@@ -126,7 +118,7 @@ describe('MemorySearch', () => {
   });
 
   it('shows request failures', async () => {
-    api.post.mockRejectedValueOnce(new Error('Search failed'));
+    api.get.mockRejectedValueOnce(new Error('Search failed'));
 
     renderMemorySearch('/memory?q=alpha');
 

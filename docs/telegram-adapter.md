@@ -1,6 +1,6 @@
 # Telegram Adapter
 
-The Telegram adapter (`@popeye/telegram`) is a thin bridge between Telegram Bot API updates and the Popeye control API. It belongs to the interface layer and contains no runtime logic.
+The Telegram adapter (`@popeye/telegram`) is a thin bridge between Telegram update payloads and the Popeye control API. It belongs to the interface layer and contains no runtime logic.
 
 ## Design principles
 
@@ -9,13 +9,27 @@ The Telegram adapter (`@popeye/telegram`) is a thin bridge between Telegram Bot 
 - Allowlist-only DM policy. No pairing flow, no open registration.
 - All messages are treated as untrusted input.
 
+## Current implemented scope
+
+The current mainline package implements:
+
+- Telegram update normalization (`normalizeTelegramUpdate()`)
+- ingress bridging into the control API (`ingestTelegramUpdate()`)
+- Bot API transport (`createTelegramBotClient()`)
+- long-poll receive/send orchestration (`TelegramLongPollRelay`)
+- reply text cleanup + fallback receipt formatting (`formatTelegramReply()`, `buildTelegramRunReply()`)
+
+Current in-repo transport is **long-polling**. Webhook hosting is still outside the package.
+
 ## Message flow
 
-1. Telegram sends a webhook update (or the adapter polls).
-2. `normalizeTelegramUpdate()` extracts `senderId`, `chatId`, `chatType`, `telegramMessageId`, and `text` from the update. Both `message` and `edited_message` are handled. Text is taken from `text` or `caption` fields. Updates without a sender or text are discarded (returns `null`).
+1. `TelegramLongPollRelay` polls Telegram `getUpdates` (or an external transport can still call the same normalization helpers).
+2. `normalizeTelegramUpdate()` extracts `senderId`, `chatId`, `chatType`, `telegramMessageId`, and `text`. Both `message` and `edited_message` are handled. Text is taken from `text` or `caption` fields. Updates without a sender or text are discarded (returns `null`).
 3. `ingestTelegramUpdate()` calls the runtime's `ingestMessage()` with source `telegram` and the extracted fields.
 4. The runtime applies the full ingress pipeline (see below).
-5. The adapter receives a `MessageIngressResponse` and can format a reply via `formatTelegramReply()`.
+5. For accepted messages, the relay waits for the related job to reach a terminal state through the control API.
+6. The relay fetches the final run events, extracts the last assistant message, and falls back to a receipt summary when needed.
+7. The relay sends the formatted reply back to Telegram with `sendMessage`.
 
 ## Runtime ingress pipeline (for Telegram source)
 
@@ -55,3 +69,5 @@ The adapter exports these interfaces:
 - `TelegramUpdate` / `TelegramMessageUpdate` -- raw Telegram update shapes
 - `NormalizedTelegramUpdate` -- extracted fields after normalization
 - `TelegramIngressClient` -- interface for the runtime's `ingestMessage` method
+- `TelegramRunTrackingClient` -- control-plane contract for job polling + run event retrieval
+- `TelegramBotClient` -- Bot API transport contract

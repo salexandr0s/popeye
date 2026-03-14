@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +36,18 @@ function createWalDb(dbPath: string): void {
   db.pragma('journal_mode = WAL');
   db.exec('CREATE TABLE IF NOT EXISTS _init (id INTEGER PRIMARY KEY)');
   db.close();
+}
+
+function createFakePiCheckout(rootVersion: string, codingAgentVersion: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-pi-'));
+  chmodSync(dir, 0o700);
+  mkdirSync(join(dir, 'packages', 'coding-agent'), { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: rootVersion, private: true }, null, 2));
+  writeFileSync(
+    join(dir, 'packages', 'coding-agent', 'package.json'),
+    JSON.stringify({ name: '@fake/coding-agent', version: codingAgentVersion, private: true }, null, 2),
+  );
+  return dir;
 }
 
 describe('security audit', () => {
@@ -126,5 +138,19 @@ describe('security audit', () => {
     createWalDb(paths.memoryDbPath);
     const findings = runLocalSecurityAudit(makeConfig(dir));
     expect(findings.filter((finding) => finding.severity !== 'info')).toHaveLength(0);
+  });
+
+  it('checks configured piVersion against coding-agent version instead of repo root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
+    chmodSync(dir, 0o700);
+    setupDirs(dir);
+    initAuthStore(join(dir, 'config', 'auth.json'));
+    const piPath = createFakePiCheckout('9.9.9', '0.57.1');
+    const findings = runLocalSecurityAudit(
+      makeConfig(dir, {
+        engine: { kind: 'pi', command: 'node', args: [], piPath, piVersion: '0.57.1' },
+      }),
+    );
+    expect(findings.some((f) => f.code === 'pi_version_mismatch')).toBe(false);
   });
 });

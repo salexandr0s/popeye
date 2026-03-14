@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import {
   type AppConfig,
@@ -15,6 +16,7 @@ import { z } from 'zod';
 export type { EngineFailureClassification } from '@popeye/contracts';
 
 const DEFAULT_PI_CLI_PATH = 'packages/coding-agent/dist/cli.js';
+const CODING_AGENT_PACKAGE_JSON_PATH = 'packages/coding-agent/package.json';
 const MAX_STDERR_BYTES = 1_048_576;
 const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
 const MAX_EVENTS = 10_000;
@@ -60,9 +62,52 @@ export interface EngineExecution {
   completed: Promise<EngineRunCompletion>;
 }
 
+export type EngineSessionPolicy =
+  | { type: 'dedicated'; rootId: string }
+  | { type: 'ephemeral' }
+  | { type: 'per_task'; taskId: string };
+
+export interface EngineTriggerDescriptor {
+  source: 'manual' | 'heartbeat' | 'schedule' | 'telegram' | 'api';
+  originId?: string;
+  timestamp: string;
+}
+
+export interface RuntimeToolDescriptor {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  label?: string;
+  execute?: (params: unknown) => Promise<RuntimeToolResult> | RuntimeToolResult;
+}
+
+export interface RuntimeToolResultContent {
+  type: 'text';
+  text: string;
+}
+
+export interface RuntimeToolResult {
+  content: RuntimeToolResultContent[];
+  details?: unknown;
+}
+
+export interface EngineRunRequest {
+  prompt: string;
+  workspaceId?: string;
+  projectId?: string | null;
+  sessionPolicy?: EngineSessionPolicy;
+  instructionSnapshotId?: string;
+  cwd?: string;
+  modelOverride?: string;
+  trigger?: EngineTriggerDescriptor;
+  runtimeTools?: RuntimeToolDescriptor[];
+}
+
 export interface EngineAdapter {
   startRun(input: string, options?: EngineRunOptions): Promise<EngineRunHandle>;
+  startRun(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunHandle>;
   run(input: string, options?: EngineRunOptions): Promise<EngineRunResult>;
+  run(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunResult>;
 }
 
 export interface PiAdapterConfig {
@@ -77,6 +122,9 @@ export interface PiCheckoutStatus {
   path: string;
   available: boolean;
   packageJsonPath: string;
+  codingAgentPackageJsonPath: string;
+  repoVersion: string | null;
+  codingAgentVersion: string | null;
   version: string | null;
 }
 
@@ -132,6 +180,12 @@ interface PromptState {
   completed: boolean;
 }
 
+interface PreparedRuntimeToolBridge {
+  extensionPaths: string[];
+  cleanup(): void;
+  toolsByName: Map<string, RuntimeToolDescriptor>;
+}
+
 const PackageVersionSchema = z.object({
   version: z.string().optional(),
 }).passthrough();
@@ -164,6 +218,13 @@ const RpcExtensionErrorSchema = z.object({
   extensionPath: z.string().optional(),
 }).passthrough();
 
+const RuntimeToolCallSchema = z.object({
+  op: z.literal('runtime_tool_call'),
+  toolCallId: z.string(),
+  tool: z.string(),
+  params: z.unknown().optional(),
+});
+
 export class PiEngineAdapterNotConfiguredError extends Error {
   constructor(message = 'Pi engine adapter is not configured in this repository yet') {
     super(message);
@@ -177,21 +238,34 @@ export function resolvePiCheckoutPath(piPath?: string): string {
 export function inspectPiCheckout(piPath?: string): PiCheckoutStatus {
   const path = resolvePiCheckoutPath(piPath);
   const packageJsonPath = resolve(path, 'package.json');
+  const codingAgentPackageJsonPath = resolve(path, CODING_AGENT_PACKAGE_JSON_PATH);
   const available = existsSync(path) && existsSync(packageJsonPath);
-  let version: string | null = null;
+  let repoVersion: string | null = null;
+  let codingAgentVersion: string | null = null;
   if (available) {
     try {
       const pkg = PackageVersionSchema.parse(JSON.parse(readFileSync(packageJsonPath, 'utf8')));
-      version = pkg.version ?? null;
+      repoVersion = pkg.version ?? null;
     } catch {
-      // version stays null if package.json is unreadable
+      // repoVersion stays null if package.json is unreadable
+    }
+    try {
+      if (existsSync(codingAgentPackageJsonPath)) {
+        const pkg = PackageVersionSchema.parse(JSON.parse(readFileSync(codingAgentPackageJsonPath, 'utf8')));
+        codingAgentVersion = pkg.version ?? null;
+      }
+    } catch {
+      // codingAgentVersion stays null if package.json is unreadable
     }
   }
   return {
     path,
     available,
     packageJsonPath,
-    version,
+    codingAgentPackageJsonPath,
+    repoVersion,
+    codingAgentVersion,
+    version: codingAgentVersion,
   };
 }
 
@@ -204,20 +278,33 @@ export interface PiVersionCheckResult {
 
 export function checkPiVersion(expected?: string, piPath?: string): PiVersionCheckResult {
   if (!expected) {
-    return { ok: true, message: 'No expected version specified — skipping version check' };
+    return { ok: true, message: 'No expected coding-agent version specified — skipping version check' };
   }
   const status = inspectPiCheckout(piPath);
   if (!status.available) {
     return { ok: false, message: `Pi checkout not available at ${status.path}`, expected, actual: null };
   }
-  if (status.version === expected) {
-    return { ok: true, message: `Pi version matches: ${expected}`, expected, actual: status.version };
+  if (!status.codingAgentVersion) {
+    return {
+      ok: false,
+      message: `Pi coding-agent version could not be read from ${status.codingAgentPackageJsonPath}`,
+      expected,
+      actual: null,
+    };
+  }
+  if (status.codingAgentVersion === expected) {
+    return {
+      ok: true,
+      message: `Pi coding-agent version matches: ${expected}`,
+      expected,
+      actual: status.codingAgentVersion,
+    };
   }
   return {
     ok: false,
-    message: `Pi version mismatch — expected ${expected}, found ${status.version ?? 'unknown'}`,
+    message: `Pi coding-agent version mismatch — expected ${expected}, found ${status.codingAgentVersion}`,
     expected,
-    actual: status.version,
+    actual: status.codingAgentVersion,
   };
 }
 
@@ -309,6 +396,13 @@ function primitivePayload(input: Record<string, unknown>): PrimitiveRecord {
   return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, coercePrimitive(value)]));
 }
 
+function normalizeEngineRunRequest(input: string | EngineRunRequest): EngineRunRequest {
+  if (typeof input === 'string') {
+    return { prompt: input };
+  }
+  return input;
+}
+
 function normalizeStructuredEvent(type: NormalizedEngineEvent['type'], payload: Record<string, unknown>, raw?: string): NormalizedEngineEvent {
   return NormalizedEngineEventSchema.parse({
     type,
@@ -391,11 +485,98 @@ function classifyFailure(message: string | undefined, started: boolean): EngineF
   return started ? 'permanent_failure' : 'startup_failure';
 }
 
-function buildPiCommand(piPath: string, command: string, args: string[]): { command: string; args: string[] } {
-  const baseArgs = stripModeArgs(resolveBaseArgs(piPath, command, args));
+function buildPiCommand(
+  piPath: string,
+  command: string,
+  args: string[],
+  options: { extensionPaths?: string[]; modelOverride?: string } = {},
+): { command: string; args: string[] } {
+  const extensionPaths = options.extensionPaths ?? [];
+  const baseArgs = applyModelOverride(
+    stripOptionValueArgs(resolveBaseArgs(piPath, command, args), new Set(['--mode'])),
+    options.modelOverride,
+  );
   return {
     command,
-    args: [...baseArgs, '--mode', 'rpc'],
+    args: [...baseArgs, ...extensionPaths.flatMap((extensionPath) => ['--extension', extensionPath]), '--mode', 'rpc'],
+  };
+}
+
+function createRuntimeToolExtensionSource(tools: RuntimeToolDescriptor[]): string {
+  const registry = tools.map((tool) => ({
+    name: tool.name,
+    label: tool.label ?? tool.name,
+    description: tool.description,
+  }));
+
+  return `import { Type } from "@mariozechner/pi-ai";
+
+const registry = ${JSON.stringify(registry, null, 2)};
+
+export default function (pi) {
+  for (const tool of registry) {
+    pi.registerTool({
+      name: tool.name,
+      label: tool.label,
+      description: tool.description,
+      parameters: Type.Object({}, { additionalProperties: true }),
+      async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+        const request = JSON.stringify({
+          op: "runtime_tool_call",
+          toolCallId,
+          tool: tool.name,
+          params,
+        });
+        const response = await ctx.ui.editor("popeye.runtime_tool", request);
+        if (typeof response !== "string" || response.length === 0) {
+          return {
+            content: [{ type: "text", text: "Popeye runtime tool bridge cancelled the request." }],
+            details: { cancelled: true },
+          };
+        }
+        const parsed = JSON.parse(response);
+        if (!parsed?.ok) {
+          throw new Error(typeof parsed?.error === "string" ? parsed.error : "Popeye runtime tool bridge failed");
+        }
+        return {
+          content: Array.isArray(parsed.content) ? parsed.content : [{ type: "text", text: "OK" }],
+          details: parsed.details,
+        };
+      },
+    });
+  }
+}
+`;
+}
+
+function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRuntimeToolBridge {
+  const toolsByName = new Map<string, RuntimeToolDescriptor>();
+  if (tools.length === 0) {
+    return {
+      extensionPaths: [],
+      cleanup() {},
+      toolsByName,
+    };
+  }
+
+  for (const tool of tools) {
+    if (typeof tool.execute !== 'function') {
+      throw new Error(`Runtime tool ${tool.name} is missing an execute callback`);
+    }
+    toolsByName.set(tool.name, tool);
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+  chmodSync(dir, 0o700);
+  const extensionPath = join(dir, 'popeye-runtime-tools.mjs');
+  writeFileSync(extensionPath, createRuntimeToolExtensionSource(tools), 'utf8');
+
+  return {
+    extensionPaths: [extensionPath],
+    cleanup() {
+      rmSync(dir, { recursive: true, force: true });
+    },
+    toolsByName,
   };
 }
 
@@ -423,18 +604,42 @@ function inferDefaultNodePiArgs(piPath: string): string[] {
   return [DEFAULT_PI_CLI_PATH];
 }
 
-function stripModeArgs(args: string[]): string[] {
+function stripOptionValueArgs(args: string[], optionNames: ReadonlySet<string>): string[] {
   const sanitized: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
-    if (arg === '--mode') {
-      index += 1;
+    const matchingOption = Array.from(optionNames).find((optionName) => arg === optionName || arg.startsWith(`${optionName}=`));
+    if (matchingOption) {
+      if (arg === matchingOption) {
+        index += 1;
+      }
       continue;
     }
     sanitized.push(arg);
   }
   return sanitized;
+}
+
+function applyModelOverride(args: string[], modelOverride?: string): string[] {
+  const normalizedModel = modelOverride?.trim();
+  if (!normalizedModel) return args;
+  return [...stripOptionValueArgs(args, new Set(['--model'])), '--model', normalizedModel];
+}
+
+function resolveSpawnCwd(piPath: string, cwd?: string): string {
+  if (!cwd) return piPath;
+  if (!isAbsolute(cwd)) {
+    throw new Error(`Engine run cwd must be an absolute path: ${cwd}`);
+  }
+  if (!existsSync(cwd)) {
+    throw new Error(`Engine run cwd does not exist: ${cwd}`);
+  }
+  const stats = statSync(cwd);
+  if (!stats.isDirectory()) {
+    throw new Error(`Engine run cwd must be a directory: ${cwd}`);
+  }
+  return cwd;
 }
 
 export interface FakeEngineConfig {
@@ -460,13 +665,15 @@ export class FakeEngineAdapter implements EngineAdapter {
     };
   }
 
-  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const request = normalizeEngineRunRequest(input);
+    const prompt = request.prompt;
     const sessionRef = `fake:${randomUUID()}`;
     const usage: UsageMetrics = {
       provider: 'fake',
       model: 'fake-engine',
-      tokensIn: input.length,
-      tokensOut: input.length,
+      tokensIn: prompt.length,
+      tokensOut: prompt.length,
       estimatedCostUsd: 0,
     };
 
@@ -496,7 +703,7 @@ export class FakeEngineAdapter implements EngineAdapter {
     const runEvents = async (): Promise<void> => {
       const { mode } = this.config;
 
-      await emitAsync({ type: 'started', payload: { input } });
+      await emitAsync({ type: 'started', payload: { input: prompt } });
 
       if (mode === 'timeout') {
         return;
@@ -536,8 +743,8 @@ export class FakeEngineAdapter implements EngineAdapter {
       }
 
       await emitAsync({ type: 'session', payload: { sessionRef } });
-      await emitAsync({ type: 'message', payload: { text: `echo:${input}` } });
-      await emitAsync({ type: 'completed', payload: { output: `echo:${input}` } });
+      await emitAsync({ type: 'message', payload: { text: `echo:${prompt}` } });
+      await emitAsync({ type: 'completed', payload: { output: `echo:${prompt}` } });
       await emitAsync({
         type: 'usage',
         payload: {
@@ -560,7 +767,7 @@ export class FakeEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     const handle = await this.startRun(input, {
       ...options,
@@ -586,13 +793,14 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
     this.failureClassification = failureClassification;
   }
 
-  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const request = normalizeEngineRunRequest(input);
     const completion: EngineRunCompletion = {
       engineSessionRef: `fake:${randomUUID()}`,
       usage: {
         provider: 'fake',
         model: 'fake-engine',
-        tokensIn: input.length,
+        tokensIn: request.prompt.length,
         tokensOut: 0,
         estimatedCostUsd: 0,
       },
@@ -605,7 +813,7 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
       isAlive: () => false,
     };
     options.onHandle?.(handle);
-    options.onEvent?.({ type: 'started', payload: { input } });
+    options.onEvent?.({ type: 'started', payload: { input: request.prompt } });
     options.onEvent?.({ type: 'failed', payload: { classification: this.failureClassification } });
     options.onEvent?.({
       type: 'usage',
@@ -620,7 +828,7 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     const handle = await this.startRun(input, {
       ...options,
@@ -659,10 +867,15 @@ export class PiEngineAdapter implements EngineAdapter {
     }
   }
 
-  async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const launch = buildPiCommand(this.piPath, this.command, this.args);
+  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const request = normalizeEngineRunRequest(input);
+    const runtimeToolBridge = prepareRuntimeToolBridge(request.runtimeTools ?? []);
+    const launch = buildPiCommand(this.piPath, this.command, this.args, {
+      extensionPaths: runtimeToolBridge.extensionPaths,
+      modelOverride: request.modelOverride,
+    });
     const child = spawn(launch.command, launch.args, {
-      cwd: this.piPath,
+      cwd: resolveSpawnCwd(this.piPath, request.cwd),
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
     });
@@ -731,6 +944,45 @@ export class PiEngineAdapter implements EngineAdapter {
       child.stdin.write(serializeRpcCommand(command));
     };
 
+    const respondToRuntimeToolRequest = async (
+      uiRequest: z.infer<typeof RpcExtensionUiRequestSchema>,
+    ): Promise<void> => {
+      try {
+        if (uiRequest.method !== 'editor' || uiRequest.title !== 'popeye.runtime_tool') {
+          throw new Error(`unsupported Pi RPC extension UI request: ${uiRequest.method}`);
+        }
+        const payload = RuntimeToolCallSchema.parse(JSON.parse(String(uiRequest.prefill ?? '')));
+        const tool = runtimeToolBridge.toolsByName.get(payload.tool);
+        if (!tool?.execute) {
+          sendCommand({
+            type: 'extension_ui_response',
+            id: uiRequest.id,
+            value: JSON.stringify({ ok: false, error: `Unknown runtime tool: ${payload.tool}` }),
+          });
+          return;
+        }
+        const result = await tool.execute(payload.params);
+        sendCommand({
+          type: 'extension_ui_response',
+          id: uiRequest.id,
+          value: JSON.stringify({
+            ok: true,
+            content: result.content,
+            details: result.details,
+          }),
+        });
+      } catch (error) {
+        sendCommand({
+          type: 'extension_ui_response',
+          id: uiRequest.id,
+          value: JSON.stringify({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        });
+      }
+    };
+
     const handleResponse = (response: RpcResponse, rawLine: string): void => {
       if (response.id === INTERNAL_IDS.getState && response.command === 'get_state') {
         if (!response.success) {
@@ -743,7 +995,7 @@ export class PiEngineAdapter implements EngineAdapter {
         synthesizeSession(state, rawLine);
         if (!promptState.requested) {
           promptState.requested = true;
-          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: input });
+          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
         }
         return;
       }
@@ -871,9 +1123,13 @@ export class PiEngineAdapter implements EngineAdapter {
         }
 
         if (parsed.type === 'extension_ui_request') {
-          const request = RpcExtensionUiRequestSchema.parse(parsed);
-          if (!PASSIVE_EXTENSION_UI_METHODS.has(request.method)) {
-            throw new Error(`unsupported Pi RPC extension UI request: ${request.method}`);
+          const uiRequest = RpcExtensionUiRequestSchema.parse(parsed);
+          if (uiRequest.method === 'editor' && uiRequest.title === 'popeye.runtime_tool') {
+            void respondToRuntimeToolRequest(uiRequest);
+            return;
+          }
+          if (!PASSIVE_EXTENSION_UI_METHODS.has(uiRequest.method)) {
+            throw new Error(`unsupported Pi RPC extension UI request: ${uiRequest.method}`);
           }
           return;
         }
@@ -976,6 +1232,7 @@ export class PiEngineAdapter implements EngineAdapter {
       child.on('close', (code) => {
         if (timeoutTimer != null) clearTimeout(timeoutTimer);
         if (cancelEscalationTimer != null) clearTimeout(cancelEscalationTimer);
+        runtimeToolBridge.cleanup();
 
         if (stdoutBuffer.trim().length > 0) {
           processLine(stdoutBuffer.trim());
@@ -1018,7 +1275,7 @@ export class PiEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     let failureMessage: string | undefined;
     const handle = await this.startRun(input, {

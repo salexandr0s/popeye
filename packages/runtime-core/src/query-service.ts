@@ -105,8 +105,8 @@ export class QueryService {
     return rows.map((row) => AgentProfileRecordSchema.parse({ id: row.id, name: row.name, createdAt: row.created_at }));
   }
 
-  getInstructionPreview(scope: string): CompiledInstructionBundle {
-    return createInstructionPreview(this.databases, this.workspaceRegistry, scope);
+  getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
+    return createInstructionPreview(this.databases, this.workspaceRegistry, scope, projectId);
   }
 
   resolveInstructionsForRun(task: { workspaceId: string; projectId: string | null; prompt: string }): CompiledInstructionBundle {

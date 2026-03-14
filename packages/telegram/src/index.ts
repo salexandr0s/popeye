@@ -1,4 +1,11 @@
-import type { IngestMessageInput, MessageIngressResponse, TelegramChatType } from '@popeye/contracts';
+import type {
+  IngestMessageInput,
+  JobRecord,
+  MessageIngressResponse,
+  ReceiptRecord,
+  RunEventRecord,
+  TelegramChatType,
+} from '@popeye/contracts';
 
 export interface TelegramUserRef {
   id: number | string;
@@ -35,6 +42,51 @@ export interface TelegramIngressClient {
   ingestMessage(input: IngestMessageInput): Promise<MessageIngressResponse>;
 }
 
+export interface TelegramRunTrackingClient extends TelegramIngressClient {
+  getJob(jobId: string): Promise<JobRecord>;
+  listRunEvents(runId: string): Promise<RunEventRecord[]>;
+  getRunReceipt(runId: string): Promise<ReceiptRecord | null>;
+}
+
+export interface TelegramSendMessageInput {
+  chatId: string;
+  text: string;
+  replyToMessageId?: number;
+}
+
+export interface TelegramBotClient {
+  getUpdates(options?: { offset?: number; timeoutSeconds?: number }): Promise<TelegramUpdate[]>;
+  sendMessage(input: TelegramSendMessageInput): Promise<void>;
+}
+
+export interface TelegramBotClientOptions {
+  token: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export interface TelegramLongPollRelayOptions {
+  bot: TelegramBotClient;
+  control: TelegramRunTrackingClient;
+  workspaceId: string;
+  longPollTimeoutSeconds?: number;
+  retryDelayMs?: number;
+  jobPollIntervalMs?: number;
+  jobTimeoutMs?: number;
+}
+
+const TERMINAL_JOB_STATUSES = new Set<JobRecord['status']>(['succeeded', 'failed_final', 'cancelled']);
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function truncateTelegramText(text: string): string {
+  if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
+  return `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 1)}…`;
+}
+
 export function normalizeTelegramUpdate(update: TelegramUpdate): NormalizedTelegramUpdate | null {
   const message = update.message ?? update.edited_message;
   if (!message?.from) return null;
@@ -52,7 +104,7 @@ export function normalizeTelegramUpdate(update: TelegramUpdate): NormalizedTeleg
 }
 
 export function formatTelegramReply(text: string): string {
-  return text.replace(/\r\n/g, '\n').trim();
+  return truncateTelegramText(text.replace(/\r\n/g, '\n').trim());
 }
 
 export async function ingestTelegramUpdate(
@@ -72,4 +124,169 @@ export async function ingestTelegramUpdate(
     telegramMessageId: normalized.telegramMessageId,
     workspaceId,
   });
+}
+
+export function extractTelegramReplyFromRunEvents(events: RunEventRecord[]): string | null {
+  for (const event of [...events].reverse()) {
+    if (event.type !== 'message') continue;
+    try {
+      const payload = JSON.parse(event.payload) as Record<string, unknown>;
+      if (payload.role === 'assistant' && typeof payload.text === 'string' && payload.text.trim().length > 0) {
+        return payload.text;
+      }
+    } catch {
+      // ignore malformed event payloads and keep scanning backwards
+    }
+  }
+  return null;
+}
+
+export function buildTelegramRunReply(receipt: ReceiptRecord): string {
+  const statusPrefix = receipt.status === 'succeeded'
+    ? '✅'
+    : receipt.status === 'cancelled'
+      ? '⏹️'
+      : '⚠️';
+  const parts = [
+    `${statusPrefix} ${receipt.summary}`,
+    `Status: ${receipt.status}`,
+    `Model: ${receipt.usage.provider}/${receipt.usage.model}`,
+    `Tokens: ${receipt.usage.tokensIn}/${receipt.usage.tokensOut}`,
+    `Cost: $${receipt.usage.estimatedCostUsd.toFixed(4)}`,
+  ];
+  if (receipt.status !== 'succeeded' && receipt.details.trim().length > 0) {
+    parts.push(`Details: ${receipt.details}`);
+  }
+  return formatTelegramReply(parts.join('\n'));
+}
+
+export function createTelegramBotClient(options: TelegramBotClientOptions): TelegramBotClient {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const baseUrl = (options.baseUrl ?? 'https://api.telegram.org').replace(/\/$/, '');
+
+  async function request<T>(method: string, body: Record<string, unknown>): Promise<T> {
+    const response = await fetchImpl(`${baseUrl}/bot${options.token}/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`Telegram Bot API ${method} failed with ${response.status}`);
+    }
+    const payload = await response.json() as { ok?: boolean; result?: T; description?: string };
+    if (!payload.ok) {
+      throw new Error(payload.description ?? `Telegram Bot API ${method} returned not ok`);
+    }
+    return payload.result as T;
+  }
+
+  return {
+    async getUpdates(options = {}) {
+      return request<TelegramUpdate[]>('getUpdates', {
+        offset: options.offset,
+        timeout: options.timeoutSeconds ?? 30,
+        allowed_updates: ['message', 'edited_message'],
+      });
+    },
+    async sendMessage(input) {
+      await request('sendMessage', {
+        chat_id: input.chatId,
+        text: truncateTelegramText(input.text),
+        reply_to_message_id: input.replyToMessageId,
+      });
+    },
+  };
+}
+
+async function waitForTerminalJob(
+  client: TelegramRunTrackingClient,
+  jobId: string,
+  pollIntervalMs: number,
+  timeoutMs: number,
+): Promise<JobRecord | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const job = await client.getJob(jobId);
+    if (TERMINAL_JOB_STATUSES.has(job.status)) {
+      return job;
+    }
+    await sleep(pollIntervalMs);
+  }
+  return null;
+}
+
+export class TelegramLongPollRelay {
+  private nextOffset: number | undefined;
+  private running = false;
+  private loopPromise: Promise<void> | null = null;
+  private readonly inflight = new Set<Promise<void>>();
+
+  constructor(private readonly options: TelegramLongPollRelayOptions) {}
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.loopPromise = this.pollLoop();
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    await this.loopPromise;
+    await Promise.allSettled([...this.inflight]);
+  }
+
+  private track(task: Promise<void>): void {
+    this.inflight.add(task);
+    task.finally(() => this.inflight.delete(task));
+  }
+
+  private async pollLoop(): Promise<void> {
+    const longPollTimeoutSeconds = this.options.longPollTimeoutSeconds ?? 30;
+    const retryDelayMs = this.options.retryDelayMs ?? 1_000;
+    while (this.running) {
+      try {
+        const updates = await this.options.bot.getUpdates(
+          this.nextOffset === undefined
+            ? { timeoutSeconds: longPollTimeoutSeconds }
+            : { offset: this.nextOffset, timeoutSeconds: longPollTimeoutSeconds },
+        );
+        for (const update of updates) {
+          this.nextOffset = Math.max(this.nextOffset ?? 0, update.update_id + 1);
+          this.track(this.handleUpdate(update));
+        }
+      } catch {
+        if (!this.running) break;
+        await sleep(retryDelayMs);
+      }
+    }
+  }
+
+  private async handleUpdate(update: TelegramUpdate): Promise<void> {
+    const normalized = normalizeTelegramUpdate(update);
+    if (!normalized) return;
+
+    const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
+    if (!ingress?.accepted || !ingress.jobId) return;
+
+    const job = await waitForTerminalJob(
+      this.options.control,
+      ingress.jobId,
+      this.options.jobPollIntervalMs ?? 500,
+      this.options.jobTimeoutMs ?? 300_000,
+    );
+    if (!job?.lastRunId) return;
+
+    const [events, receipt] = await Promise.all([
+      this.options.control.listRunEvents(job.lastRunId),
+      this.options.control.getRunReceipt(job.lastRunId),
+    ]);
+    const replyText = extractTelegramReplyFromRunEvents(events)
+      ?? (receipt ? buildTelegramRunReply(receipt) : 'Run completed.');
+
+    await this.options.bot.sendMessage({
+      chatId: normalized.chatId,
+      text: formatTelegramReply(replyText),
+      replyToMessageId: normalized.telegramMessageId,
+    });
+  }
 }

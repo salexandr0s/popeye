@@ -41,6 +41,8 @@ import {
   type EngineFailureClassification,
   type EngineRunCompletion,
   type EngineRunHandle,
+  type EngineRunRequest,
+  type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
 import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, loadSqliteVec } from '@popeye/memory';
 import { redactText } from '@popeye/observability';
@@ -55,9 +57,16 @@ import { openRuntimeDatabases, type RuntimeDatabases } from './database.js';
 import { MemoryLifecycleService, type MemoryInsertInput } from './memory-lifecycle.js';
 import { MessageIngestionService, MessageIngressError } from './message-ingestion.js';
 import { QueryService } from './query-service.js';
+import {
+  clearBrowserSessions,
+  createBrowserSession as createRuntimeBrowserSession,
+  type BrowserSessionValidationResult,
+  validateBrowserSession as validateRuntimeBrowserSession,
+} from './browser-sessions.js';
 
 import { nowIso } from '@popeye/contracts';
 import { z } from 'zod';
+import { readAuthStore } from './auth.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -193,6 +202,13 @@ const ScheduleRowSchema = z.object({
   created_at: z.string(),
 });
 
+const RuntimeMemorySearchToolInputSchema = z.object({
+  query: z.string().min(1),
+  scope: z.string().optional(),
+  limit: z.number().int().positive().max(10).optional(),
+  includeContent: z.boolean().optional(),
+});
+
 function mapRunRow(row: unknown): RunRecord {
   const parsed = RunRowSchema.parse(row);
   return RunRecordSchema.parse({
@@ -268,6 +284,9 @@ export class PopeyeRuntimeService {
 
   constructor(config: AppConfig, engineOverride?: EngineAdapter) {
     const startupStart = performance.now();
+    if (config.security.bindHost !== '127.0.0.1') {
+      throw new Error(`Popeye requires config.security.bindHost to be 127.0.0.1, received ${config.security.bindHost}`);
+    }
     this.config = config;
     this.startedAt = nowIso();
     this.databases = openRuntimeDatabases(config);
@@ -315,6 +334,18 @@ export class PopeyeRuntimeService {
       get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
       computeNextHeartbeatDueAt: () => this.computeNextHeartbeatDueAt(),
     }, this.workspaceRegistry);
+
+    const clearedBrowserSessions = clearBrowserSessions(this.databases.app);
+    if (clearedBrowserSessions > 0) {
+      this.recordSecurityAudit({
+        code: 'browser_sessions_cleared_on_startup',
+        severity: 'info',
+        message: `Cleared ${clearedBrowserSessions} browser session(s) during startup`,
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: { cleared: String(clearedBrowserSessions) },
+      });
+    }
 
     this.seedReferenceData();
     this.reconcileStartupState();
@@ -404,6 +435,10 @@ export class PopeyeRuntimeService {
     return this.receiptManager.getReceipt(receiptId);
   }
 
+  getReceiptByRunId(runId: string): ReceiptRecord | null {
+    return this.receiptManager.getReceiptByRunId(runId);
+  }
+
   getUsageSummary(): UsageSummary {
     return this.receiptManager.getUsageSummary();
   }
@@ -474,8 +509,8 @@ export class PopeyeRuntimeService {
     return this.sessionService.listSessionRoots();
   }
 
-  getInstructionPreview(scope: string): CompiledInstructionBundle {
-    return this.queryService.getInstructionPreview(scope);
+  getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
+    return this.queryService.getInstructionPreview(scope, projectId);
   }
 
   listInterventions(): InterventionRecord[] {
@@ -494,8 +529,20 @@ export class PopeyeRuntimeService {
     this.recordSecurityAudit(event);
   }
 
+  loadAuthStore() {
+    return readAuthStore(this.config.authFile);
+  }
+
   issueCsrfToken(): string {
     return this.queryService.issueCsrfToken();
+  }
+
+  createBrowserSession() {
+    return createRuntimeBrowserSession(this.databases.app);
+  }
+
+  validateBrowserSession(sessionId: string): BrowserSessionValidationResult {
+    return validateRuntimeBrowserSession(this.databases.app, sessionId);
   }
 
   // --- Delegated: MessageIngestion ---
@@ -563,6 +610,7 @@ export class PopeyeRuntimeService {
       usage: { provider: this.config.engine.kind, model: 'n/a', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
     });
     this.receiptManager.captureMemoryFromReceipt(receipt);
+    this.emit('run_completed', receipt);
     return this.getRun(runId);
   }
 
@@ -742,6 +790,63 @@ export class PopeyeRuntimeService {
 
   private emit(event: string, payload: unknown): void {
     this.events.emit('event', { event, data: JSON.stringify(payload) } satisfies RuntimeEvent);
+  }
+
+  private createRuntimeTools(task: TaskRecord): RuntimeToolDescriptor[] {
+    return [
+      {
+        name: 'popeye_memory_search',
+        label: 'Popeye Memory Search',
+        description: 'Search Popeye memory for prior facts, receipts, and procedures before answering.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+            scope: { type: 'string', description: 'Optional memory scope override' },
+            limit: { type: 'number', description: 'Maximum results to return (1-10)' },
+            includeContent: { type: 'boolean', description: 'Include full memory content snippets' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        execute: async (params) => {
+          const parsed = RuntimeMemorySearchToolInputSchema.parse(params ?? {});
+          const response = await this.searchMemory({
+            query: parsed.query,
+            scope: parsed.scope ?? task.workspaceId,
+            limit: parsed.limit ?? 5,
+            includeContent: parsed.includeContent ?? false,
+          });
+          const lines = response.results.length === 0
+            ? ['No matching Popeye memories found.']
+            : response.results.map((result, index) => {
+                const snippet = result.snippet ? ` — ${result.snippet}` : '';
+                return `${index + 1}. ${result.description} [${result.scope}/${result.sourceType}]${snippet}`;
+              });
+          return {
+            content: [{ type: 'text', text: lines.join('\n') }],
+            details: {
+              query: response.query,
+              totalCandidates: response.totalCandidates,
+              latencyMs: response.latencyMs,
+              searchMode: response.searchMode,
+              results: response.results,
+            },
+          };
+        },
+      },
+    ];
+  }
+
+  private resolveTaskCwd(task: TaskRecord): string | undefined {
+    if (task.projectId) {
+      const project = this.workspaceRegistry.getProject(task.projectId);
+      if (project?.workspaceId === task.workspaceId && project.path) {
+        return project.path;
+      }
+    }
+    const workspace = this.workspaceRegistry.getWorkspace(task.workspaceId);
+    return workspace?.rootPath ?? undefined;
   }
 
   // --- Internal: startup & seeding ---
@@ -1007,10 +1112,24 @@ export class PopeyeRuntimeService {
       ? `${instructionBundle.compiledText}\n\n---\n\n${redactedPrompt.text}`
       : redactedPrompt.text;
 
+    this.messageIngestion.linkAcceptedIngressToRun(task.id, job.id, run.id);
     this.emit('run_started', run);
 
     try {
-      const handle = await this.engine.startRun(fullPrompt, {
+      const engineRequest: EngineRunRequest = {
+        prompt: fullPrompt,
+        workspaceId: task.workspaceId,
+        projectId: task.projectId,
+        instructionSnapshotId: instructionBundle.id,
+        cwd: this.resolveTaskCwd(task),
+        sessionPolicy: { type: 'dedicated', rootId: sessionRoot.id },
+        trigger: {
+          source: task.source,
+          timestamp: run.startedAt,
+        },
+        runtimeTools: this.createRuntimeTools(task),
+      };
+      const handle = await this.engine.startRun(engineRequest, {
         onEvent: (event) => this.persistEngineEvent(run.id, event),
       });
       const activeRun: ActiveRunContext = {
@@ -1044,6 +1163,7 @@ export class PopeyeRuntimeService {
         usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
       });
       this.receiptManager.captureMemoryFromReceipt(receipt);
+      this.emit('run_completed', receipt);
       this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: safeMessage, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
       return this.getRun(run.id);
     }
@@ -1123,6 +1243,7 @@ export class PopeyeRuntimeService {
         usage: completion.usage,
       });
       this.receiptManager.captureMemoryFromReceipt(receipt);
+      this.emit('run_completed', receipt);
       this.cleanupActiveRun(activeRun);
       return;
     }
@@ -1147,6 +1268,7 @@ export class PopeyeRuntimeService {
       usage: completion.usage,
     });
     this.receiptManager.captureMemoryFromReceipt(receipt);
+    this.emit('run_completed', receipt);
     this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
     this.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
     this.cleanupActiveRun(activeRun);
@@ -1178,6 +1300,7 @@ export class PopeyeRuntimeService {
       usage: completion.usage,
     });
     this.receiptManager.captureMemoryFromReceipt(receipt);
+    this.emit('run_completed', receipt);
   }
 
   private cleanupActiveRun(activeRun: ActiveRunContext): void {
@@ -1191,6 +1314,10 @@ export class PopeyeRuntimeService {
     if (!run || isTerminalRunState(run.state)) return;
     this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), this.redactError(reason), run.id);
+    const receipt = this.receiptManager.getReceiptByRunId(run.id);
+    if (receipt) {
+      this.emit('run_completed', receipt);
+    }
     await this.applyRecoveryDecision(run.jobId, run.id, reason);
     const activeRun = this.activeRuns.get(runId);
     if (activeRun) this.cleanupActiveRun(activeRun);

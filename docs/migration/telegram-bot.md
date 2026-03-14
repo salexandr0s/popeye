@@ -18,6 +18,7 @@
 - Rate-limited message ingress
 - Stateless adapter — all state in Popeye runtime
 - Prompt injection detection on all inbound messages
+- Current implementation status: ingress normalization, long-poll receive/send transport, and control-API-backed reply delivery are implemented
 
 ## Migration steps
 
@@ -34,9 +35,10 @@
    }
    ```
 3. **Set bot token** — via `TELEGRAM_BOT_TOKEN` env var (never in config files)
-4. **Deploy adapter** — authenticates to control API using runtime auth token
-5. **Test** — send a DM, verify it appears in `pop run list`
-6. **Verify ingress** — check runtime logs for message routing
+4. **Deploy adapter** — `popeyed` authenticates to the control API using the runtime auth token and starts the long-poll relay automatically when Telegram is enabled
+5. **Test ingress** — send a DM, verify it appears in `pop run list`
+6. **Test reply delivery** — confirm the bot replies with the final assistant message (or receipt fallback when no assistant text exists)
+7. **Verify routing** — inspect `message_ingress`, runs, and receipts if the bot does not answer as expected
 
 ## Intentional omissions
 

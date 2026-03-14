@@ -19,8 +19,11 @@ function createFakePiRepo(script: string, options: { defaultCli?: boolean } = {}
   const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-'));
   chmodSync(dir, 0o700);
   const cliDir = options.defaultCli === false ? join(dir, 'bin') : join(dir, 'packages', 'coding-agent', 'dist');
+  const codingAgentDir = join(dir, 'packages', 'coding-agent');
   mkdirSync(cliDir, { recursive: true });
+  mkdirSync(codingAgentDir, { recursive: true });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '0.1.0', private: true }, null, 2));
+  writeFileSync(join(codingAgentDir, 'package.json'), JSON.stringify({ name: '@fake/coding-agent', version: '0.1.0', private: true }, null, 2));
   writeFileSync(join(cliDir, options.defaultCli === false ? 'pi.js' : 'cli.js'), script, 'utf8');
   return dir;
 }
@@ -66,6 +69,23 @@ describe('engine-pi', () => {
     expect(result.engineSessionRef).toContain('fake:');
     expect(result.failureClassification).toBeNull();
     expect(result.usage.provider).toBe('fake');
+  });
+
+  it('fake adapter accepts structured run requests', async () => {
+    const adapter = new FakeEngineAdapter();
+    const cwd = mkdtempSync(join(tmpdir(), 'popeye-fake-engine-cwd-'));
+    const result = await adapter.run({
+      prompt: 'structured-run-test',
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      cwd,
+      modelOverride: 'popeye/test-model',
+      sessionPolicy: { type: 'dedicated', rootId: 'session-root-1' },
+      instructionSnapshotId: 'bundle-1',
+      trigger: { source: 'manual', timestamp: '2026-03-14T10:00:00.000Z' },
+    });
+    expect(result.events.map((e) => e.type)).toEqual(['started', 'session', 'message', 'completed', 'usage']);
+    expect(result.events.find((event) => event.type === 'message')?.payload.text).toBe('echo:structured-run-test');
   });
 
   it('fake adapter transient_failure mode emits started then failed', async () => {
@@ -143,6 +163,17 @@ describe('engine-pi', () => {
     const piPath = createFakePiRepo('', { defaultCli: false });
     const status = inspectPiCheckout(piPath);
     expect(status.available).toBe(true);
+    expect(status.repoVersion).toBe('0.1.0');
+    expect(status.codingAgentVersion).toBe('0.1.0');
+    expect(status.version).toBe('0.1.0');
+  });
+
+  it('prefers coding-agent version over repo-root version', () => {
+    const piPath = createFakePiRepo('', { defaultCli: false });
+    writeFileSync(join(piPath, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '9.9.9', private: true }, null, 2));
+    const status = inspectPiCheckout(piPath);
+    expect(status.repoVersion).toBe('9.9.9');
+    expect(status.codingAgentVersion).toBe('0.1.0');
     expect(status.version).toBe('0.1.0');
   });
 
@@ -166,6 +197,7 @@ describe('engine-pi', () => {
   it('checkPiVersion returns ok when no expected version', () => {
     const result = checkPiVersion(undefined);
     expect(result.ok).toBe(true);
+    expect(result.message).toContain('coding-agent');
   });
 
   it('checkPiVersion returns not-ok when checkout missing', () => {
@@ -419,6 +451,153 @@ describe('engine-pi', () => {
     const result = await adapter.run('ui');
     expect(result.failureClassification).toBe('protocol_error');
     expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('protocol_error');
+  });
+
+  it('bridges host-owned runtime tools over Pi RPC editor requests', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      let sawExtensionFlag = process.argv.includes('--extension');
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-session', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-1',
+                tool: 'popeye_memory_search',
+                params: { query: 'release notes' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 2, output: 3, cost: { total: 0.01 } },
+                content: [{ type: 'text', text: response.content[0].text + ' / extension=' + String(sawExtensionFlag) }],
+              },
+            });
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 2, output: 3, cost: { total: 0.01 } },
+                content: [{ type: 'text', text: response.content[0].text + ' / extension=' + String(sawExtensionFlag) }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-bridge',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute(params) {
+          expect(params).toEqual({ query: 'release notes' });
+          return {
+            content: [{ type: 'text', text: 'memory result ready' }],
+            details: { count: 1 },
+          };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('memory result ready');
+    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('extension=true');
+  });
+
+  it('honors cwd and request modelOverride for Pi runs', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:cwd-model-session', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            const modelIndex = process.argv.findIndex((arg) => arg === '--model');
+            const model = modelIndex >= 0 ? process.argv[modelIndex + 1] : 'missing';
+            const payload = 'cwd=' + process.cwd() + ';model=' + model;
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: payload }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+    const runCwd = mkdtempSync(join(tmpdir(), 'popeye-pi-run-cwd-'));
+    const adapter = new PiEngineAdapter({
+      piPath,
+      command: 'node',
+      args: ['bin/pi.js', '--model', 'config-model'],
+    });
+    const result = await adapter.run({
+      prompt: 'cwd-model',
+      cwd: runCwd,
+      modelOverride: 'request-model',
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain(`cwd=${runCwd}`);
+    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('model=request-model');
+  });
+
+  it('rejects invalid structured cwd values before spawning Pi', async () => {
+    const piPath = createFakePiRepo('', { defaultCli: false });
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+
+    await expect(
+      adapter.run({
+        prompt: 'bad-cwd',
+        cwd: 'relative/path',
+      }),
+    ).rejects.toThrow('absolute path');
   });
 
   it('rejects malformed stdout lines as protocol_error', async () => {

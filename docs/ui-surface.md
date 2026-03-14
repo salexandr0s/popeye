@@ -6,13 +6,20 @@ Popeye's first non-CLI client. A Vite + React SPA served by the daemon on loopba
 
 - **Stack:** Vite + React + TailwindCSS v4
 - **Serving:** Static files served by `popeyed` via `@fastify/static`
-- **Auth:** Token injected into `index.html` at serve time (`__POPEYE_AUTH_TOKEN__` placeholder replaced by daemon)
+- **Auth:** One-time bootstrap nonce injected into `index.html`, exchanged via `POST /v1/auth/exchange` for an HttpOnly browser-session cookie; mutations then fetch a CSRF token from `GET /v1/security/csrf-token`
 - **Location:** `apps/web-inspector/`
 - **Build output:** `apps/web-inspector/dist/`
 
-## Auth Token Delivery
+## Browser auth bootstrap
 
-The daemon reads `index.html` from the web inspector dist directory, replaces the `__POPEYE_AUTH_TOKEN__` placeholder with the real auth token, and serves the modified HTML. The token is available as `window.__POPEYE_AUTH_TOKEN__` in the SPA. Safe because loopback-only + same-process serving.
+The daemon injects `window.__POPEYE_BOOTSTRAP_NONCE__` into the served HTML. On first use, the SPA:
+
+1. POSTs the nonce to `/v1/auth/exchange`
+2. receives an HttpOnly `popeye_auth` browser-session cookie
+3. performs same-origin GET requests with the cookie
+4. fetches a CSRF token from `/v1/security/csrf-token` before POST mutations
+
+The long-lived bearer token is **not** exposed to browser JavaScript or stored in the browser cookie.
 
 ## Views and API Dependencies
 
@@ -23,9 +30,9 @@ The daemon reads `index.html` from the web inspector dist directory, replaces th
 | Runs | `/runs`, `/runs/:id` | `GET /v1/runs`, `GET /v1/runs/:id`, `GET /v1/runs/:id/events`, `POST /v1/runs/:id/cancel`, `POST /v1/runs/:id/retry` |
 | Jobs | `/jobs` | `GET /v1/jobs`, `POST /v1/jobs/:id/pause`, `POST /v1/jobs/:id/resume`, `POST /v1/jobs/:id/enqueue` |
 | Receipts | `/receipts`, `/receipts/:id` | `GET /v1/receipts`, `GET /v1/receipts/:id` |
-| Instructions | `/instructions` | `GET /v1/workspaces`, `GET /v1/instruction-previews/:scope` |
+| Instructions | `/instructions` | `GET /v1/workspaces`, `GET /v1/instruction-previews/:scope`, optional `?projectId=` |
 | Interventions | `/interventions` | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve` |
-| Memory | `/memory` | `GET /v1/memory/search?q=` |
+| Memory | `/memory` | `GET /v1/memory/search?q=...&full=true&limit=20` |
 | Usage & Security | `/usage` | `GET /v1/usage/summary`, `GET /v1/security/audit` |
 
 ## Design Token Usage

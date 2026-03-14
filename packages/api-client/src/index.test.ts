@@ -152,6 +152,39 @@ describe('PopeyeApiClient', () => {
     );
   });
 
+  it('fetches single jobs and run receipts', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, {
+      id: 'job-1',
+      taskId: 'task-1',
+      workspaceId: 'default',
+      status: 'running',
+      retryCount: 0,
+      availableAt: '2026-01-01T00:00:00Z',
+      lastRunId: 'run-1',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
+    mockFetch(200, {
+      id: 'receipt-1',
+      runId: 'run-1',
+      jobId: 'job-1',
+      taskId: 'task-1',
+      workspaceId: 'default',
+      status: 'succeeded',
+      summary: 'done',
+      details: '',
+      usage: { provider: 'fake', model: 'fake', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+
+    await expect(client.getJob('job-1')).resolves.toMatchObject({ id: 'job-1', lastRunId: 'run-1' });
+    await expect(client.getRunReceipt('run-1')).resolves.toMatchObject({ id: 'receipt-1', runId: 'run-1' });
+  });
+
   it('encodes memory search options into query params', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',
@@ -178,6 +211,28 @@ describe('PopeyeApiClient', () => {
     );
   });
 
+  it('encodes optional projectId for instruction previews', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, {
+      id: 'bundle-1',
+      sources: [],
+      compiledText: 'compiled',
+      bundleHash: 'hash',
+      warnings: [],
+      createdAt: '2026-03-14T00:00:00.000Z',
+    });
+
+    await client.getInstructionPreview('default', 'proj-1');
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210/v1/instruction-previews/default?projectId=proj-1',
+      expect.anything(),
+    );
+  });
+
   it('returns null for missing memory records', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',
@@ -186,6 +241,45 @@ describe('PopeyeApiClient', () => {
     mockFetch(404, { error: 'not_found' });
 
     await expect(client.getMemory('missing')).resolves.toBeNull();
+  });
+
+  it('ingests and fetches messages through the API', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      accepted: true,
+      duplicate: false,
+      httpStatus: 200,
+      decisionCode: 'accepted',
+      decisionReason: 'accepted',
+      message: null,
+      taskId: 'task-1',
+      jobId: 'job-1',
+      runId: null,
+    });
+    mockFetch(200, {
+      id: 'message-1',
+      source: 'telegram',
+      senderId: '42',
+      body: 'hello',
+      accepted: true,
+      relatedRunId: 'run-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+
+    await expect(client.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'hello',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 1,
+      workspaceId: 'default',
+    })).resolves.toMatchObject({ accepted: true, taskId: 'task-1' });
+    await expect(client.getMessage('message-1')).resolves.toMatchObject({ id: 'message-1', relatedRunId: 'run-1' });
   });
 
   it('parses SSE events via subscribeEvents callback', () => {

@@ -23,7 +23,7 @@ import { redactText } from '@popeye/observability';
 import { z } from 'zod';
 
 import type { RuntimeDatabases } from './database.js';
-import { scanPrompt } from './prompt.js';
+import { scanPrompt, type PromptScanOptions } from './prompt.js';
 import { nowIso } from '@popeye/contracts';
 
 function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
@@ -135,6 +135,21 @@ export class MessageIngestionService {
     private readonly callbacks: MessageIngestionCallbacks,
   ) {}
 
+  private promptScanOptions(): PromptScanOptions | undefined {
+    const customQuarantinePatterns = this.config.security.promptScanQuarantinePatterns ?? [];
+    const customSanitizePatterns = this.config.security.promptScanSanitizePatterns ?? [];
+    if (
+      customQuarantinePatterns.length === 0 &&
+      customSanitizePatterns.length === 0
+    ) {
+      return undefined;
+    }
+    return {
+      customQuarantinePatterns,
+      customSanitizePatterns,
+    };
+  }
+
   getMessageIngressByKey(idempotencyKey: string): MessageIngressRecord | null {
     const rawRow = this.databases.app.prepare('SELECT * FROM message_ingress WHERE idempotency_key = ?').get(idempotencyKey);
     if (!rawRow) return null;
@@ -197,6 +212,26 @@ export class MessageIngestionService {
     this.databases.app
       .prepare('UPDATE message_ingress SET message_id = ?, task_id = ?, job_id = ?, run_id = ?, updated_at = ? WHERE id = ?')
       .run(updates.messageId, updates.taskId, updates.jobId, updates.runId, nowIso(), recordId);
+  }
+
+  linkAcceptedIngressToRun(taskId: string, jobId: string, runId: string): void {
+    const updatedAt = nowIso();
+    this.databases.app
+      .prepare('UPDATE message_ingress SET run_id = ?, updated_at = ? WHERE accepted = 1 AND (task_id = ? OR job_id = ?)')
+      .run(runId, updatedAt, taskId, jobId);
+    this.databases.app
+      .prepare(`
+        UPDATE messages
+        SET related_run_id = ?
+        WHERE id IN (
+          SELECT message_id
+          FROM message_ingress
+          WHERE accepted = 1
+            AND message_id IS NOT NULL
+            AND (task_id = ? OR job_id = ?)
+        )
+      `)
+      .run(runId, taskId, jobId);
   }
 
   buildIngressResponse(record: MessageIngressRecord, duplicate: boolean): MessageIngressResponse {
@@ -368,7 +403,7 @@ export class MessageIngestionService {
         throw new MessageIngressError(this.buildIngressResponse(denied, false));
       }
 
-      const promptScan = scanPrompt(redacted.text);
+      const promptScan = scanPrompt(redacted.text, this.promptScanOptions());
       const redactedPrompt = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
       for (const event of redactedPrompt.events) this.callbacks.recordSecurityAudit(event);
 
@@ -449,7 +484,7 @@ export class MessageIngestionService {
       });
     }
 
-    const promptScan = scanPrompt(parsed.text);
+    const promptScan = scanPrompt(parsed.text, this.promptScanOptions());
     const redacted = redactText(promptScan.sanitizedText, this.config.security.redactionPatterns);
     for (const event of redacted.events) this.callbacks.recordSecurityAudit(event);
     if (promptScan.verdict === 'quarantine') {

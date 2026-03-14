@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../api/provider';
+import { buildInstructionPreviewPath } from '../api/routes';
 import type { InstructionBundle } from '../api/hooks';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
@@ -21,10 +22,8 @@ export function Instructions() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ workspaceId: nextWorkspaceId });
-      if (nextProjectId) params.set('projectId', nextProjectId);
       const result = await api.get<InstructionBundle>(
-        `/v1/instructions/preview?${params.toString()}`,
+        buildInstructionPreviewPath(nextWorkspaceId, nextProjectId || undefined),
       );
       setBundle(result);
     } catch (err) {

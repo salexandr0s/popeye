@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../api/provider';
+import { buildMemorySearchPath } from '../api/routes';
 import type { MemorySearchResponse, MemorySearchResult } from '../api/hooks';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
@@ -53,11 +54,11 @@ export function MemorySearch() {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.post<MemorySearchResponse>('/v1/memory/search', {
+      const result = await api.get<MemorySearchResponse>(buildMemorySearchPath({
         query: searchQuery,
         includeContent: true,
         limit: 20,
-      });
+      }));
       setResponse(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');

@@ -8,10 +8,16 @@
   ],
   "references": [
     {
+      "path": "../../packages/api-client"
+    },
+    {
       "path": "../../packages/control-api"
     },
     {
       "path": "../../packages/runtime-core"
+    },
+    {
+      "path": "../../packages/telegram"
     }
   ]
 }

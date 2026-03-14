@@ -1,22 +1,24 @@
 # ADR 0008: Defer Phase 9 Interfaces
 
-- Status: Accepted
+- Status: Amended
 - Date: 2025-03-13
+- Amended: 2026-03-14
 
-## Decision
+## Original decision
 
-Defer Phase 9 (web inspector + Swift macOS client). Phase 10 proceeds against CLI + control API boundary only.
+Defer Phase 9 (web inspector + Swift macOS client). Phase 10 could proceed against CLI + control API first.
 
-## Rationale
+## Current status
 
-- The `/v1/*` control API is the stable boundary both future interfaces target
-- Hardening, security, migration docs, and test coverage are orthogonal to presentation layer
-- Phase 9 has zero implementation — blocking Phase 10 on it adds no value
-- CLI + control API provide complete operator coverage for v1
+That decision is now only **partially** true:
+
+- the **web inspector is implemented** and serves as the primary Phase 9 proof of the control API boundary
+- the **Swift macOS client remains deferred**
+
+Phase 9 therefore no longer has zero implementation.
 
 ## Consequences
 
-- Phase 10 verifies CLI/API only
-- Phase 9 proceeds independently when ready
-- No interface-layer assumptions leak into Phase 10 hardening work
-- Web inspector and Swift client can target the same `/v1/*` API when implemented
+- Interface-layer work is no longer hypothetical; `apps/web-inspector` is an active surface that must stay aligned with `/v1/*`
+- Phase 10 hardening/docs must account for the shipped web inspector, especially browser auth bootstrap and CSRF
+- Swift/macOS work can still proceed independently when ready

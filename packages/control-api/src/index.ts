@@ -18,12 +18,12 @@ import {
 } from '@popeye/contracts';
 import { z } from 'zod';
 import {
+  AUTH_COOKIE_NAME,
+  InstructionPreviewContextError,
   MessageIngressError,
   issueCsrfToken,
-  readAuthStore,
   serializeAuthCookie,
   serializeCsrfCookie,
-  validateAuthCookie,
   validateBearerToken,
   validateCsrfToken,
   type PopeyeRuntimeService,
@@ -39,6 +39,16 @@ export interface ControlApiDependencies {
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+type RequestAuthContext =
+  | { kind: 'bearer'; csrfToken: string }
+  | { kind: 'browser_session'; sessionId: string; csrfToken: string };
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    popeyeAuthContext?: RequestAuthContext;
+  }
+}
 
 function readCookieHeader(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) {
@@ -66,8 +76,32 @@ const RunListQueryParamsSchema = z.object({
   state: z.string().optional(),
 });
 
+const InstructionPreviewQueryParamsSchema = z.object({
+  projectId: z.string().min(1).optional(),
+});
+
 function parseIdParam(params: unknown): string {
   return PathIdParamSchema.parse(params).id;
+}
+
+function readCookieValue(cookieHeader: string | undefined, name: string): string | undefined {
+  if (!cookieHeader) {
+    return undefined;
+  }
+  for (const entry of cookieHeader.split(';')) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    if (trimmed.slice(0, separator).trim() !== name) continue;
+    const value = trimmed.slice(separator + 1).trim();
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function recordAuthExchangeAudit(
@@ -113,12 +147,43 @@ function recordAuthExchangeAudit(
   runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
 }
 
+function recordBrowserSessionAudit(
+  runtime: PopeyeRuntimeService,
+  request: { headers: Record<string, unknown>; ip: string | undefined },
+  outcome: 'expired' | 'invalid',
+): void {
+  const event: SecurityAuditEvent = outcome === 'expired'
+    ? {
+        code: 'browser_session_expired',
+        severity: 'warn',
+        message: 'Browser session expired',
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          remoteAddress: request.ip ?? '',
+          userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+        },
+      }
+    : {
+        code: 'browser_session_invalid',
+        severity: 'warn',
+        message: 'Browser session was invalid',
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          remoteAddress: request.ip ?? '',
+          userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+        },
+      };
+  runtime.recordSecurityAuditEvent(event);
+}
+
 export async function createControlApi(
   dependencies: ControlApiDependencies,
 ): Promise<FastifyInstance> {
   const app = Fastify({
     bodyLimit: 1_048_576,
-    logger: { level: 'info', redact: ['req.headers.authorization'] },
+    logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
   });
   await app.register(sensible);
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
@@ -133,19 +198,6 @@ export async function createControlApi(
     },
   });
 
-  // Cached auth store to avoid per-request file reads
-  let cachedAuthStore: ReturnType<typeof readAuthStore> | null = null;
-  let authStoreLastRead = 0;
-  function getCachedAuthStore(): ReturnType<typeof readAuthStore> {
-    const now = Date.now();
-    // 1s eventual-consistency window for token revocation (POP-SEC-005)
-    if (!cachedAuthStore || now - authStoreLastRead > 1000) {
-      cachedAuthStore = readAuthStore(dependencies.runtime.config.authFile);
-      authStoreLastRead = now;
-    }
-    return cachedAuthStore;
-  }
-
   const authExemptPaths = dependencies.authExemptPaths ?? new Set<string>();
 
   app.addHook('preHandler', async (request, reply) => {
@@ -158,17 +210,42 @@ export async function createControlApi(
       return undefined;
     }
 
-    const authStore = getCachedAuthStore();
-    const authorizedByBearer = validateBearerToken(request.headers.authorization, authStore);
-    const authorizedByCookie = validateAuthCookie(readCookieHeader(request.headers.cookie), authStore);
-    if (!authorizedByBearer && !authorizedByCookie) {
-      return reply.code(401).send({ error: 'unauthorized' });
+    const cookieHeader = readCookieHeader(request.headers.cookie);
+    const authHeader = request.headers.authorization;
+    if (authHeader !== undefined) {
+      const authStore = dependencies.runtime.loadAuthStore();
+      if (!validateBearerToken(authHeader, authStore)) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      request.popeyeAuthContext = {
+        kind: 'bearer',
+        csrfToken: issueCsrfToken(authStore),
+      };
+    } else {
+      const sessionId = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
+      if (!sessionId) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      const sessionResult = dependencies.runtime.validateBrowserSession(sessionId);
+      if (sessionResult.status !== 'valid') {
+        recordBrowserSessionAudit(dependencies.runtime, request, sessionResult.status);
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      request.popeyeAuthContext = {
+        kind: 'browser_session',
+        sessionId: sessionResult.session.id,
+        csrfToken: sessionResult.session.csrfToken,
+      };
     }
 
     if (MUTATING_METHODS.has(request.method)) {
       const csrfHeader = request.headers['x-popeye-csrf'];
       const csrf = Array.isArray(csrfHeader) ? csrfHeader[0] : csrfHeader;
-      if (!validateCsrfToken(csrf, authStore)) {
+      const authContext = request.popeyeAuthContext;
+      const csrfValid = authContext?.kind === 'bearer'
+        ? validateCsrfToken(csrf, dependencies.runtime.loadAuthStore())
+        : csrf === authContext?.csrfToken;
+      if (!csrfValid) {
         return reply.code(403).send({ error: 'csrf_invalid' });
       }
       // POP-SEC-007: Sec-Fetch-Site may be absent in non-browser clients.
@@ -194,8 +271,8 @@ export async function createControlApi(
     if (outcome !== 'accepted') {
       return reply.code(401).send({ error: 'unauthorized' });
     }
-    const authStore = getCachedAuthStore();
-    reply.header('set-cookie', serializeAuthCookie(authStore.current.token));
+    const session = dependencies.runtime.createBrowserSession();
+    reply.header('set-cookie', serializeAuthCookie(session.id));
     return { ok: true as const };
   });
 
@@ -249,6 +326,12 @@ export async function createControlApi(
   });
 
   app.get('/v1/jobs', async () => dependencies.runtime.listJobs());
+  app.get('/v1/jobs/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const job = dependencies.runtime.getJob(id);
+    if (!job) return reply.code(404).send({ error: 'not_found' });
+    return job;
+  });
   app.get('/v1/jobs/:id/lease', async (request, reply) => {
     const id = parseIdParam(request.params);
     const lease = dependencies.runtime.getJobLease(id);
@@ -284,6 +367,12 @@ export async function createControlApi(
     if (!run) return reply.code(404).send({ error: 'not_found' });
     return run;
   });
+  app.get('/v1/runs/:id/receipt', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const receipt = dependencies.runtime.getReceiptByRunId(id);
+    if (!receipt) return reply.code(404).send({ error: 'not_found' });
+    return receipt;
+  });
   app.get('/v1/runs/:id/events', async (request) =>
     dependencies.runtime.listRunEvents(parseIdParam(request.params)),
   );
@@ -302,11 +391,19 @@ export async function createControlApi(
     return receipt;
   });
 
-  app.get('/v1/instruction-previews/:scope', async (request) =>
-    dependencies.runtime.getInstructionPreview(
-      (request.params as { scope: string }).scope,
-    ),
-  );
+  app.get('/v1/instruction-previews/:scope', async (request, reply) => {
+    const params = request.params as { scope: string };
+    const query = InstructionPreviewQueryParamsSchema.parse(request.query);
+    try {
+      return dependencies.runtime.getInstructionPreview(params.scope, query.projectId);
+    } catch (error) {
+      if (error instanceof InstructionPreviewContextError) {
+        const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;
+        return reply.code(statusCode).send({ error: error.errorCode });
+      }
+      throw error;
+    }
+  });
   app.get('/v1/interventions', async () => dependencies.runtime.listInterventions());
   app.post('/v1/interventions/:id/resolve', async (request) =>
     dependencies.runtime.resolveIntervention(parseIdParam(request.params)),
@@ -408,8 +505,11 @@ export async function createControlApi(
     findings: dependencies.runtime.getSecurityAuditFindings(),
   }));
   app.get('/v1/security/csrf-token', async (_request, reply) => {
-    const authStore = getCachedAuthStore();
-    const token = issueCsrfToken(authStore);
+    const authContext = _request.popeyeAuthContext;
+    const token = authContext?.csrfToken;
+    if (!token) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
     reply.header('set-cookie', serializeCsrfCookie(token));
     return { token };
   });

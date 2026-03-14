@@ -25,6 +25,10 @@ import {
   type MemorySearchResponse,
   MemorySearchResponseSchema,
   type MemoryType,
+  type MessageIngressResponse,
+  MessageIngressResponseSchema,
+  type MessageRecord,
+  MessageRecordSchema,
   type ProjectListItem,
   ProjectListItemSchema,
   type ReceiptRecord,
@@ -49,6 +53,7 @@ import {
   UsageSummarySchema,
   type WorkspaceListItem,
   WorkspaceListItemSchema,
+  type IngestMessageInput,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -215,6 +220,10 @@ export class PopeyeApiClient {
     return this.get(`/v1/jobs/${encodeURIComponent(jobId)}/lease`, JobLeaseRecordSchema);
   }
 
+  async getJob(jobId: string): Promise<JobRecord> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobId)}`, JobRecordSchema);
+  }
+
   async pauseJob(jobId: string): Promise<JobRecord | null> {
     const response = await this.postRaw(`/v1/jobs/${encodeURIComponent(jobId)}/pause`);
     if (!response.ok) throw new ApiError(response.status, await response.text());
@@ -245,6 +254,17 @@ export class PopeyeApiClient {
     return this.get(`/v1/runs/${encodeURIComponent(id)}`, RunRecordSchema);
   }
 
+  async getRunReceipt(runId: string): Promise<ReceiptRecord | null> {
+    try {
+      return await this.get(`/v1/runs/${encodeURIComponent(runId)}/receipt`, ReceiptRecordSchema);
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async listRunEvents(runId: string): Promise<RunEventRecord[]> {
     return this.getArray(`/v1/runs/${encodeURIComponent(runId)}/events`, RunEventRecordSchema);
   }
@@ -271,8 +291,19 @@ export class PopeyeApiClient {
     return this.get(`/v1/receipts/${encodeURIComponent(id)}`, ReceiptRecordSchema);
   }
 
-  async getInstructionPreview(scope: string): Promise<CompiledInstructionBundle> {
-    return this.get(`/v1/instruction-previews/${encodeURIComponent(scope)}`, CompiledInstructionBundleSchema);
+  async ingestMessage(input: IngestMessageInput): Promise<MessageIngressResponse> {
+    return this.post('/v1/messages/ingest', input, MessageIngressResponseSchema);
+  }
+
+  async getMessage(id: string): Promise<MessageRecord> {
+    return this.get(`/v1/messages/${encodeURIComponent(id)}`, MessageRecordSchema);
+  }
+
+  async getInstructionPreview(scope: string, projectId?: string): Promise<CompiledInstructionBundle> {
+    return this.get(
+      `/v1/instruction-previews/${encodeURIComponent(scope)}${this.buildQuery({ projectId })}`,
+      CompiledInstructionBundleSchema,
+    );
   }
 
   async listInterventions(): Promise<InterventionRecord[]> {

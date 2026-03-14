@@ -14,6 +14,7 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/tasks` | `TaskRecordSchema[]` |
 | POST | `/v1/tasks` | `TaskCreateResponseSchema` (req: `TaskCreateInputSchema`) |
 | GET | `/v1/jobs` | `JobRecordSchema[]` |
+| GET | `/v1/jobs/:id` | `JobRecordSchema` |
 | GET | `/v1/jobs/:id/lease` | `JobLeaseRecordSchema` |
 | POST | `/v1/jobs/:id/pause` | `JobRecordSchema` |
 | POST | `/v1/jobs/:id/resume` | `JobRecordSchema` |
@@ -21,11 +22,12 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/sessions` | `SessionRootRecord[]` |
 | GET | `/v1/runs` | `RunRecordSchema[]` |
 | GET | `/v1/runs/:id` | `RunRecordSchema` |
+| GET | `/v1/runs/:id/receipt` | `ReceiptRecordSchema` |
 | GET | `/v1/runs/:id/events` | `RunEventRecordSchema[]` |
 | POST | `/v1/runs/:id/retry` | `JobRecordSchema` |
 | POST | `/v1/runs/:id/cancel` | `RunRecordSchema` |
 | GET | `/v1/receipts/:id` | `ReceiptRecordSchema` |
-| GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` |
+| GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` (`projectId` query optional; `400 { error: "invalid_context" }` on cross-workspace mismatch) |
 | GET | `/v1/interventions` | `InterventionRecordSchema[]` |
 | POST | `/v1/interventions/:id/resolve` | `InterventionRecordSchema` |
 | GET | `/v1/events/stream` | SSE `text/event-stream` |
@@ -58,13 +60,14 @@ Behavior notes:
   - durable rate limiting
   - prompt-injection screening
   - duplicate delivery replay keyed by `(source, chatId, telegramMessageId)`
+- Current in-repo Telegram support includes long-poll receive/send transport in `@popeye/telegram`, using standard control-plane routes rather than a Telegram-specific reply endpoint.
 - Telegram ingress status mapping:
   - `403`: disabled / non-private chat / not allowlisted
   - `400`: invalid payload / prompt injection
   - `429`: rate limited
 
 Security:
-- bearer auth required on every route
+- bearer auth required for CLI/API routes; browser clients use the bootstrap nonce + `popeye_auth` browser-session cookie
 - mutating routes also require `X-Popeye-CSRF`
 - browser mutations must satisfy `Sec-Fetch-Site` validation
 

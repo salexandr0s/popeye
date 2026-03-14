@@ -11,6 +11,7 @@ import {
   loadAppConfig,
 } from '@popeye/runtime-core';
 import { WebBootstrapNonceStore } from './web-bootstrap.js';
+import { startTelegramBridge } from './telegram-bridge.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
 if (!configPath) {
@@ -63,9 +64,11 @@ if (existsSync(webInspectorDist)) {
 }
 
 let shuttingDown = false;
+let telegramBridge: Awaited<ReturnType<typeof startTelegramBridge>> | null = null;
 const shutdown = async (code = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  await telegramBridge?.stop();
   await app.close();
   await runtime.close();
   process.exit(code);
@@ -86,3 +89,4 @@ await app.listen({
   host: config.security.bindHost,
   port: config.security.bindPort,
 });
+telegramBridge = await startTelegramBridge(config);

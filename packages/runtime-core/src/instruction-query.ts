@@ -5,6 +5,16 @@ import type { WorkspaceRegistry } from '@popeye/workspace';
 
 import type { RuntimeDatabases } from './database.js';
 
+export class InstructionPreviewContextError extends Error {
+  readonly errorCode: 'not_found' | 'invalid_context';
+
+  constructor(errorCode: 'not_found' | 'invalid_context', message: string) {
+    super(message);
+    this.name = 'InstructionPreviewContextError';
+    this.errorCode = errorCode;
+  }
+}
+
 function buildResolverDependencies(workspaceRegistry: WorkspaceRegistry): ResolverDependencies {
   return {
     getWorkspace: (id) => {
@@ -22,17 +32,41 @@ function buildResolverDependencies(workspaceRegistry: WorkspaceRegistry): Resolv
   };
 }
 
+function validateInstructionPreviewContext(workspaceRegistry: WorkspaceRegistry, scope: string, projectId?: string): void {
+  const workspace = workspaceRegistry.getWorkspace(scope);
+  if (!workspace) {
+    throw new InstructionPreviewContextError('not_found', `Workspace ${scope} not found`);
+  }
+  if (!projectId) return;
+  const project = workspaceRegistry.getProject(projectId);
+  if (!project) {
+    throw new InstructionPreviewContextError('not_found', `Project ${projectId} not found`);
+  }
+  if (project.workspaceId !== scope) {
+    throw new InstructionPreviewContextError(
+      'invalid_context',
+      `Project ${projectId} does not belong to workspace ${scope}`,
+    );
+  }
+}
+
 export function createInstructionPreview(
   databases: RuntimeDatabases,
   workspaceRegistry: WorkspaceRegistry,
   scope: string,
+  projectId?: string,
 ): CompiledInstructionBundle {
+  validateInstructionPreviewContext(workspaceRegistry, scope, projectId);
   const bundle = compileInstructionBundle(
-    resolveInstructionSources({ workspaceId: scope, identity: 'default' }, buildResolverDependencies(workspaceRegistry)),
+    resolveInstructionSources(
+      { workspaceId: scope, projectId, identity: 'default' },
+      buildResolverDependencies(workspaceRegistry),
+    ),
   );
-  databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, bundle_json, created_at) VALUES (?, ?, ?, ?)').run(
+  databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, project_id, bundle_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
     bundle.id,
     scope,
+    projectId ?? null,
     JSON.stringify(bundle),
     bundle.createdAt,
   );
@@ -50,9 +84,10 @@ export function resolveInstructionBundleForTask(
       buildResolverDependencies(workspaceRegistry),
     ),
   );
-  databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, bundle_json, created_at) VALUES (?, ?, ?, ?)').run(
+  databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, project_id, bundle_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
     bundle.id,
     task.workspaceId,
+    task.projectId ?? null,
     JSON.stringify(bundle),
     bundle.createdAt,
   );

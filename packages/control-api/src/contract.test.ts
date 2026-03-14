@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -13,6 +13,7 @@ import {
   JobRecordSchema,
   MemoryPromotionResponseSchema,
   ProjectRecordSchema,
+  ReceiptRecordSchema,
   RunRecordSchema,
   SchedulerStatusResponseSchema,
   TaskRecordSchema,
@@ -90,6 +91,52 @@ describe('API contract tests', () => {
     return { dir, authFile, store, runtime };
   }
 
+  function createInstructionPreviewEnv() {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-contract-instructions-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-a');
+    const projectRoot = join(workspaceRoot, 'project-a');
+    const otherWorkspaceRoot = join(dir, 'workspace-b');
+    const otherProjectRoot = join(otherWorkspaceRoot, 'project-b');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(otherProjectRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace contract instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project contract instructions');
+    writeFileSync(join(otherWorkspaceRoot, 'WORKSPACE.md'), 'workspace B instructions');
+    writeFileSync(join(otherProjectRoot, 'PROJECT.md'), 'project B instructions');
+
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'] },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [
+        {
+          id: 'default',
+          name: 'Default workspace',
+          rootPath: workspaceRoot,
+          projects: [{ id: 'proj-1', name: 'Project One', path: projectRoot }],
+          heartbeatEnabled: true,
+          heartbeatIntervalSeconds: 3600,
+        },
+        {
+          id: 'other',
+          name: 'Other workspace',
+          rootPath: otherWorkspaceRoot,
+          projects: [{ id: 'proj-2', name: 'Project Two', path: otherProjectRoot }],
+          heartbeatEnabled: true,
+          heartbeatIntervalSeconds: 3600,
+        },
+      ],
+    });
+    return { store, runtime };
+  }
+
   it('GET /v1/status conforms to DaemonStatusResponseSchema', async () => {
     const { store, runtime } = createTestEnv();
     const app = await createControlApi({ runtime });
@@ -160,6 +207,24 @@ describe('API contract tests', () => {
     await app.close();
   });
 
+  it('GET /v1/jobs/:id conforms to JobRecordSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'job-contract', prompt: 'hello', source: 'manual', autoEnqueue: true });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${created.job!.id}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    JobRecordSchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('GET /v1/runs conforms to RunRecord array', async () => {
     const { store, runtime } = createTestEnv();
     const app = await createControlApi({ runtime });
@@ -172,6 +237,25 @@ describe('API contract tests', () => {
 
     expect(response.statusCode).toBe(200);
     z.array(RunRecordSchema).parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/runs/:id/receipt conforms to ReceiptRecordSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'run-receipt-contract', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal!.run!.id}/receipt`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    ReceiptRecordSchema.parse(response.json());
 
     await runtime.close();
     await app.close();
@@ -286,6 +370,80 @@ describe('API contract tests', () => {
     expect(response.statusCode).toBe(200);
     const parsed = z.array(AgentProfileRecordSchema).parse(response.json());
     expect(Array.isArray(parsed)).toBe(true);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/instruction-previews/:scope supports optional projectId context', async () => {
+    const { store, runtime } = createInstructionPreviewEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/instruction-previews/default?projectId=proj-1',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.compiledText).toContain('workspace contract instructions');
+    expect(body.compiledText).toContain('project contract instructions');
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/instruction-previews/:scope returns 404 for an unknown workspace', async () => {
+    const { store, runtime } = createInstructionPreviewEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/instruction-previews/missing?projectId=proj-1',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'not_found' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/instruction-previews/:scope returns 404 for an unknown project', async () => {
+    const { store, runtime } = createInstructionPreviewEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/instruction-previews/default?projectId=missing-project',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'not_found' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/instruction-previews/:scope returns 400 for a project from another workspace and does not write a snapshot', async () => {
+    const { store, runtime } = createInstructionPreviewEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/instruction-previews/default?projectId=proj-2',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'invalid_context' });
+    const snapshotCount = runtime.databases.app.prepare('SELECT COUNT(*) AS count FROM instruction_snapshots').get() as {
+      count: number;
+    };
+    expect(snapshotCount.count).toBe(0);
 
     await runtime.close();
     await app.close();

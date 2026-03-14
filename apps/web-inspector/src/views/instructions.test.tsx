@@ -66,7 +66,7 @@ describe('Instructions', () => {
     renderInstructions('/instructions?workspaceId=alpha&projectId=proj-1');
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith('/v1/instructions/preview?workspaceId=alpha&projectId=proj-1');
+      expect(api.get).toHaveBeenCalledWith('/v1/instruction-previews/alpha?projectId=proj-1');
     });
 
     expect(screen.getByLabelText('Workspace ID')).toHaveProperty('value', 'alpha');
@@ -83,7 +83,7 @@ describe('Instructions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 
     await waitFor(() => {
-      expect(api.get).toHaveBeenCalledWith('/v1/instructions/preview?workspaceId=beta&projectId=proj-2');
+      expect(api.get).toHaveBeenCalledWith('/v1/instruction-previews/beta?projectId=proj-2');
     });
   });
 
