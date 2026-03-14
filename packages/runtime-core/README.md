@@ -7,7 +7,7 @@ layer that wires together all domain packages into a cohesive runtime.
 
 Provides `PopeyeRuntimeService`, the main service class that orchestrates tasks,
 jobs, and runs. Manages SQLite databases (WAL mode, foreign keys), bearer token
-authentication, CSRF protection, prompt injection detection, configuration
+authentication, browser sessions for the web inspector, CSRF protection, prompt injection detection, configuration
 loading, database backup/restore, security audit, memory lifecycle, message
 ingestion, and macOS platform integration (Keychain, launchd).
 
@@ -29,6 +29,7 @@ New platform implementation.
 | `deriveRuntimePaths(dir)`        | Compute standard runtime directory layout               |
 | `ensureRuntimePaths(config)`     | Create runtime directories with secure permissions      |
 | `initAuthStore()` / `rotateAuthStore()` | Bearer token management                           |
+| `createBrowserSession()` / `validateBrowserSession()` | Browser-session management for the web inspector |
 | `validateBearerToken()`          | Token validation for API requests                       |
 | `validateCsrfToken()` / `issueCsrfToken()` | CSRF protection for mutations                  |
 | `detectPromptInjection(text)`    | Prompt injection detection on untrusted input           |

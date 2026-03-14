@@ -135,6 +135,11 @@ describe('@popeye/telegram', () => {
 
   it('extracts final assistant text from run events and falls back to receipt rendering', () => {
     expect(extractTelegramReplyFromRunEvents([
+      { id: 'e0', runId: 'run-1', type: 'message', payload: JSON.stringify({ role: 'assistant', text: 'older text' }), createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'e1', runId: 'run-1', type: 'completed', payload: JSON.stringify({ output: 'done here' }), createdAt: '2026-01-01T00:00:01Z' },
+    ])).toBe('done here');
+
+    expect(extractTelegramReplyFromRunEvents([
       { id: 'e1', runId: 'run-1', type: 'message', payload: JSON.stringify({ role: 'assistant', text: 'done here' }), createdAt: '2026-01-01T00:00:00Z' },
     ])).toBe('done here');
 
@@ -210,7 +215,8 @@ describe('@popeye/telegram', () => {
           updatedAt: '2026-01-01T00:00:01Z',
         }),
       listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>().mockResolvedValue([
-        { id: 'e1', runId: 'run-1', type: 'message', payload: JSON.stringify({ role: 'assistant', text: 'All green.' }), createdAt: '2026-01-01T00:00:01Z' },
+        { id: 'e1', runId: 'run-1', type: 'message', payload: JSON.stringify({ role: 'assistant', text: 'Older assistant text.' }), createdAt: '2026-01-01T00:00:01Z' },
+        { id: 'e2', runId: 'run-1', type: 'completed', payload: JSON.stringify({ output: 'All green.' }), createdAt: '2026-01-01T00:00:02Z' },
       ]),
       getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>().mockResolvedValue({
         id: 'receipt-1',
@@ -245,6 +251,289 @@ describe('@popeye/telegram', () => {
     expect(bot.sendMessage).toHaveBeenCalledWith({
       chatId: '777',
       text: 'All green.',
+      replyToMessageId: 50,
+    });
+  });
+
+  it('does not send a second reply for duplicate replayed deliveries, including restart replays', async () => {
+    const update = {
+      update_id: 100,
+      message: {
+        message_id: 50,
+        from: { id: 42 },
+        chat: { id: 777, type: 'private' as const },
+        text: 'status?',
+      },
+    };
+    const bot: TelegramBotClient = {
+      getUpdates: vi
+        .fn<TelegramBotClient['getUpdates']>()
+        .mockResolvedValueOnce([update])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([update])
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [];
+        }),
+      sendMessage: vi.fn<TelegramBotClient['sendMessage']>().mockResolvedValue(undefined),
+    };
+    const control: TelegramRunTrackingClient = {
+      ingestMessage: vi
+        .fn<TelegramRunTrackingClient['ingestMessage']>()
+        .mockResolvedValueOnce({
+          accepted: true,
+          duplicate: false,
+          httpStatus: 200,
+          decisionCode: 'accepted',
+          decisionReason: 'accepted',
+          message: null,
+          taskId: 'task-1',
+          jobId: 'job-1',
+          runId: null,
+        })
+        .mockResolvedValueOnce({
+          accepted: true,
+          duplicate: true,
+          httpStatus: 200,
+          decisionCode: 'duplicate_replayed',
+          decisionReason: 'duplicate delivery replayed: accepted',
+          message: null,
+          taskId: 'task-1',
+          jobId: 'job-1',
+          runId: 'run-1',
+        }),
+      getJob: vi.fn<TelegramRunTrackingClient['getJob']>().mockResolvedValue({
+        id: 'job-1',
+        taskId: 'task-1',
+        workspaceId: 'default',
+        status: 'succeeded',
+        retryCount: 0,
+        availableAt: '2026-01-01T00:00:00Z',
+        lastRunId: 'run-1',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:01Z',
+      }),
+      listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>().mockResolvedValue([
+        { id: 'e1', runId: 'run-1', type: 'completed', payload: JSON.stringify({ output: 'All green.' }), createdAt: '2026-01-01T00:00:01Z' },
+      ]),
+      getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>().mockResolvedValue(null),
+    };
+
+    const relay = new TelegramLongPollRelay({
+      bot,
+      control,
+      workspaceId: 'default',
+      longPollTimeoutSeconds: 0,
+      retryDelayMs: 1,
+      jobPollIntervalMs: 1,
+      jobTimeoutMs: 100,
+    });
+
+    relay.start();
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    await relay.stop();
+
+    expect(control.ingestMessage).toHaveBeenCalledTimes(2);
+    expect(control.getJob).toHaveBeenCalledTimes(1);
+    expect(bot.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reply when ingress is denied', async () => {
+    const bot: TelegramBotClient = {
+      getUpdates: vi
+        .fn<TelegramBotClient['getUpdates']>()
+        .mockResolvedValueOnce([
+          {
+            update_id: 100,
+            message: {
+              message_id: 50,
+              from: { id: 24 },
+              chat: { id: 777, type: 'private' },
+              text: 'status?',
+            },
+          },
+        ])
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [];
+        }),
+      sendMessage: vi.fn<TelegramBotClient['sendMessage']>().mockResolvedValue(undefined),
+    };
+    const control: TelegramRunTrackingClient = {
+      ingestMessage: vi.fn<TelegramRunTrackingClient['ingestMessage']>().mockResolvedValue({
+        accepted: false,
+        duplicate: false,
+        httpStatus: 403,
+        decisionCode: 'telegram_not_allowlisted',
+        decisionReason: 'Telegram sender is not allowlisted',
+        message: null,
+        taskId: null,
+        jobId: null,
+        runId: null,
+      }),
+      getJob: vi.fn<TelegramRunTrackingClient['getJob']>(),
+      listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>(),
+      getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>(),
+    };
+
+    const relay = new TelegramLongPollRelay({
+      bot,
+      control,
+      workspaceId: 'default',
+      longPollTimeoutSeconds: 0,
+      retryDelayMs: 1,
+    });
+
+    relay.start();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await relay.stop();
+
+    expect(bot.sendMessage).not.toHaveBeenCalled();
+    expect(control.getJob).not.toHaveBeenCalled();
+  });
+
+  it('retries Telegram send failures without crashing the relay loop', async () => {
+    const bot: TelegramBotClient = {
+      getUpdates: vi
+        .fn<TelegramBotClient['getUpdates']>()
+        .mockResolvedValueOnce([
+          {
+            update_id: 100,
+            message: {
+              message_id: 50,
+              from: { id: 42 },
+              chat: { id: 777, type: 'private' },
+              text: 'status?',
+            },
+          },
+        ])
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [];
+        }),
+      sendMessage: vi.fn<TelegramBotClient['sendMessage']>()
+        .mockRejectedValueOnce(new Error('temporary bot api error'))
+        .mockResolvedValueOnce(undefined),
+    };
+    const control: TelegramRunTrackingClient = {
+      ingestMessage: vi.fn<TelegramRunTrackingClient['ingestMessage']>().mockResolvedValue({
+        accepted: true,
+        duplicate: false,
+        httpStatus: 200,
+        decisionCode: 'accepted',
+        decisionReason: 'accepted',
+        message: null,
+        taskId: 'task-1',
+        jobId: 'job-1',
+        runId: null,
+      }),
+      getJob: vi.fn<TelegramRunTrackingClient['getJob']>().mockResolvedValue({
+        id: 'job-1',
+        taskId: 'task-1',
+        workspaceId: 'default',
+        status: 'succeeded',
+        retryCount: 0,
+        availableAt: '2026-01-01T00:00:00Z',
+        lastRunId: 'run-1',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:01Z',
+      }),
+      listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>().mockResolvedValue([
+        { id: 'e1', runId: 'run-1', type: 'completed', payload: JSON.stringify({ output: 'All green.' }), createdAt: '2026-01-01T00:00:01Z' },
+      ]),
+      getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>().mockResolvedValue(null),
+    };
+
+    const relay = new TelegramLongPollRelay({
+      bot,
+      control,
+      workspaceId: 'default',
+      longPollTimeoutSeconds: 0,
+      retryDelayMs: 1,
+      sendRetryAttempts: 2,
+      sendRetryDelayMs: 1,
+      jobPollIntervalMs: 1,
+      jobTimeoutMs: 100,
+    });
+
+    relay.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await relay.stop();
+
+    expect(bot.sendMessage).toHaveBeenCalledTimes(2);
+    expect(control.ingestMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries getUpdates failures on the polling loop and still processes the later delivery', async () => {
+    const bot: TelegramBotClient = {
+      getUpdates: vi
+        .fn<TelegramBotClient['getUpdates']>()
+        .mockRejectedValueOnce(new Error('temporary poll error'))
+        .mockResolvedValueOnce([
+          {
+            update_id: 100,
+            message: {
+              message_id: 50,
+              from: { id: 42 },
+              chat: { id: 777, type: 'private' },
+              text: 'status?',
+            },
+          },
+        ])
+        .mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [];
+        }),
+      sendMessage: vi.fn<TelegramBotClient['sendMessage']>().mockResolvedValue(undefined),
+    };
+    const control: TelegramRunTrackingClient = {
+      ingestMessage: vi.fn<TelegramRunTrackingClient['ingestMessage']>().mockResolvedValue({
+        accepted: true,
+        duplicate: false,
+        httpStatus: 200,
+        decisionCode: 'accepted',
+        decisionReason: 'accepted',
+        message: null,
+        taskId: 'task-1',
+        jobId: 'job-1',
+        runId: null,
+      }),
+      getJob: vi.fn<TelegramRunTrackingClient['getJob']>().mockResolvedValue({
+        id: 'job-1',
+        taskId: 'task-1',
+        workspaceId: 'default',
+        status: 'succeeded',
+        retryCount: 0,
+        availableAt: '2026-01-01T00:00:00Z',
+        lastRunId: 'run-1',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:01Z',
+      }),
+      listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>().mockResolvedValue([
+        { id: 'e1', runId: 'run-1', type: 'completed', payload: JSON.stringify({ output: 'Recovered after poll retry.' }), createdAt: '2026-01-01T00:00:01Z' },
+      ]),
+      getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>().mockResolvedValue(null),
+    };
+
+    const relay = new TelegramLongPollRelay({
+      bot,
+      control,
+      workspaceId: 'default',
+      longPollTimeoutSeconds: 0,
+      retryDelayMs: 1,
+      jobPollIntervalMs: 1,
+      jobTimeoutMs: 100,
+    });
+
+    relay.start();
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    await relay.stop();
+
+    expect(bot.getUpdates.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(control.ingestMessage).toHaveBeenCalledTimes(1);
+    expect(bot.sendMessage).toHaveBeenCalledWith({
+      chatId: '777',
+      text: 'Recovered after poll retry.',
       replyToMessageId: 50,
     });
   });

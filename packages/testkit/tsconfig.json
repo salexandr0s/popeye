@@ -10,5 +10,9 @@
     {
       "path": "../engine-pi"
     }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

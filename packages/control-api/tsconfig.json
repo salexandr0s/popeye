@@ -13,5 +13,9 @@
     {
       "path": "../runtime-core"
     }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

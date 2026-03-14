@@ -68,22 +68,6 @@ export function validateBearerToken(header: string | undefined, record: AuthRota
   return validateToken(token, record, now);
 }
 
-export function validateRequestToken(
-  authorizationHeader: string | undefined,
-  cookieHeader: string | string[] | undefined,
-  record: AuthRotationRecord,
-  now = new Date(),
-): boolean {
-  if (authorizationHeader !== undefined) {
-    return validateBearerToken(authorizationHeader, record, now);
-  }
-  const token = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
-  if (!token) {
-    return false;
-  }
-  return validateToken(token, record, now);
-}
-
 function validateToken(token: string, record: AuthRotationRecord, now = new Date()): boolean {
   if (constantTimeEquals(token, record.current.token)) {
     return true;
@@ -125,14 +109,6 @@ export function readCookieValue(cookieHeader: string | string[] | undefined, nam
   }
 
   return undefined;
-}
-
-export function validateAuthCookie(cookieHeader: string | undefined, record: AuthRotationRecord, now = new Date()): boolean {
-  const token = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
-  if (!token) {
-    return false;
-  }
-  return validateToken(token, record, now);
 }
 
 function hashCsrfSeed(seed: string): string {

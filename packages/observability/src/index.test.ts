@@ -4,32 +4,32 @@ import { redactText } from './index.js';
 
 describe('redactText', () => {
   it('redacts built-in secrets', () => {
-    const result = redactText('token key-1234567890 and Bearer abcdefghijklmnopqrstuvwxyz123456');
+    const result = redactText('token key-1234567890 and Bearer abcdefghijklmnopqrstuvwxyz123456'); // secret-scan: allow
     expect(result.text).toContain('[REDACTED:generic-key]');
     expect(result.text).toContain('[REDACTED:bearer-token]');
     expect(result.events.length).toBeGreaterThan(0);
   });
 
   it('redacts AWS access keys', () => {
-    const result = redactText('Config: AKIAIOSFODNN7EXAMPLE is the key');
+    const result = redactText('Config: AKIAIOSFODNN7EXAMPLE is the key'); // secret-scan: allow
     expect(result.text).toContain('[REDACTED:aws-access-key]');
     expect(result.events.length).toBeGreaterThan(0);
   });
 
   it('redacts GitHub PATs', () => {
-    const result = redactText('Token: github_pat_abcdefghijklmnopqrst is set');
+    const result = redactText('Token: github_pat_abcdefghijklmnopqrst is set'); // secret-scan: allow
     expect(result.text).toContain('[REDACTED:github-pat]');
     expect(result.events.length).toBeGreaterThan(0);
   });
 
   it('redacts Anthropic keys', () => {
-    const result = redactText('Key: sk-ant-api03-abcdefghijklmnopqrst is configured');
+    const result = redactText('Key: sk-ant-api03-abcdefghijklmnopqrst is configured'); // secret-scan: allow
     expect(result.text).toContain('[REDACTED:anthropic-key]');
     expect(result.events.length).toBeGreaterThan(0);
   });
 
   it('redacts Slack webhooks', () => {
-    const result = redactText('Webhook: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX');
+    const result = redactText('Webhook: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX'); // secret-scan: allow
     expect(result.text).toContain('[REDACTED:slack-webhook]');
     expect(result.events.length).toBeGreaterThan(0);
   });

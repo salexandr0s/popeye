@@ -42,6 +42,14 @@ if (existsSync(webInspectorDist)) {
     'utf8',
   );
   const htmlTemplate = rawHtml.replace(/<script/g, `<script nonce="${cspNonce}"`);
+  const renderWebInspector = () => htmlTemplate.replace(
+    '__POPEYE_BOOTSTRAP_NONCE__',
+    webBootstrap.issue(),
+  );
+
+  app.get('/', async (_request, reply) => (
+    reply.code(200).type('text/html').send(renderWebInspector())
+  ));
 
   await app.register(fastifyStatic, {
     root: webInspectorDist,
@@ -55,11 +63,7 @@ if (existsSync(webInspectorDist)) {
     if (request.url.startsWith('/v1/')) {
       return reply.code(404).send({ error: 'not_found' });
     }
-    const injectedHtml = htmlTemplate.replace(
-      '__POPEYE_BOOTSTRAP_NONCE__',
-      webBootstrap.issue(),
-    );
-    return reply.code(200).type('text/html').send(injectedHtml);
+    return reply.code(200).type('text/html').send(renderWebInspector());
   });
 }
 

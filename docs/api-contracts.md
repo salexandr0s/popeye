@@ -61,6 +61,13 @@ Behavior notes:
   - prompt-injection screening
   - duplicate delivery replay keyed by `(source, chatId, telegramMessageId)`
 - Current in-repo Telegram support includes long-poll receive/send transport in `@popeye/telegram`, using standard control-plane routes rather than a Telegram-specific reply endpoint.
+- Current Telegram relay reply precedence on those routes is:
+  - `completed.output`
+  - last assistant `message` event text
+  - receipt-derived fallback text
+- Relay behavior is intentionally thin:
+  - duplicate replayed Telegram ingress responses do not trigger a second reply
+  - denied ingress responses do not trigger a Telegram reply
 - Telegram ingress status mapping:
   - `403`: disabled / non-private chat / not allowlisted
   - `400`: invalid payload / prompt injection

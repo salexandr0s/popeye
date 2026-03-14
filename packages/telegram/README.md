@@ -13,6 +13,9 @@ through `/v1/messages/ingest`, a Telegram Bot API transport client, and a
 long-poll relay that waits for run completion before replying. All state lives
 in the Popeye runtime -- this adapter holds none.
 
+Current in-repo support is end-to-end **long-poll receive/send transport**.
+Webhook hosting remains out of scope for the package.
+
 ## Layer
 
 Interface. Stateless adapter between Telegram and the control API.
@@ -52,5 +55,17 @@ const relay = new TelegramLongPollRelay({
 
 relay.start();
 ```
+
+Reply behavior:
+
+- canonical success reply source is `completed.output` from `/v1/runs/:id/events`
+- fallback is the last assistant `message` event text
+- receipt rendering is only used when no conversational reply text exists
+- duplicate Telegram deliveries are replay-safe and do not send a second reply
+- denied ingress is silent at the relay layer; the runtime remains the audit source of truth
+- Bot API send failures are retried with bounded backoff
+
+This package remains a thin bridge. It does not introduce a channel system or
+Telegram-specific runtime endpoints.
 
 See `src/index.test.ts` for normalization, relay, and transport tests.

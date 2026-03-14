@@ -292,7 +292,17 @@ export class PopeyeApiClient {
   }
 
   async ingestMessage(input: IngestMessageInput): Promise<MessageIngressResponse> {
-    return this.post('/v1/messages/ingest', input, MessageIngressResponseSchema);
+    await this.ensureCsrfToken();
+    const response = await fetch(`${this.baseUrl}/v1/messages/ingest`, {
+      method: 'POST',
+      headers: this.mutationHeaders(),
+      body: JSON.stringify(input),
+    });
+    const data: unknown = await response.json();
+    if (!response.ok) {
+      return MessageIngressResponseSchema.parse(data);
+    }
+    return MessageIngressResponseSchema.parse(data);
   }
 
   async getMessage(id: string): Promise<MessageRecord> {

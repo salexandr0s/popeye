@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 const root = process.cwd();
-const ignores = new Set(['node_modules', '.git', 'dist', 'coverage', '.vitest-coverage']);
+const ignores = new Set(['node_modules', '.git', 'dist', 'coverage', '.vitest-coverage', '.turbo']);
 const patterns = [
   /sk-[A-Za-z0-9]{10,}/g,
   /ghp_[A-Za-z0-9]{20,}/g,
@@ -13,14 +13,19 @@ const patterns = [
   /sk-ant-[A-Za-z0-9-]{20,}/g,
   /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_/]+/g,
 ];
+const inlineAllowMarker = 'secret-scan: allow';
 
 function isSkippedFile(path) {
   const name = basename(path);
-  return name.endsWith('.test.ts')
-    || name.endsWith('.spec.ts')
-    || name.endsWith('.test.tsx')
-    || name.endsWith('.spec.tsx')
-    || name.endsWith('.md')
+  return name.endsWith('.png')
+    || name.endsWith('.jpg')
+    || name.endsWith('.jpeg')
+    || name.endsWith('.gif')
+    || name.endsWith('.ico')
+    || name.endsWith('.pdf')
+    || name.endsWith('.zip')
+    || name.endsWith('.sqlite')
+    || name.endsWith('.db')
     || hasGeneratedSourceSibling(path);
 }
 
@@ -69,9 +74,18 @@ function walk(dir) {
     const text = readFileSync(full, 'utf8');
     for (const pattern of patterns) {
       pattern.lastIndex = 0;
-      if (pattern.test(text)) {
-        throw new Error(`Potential secret found in ${full}`);
+      const match = pattern.exec(text);
+      if (!match) {
+        continue;
       }
+      const beforeMatch = text.slice(0, match.index);
+      const lineIndex = beforeMatch.split('\n').length - 1;
+      const lines = text.split('\n');
+      const line = lines[lineIndex] ?? '';
+      if (line.includes(inlineAllowMarker)) {
+        continue;
+      }
+      throw new Error(`Potential secret found in ${relative(root, full)}:${lineIndex + 1}`);
     }
   }
 }

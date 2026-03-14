@@ -9,7 +9,6 @@ import {
   createRuntimeService,
   initAuthStore,
   issueCsrfToken,
-  readAuthStore,
 } from '@popeye/runtime-core';
 
 import { createControlApi } from './index.js';
@@ -156,18 +155,18 @@ describe('CSRF token issuance and validation', () => {
     });
 
     const body = response.json() as { token: string };
-    const expected = issueCsrfToken(readAuthStore(authFile));
+    const expected = issueCsrfToken(store);
     expect(body.token).toBe(expected);
 
     await runtime.close();
     await app.close();
   });
 
-  it('accepts same-origin cookie auth for web clients', async () => {
+  it('accepts same-origin browser session auth for web clients', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-csrf-cookie-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
-    const store = initAuthStore(authFile);
+    initAuthStore(authFile);
     const runtime = createRuntimeService({
       runtimeDataDir: dir,
       authFile,
@@ -198,22 +197,23 @@ describe('CSRF token issuance and validation', () => {
       ],
     });
     const app = await createControlApi({ runtime });
+    const session = runtime.createBrowserSession();
 
     const csrfResponse = await app.inject({
       method: 'GET',
       url: '/v1/security/csrf-token',
-      headers: { cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(store.current.token)}` },
+      headers: { cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(session.id)}` },
     });
 
     expect(csrfResponse.statusCode).toBe(200);
     const body = csrfResponse.json() as { token: string };
-    expect(body.token).toBe(issueCsrfToken(readAuthStore(authFile)));
+    expect(body.token).toBe(session.csrfToken);
 
     const created = await app.inject({
       method: 'POST',
       url: '/v1/tasks',
       headers: {
-        cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(store.current.token)}`,
+        cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(session.id)}`,
         'x-popeye-csrf': body.token,
         'sec-fetch-site': 'same-origin',
       },

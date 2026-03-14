@@ -9,7 +9,7 @@ import type { AppConfig, ReceiptRecord } from '@popeye/contracts';
 import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '@popeye/engine-pi';
 import { FailingFakeEngineAdapter } from '@popeye/engine-pi';
 import { initAuthStore } from './auth.js';
-import { InstructionPreviewContextError } from './instruction-query.js';
+import type { InstructionPreviewContextError } from './instruction-query.js';
 import { classifyFailureFromMessage, createRuntimeService } from './runtime-service.js';
 
 function makeConfig(dir: string): AppConfig {
@@ -822,7 +822,22 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
-  it('emits run_completed SSE payloads for failed and cancelled runs', async () => {
+  it('emits run_completed SSE payloads for succeeded, failed, and cancelled runs', async () => {
+    const successDir = mkdtempSync(join(tmpdir(), 'popeye-run-completed-success-'));
+    chmodSync(successDir, 0o700);
+    const successRuntime = createRuntimeService(makeConfig(successDir));
+    const successEmitted: ReceiptRecord[] = [];
+    successRuntime.events.on('event', (event: { event: string; data: string }) => {
+      if (event.event === 'run_completed') {
+        successEmitted.push(JSON.parse(event.data) as ReceiptRecord);
+      }
+    });
+
+    const succeeded = successRuntime.createTask({ workspaceId: 'default', projectId: null, title: 'success', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    await successRuntime.waitForJobTerminalState(succeeded.job!.id, 5_000);
+    expect(successEmitted.some((receipt) => receipt.status === 'succeeded')).toBe(true);
+    await successRuntime.close();
+
     const dir = mkdtempSync(join(tmpdir(), 'popeye-run-completed-'));
     chmodSync(dir, 0o700);
     const failedRuntime = createRuntimeService(makeConfig(dir), new FailingFakeEngineAdapter('permanent_failure'));
@@ -852,6 +867,49 @@ describe('PopeyeRuntimeService', () => {
     await cancelledRuntime.waitForJobTerminalState(cancelled.job!.id, 5_000);
     expect(cancelledEmitted.some((receipt) => receipt.status === 'cancelled')).toBe(true);
     await cancelledRuntime.close();
+  });
+
+  it('emits run_completed when an in-flight run is abandoned during shutdown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-run-completed-abandoned-'));
+    chmodSync(dir, 0o700);
+    const hangingEngine: EngineAdapter = {
+      async startRun(_input, options) {
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return await new Promise<never>(() => undefined);
+          },
+          isAlive: () => true,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { mode: 'rpc' } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:hanging' } });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    const runtime = createRuntimeService(makeConfig(dir), hangingEngine);
+    (runtime as unknown as { scheduler: { shutdownGraceMs: number } }).scheduler.shutdownGraceMs = 5;
+    const emitted: ReceiptRecord[] = [];
+    runtime.events.on('event', (event: { event: string; data: string }) => {
+      if (event.event === 'run_completed') {
+        emitted.push(JSON.parse(event.data) as ReceiptRecord);
+      }
+    });
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'abandon', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const deadline = Date.now() + 5_000;
+    while (runtime.listRuns().length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    await runtime.close();
+
+    expect(emitted.some((receipt) => receipt.status === 'abandoned')).toBe(true);
+    expect(emitted.some((receipt) => receipt.taskId === created.task.id)).toBe(true);
   });
 
   it('failure injection: transient failure schedules retry', async () => {

@@ -19,5 +19,9 @@
     {
       "path": "../../packages/telegram"
     }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

@@ -4,8 +4,10 @@ export * from './prompt.js';
 export * from './security-audit.js';
 export * from './database.js';
 export * from './backup.js';
+export * from './browser-sessions.js';
 export * from './keychain.js';
 export * from './launchd.js';
+export * from './instruction-query.js';
 export * from './runtime-service.js';
 export * from './memory-lifecycle.js';
 

@@ -64,6 +64,7 @@ function seedLegacyAppDatabase(dir: string): void {
       CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
       CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE instruction_snapshots (id TEXT PRIMARY KEY, scope TEXT NOT NULL, bundle_json TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     const appliedAt = '2026-03-13T00:00:00.000Z';
     for (const migrationId of [
@@ -174,6 +175,7 @@ describe('openRuntimeDatabases', () => {
         const expectedAppTables = [
           'schema_migrations',
           'daemon_state',
+          'browser_sessions',
           'workspaces',
           'projects',
           'agent_profiles',
@@ -311,6 +313,7 @@ describe('openRuntimeDatabases', () => {
         const indexNames = rows.map((r) => r.name);
 
         const expectedIndexes = [
+          'idx_browser_sessions_expires',
           'idx_jobs_status_created',
           'idx_jobs_workspace_status',
           'idx_jobs_task_status',
@@ -481,6 +484,8 @@ describe('openRuntimeDatabases', () => {
           '003-app-coalesce-key',
           '004-app-schema-hardening',
           '005-workspace-project-paths',
+          '006-browser-sessions',
+          '007-instruction-snapshot-project-context',
         ]);
 
         const memMigrations = databases.memory
@@ -512,12 +517,16 @@ describe('openRuntimeDatabases', () => {
           .prepare('SELECT id FROM schema_migrations ORDER BY id')
           .all() as Array<{ id: string }>;
         expect(migrationIds.map((row) => row.id)).toContain('005-workspace-project-paths');
+        expect(migrationIds.map((row) => row.id)).toContain('007-instruction-snapshot-project-context');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');
 
         const projectColumns = databases.app.pragma('table_info(projects)') as Array<{ name: string }>;
         expect(projectColumns.map((column) => column.name)).toContain('path');
+
+        const snapshotColumns = databases.app.pragma('table_info(instruction_snapshots)') as Array<{ name: string }>;
+        expect(snapshotColumns.map((column) => column.name)).toContain('project_id');
 
         const workspace = databases.app.prepare('SELECT id, name, root_path FROM workspaces WHERE id = ?').get('ws-1') as {
           id: string;

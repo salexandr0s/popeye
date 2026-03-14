@@ -244,6 +244,19 @@ const APP_MIGRATIONS: Migration[] = [
       'ALTER TABLE projects ADD COLUMN path TEXT;',
     ],
   },
+  {
+    id: '006-browser-sessions',
+    statements: [
+      'CREATE TABLE IF NOT EXISTS browser_sessions (id TEXT PRIMARY KEY, csrf_token TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL, expires_at TEXT NOT NULL);',
+      'CREATE INDEX IF NOT EXISTS idx_browser_sessions_expires ON browser_sessions(expires_at);',
+    ],
+  },
+  {
+    id: '007-instruction-snapshot-project-context',
+    statements: [
+      'ALTER TABLE instruction_snapshots ADD COLUMN project_id TEXT;',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

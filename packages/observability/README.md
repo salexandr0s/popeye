@@ -46,7 +46,7 @@ New platform implementation.
 ```ts
 import { redactText, sha256 } from '@popeye/observability';
 
-const { text, events } = redactText('My key is sk-abc123def456ghi789');
+const { text, events } = redactText('My key is sk-abc123def456ghi789'); // secret-scan: allow
 // text => 'My key is [REDACTED:openai-key]'
 // events => [{ code: 'redaction_applied', ... }]
 

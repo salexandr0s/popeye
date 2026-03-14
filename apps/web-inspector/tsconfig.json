@@ -12,8 +12,17 @@
     "rootDir": "src",
     "declaration": true
   },
-  "include": ["src"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
   "references": [
-    { "path": "../../packages/contracts" }
+    {
+      "path": "../../packages/contracts"
+    }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

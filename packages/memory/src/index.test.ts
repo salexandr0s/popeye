@@ -31,6 +31,8 @@ describe('memory policy', () => {
       lastReinforcedAt: null,
       archivedAt: null,
       createdAt: '2026-01-01T00:00:00Z',
+      sourceRunId: null,
+      sourceTimestamp: null,
     })).toBe('deny');
   });
 

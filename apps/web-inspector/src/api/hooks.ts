@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApi } from './provider';
+import { readBootstrapNonce } from './bootstrap';
 
 import type {
   DaemonStatusResponse,
@@ -51,9 +52,7 @@ export function resetBrowserBootstrapForTests(): void {
 
 function ensureBrowserBootstrap(): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise;
-  const nonce = (
-    globalThis.window as unknown as { __POPEYE_BOOTSTRAP_NONCE__?: string } | undefined
-  )?.__POPEYE_BOOTSTRAP_NONCE__;
+  const nonce = readBootstrapNonce();
   if (!nonce) {
     return Promise.reject(new Error('Missing bootstrap nonce'));
   }

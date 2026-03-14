@@ -282,6 +282,72 @@ describe('PopeyeApiClient', () => {
     await expect(client.getMessage('message-1')).resolves.toMatchObject({ id: 'message-1', relatedRunId: 'run-1' });
   });
 
+  it('returns denied ingress responses without throwing for control-plane callers', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(403, {
+      accepted: false,
+      duplicate: false,
+      httpStatus: 403,
+      decisionCode: 'telegram_not_allowlisted',
+      decisionReason: 'Telegram sender is not allowlisted',
+      message: null,
+      taskId: null,
+      jobId: null,
+      runId: null,
+    });
+
+    await expect(client.ingestMessage({
+      source: 'telegram',
+      senderId: '24',
+      text: 'hello',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 2,
+      workspaceId: 'default',
+    })).resolves.toMatchObject({
+      accepted: false,
+      httpStatus: 403,
+      decisionCode: 'telegram_not_allowlisted',
+    });
+  });
+
+  it('returns denied ingress responses without throwing ApiError', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(403, {
+      accepted: false,
+      duplicate: false,
+      httpStatus: 403,
+      decisionCode: 'telegram_not_allowlisted',
+      decisionReason: 'Telegram sender is not allowlisted',
+      message: null,
+      taskId: null,
+      jobId: null,
+      runId: null,
+    });
+
+    await expect(client.ingestMessage({
+      source: 'telegram',
+      senderId: '24',
+      text: 'hello',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 7,
+      workspaceId: 'default',
+    })).resolves.toMatchObject({
+      accepted: false,
+      httpStatus: 403,
+      decisionCode: 'telegram_not_allowlisted',
+    });
+  });
+
   it('parses SSE events via subscribeEvents callback', () => {
     const chunks = [
       new TextEncoder().encode(

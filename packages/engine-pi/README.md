@@ -43,9 +43,35 @@ Pi wrapper. Runtime wrapping of the Pi engine primitive.
 import { createEngineAdapter } from '@popeye/engine-pi';
 
 const adapter = createEngineAdapter(config);
-const result = await adapter.run('hello');
+const result = await adapter.run({
+  prompt: 'hello',
+  cwd: '/absolute/worktree/path',
+  modelOverride: 'popeye/custom-model',
+});
 console.log(result.events, result.usage);
 ```
+
+String prompts remain supported for backward compatibility.
+
+## Structured run request support
+
+Current `EngineRunRequest` behavior:
+
+- supported execution controls: `prompt`, `cwd`, `modelOverride`, `runtimeTools`
+- accepted runtime metadata (not forwarded into Pi RPC semantics yet):
+  `workspaceId`, `projectId`, `sessionPolicy`, `instructionSnapshotId`,
+  `trigger`
+
+Notes:
+
+- `cwd` must be an absolute existing directory; otherwise startup fails clearly
+- `modelOverride` overrides any configured `--model` in `engine.args`
+- runtime tools are currently bridged through a temporary Pi extension and
+  `extension_ui_request(method:"editor")` carrier messages
+- that bridge is a Popeye-owned workaround over Pi's extension UI channel, not
+  a first-class upstream host-tool RPC protocol
+- adapter tests cover malformed bridge payloads, tool exceptions, cancellation
+  during an in-flight bridge request, and multiple tool calls in a single run
 
 ## Pi launch contract
 
@@ -69,5 +95,7 @@ console.log(result.events, result.usage);
   `packages/coding-agent/dist/cli.js` inside the configured Pi checkout
 - If `command` is `node` and `args` begins with Pi flags (for example
   `--extension` or `--model`), the adapter prepends the built Pi CLI path
+- A request-level `modelOverride` replaces any configured `--model`
+- A request-level `cwd` overrides the default Pi checkout working directory
 
 See `src/index.test.ts` for adapter behavior and failure mode tests.

@@ -13,7 +13,7 @@
     "@popeye/runtime-core": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b --force",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc -b --pretty false"
   },

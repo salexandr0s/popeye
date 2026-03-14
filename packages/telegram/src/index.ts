@@ -6,6 +6,7 @@ import type {
   RunEventRecord,
   TelegramChatType,
 } from '@popeye/contracts';
+import { buildCanonicalRunReplyText, extractCanonicalRunReplyText } from '@popeye/contracts';
 
 export interface TelegramUserRef {
   id: number | string;
@@ -73,6 +74,8 @@ export interface TelegramLongPollRelayOptions {
   retryDelayMs?: number;
   jobPollIntervalMs?: number;
   jobTimeoutMs?: number;
+  sendRetryAttempts?: number;
+  sendRetryDelayMs?: number;
 }
 
 const TERMINAL_JOB_STATUSES = new Set<JobRecord['status']>(['succeeded', 'failed_final', 'cancelled']);
@@ -127,18 +130,7 @@ export async function ingestTelegramUpdate(
 }
 
 export function extractTelegramReplyFromRunEvents(events: RunEventRecord[]): string | null {
-  for (const event of [...events].reverse()) {
-    if (event.type !== 'message') continue;
-    try {
-      const payload = JSON.parse(event.payload) as Record<string, unknown>;
-      if (payload.role === 'assistant' && typeof payload.text === 'string' && payload.text.trim().length > 0) {
-        return payload.text;
-      }
-    } catch {
-      // ignore malformed event payloads and keep scanning backwards
-    }
-  }
-  return null;
+  return extractCanonicalRunReplyText(events);
 }
 
 export function buildTelegramRunReply(receipt: ReceiptRecord): string {
@@ -215,6 +207,25 @@ async function waitForTerminalJob(
   return null;
 }
 
+async function sendTelegramReplyWithRetry(
+  bot: TelegramBotClient,
+  input: TelegramSendMessageInput,
+  options: { attempts: number; delayMs: number },
+): Promise<void> {
+  const maxAttempts = Math.max(1, options.attempts);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await bot.sendMessage(input);
+      return;
+    } catch (error) {
+      if (attempt >= maxAttempts) {
+        throw error;
+      }
+      await sleep(options.delayMs);
+    }
+  }
+}
+
 export class TelegramLongPollRelay {
   private nextOffset: number | undefined;
   private running = false;
@@ -237,6 +248,7 @@ export class TelegramLongPollRelay {
 
   private track(task: Promise<void>): void {
     this.inflight.add(task);
+    void task.catch(() => undefined);
     task.finally(() => this.inflight.delete(task));
   }
 
@@ -262,31 +274,38 @@ export class TelegramLongPollRelay {
   }
 
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
-    const normalized = normalizeTelegramUpdate(update);
-    if (!normalized) return;
+    try {
+      const normalized = normalizeTelegramUpdate(update);
+      if (!normalized) return;
 
-    const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
-    if (!ingress?.accepted || !ingress.jobId) return;
+      const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
+      if (!ingress?.accepted || ingress.duplicate || !ingress.jobId) return;
 
-    const job = await waitForTerminalJob(
-      this.options.control,
-      ingress.jobId,
-      this.options.jobPollIntervalMs ?? 500,
-      this.options.jobTimeoutMs ?? 300_000,
-    );
-    if (!job?.lastRunId) return;
+      const job = await waitForTerminalJob(
+        this.options.control,
+        ingress.jobId,
+        this.options.jobPollIntervalMs ?? 500,
+        this.options.jobTimeoutMs ?? 300_000,
+      );
+      if (!job?.lastRunId) return;
 
-    const [events, receipt] = await Promise.all([
-      this.options.control.listRunEvents(job.lastRunId),
-      this.options.control.getRunReceipt(job.lastRunId),
-    ]);
-    const replyText = extractTelegramReplyFromRunEvents(events)
-      ?? (receipt ? buildTelegramRunReply(receipt) : 'Run completed.');
+      const [events, receipt] = await Promise.all([
+        this.options.control.listRunEvents(job.lastRunId),
+        this.options.control.getRunReceipt(job.lastRunId),
+      ]);
+      const replyText = buildCanonicalRunReplyText(events, receipt, buildTelegramRunReply) ?? 'Run completed.';
 
-    await this.options.bot.sendMessage({
-      chatId: normalized.chatId,
-      text: formatTelegramReply(replyText),
-      replyToMessageId: normalized.telegramMessageId,
-    });
+      await sendTelegramReplyWithRetry(this.options.bot, {
+        chatId: normalized.chatId,
+        text: formatTelegramReply(replyText),
+        replyToMessageId: normalized.telegramMessageId,
+      }, {
+        attempts: this.options.sendRetryAttempts ?? 3,
+        delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
+      });
+    } catch {
+      // Keep the long-poll worker resilient: denied ingress, duplicate replays, and Bot API
+      // failures should not crash the relay loop or produce unhandled rejections.
+    }
   }
 }

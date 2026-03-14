@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { readBootstrapNonce } from './bootstrap';
 
 export interface ApiClient {
   get: <T>(path: string) => Promise<T>;
@@ -11,6 +12,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   const client = useMemo(() => {
     let csrfToken: string | null = null;
     let bootstrapped = false;
+    let bootstrapPromise: Promise<void> | null = null;
 
     const baseHeaders = (): Record<string, string> => ({
       'Content-Type': 'application/json',
@@ -18,20 +20,24 @@ export function ApiProvider({ children }: { children: ReactNode }) {
 
     const ensureBootstrap = async (): Promise<void> => {
       if (bootstrapped) return;
-      const nonce = (
-        window as unknown as { __POPEYE_BOOTSTRAP_NONCE__?: string }
-      ).__POPEYE_BOOTSTRAP_NONCE__;
+      if (bootstrapPromise) return bootstrapPromise;
+      const nonce = readBootstrapNonce();
       if (!nonce) {
         throw new Error('Missing bootstrap nonce');
       }
-      const res = await fetch('/v1/auth/exchange', {
+      bootstrapPromise = fetch('/v1/auth/exchange', {
         method: 'POST',
         headers: baseHeaders(),
         credentials: 'same-origin',
         body: JSON.stringify({ nonce }),
+      }).then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        bootstrapped = true;
+      }).catch((error: unknown) => {
+        bootstrapPromise = null;
+        throw error;
       });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      bootstrapped = true;
+      return bootstrapPromise;
     };
 
     const ensureCsrf = async (): Promise<string> => {

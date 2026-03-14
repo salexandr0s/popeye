@@ -20,7 +20,13 @@ export class MemorySearchService {
   constructor(opts: { db: Database.Database; embeddingClient: EmbeddingClient; vecAvailable: boolean | (() => boolean); halfLifeDays?: number }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
-    this.getVecAvailable = typeof opts.vecAvailable === 'function' ? opts.vecAvailable : () => opts.vecAvailable;
+    if (typeof opts.vecAvailable === 'function') {
+      const getVecAvailable = opts.vecAvailable;
+      this.getVecAvailable = () => getVecAvailable();
+    } else {
+      const vecAvailable = opts.vecAvailable;
+      this.getVecAvailable = () => vecAvailable;
+    }
     this.halfLifeDays = opts.halfLifeDays ?? 30;
   }
 

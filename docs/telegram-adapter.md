@@ -18,8 +18,10 @@ The current mainline package implements:
 - Bot API transport (`createTelegramBotClient()`)
 - long-poll receive/send orchestration (`TelegramLongPollRelay`)
 - reply text cleanup + fallback receipt formatting (`formatTelegramReply()`, `buildTelegramRunReply()`)
+- duplicate-delivery suppression at the relay layer
+- bounded Bot API send retry behavior
 
-Current in-repo transport is **long-polling**. Webhook hosting is still outside the package.
+Current in-repo transport is **end-to-end long-polling**. Webhook hosting is still outside the package.
 
 ## Message flow
 
@@ -28,8 +30,12 @@ Current in-repo transport is **long-polling**. Webhook hosting is still outside 
 3. `ingestTelegramUpdate()` calls the runtime's `ingestMessage()` with source `telegram` and the extracted fields.
 4. The runtime applies the full ingress pipeline (see below).
 5. For accepted messages, the relay waits for the related job to reach a terminal state through the control API.
-6. The relay fetches the final run events, extracts the last assistant message, and falls back to a receipt summary when needed.
+6. The relay fetches the final run events and derives the reply with this precedence:
+   - `completed.output`
+   - last assistant `message` text
+   - receipt-derived fallback text
 7. The relay sends the formatted reply back to Telegram with `sendMessage`.
+8. Duplicate replayed deliveries and denied ingress responses do **not** produce a Telegram reply; the runtime remains the audit source of truth.
 
 ## Runtime ingress pipeline (for Telegram source)
 
@@ -46,6 +52,8 @@ The runtime service applies these checks in order when `source === "telegram"`:
 ## Idempotency
 
 Telegram messages are deduped via an idempotency key: `telegram:{chatId}:{telegramMessageId}`. Duplicate deliveries replay the original response without re-processing.
+
+This is also the current restart/offset story for long-poll mode: if Telegram replays an update after daemon restart, the runtime replay is accepted as a duplicate and the relay stays silent rather than sending a second reply.
 
 ## Configuration
 

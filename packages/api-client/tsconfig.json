@@ -11,6 +11,16 @@
     "skipLibCheck": true,
     "composite": true
   },
-  "include": ["src"],
-  "references": [{ "path": "../contracts" }]
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../contracts"
+    }
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }

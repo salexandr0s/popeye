@@ -591,7 +591,7 @@ describe('Config validation', () => {
     expect(result.runtimeDataDir).toBe('/tmp/popeye-test');
     expect(result.security.bindHost).toBe('127.0.0.1');
     expect(result.workspaces).toHaveLength(1);
-    expect(result.workspaces[0].id).toBe('default');
+    expect(result.workspaces[0]?.id).toBe('default');
   });
 
   it('rejects missing runtimeDataDir', () => {
@@ -633,7 +633,7 @@ describe('Config validation', () => {
     const { workspaces: _ws, ...noWs } = completeConfig;
     const result = AppConfigSchema.parse(noWs);
     expect(result.workspaces).toHaveLength(1);
-    expect(result.workspaces[0].id).toBe('default');
+    expect(result.workspaces[0]?.id).toBe('default');
   });
 
   it('applies default engine when omitted', () => {

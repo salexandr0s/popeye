@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -535,6 +535,564 @@ describe('engine-pi', () => {
     expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('extension=true');
   });
 
+  it('returns structured bridge errors for malformed runtime-tool payloads', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-malformed', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({ type: 'extension_ui_request', id: 'ui-1', method: 'editor', title: 'popeye.runtime_tool', prefill: '{"op":' });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: String(response.error) }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-malformed',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          return { content: [{ type: 'text', text: 'should not run' }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('Unexpected end of JSON input');
+  });
+
+  it('returns structured bridge errors when runtime tools throw', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-throws', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({ op: 'runtime_tool_call', toolCallId: 'tc-1', tool: 'popeye_memory_search', params: { query: 'boom' } }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: String(response.error) }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-throws',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          throw new Error('runtime tool exploded');
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('runtime tool exploded');
+  });
+
+  it('supports multiple runtime-tool bridge calls in one run', async () => {
+    const calls: unknown[] = [];
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      let ui1Handled = false;
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-multi', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({ op: 'runtime_tool_call', toolCallId: 'tc-1', tool: 'popeye_memory_search', params: { query: 'alpha' } }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1' && !ui1Handled) {
+            ui1Handled = true;
+            const response = JSON.parse(message.value);
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-2',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({ op: 'runtime_tool_call', toolCallId: 'tc-2', tool: 'popeye_memory_search', params: { query: response.content[0].text } }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-2') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 2, output: 2, cost: { total: 0 } },
+                content: [{ type: 'text', text: response.content[0].text }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-multi',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute(params) {
+          calls.push(params);
+          const query = typeof (params as { query?: unknown }).query === 'string'
+            ? (params as { query: string }).query
+            : 'unknown';
+          return { content: [{ type: 'text', text: `reply:${query}` }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(calls).toEqual([{ query: 'alpha' }, { query: 'reply:alpha' }]);
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('reply:reply:alpha');
+  });
+
+  it('cancels cleanly while a runtime-tool bridge call is in flight', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      let aborted = false;
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-cancel', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({ op: 'runtime_tool_call', toolCallId: 'tc-1', tool: 'popeye_memory_search', params: { query: 'slow' } }),
+            });
+          }
+          if (message.type === 'abort' && !aborted) {
+            aborted = true;
+            write({ id: message.id, type: 'response', command: 'abort', success: true });
+            write({
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'aborted',
+                errorMessage: 'cancelled by abort',
+                usage: { input: 1, output: 0, cost: { total: 0 } },
+                content: [],
+              },
+            });
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'aborted',
+                errorMessage: 'cancelled by abort',
+                usage: { input: 1, output: 0, cost: { total: 0 } },
+                content: [],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const handle = await adapter.startRun({
+      prompt: 'tool-cancel',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return { content: [{ type: 'text', text: 'late result' }] };
+        },
+      }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handle.cancel();
+    const completion = await handle.wait();
+
+    expect(completion.failureClassification).toBe('cancelled');
+  });
+
+  it('reports malformed runtime-tool payloads back through the workaround bridge', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-malformed', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: '{"tool":"broken"',
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'bridge-error=' + String(typeof response.error === 'string') }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-malformed',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          return { content: [{ type: 'text', text: 'unused' }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('bridge-error=true');
+  });
+
+  it('surfaces runtime-tool execution exceptions through the workaround bridge', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-exception', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-1',
+                tool: 'popeye_memory_search',
+                params: { query: 'release notes' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'tool-error=' + response.error }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-exception',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          throw new Error('memory exploded');
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('tool-error=memory exploded');
+  });
+
+  it('marks the run cancelled when cancellation interrupts an in-flight runtime-tool bridge request', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-cancel', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-1',
+                tool: 'popeye_memory_search',
+                params: { query: 'release notes' },
+              }),
+            });
+          }
+          if (message.type === 'abort') {
+            write({ id: message.id, type: 'response', command: 'abort', success: true });
+            process.exit(0);
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const events: NormalizedEngineEvent[] = [];
+    let releaseTool: (() => void) | null = null;
+    const executeStarted = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    const handle = await adapter.startRun({
+      prompt: 'tool-cancel',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          releaseTool?.();
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return { content: [{ type: 'text', text: 'late result' }] };
+        },
+      }],
+    }, {
+      onEvent: (event) => events.push(event),
+    });
+
+    await executeStarted;
+    await handle.cancel();
+    const completion = await handle.wait();
+
+    expect(completion.failureClassification).toBe('cancelled');
+    expect(events.find((event) => event.type === 'failed')?.payload.classification).toBe('cancelled');
+  });
+
+  it('supports multiple runtime-tool bridge calls in a single run', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      const toolResults = [];
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-multi', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-1',
+                tool: 'popeye_memory_search',
+                params: { query: 'first' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            toolResults.push(JSON.parse(message.value).content[0].text);
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-2',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-2',
+                tool: 'popeye_memory_search',
+                params: { query: 'second' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-2') {
+            toolResults.push(JSON.parse(message.value).content[0].text);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: toolResults.join('|') }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+    const calls: string[] = [];
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'tool-multi',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute(params) {
+          const query = typeof (params as { query?: unknown })?.query === 'string'
+            ? (params as { query: string }).query
+            : 'missing';
+          calls.push(query);
+          return { content: [{ type: 'text', text: query.toUpperCase() }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(calls).toEqual(['first', 'second']);
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('FIRST|SECOND');
+  });
+
   it('honors cwd and request modelOverride for Pi runs', async () => {
     const piPath = createFakePiRepo(`
       let buffer = '';
@@ -572,6 +1130,7 @@ describe('engine-pi', () => {
       });
     `, { defaultCli: false });
     const runCwd = mkdtempSync(join(tmpdir(), 'popeye-pi-run-cwd-'));
+    const resolvedRunCwd = realpathSync(runCwd);
     const adapter = new PiEngineAdapter({
       piPath,
       command: 'node',
@@ -584,8 +1143,8 @@ describe('engine-pi', () => {
     });
 
     expect(result.failureClassification).toBeNull();
-    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain(`cwd=${runCwd}`);
-    expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('model=request-model');
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain(`cwd=${resolvedRunCwd}`);
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('model=request-model');
   });
 
   it('rejects invalid structured cwd values before spawning Pi', async () => {

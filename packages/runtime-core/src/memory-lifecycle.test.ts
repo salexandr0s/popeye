@@ -544,7 +544,7 @@ describe('MemoryLifecycleService', () => {
       const redactConfig = makeConfig({ redactionPatterns: ['sk-[a-zA-Z0-9]{20,}'] });
       const svc = new MemoryLifecycleService(databases, redactConfig, searchService);
 
-      const results = await svc.processCompactionFlush('run-secret', 'Found key sk-abcdefghijklmnopqrstuvwxyz in config', 'default');
+      const results = await svc.processCompactionFlush('run-secret', 'Found key sk-abcdefghijklmnopqrstuvwxyz in config', 'default'); // secret-scan: allow
       expect(results).toHaveLength(1);
       expect(results[0].content).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
       expect(results[0].content).toContain('[REDACTED:');

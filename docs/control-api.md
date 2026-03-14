@@ -139,6 +139,20 @@ Duplicate Telegram messages (same `source + chatId + telegramMessageId`) are det
 
 The control API does **not** expose a Telegram-specific reply endpoint. Instead, the in-repo Telegram relay uses normal control-plane routes (`/v1/messages/ingest`, `/v1/jobs/:id`, `/v1/runs/:id/events`, `/v1/runs/:id/receipt`) to wait for completion and send the reply itself.
 
+Current reply precedence for that relay is:
+
+1. `completed.output` from the terminal run events
+2. the last assistant `message` event text
+3. a receipt-derived fallback
+
+Current relay delivery behavior is also explicit:
+
+- duplicate replayed ingress responses do not send a second Telegram reply
+- denied ingress responses do not send a Telegram reply
+- Bot API send failures are retried in the relay with bounded backoff
+
+Denied ingress responses and duplicate replay responses are intentionally **silent** at the relay layer. They remain visible through `message_ingress`, jobs/runs, receipts, and `run_completed`/audit events rather than via Telegram-side error messages.
+
 ## Memory promotion flow
 
 Memory promotion is a two-step mutation flow:

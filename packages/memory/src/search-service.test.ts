@@ -169,7 +169,7 @@ describe('MemorySearchService', () => {
         description: 'Has secret',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'API key is sk-1234567890abcdefghij',
+        content: 'API key is sk-1234567890abcdefghij', // secret-scan: allow
         confidence: 0.8,
         scope: 'workspace',
       });

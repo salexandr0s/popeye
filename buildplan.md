@@ -508,6 +508,8 @@ Turn the runtime into a service.
 
 Add the first external channel adapter so Popeye can receive and respond to messages via Telegram.
 
+**Current status (2026-03-14):** delivered in-repo as a thin long-poll bridge over the versioned control API. Earlier wording about "provisional daemon endpoints" is historical plan text, not the intended architecture.
+
 ### Deliverables
 
 - `@popeye/telegram` package
@@ -520,7 +522,7 @@ Add the first external channel adapter so Popeye can receive and respond to mess
 
 - Build thin Telegram bot adapter that receives messages via Telegram Bot API.
 - Implement allowlist-only DM policy (no pairing, no open registration).
-- Route incoming Telegram messages through provisional daemon endpoints (formalized in Phase 8's control API).
+- Route incoming Telegram messages through the control API (`/v1/messages/ingest` in the current implementation).
 - Return engine responses back through Telegram.
 - Implement rate limiting on inbound messages.
 - Add Telegram adapter integration tests.
@@ -529,7 +531,7 @@ Add the first external channel adapter so Popeye can receive and respond to mess
 
 ### Dependencies
 
-- Phase 3 complete (daemon running, auth token from Phase 2 in place). Telegram connects to provisional daemon endpoints that are formalized in Phase 8.
+- Phase 3 complete (daemon running, auth token from Phase 2 in place). Telegram connects through the control API in the current implementation.
 
 ### Risks
 

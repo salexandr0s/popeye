@@ -581,17 +581,27 @@ function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRunti
 }
 
 function resolveBaseArgs(piPath: string, command: string, args: string[]): string[] {
+  const withResolvedScriptPath = (resolvedArgs: string[]): string[] => {
+    if (command !== 'node') {
+      return resolvedArgs;
+    }
+    const [firstArg, ...rest] = resolvedArgs;
+    if (!firstArg || firstArg.startsWith('-') || isAbsolute(firstArg)) {
+      return resolvedArgs;
+    }
+    return [resolve(piPath, firstArg), ...rest];
+  };
   if (command !== 'node') {
     return args;
   }
   if (args.length === 0) {
-    return inferDefaultNodePiArgs(piPath);
+    return withResolvedScriptPath(inferDefaultNodePiArgs(piPath));
   }
   const firstArg = args[0];
   if (firstArg === undefined || firstArg.startsWith('-')) {
-    return [...inferDefaultNodePiArgs(piPath), ...args];
+    return withResolvedScriptPath([...inferDefaultNodePiArgs(piPath), ...args]);
   }
-  return args;
+  return withResolvedScriptPath(args);
 }
 
 function inferDefaultNodePiArgs(piPath: string): string[] {
@@ -779,7 +789,10 @@ export class FakeEngineAdapter implements EngineAdapter {
     const completion = await handle.wait();
     return {
       events,
-      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      engineSessionRef: completion.engineSessionRef ?? (() => {
+        const sessionRef = events.find((event) => event.type === 'session')?.payload.sessionRef;
+        return typeof sessionRef === 'string' ? sessionRef : null;
+      })(),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
     };
@@ -840,7 +853,10 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
     const completion = await handle.wait();
     return {
       events,
-      engineSessionRef: completion.engineSessionRef ?? events.find((event) => event.type === 'session')?.payload.sessionRef ?? null,
+      engineSessionRef: completion.engineSessionRef ?? (() => {
+        const sessionRef = events.find((event) => event.type === 'session')?.payload.sessionRef;
+        return typeof sessionRef === 'string' ? sessionRef : null;
+      })(),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
     };
@@ -870,10 +886,14 @@ export class PiEngineAdapter implements EngineAdapter {
   async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
     const request = normalizeEngineRunRequest(input);
     const runtimeToolBridge = prepareRuntimeToolBridge(request.runtimeTools ?? []);
-    const launch = buildPiCommand(this.piPath, this.command, this.args, {
-      extensionPaths: runtimeToolBridge.extensionPaths,
-      modelOverride: request.modelOverride,
-    });
+    const launch = buildPiCommand(
+      this.piPath,
+      this.command,
+      this.args,
+      request.modelOverride === undefined
+        ? { extensionPaths: runtimeToolBridge.extensionPaths }
+        : { extensionPaths: runtimeToolBridge.extensionPaths, modelOverride: request.modelOverride },
+    );
     const child = spawn(launch.command, launch.args, {
       cwd: resolveSpawnCwd(this.piPath, request.cwd),
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1240,6 +1260,11 @@ export class PiEngineAdapter implements EngineAdapter {
         }
 
         const exitCode = code ?? 0;
+        if (cancelRequested && failureClassification === null) {
+          failureClassification = 'cancelled';
+          failureMessage = failureMessage ?? 'cancelled by operator';
+        }
+
         if (!promptState.completed && failureClassification === null && exitCode !== 0) {
           failureClassification = promptState.accepted || startedEmitted ? 'permanent_failure' : 'startup_failure';
           failureMessage = stderr.trim() || `Pi RPC process failed with code ${exitCode}`;
@@ -1316,7 +1341,13 @@ export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | P
 export function createEngineAdapter(config: AppConfig): EngineAdapter {
   if (config.engine.kind === 'pi') {
     assertPiCheckoutAvailable(config.engine.piPath);
-    return new PiEngineAdapter({ piPath: config.engine.piPath, piVersion: config.engine.piVersion, command: config.engine.command, args: config.engine.args, timeoutMs: config.engine.timeoutMs });
+    return new PiEngineAdapter({
+      command: config.engine.command,
+      args: config.engine.args,
+      ...(config.engine.piPath === undefined ? {} : { piPath: config.engine.piPath }),
+      ...(config.engine.piVersion === undefined ? {} : { piVersion: config.engine.piVersion }),
+      ...(config.engine.timeoutMs === undefined ? {} : { timeoutMs: config.engine.timeoutMs }),
+    });
   }
   return new FakeEngineAdapter();
 }

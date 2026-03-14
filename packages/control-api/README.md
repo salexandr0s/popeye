@@ -9,7 +9,7 @@ interact with the runtime.
 Mounts versioned REST endpoints on a Fastify server, enforcing bearer token
 authentication on API requests and CSRF protection (token + Sec-Fetch-Site
 validation) on all state-changing mutations. Browser clients can bootstrap a
-same-origin HttpOnly auth cookie through a one-time `/v1/auth/exchange` nonce
+same-origin HttpOnly browser-session cookie through a one-time `/v1/auth/exchange` nonce
 exchange. Provides SSE streaming for real-time event delivery. Contains no
 business logic -- all operations delegate to `PopeyeRuntimeService`.
 
@@ -74,7 +74,7 @@ The web inspector does not receive the long-lived bearer token in HTML. Instead:
 
 1. the daemon serves HTML with a one-time bootstrap nonce
 2. the browser posts that nonce to `POST /v1/auth/exchange`
-3. the control API sets an HttpOnly `popeye_auth` cookie
+3. the control API sets an HttpOnly `popeye_auth` browser-session cookie
 4. subsequent same-origin requests rely on the cookie plus CSRF token
 
 ### Memory promotion
@@ -87,3 +87,9 @@ The memory API includes a two-step promotion flow:
 
 Promotion routes are covered by contract and behavior tests in
 `src/contract.test.ts` and `src/index.test.ts`.
+
+### Instruction preview validation
+
+`GET /v1/instruction-previews/:scope?projectId=...` validates that the project
+belongs to the requested workspace. Unknown workspace/project IDs return `404`,
+while a cross-workspace mismatch returns `400 { error: "invalid_context" }`.

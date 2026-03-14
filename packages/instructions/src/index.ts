@@ -14,8 +14,10 @@ export function compileInstructionBundle(sources: InstructionSource[]): Compiled
   const warnings: string[] = [];
 
   for (let index = 1; index < orderedSources.length; index += 1) {
-    if (orderedSources[index - 1]?.precedence === orderedSources[index]?.precedence) {
-      warnings.push(`Multiple sources share precedence ${orderedSources[index].precedence}`);
+    const previousSource = orderedSources[index - 1];
+    const currentSource = orderedSources[index];
+    if (previousSource && currentSource && previousSource.precedence === currentSource.precedence) {
+      warnings.push(`Multiple sources share precedence ${currentSource.precedence}`);
     }
   }
 

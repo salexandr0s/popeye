@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '@popeye/runtime-core';
+import { AUTH_COOKIE_NAME, initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '@popeye/runtime-core';
 
 import { createControlApi } from './index.js';
 
@@ -42,6 +42,13 @@ function insertMemoryForPromotion(
 }
 
 describe('control api', () => {
+  function extractCookieValue(setCookie: string | string[] | undefined, cookieName: string): string | null {
+    const raw = Array.isArray(setCookie) ? setCookie.join(';') : setCookie;
+    if (!raw) return null;
+    const match = raw.match(new RegExp(`${cookieName}=([^;]+)`));
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  }
+
   it('requires auth for protected endpoints and csrf for mutations', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-'));
     chmodSync(dir, 0o700);
@@ -101,7 +108,7 @@ describe('control api', () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
-    initAuthStore(authFile);
+    const store = initAuthStore(authFile);
     const runtime = createRuntimeService({
       runtimeDataDir: dir,
       authFile,
@@ -133,6 +140,9 @@ describe('control api', () => {
     expect(exchanged.statusCode).toBe(200);
     expect(exchanged.json()).toEqual({ ok: true });
     expect(exchanged.headers['set-cookie']).toContain('popeye_auth=');
+    const sessionCookie = extractCookieValue(exchanged.headers['set-cookie'] as string, AUTH_COOKIE_NAME);
+    expect(sessionCookie).toBeTruthy();
+    expect(sessionCookie).not.toBe(store.current.token);
     expect(runtime.getSecurityAuditFindings()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'auth_exchange_succeeded', severity: 'info' }),
@@ -141,6 +151,39 @@ describe('control api', () => {
     );
 
     await runtime.close();
+    await app.close();
+  });
+
+  it('invalidates existing browser sessions on runtime restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-session-restart-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const config = {
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1' as const, bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled' as const, allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake' as const, command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    };
+    const runtime = createRuntimeService(config);
+    const session = runtime.createBrowserSession();
+    await runtime.close();
+
+    const restarted = createRuntimeService(config);
+    const app = await createControlApi({ runtime: restarted });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(session.id)}` },
+    });
+
+    expect(response.statusCode).toBe(401);
+
+    await restarted.close();
     await app.close();
   });
 
@@ -310,6 +353,176 @@ describe('control api', () => {
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
     expect(second.json()).toMatchObject({ accepted: true, duplicate: true, decisionCode: 'duplicate_replayed' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('exposes job lookup, run receipt lookup, and message-to-run linkage for accepted telegram ingress', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-links-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const headers = { authorization: `Bearer ${store.current.token}`, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' };
+
+    const ingress = await app.inject({
+      method: 'POST',
+      url: '/v1/messages/ingest',
+      headers,
+      payload: {
+        source: 'telegram',
+        senderId: '42',
+        text: 'link this to a run',
+        chatId: 'chat-1',
+        chatType: 'private',
+        telegramMessageId: 11,
+        workspaceId: 'default',
+      },
+    });
+
+    expect(ingress.statusCode).toBe(200);
+    const ingressBody = ingress.json() as {
+      accepted: boolean;
+      jobId: string | null;
+      taskId: string | null;
+      message: { id: string } | null;
+    };
+    expect(ingressBody.accepted).toBe(true);
+    expect(ingressBody.jobId).toBeTruthy();
+
+    const terminal = ingressBody.jobId
+      ? await runtime.waitForJobTerminalState(ingressBody.jobId, 5_000)
+      : null;
+    expect(terminal?.run?.id).toBeTruthy();
+
+    const jobResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${ingressBody.jobId}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(jobResponse.statusCode).toBe(200);
+    expect(jobResponse.json()).toMatchObject({
+      id: ingressBody.jobId,
+      taskId: ingressBody.taskId,
+      lastRunId: terminal?.run?.id,
+      status: terminal?.job.status,
+    });
+
+    const receiptResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal?.run?.id}/receipt`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(receiptResponse.statusCode).toBe(200);
+    expect(receiptResponse.json()).toMatchObject({
+      runId: terminal?.run?.id,
+      jobId: ingressBody.jobId,
+      taskId: ingressBody.taskId,
+      status: terminal?.receipt?.status,
+    });
+
+    const messageRow = runtime.databases.app
+      .prepare('SELECT related_run_id FROM messages WHERE id = ?')
+      .get(ingressBody.message?.id) as { related_run_id: string | null };
+    const ingressRow = runtime.databases.app
+      .prepare('SELECT task_id, job_id, run_id FROM message_ingress WHERE message_id = ?')
+      .get(ingressBody.message?.id) as { task_id: string | null; job_id: string | null; run_id: string | null };
+
+    expect(messageRow.related_run_id).toBe(terminal?.run?.id);
+    expect(ingressRow).toEqual({
+      task_id: ingressBody.taskId,
+      job_id: ingressBody.jobId,
+      run_id: terminal?.run?.id,
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('serves job and run receipt routes for Telegram-ingested runs and preserves linkage invariants', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-run-linkage-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const headers = { authorization: `Bearer ${store.current.token}`, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' };
+
+    const ingest = await app.inject({
+      method: 'POST',
+      url: '/v1/messages/ingest',
+      headers,
+      payload: { source: 'telegram', senderId: '42', text: 'hello', chatId: 'chat-7', chatType: 'private', telegramMessageId: 7, workspaceId: 'default' },
+    });
+    expect(ingest.statusCode).toBe(200);
+    const ingressBody = ingest.json() as {
+      message: { id: string } | null;
+      jobId: string | null;
+      taskId: string | null;
+    };
+    const terminal = ingressBody.jobId ? await runtime.waitForJobTerminalState(ingressBody.jobId, 5_000) : null;
+
+    const jobResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${terminal?.job.id}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    const receiptResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal?.run?.id}/receipt`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(jobResponse.statusCode).toBe(200);
+    expect(jobResponse.json()).toMatchObject({
+      id: terminal?.job.id,
+      taskId: ingressBody.taskId,
+      lastRunId: terminal?.run?.id,
+      status: terminal?.job.status,
+    });
+    expect(receiptResponse.statusCode).toBe(200);
+    expect(receiptResponse.json()).toMatchObject({
+      runId: terminal?.run?.id,
+      jobId: terminal?.job.id,
+      taskId: ingressBody.taskId,
+      status: terminal?.receipt?.status,
+    });
+
+    const messageRow = runtime.databases.app
+      .prepare('SELECT related_run_id FROM messages WHERE id = ?')
+      .get(ingressBody.message?.id) as { related_run_id: string | null };
+    const ingressRow = runtime.databases.app
+      .prepare('SELECT task_id, job_id, run_id FROM message_ingress WHERE message_id = ?')
+      .get(ingressBody.message?.id) as { task_id: string | null; job_id: string | null; run_id: string | null };
+
+    expect(messageRow.related_run_id).toBe(terminal?.run?.id ?? null);
+    expect(ingressRow).toEqual({
+      task_id: ingressBody.taskId,
+      job_id: terminal?.job.id ?? null,
+      run_id: terminal?.run?.id ?? null,
+    });
 
     await runtime.close();
     await app.close();
