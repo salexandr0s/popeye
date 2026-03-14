@@ -9,7 +9,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: 'pnpm --filter @popeye/web-inspector build && POPEYE_CONFIG_PATH=config/example.json pnpm exec tsx apps/daemon/src/index.ts',
+    command: 'pnpm --filter @popeye/web-inspector build && POPEYE_CONFIG_PATH=config/example.json pnpm exec tsx --tsconfig tsconfig.base.json apps/daemon/src/index.ts',
     url: 'http://127.0.0.1:3210/v1/health',
     reuseExistingServer: false,
     timeout: 10_000,
