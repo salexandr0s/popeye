@@ -18,7 +18,7 @@ function makeConfig(dir: string) {
       runtimeDataDir: dir,
       authFile,
       security: { bindHost: '127.0.0.1' as const, bindPort: 0, redactionPatterns: [] },
-      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
       embeddings: { provider: 'disabled' as const, allowedClassifications: ['embeddable' as const] },
       memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
       engine: { kind: 'fake' as const, command: 'node', args: [] },

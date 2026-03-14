@@ -55,6 +55,8 @@ export function scanPrompt(text: string, options?: PromptScanOptions): PromptSca
   const allSanitizeRules = [...SANITIZE_RULES, ...customSanitizeRules];
 
   const matchedRules: string[] = [];
+  // Quarantine patterns must NOT use the `g` flag — .test() on a global
+  // regex mutates lastIndex, causing intermittent match failures across calls.
   for (const rule of allQuarantineRules) {
     if (rule.pattern.test(normalized)) {
       matchedRules.push(rule.name);

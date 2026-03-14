@@ -19,7 +19,7 @@ function makeConfig(dir: string): AppConfig {
     runtimeDataDir: dir,
     authFile,
     security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
-    telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+    telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
     memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: true, compactionFlushConfidence: 0.7 },
     engine: { kind: 'fake', command: 'node', args: [] },
@@ -277,7 +277,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
     expect(() =>
       runtime.ingestMessage({
@@ -301,7 +301,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
       security: {
         ...makeConfig(dir).security,
         promptScanQuarantinePatterns: ['send.*competitor'],
@@ -359,7 +359,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     const first = runtime.ingestMessage({
@@ -409,7 +409,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
       workspaces: [
         { id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 },
         { id: 'ops', name: 'Ops workspace', heartbeatEnabled: false, heartbeatIntervalSeconds: 3600 },
@@ -449,7 +449,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     const response = runtime.ingestMessage({
@@ -553,7 +553,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     const response = runtime.ingestMessage({
@@ -621,7 +621,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     expect(runtime.getTelegramRelayCheckpoint('default')).toBeNull();
@@ -661,7 +661,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     expect(() =>
@@ -680,7 +680,7 @@ describe('PopeyeRuntimeService', () => {
     chmodSync(dir, 0o700);
     const runtime = createRuntimeService({
       ...makeConfig(dir),
-      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 1, rateLimitWindowSeconds: 60 },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 1, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
     });
 
     runtime.ingestMessage({
