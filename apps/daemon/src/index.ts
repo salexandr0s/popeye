@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 
 import { cleanStalePiTempDirs } from '@popeye/engine-pi';
 import { createControlApi } from '@popeye/control-api';
-import { redactText } from '@popeye/observability';
+import { createLogger, redactText } from '@popeye/observability';
 import {
   createRuntimeService,
   ensureRuntimePaths,
@@ -21,10 +21,11 @@ if (!configPath) {
 }
 
 const config = loadAppConfig(configPath);
+const log = createLogger('daemon', config.security.redactionPatterns);
 ensureRuntimePaths(config);
 const cleanedTempDirs = cleanStalePiTempDirs();
 if (cleanedTempDirs > 0) {
-  console.info(`Cleaned ${cleanedTempDirs} stale Pi temp director${cleanedTempDirs === 1 ? 'y' : 'ies'}`);
+  log.info(`Cleaned ${cleanedTempDirs} stale Pi temp directories`, { count: cleanedTempDirs });
 }
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
@@ -90,13 +91,13 @@ process.on('SIGINT', () => void shutdown());
 process.on('unhandledRejection', (error) => {
   const msg = error instanceof Error ? error.stack ?? error.message : String(error);
   const redacted = redactText(msg, config.security.redactionPatterns);
-  console.error('unhandledRejection', redacted.text);
+  log.error('unhandledRejection', { detail: redacted.text });
   void shutdown(1);
 });
 process.on('uncaughtException', (error) => {
   const msg = error instanceof Error ? error.stack ?? error.message : String(error);
   const redacted = redactText(msg, config.security.redactionPatterns);
-  console.error('uncaughtException', redacted.text);
+  log.error('uncaughtException', { detail: redacted.text });
   process.exit(1);
 });
 

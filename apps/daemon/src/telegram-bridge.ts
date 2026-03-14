@@ -1,5 +1,6 @@
 import type { AppConfig } from '@popeye/contracts';
 import { PopeyeApiClient } from '@popeye/api-client';
+import { createLogger } from '@popeye/observability';
 import { loadAuthStore } from '@popeye/runtime-core';
 import {
   TelegramLongPollRelay,
@@ -27,9 +28,10 @@ export async function startTelegramBridge(
 ): Promise<StartedTelegramBridge | null> {
   if (!config.telegram.enabled) return null;
 
+  const log = createLogger('telegram-bridge');
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
-    console.warn('[daemon] Telegram enabled but TELEGRAM_BOT_TOKEN is not set; skipping Telegram bridge startup');
+    log.warn('Telegram enabled but TELEGRAM_BOT_TOKEN is not set; skipping bridge startup');
     return null;
   }
 

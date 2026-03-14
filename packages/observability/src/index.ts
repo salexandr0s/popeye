@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 
 import type { SecurityAuditEvent } from '@popeye/contracts';
 
+export { createLogger } from './logger.js';
+export type { PopeyeLogger, CorrelationIds } from './logger.js';
+
 const BUILTIN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'openai-key', pattern: /sk-[A-Za-z0-9]{10,}/g },
   { name: 'generic-key', pattern: /key-[A-Za-z0-9]{10,}/g },
