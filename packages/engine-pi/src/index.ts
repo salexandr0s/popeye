@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -28,6 +28,28 @@ const INTERNAL_IDS = {
   abort: 'popeye:abort',
 } as const;
 const PASSIVE_EXTENSION_UI_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text']);
+
+export function cleanStalePiTempDirs(): number {
+  const prefix = 'popeye-pi-extension-';
+  const base = tmpdir();
+  let cleaned = 0;
+  let entries: string[];
+  try {
+    entries = readdirSync(base);
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    try {
+      rmSync(join(base, entry), { recursive: true, force: true });
+      cleaned++;
+    } catch {
+      // best-effort cleanup
+    }
+  }
+  return cleaned;
+}
 
 export interface EngineRunHandle {
   pid: number | null;
@@ -654,9 +676,22 @@ function resolveSpawnCwd(piPath: string, cwd?: string): string {
   return cwd;
 }
 
-function executeWithTimeout<T>(operation: () => Promise<T> | T, timeoutMs: number, toolName: string): Promise<T> {
+interface ExecuteWithTimeoutOptions {
+  onTimeout?: () => void;
+  onLateSettle?: (input: { status: 'resolved' | 'rejected' }) => void;
+}
+
+function executeWithTimeout<T>(
+  operation: () => Promise<T> | T,
+  timeoutMs: number,
+  toolName: string,
+  options: ExecuteWithTimeoutOptions = {},
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let timedOut = false;
     const timer = setTimeout(() => {
+      timedOut = true;
+      options.onTimeout?.();
       reject(new RuntimeToolBridgeTimeoutError(toolName, timeoutMs));
     }, timeoutMs);
 
@@ -664,10 +699,18 @@ function executeWithTimeout<T>(operation: () => Promise<T> | T, timeoutMs: numbe
       .then(() => operation())
       .then(
         (result) => {
+          if (timedOut) {
+            options.onLateSettle?.({ status: 'resolved' });
+            return;
+          }
           clearTimeout(timer);
           resolve(result);
         },
         (error: unknown) => {
+          if (timedOut) {
+            options.onLateSettle?.({ status: 'rejected' });
+            return;
+          }
           clearTimeout(timer);
           reject(error);
         },
@@ -940,6 +983,21 @@ export class PiEngineAdapter implements EngineAdapter {
     let sessionEmitted = false;
     let cancelRequested = false;
     const promptState: PromptState = { requested: false, accepted: false, completed: false };
+    const diagnosticWarnings: string[] = [];
+
+    const appendWarning = (warning: string): void => {
+      if (!diagnosticWarnings.includes(warning)) {
+        diagnosticWarnings.push(warning);
+      }
+    };
+
+    const collectWarnings = (): string | undefined => {
+      const stderrWarning = stderr.trim();
+      const warnings = stderrWarning.length > 0
+        ? [stderrWarning, ...diagnosticWarnings]
+        : [...diagnosticWarnings];
+      return warnings.length > 0 ? warnings.join('\n') : undefined;
+    };
 
     const safeEmit = (event: NormalizedEngineEvent): void => {
       if (event.type === 'usage') usageEmitted = true;
@@ -1056,11 +1114,20 @@ export class PiEngineAdapter implements EngineAdapter {
           toolName: payload.tool,
           params: payload.params,
         }, rawRequest);
+        const timeoutWarning = `Runtime tool ${payload.tool} timed out after ${this.runtimeToolTimeoutMs}ms; underlying execution was not cancelled and any later settlement was suppressed.`;
         const execute = tool.execute;
         const result = await executeWithTimeout(
           () => execute(payload.params),
           this.runtimeToolTimeoutMs,
           payload.tool,
+          {
+            onTimeout: () => {
+              appendWarning(timeoutWarning);
+            },
+            onLateSettle: ({ status }) => {
+              appendWarning(`Suppressed late runtime tool ${status} after timeout: ${payload.tool} (${payload.toolCallId})`);
+            },
+          },
         );
         emitBridgeToolResult({
           toolCallId: payload.toolCallId,
@@ -1391,7 +1458,7 @@ export class PiEngineAdapter implements EngineAdapter {
           engineSessionRef,
           usage,
           failureClassification,
-          warnings: stderr.trim() || undefined,
+          warnings: collectWarnings(),
         });
       });
     });

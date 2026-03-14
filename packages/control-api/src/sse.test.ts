@@ -100,4 +100,24 @@ describe('SSE event stream', () => {
     await runtime.close();
     await app.close();
   });
+
+  it('rejects SSE connections beyond maxSseConnections with 429', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-sse-limit-'));
+    chmodSync(dir, 0o700);
+    const { store, config } = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    // Set limit to 0 so the very first inject() hits 429
+    const app = await createControlApi({ runtime, maxSseConnections: 0 });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/events/stream',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ error: 'too_many_sse_connections' });
+
+    await runtime.close();
+    await app.close();
+  });
 });

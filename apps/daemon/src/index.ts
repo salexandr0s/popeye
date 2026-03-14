@@ -4,7 +4,9 @@ import { resolve } from 'node:path';
 
 import fastifyStatic from '@fastify/static';
 
+import { cleanStalePiTempDirs } from '@popeye/engine-pi';
 import { createControlApi } from '@popeye/control-api';
+import { redactText } from '@popeye/observability';
 import {
   createRuntimeService,
   ensureRuntimePaths,
@@ -20,6 +22,10 @@ if (!configPath) {
 
 const config = loadAppConfig(configPath);
 ensureRuntimePaths(config);
+const cleanedTempDirs = cleanStalePiTempDirs();
+if (cleanedTempDirs > 0) {
+  console.info(`Cleaned ${cleanedTempDirs} stale Pi temp director${cleanedTempDirs === 1 ? 'y' : 'ies'}`);
+}
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
 const cspNonce = randomBytes(16).toString('base64');
@@ -29,6 +35,7 @@ const app = await createControlApi({
   cspNonce,
   authExemptPaths: new Set(['/v1/auth/exchange']),
   validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
+  useSecureCookies: config.security.useSecureCookies,
 });
 
 // Serve web inspector static files
@@ -81,11 +88,15 @@ const shutdown = async (code = 0) => {
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());
 process.on('unhandledRejection', (error) => {
-  console.error('unhandledRejection', error);
+  const msg = error instanceof Error ? error.stack ?? error.message : String(error);
+  const redacted = redactText(msg, config.security.redactionPatterns);
+  console.error('unhandledRejection', redacted.text);
   void shutdown(1);
 });
 process.on('uncaughtException', (error) => {
-  console.error('uncaughtException', error);
+  const msg = error instanceof Error ? error.stack ?? error.message : String(error);
+  const redacted = redactText(msg, config.security.redactionPatterns);
+  console.error('uncaughtException', redacted.text);
   process.exit(1);
 });
 

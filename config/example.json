@@ -4,12 +4,17 @@
   "security": {
     "bindHost": "127.0.0.1",
     "bindPort": 3210,
-    "redactionPatterns": []
+    "redactionPatterns": [],
+    "promptScanQuarantinePatterns": [],
+    "promptScanSanitizePatterns": [],
+    "useSecureCookies": false,
+    "tokenRotationDays": 30
   },
   "telegram": {
     "enabled": false,
     "allowedUserId": "operator-telegram-id",
     "maxMessagesPerMinute": 10,
+    "globalMaxMessagesPerMinute": 30,
     "rateLimitWindowSeconds": 60
   },
   "embeddings": {

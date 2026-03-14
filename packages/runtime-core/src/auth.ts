@@ -124,12 +124,14 @@ export function issueCsrfToken(record: AuthRotationRecord): string {
   return hashCsrfSeed(`csrf:${record.current.token}:${record.current.createdAt}`);
 }
 
-export function serializeAuthCookie(token: string): string {
-  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
+export function serializeAuthCookie(token: string, secure?: boolean): string {
+  const base = `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
+  return secure ? `${base}; Secure` : base;
 }
 
-export function serializeCsrfCookie(token: string): string {
-  return `${CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
+export function serializeCsrfCookie(token: string, secure?: boolean): string {
+  const base = `${CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
+  return secure ? `${base}; Secure` : base;
 }
 
 export function validateCsrfToken(token: string | undefined, record: AuthRotationRecord): boolean {

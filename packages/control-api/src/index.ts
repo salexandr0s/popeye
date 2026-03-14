@@ -1,3 +1,5 @@
+import type { ServerResponse } from 'node:http';
+
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
@@ -17,7 +19,9 @@ import {
   TelegramDeliveryStateSchema,
   TelegramRelayCheckpointCommitRequestSchema,
   TelegramRelayCheckpointResponseSchema,
+  TelegramReplyDeliveryMarkUncertainRequestSchema,
   TelegramReplyDeliveryMarkSentRequestSchema,
+  TelegramReplyDeliveryStateUpdateRequestSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -41,6 +45,10 @@ export interface ControlApiDependencies {
   /** Paths exempt from bearer auth (e.g. nonce exchange). CSRF is also skipped for these. */
   authExemptPaths?: ReadonlySet<string>;
   validateAuthExchangeNonce?: (nonce: string) => 'accepted' | 'expired' | 'invalid';
+  /** When true, emitted Set-Cookie headers include the Secure flag. */
+  useSecureCookies?: boolean;
+  /** Maximum concurrent SSE connections. Defaults to 10. */
+  maxSseConnections?: number;
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -281,7 +289,7 @@ export async function createControlApi(
       return reply.code(401).send({ error: 'unauthorized' });
     }
     const session = dependencies.runtime.createBrowserSession();
-    reply.header('set-cookie', serializeAuthCookie(session.id));
+    reply.header('set-cookie', serializeAuthCookie(session.id, dependencies.useSecureCookies));
     return { ok: true as const };
   });
 
@@ -473,13 +481,15 @@ export async function createControlApi(
     return dependencies.runtime.executeMemoryPromotion({ memoryId: id, ...body });
   });
 
-  const MAX_SSE_CONNECTIONS = 10;
-  let sseConnectionCount = 0;
-  app.get('/v1/events/stream', async (_request, reply) => {
-    if (sseConnectionCount >= MAX_SSE_CONNECTIONS) {
-      return reply.code(429).send({ error: 'too_many_sse_connections' });
+  const MAX_SSE_CONNECTIONS = dependencies.maxSseConnections ?? 10;
+  const sseConnections = new Set<ServerResponse>();
+  app.get('/v1/events/stream', (_request, reply) => {
+    if (sseConnections.size >= MAX_SSE_CONNECTIONS) {
+      void reply.code(429).send({ error: 'too_many_sse_connections' });
+      return;
     }
-    sseConnectionCount++;
+    sseConnections.add(reply.raw);
+    reply.hijack();
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -494,7 +504,7 @@ export async function createControlApi(
       reply.raw.write(': heartbeat\n\n');
     }, 30_000);
     reply.raw.on('close', () => {
-      sseConnectionCount--;
+      sseConnections.delete(reply.raw);
       clearInterval(heartbeat);
       dependencies.runtime.events.off('event', listener);
     });
@@ -541,6 +551,47 @@ export async function createControlApi(
     const delivery = dependencies.runtime.markTelegramReplySent(params.chatId, params.telegramMessageId, {
       workspaceId: body.workspaceId,
       ...(body.runId === undefined ? {} : { runId: body.runId }),
+      ...(body.sentTelegramMessageId === undefined ? {} : { sentTelegramMessageId: body.sentTelegramMessageId }),
+    });
+    if (!delivery) return reply.code(404).send({ error: 'not_found' });
+    return TelegramDeliveryStateSchema.parse(delivery);
+  });
+  app.post('/v1/telegram/replies/:chatId/:telegramMessageId/mark-sending', async (request, reply) => {
+    const params = z.object({
+      chatId: z.string().min(1),
+      telegramMessageId: z.coerce.number().int().nonnegative(),
+    }).parse(request.params);
+    const body = TelegramReplyDeliveryStateUpdateRequestSchema.parse(request.body);
+    const delivery = dependencies.runtime.markTelegramReplySending(params.chatId, params.telegramMessageId, {
+      workspaceId: body.workspaceId,
+      ...(body.runId === undefined ? {} : { runId: body.runId }),
+    });
+    if (!delivery) return reply.code(404).send({ error: 'not_found' });
+    return TelegramDeliveryStateSchema.parse(delivery);
+  });
+  app.post('/v1/telegram/replies/:chatId/:telegramMessageId/mark-pending', async (request, reply) => {
+    const params = z.object({
+      chatId: z.string().min(1),
+      telegramMessageId: z.coerce.number().int().nonnegative(),
+    }).parse(request.params);
+    const body = TelegramReplyDeliveryStateUpdateRequestSchema.parse(request.body);
+    const delivery = dependencies.runtime.markTelegramReplyPending(params.chatId, params.telegramMessageId, {
+      workspaceId: body.workspaceId,
+      ...(body.runId === undefined ? {} : { runId: body.runId }),
+    });
+    if (!delivery) return reply.code(404).send({ error: 'not_found' });
+    return TelegramDeliveryStateSchema.parse(delivery);
+  });
+  app.post('/v1/telegram/replies/:chatId/:telegramMessageId/mark-uncertain', async (request, reply) => {
+    const params = z.object({
+      chatId: z.string().min(1),
+      telegramMessageId: z.coerce.number().int().nonnegative(),
+    }).parse(request.params);
+    const body = TelegramReplyDeliveryMarkUncertainRequestSchema.parse(request.body);
+    const delivery = dependencies.runtime.markTelegramReplyUncertain(params.chatId, params.telegramMessageId, {
+      workspaceId: body.workspaceId,
+      ...(body.runId === undefined ? {} : { runId: body.runId }),
+      ...(body.reason === undefined ? {} : { reason: body.reason }),
     });
     if (!delivery) return reply.code(404).send({ error: 'not_found' });
     return TelegramDeliveryStateSchema.parse(delivery);
@@ -556,7 +607,7 @@ export async function createControlApi(
     if (!token) {
       return reply.code(401).send({ error: 'unauthorized' });
     }
-    reply.header('set-cookie', serializeCsrfCookie(token));
+    reply.header('set-cookie', serializeCsrfCookie(token, dependencies.useSecureCookies));
     return { token };
   });
 

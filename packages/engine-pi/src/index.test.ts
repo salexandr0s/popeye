@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,7 @@ import {
   PiEngineAdapter,
   PiEngineAdapterNotConfiguredError,
   checkPiVersion,
+  cleanStalePiTempDirs,
   inspectPiCheckout,
   runPiCompatibilityCheck,
 } from './index.ts';
@@ -649,6 +650,86 @@ describe('engine-pi', () => {
         errorCode: 'timeout',
       }),
     }));
+    expect(
+      result.events.filter((event) => event.type === 'tool_result' && event.payload.toolCallId === 'tc-timeout'),
+    ).toHaveLength(1);
+    expect(result.warnings).toContain(
+      'Runtime tool popeye_memory_search timed out after 20ms; underlying execution was not cancelled and any later settlement was suppressed.',
+    );
+  });
+
+  it('captures late runtime-tool settlement warnings after a timeout when the run stays open', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-timeout-late', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-timeout-late',
+                tool: 'popeye_memory_search',
+                params: { query: 'slow-late' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            setTimeout(() => {
+              const response = JSON.parse(message.value);
+              write({
+                type: 'agent_end',
+                messages: [{
+                  role: 'assistant',
+                  provider: 'pi',
+                  model: 'stub',
+                  stopReason: 'stop',
+                  usage: { input: 1, output: 1, cost: { total: 0 } },
+                  content: [{ type: 'text', text: String(response.error) }],
+                }],
+              });
+            }, 120);
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({ ...explicitConfig(piPath), runtimeToolTimeoutMs: 20 });
+    const result = await adapter.run({
+      prompt: 'tool-timeout-late',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          await new Promise((resolve) => setTimeout(resolve, 60));
+          return { content: [{ type: 'text', text: 'late result' }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.warnings).toContain(
+      'Runtime tool popeye_memory_search timed out after 20ms; underlying execution was not cancelled and any later settlement was suppressed.',
+    );
+    expect(result.warnings).toContain(
+      'Suppressed late runtime tool resolved after timeout: popeye_memory_search (tc-timeout-late)',
+    );
   });
 
   it('returns structured bridge errors for malformed runtime-tool payloads', async () => {
@@ -1334,5 +1415,24 @@ describe('engine-pi', () => {
     expect(result.failureClassification).toBeNull();
     expect(result.engineSessionRef).toBe('pi:explicit-session');
     expect(result.usage.tokensIn).toBe(2);
+  });
+
+  describe('cleanStalePiTempDirs', () => {
+    it('removes directories matching the popeye-pi-extension- prefix', () => {
+      // Create fake temp dirs
+      const dir1 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+      const dir2 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+      // Also create a non-matching dir to verify it's not cleaned
+      const safeDir = mkdtempSync(join(tmpdir(), 'popeye-other-'));
+
+      const cleaned = cleanStalePiTempDirs();
+      expect(cleaned).toBeGreaterThanOrEqual(2);
+      expect(existsSync(dir1)).toBe(false);
+      expect(existsSync(dir2)).toBe(false);
+      expect(existsSync(safeDir)).toBe(true);
+
+      // Clean up the safe dir
+      rmSync(safeDir, { recursive: true, force: true });
+    });
   });
 });

@@ -14,6 +14,8 @@ import {
   readAuthStore,
   readCookieValue,
   rotateAuthStore,
+  serializeAuthCookie,
+  serializeCsrfCookie,
   validateBearerToken,
   validateCsrfToken,
 } from './auth.js';
@@ -147,5 +149,20 @@ describe('auth store', () => {
     const csrf = issueCsrfToken(record);
     expect(validateCsrfToken(csrf, record)).toBe(true);
     expect(validateCsrfToken('wrongtoken', record)).toBe(false);
+  });
+
+  it('includes Secure flag when secure param is true', () => {
+    expect(serializeAuthCookie('test-token', true)).toContain('; Secure');
+    expect(serializeCsrfCookie('csrf-token', true)).toContain('; Secure');
+  });
+
+  it('omits Secure flag when secure param is false', () => {
+    expect(serializeAuthCookie('test-token', false)).not.toContain('; Secure');
+    expect(serializeCsrfCookie('csrf-token', false)).not.toContain('; Secure');
+  });
+
+  it('omits Secure flag when secure param is omitted', () => {
+    expect(serializeAuthCookie('test-token')).not.toContain('; Secure');
+    expect(serializeCsrfCookie('csrf-token')).not.toContain('; Secure');
   });
 });

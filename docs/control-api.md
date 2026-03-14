@@ -96,7 +96,10 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | GET | `/v1/messages/:id` | Get a message by ID. Returns 404 if not found. |
 | GET | `/v1/telegram/relay/checkpoint?workspaceId=...` | Read the durable Telegram long-poll checkpoint for a workspace. |
 | POST | `/v1/telegram/relay/checkpoint` | Persist the durable Telegram long-poll checkpoint. |
-| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent` | Mark a Telegram reply delivery as sent. |
+| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sending` | Durably claim a Telegram reply delivery attempt before calling `sendMessage`. |
+| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-pending` | Reset a Telegram reply delivery back to `pending` after a definitive retryable Bot API failure. |
+| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-uncertain` | Mark a Telegram reply delivery `uncertain` and open operator follow-up when delivery outcome is ambiguous or permanently blocked. |
+| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent` | Mark a Telegram reply delivery as sent. Body accepts `workspaceId`, optional `runId`, and optional `sentTelegramMessageId` for Bot API delivery observability. |
 
 ### Memory
 
@@ -133,15 +136,16 @@ For Telegram messages, the following checks are applied in order:
 1. Telegram must be enabled in config
 2. Chat type must be `private`
 3. Sender must match `config.telegram.allowedUserId`
-4. Rate limit check against `maxMessagesPerMinute`
-5. Prompt injection scan (quarantine or sanitize)
-6. Secret redaction
+4. Global rate limit check against `globalMaxMessagesPerMinute` (all senders)
+5. Per-user rate limit check against `maxMessagesPerMinute`
+6. Prompt injection scan (quarantine or sanitize; custom patterns validated for ReDoS safety)
+7. Secret redaction
 
 Accepted messages create a Task with `autoEnqueue: true`, which immediately creates a Job and schedules execution. When the run starts, the runtime links the accepted message ingress row and message row to the concrete `runId`.
 
-Duplicate Telegram messages (same `source + chatId + telegramMessageId`) are detected via idempotency keys and replayed without re-processing.
+Duplicate Telegram messages are detected via workspace-scoped idempotency keys (`source + workspaceId + chatId + telegramMessageId`) and replayed without re-processing.
 
-The control API now exposes a packaged reply surface and narrow Telegram relay-state routes. The in-repo Telegram relay stays thin and uses: `/v1/messages/ingest`, `/v1/jobs/:id`, `/v1/runs/:id/reply`, `/v1/telegram/relay/checkpoint`, and `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent`.
+The control API now exposes a packaged reply surface and narrow Telegram relay-state routes. The in-repo Telegram relay stays thin and uses: `/v1/messages/ingest`, `/v1/jobs/:id`, `/v1/runs/:id/reply`, `/v1/telegram/relay/checkpoint`, and the `/v1/telegram/replies/:chatId/:telegramMessageId/*` delivery-state routes.
 
 Current packaged reply precedence is:
 
@@ -152,9 +156,16 @@ Current packaged reply precedence is:
 Current relay delivery behavior is also explicit:
 
 - duplicate replayed ingress responses with `telegramDelivery.status === "sent"` do not send a second Telegram reply
+- duplicate replayed ingress responses with `telegramDelivery.status === "uncertain"` stay silent at the relay and rely on operator follow-up
 - denied ingress responses do not send a Telegram reply
+- relay claims delivery as `sending` before calling Telegram `sendMessage`
+- if replay finds a delivery still `sending`, the relay marks it `uncertain`, opens `needs_operator_input`, and does not auto-send a duplicate reply
+- retryable definitive Bot API failures reset delivery back to `pending` and leave the update unacked for replay
+- ambiguous transport failures and non-retryable Bot API failures are marked `uncertain` and acknowledged exactly once at the relay
 - long-poll progress is durably checkpointed only after an update is fully handled
-- Bot API send failures are retried in the relay with bounded backoff
+- relay checkpoint commits are monotonic per workspace; lower `lastAcknowledgedUpdateId` values do not move the checkpoint backward
+- reply preparation is bounded-concurrent, but reply send + checkpoint acknowledgement stay ordered
+- only retryable definitive Bot API failures are retried in the relay; ambiguous transport failures are not blindly retried
 
 Denied ingress responses and duplicate replay responses are intentionally **silent** at the relay layer. They remain visible through `message_ingress`, jobs/runs, receipts, and `run_completed`/audit events rather than via Telegram-side error messages.
 
@@ -193,6 +204,24 @@ data: <json_payload>
 ```
 
 Event types: `task_created`, `job_queued`, `run_started`, `run_event`, `run_completed`, `intervention_created`, `security_audit`.
+
+## Security configuration
+
+The following config fields control security behavior:
+
+| Field | Schema location | Default | Purpose |
+|-------|----------------|---------|---------|
+| `security.useSecureCookies` | `SecurityConfigSchema` | `false` | Adds `; Secure` flag to auth and CSRF cookies. Enable when serving over TLS. |
+| `security.tokenRotationDays` | `SecurityConfigSchema` | `30` | Auto-rotates auth tokens after this many days. Checked daily on daemon startup. |
+| `telegram.globalMaxMessagesPerMinute` | `TelegramConfigSchema` | `30` | Global rate limit across all Telegram senders within the rate limit window. |
+
+SSE connections are limited to 10 concurrent (configurable via `maxSseConnections` in `ControlApiDependencies`). Excess connections receive `429 { error: "too_many_sse_connections" }`.
+
+Custom prompt scan patterns (`security.promptScanQuarantinePatterns`, `security.promptScanSanitizePatterns`) are validated for ReDoS safety at scan time. Unsafe patterns are skipped with a `[skipped:redos]` marker in the scan result.
+
+Unhandled exceptions and rejections are routed through `redactText()` before logging, preventing accidental secret exposure in crash output.
+
+Stale Pi engine temp directories (`popeye-pi-extension-*` in the system temp dir) are cleaned on daemon startup.
 
 ## Versioning
 

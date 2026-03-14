@@ -482,15 +482,54 @@ describe('PopeyeRuntimeService', () => {
       run_id: terminal?.run?.id ?? null,
       status: 'pending',
     });
+    const sending = runtime.markTelegramReplySending('chat-1', 7, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+    });
+    expect(sending).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 7,
+      status: 'sending',
+    });
+    const duplicateWhileSending = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'link this run',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 7,
+      workspaceId: 'default',
+    });
+    expect(duplicateWhileSending.duplicate).toBe(true);
+    expect(duplicateWhileSending.telegramDelivery).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 7,
+      status: 'sending',
+    });
+    const pending = runtime.markTelegramReplyPending('chat-1', 7, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+    });
+    expect(pending).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 7,
+      status: 'pending',
+    });
     const sent = runtime.markTelegramReplySent('chat-1', 7, {
       workspaceId: 'default',
       runId: terminal?.run?.id ?? null,
+      sentTelegramMessageId: 901,
     });
     expect(sent).toEqual({
       chatId: 'chat-1',
       telegramMessageId: 7,
       status: 'sent',
     });
+    const sentDeliveryRow = runtime.databases.app
+      .prepare('SELECT sent_telegram_message_id, sent_at FROM telegram_reply_deliveries WHERE chat_id = ? AND telegram_message_id = ?')
+      .get('chat-1', 7) as { sent_telegram_message_id: number | null; sent_at: string | null };
+    expect(sentDeliveryRow.sent_telegram_message_id).toBe(901);
+    expect(sentDeliveryRow.sent_at).toEqual(expect.any(String));
     const duplicateAfterSent = runtime.ingestMessage({
       source: 'telegram',
       senderId: '42',
@@ -506,6 +545,74 @@ describe('PopeyeRuntimeService', () => {
       telegramMessageId: 7,
       status: 'sent',
     });
+    await runtime.close();
+  });
+
+  it('marks ambiguous Telegram deliveries uncertain and opens a single operator intervention', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-telegram-uncertain-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+    });
+
+    const response = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'ambiguous delivery',
+      chatId: 'chat-9',
+      chatType: 'private',
+      telegramMessageId: 9,
+      workspaceId: 'default',
+    });
+    const terminal = response.jobId ? await runtime.waitForJobTerminalState(response.jobId, 5_000) : null;
+    runtime.markTelegramReplySending('chat-9', 9, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+    });
+
+    const uncertain = runtime.markTelegramReplyUncertain('chat-9', 9, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+      reason: 'send outcome was ambiguous',
+    });
+    expect(uncertain).toEqual({
+      chatId: 'chat-9',
+      telegramMessageId: 9,
+      status: 'uncertain',
+    });
+    expect(runtime.listInterventions()).toEqual([
+      expect.objectContaining({
+        code: 'needs_operator_input',
+        runId: terminal?.run?.id ?? null,
+        reason: 'send outcome was ambiguous',
+        status: 'open',
+      }),
+    ]);
+
+    runtime.markTelegramReplyUncertain('chat-9', 9, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+      reason: 'duplicate replay after restart',
+    });
+    expect(runtime.listInterventions()).toHaveLength(1);
+
+    const duplicateAfterUncertain = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'ambiguous delivery',
+      chatId: 'chat-9',
+      chatType: 'private',
+      telegramMessageId: 9,
+      workspaceId: 'default',
+    });
+    expect(duplicateAfterUncertain.duplicate).toBe(true);
+    expect(duplicateAfterUncertain.telegramDelivery).toEqual({
+      chatId: 'chat-9',
+      telegramMessageId: 9,
+      status: 'uncertain',
+    });
+
     await runtime.close();
   });
 

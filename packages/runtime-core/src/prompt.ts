@@ -1,4 +1,5 @@
 import { type PromptScanResult } from '@popeye/contracts';
+import safe from 'safe-regex2';
 
 const SANITIZE_RULES: Array<{ name: string; pattern: RegExp; replacement: string }> = [
   { name: 'ignore-previous', pattern: /ignore previous instructions/gi, replacement: '[sanitized instruction override]' },
@@ -23,22 +24,35 @@ export function scanPrompt(text: string, options?: PromptScanOptions): PromptSca
   // Normalize Unicode to NFC to prevent homoglyph bypasses
   const normalized = text.normalize('NFC');
 
-  const allQuarantineRules = [
-    ...QUARANTINE_RULES,
-    ...(options?.customQuarantinePatterns ?? []).map((p, i) => ({
-      name: `custom-quarantine-${i + 1}`,
-      pattern: new RegExp(p, 'i'),
-    })),
-  ];
+  const customQuarantineInput = options?.customQuarantinePatterns ?? [];
+  const customQuarantineRules: Array<{ name: string; pattern: RegExp }> = [];
+  const skippedRules: string[] = [];
 
-  const allSanitizeRules = [
-    ...SANITIZE_RULES,
-    ...(options?.customSanitizePatterns ?? []).map((p, i) => ({
-      name: `custom-sanitize-${i + 1}`,
-      pattern: new RegExp(p.pattern, 'gi'),
-      replacement: p.replacement,
-    })),
-  ];
+  for (let i = 0; i < customQuarantineInput.length; i++) {
+    const p = customQuarantineInput[i]!;
+    const name = `custom-quarantine-${i + 1}`;
+    if (!safe(p)) {
+      skippedRules.push(`${name}[skipped:redos]`);
+      continue;
+    }
+    customQuarantineRules.push({ name, pattern: new RegExp(p, 'i') });
+  }
+
+  const customSanitizeInput = options?.customSanitizePatterns ?? [];
+  const customSanitizeRules: Array<{ name: string; pattern: RegExp; replacement: string }> = [];
+
+  for (let i = 0; i < customSanitizeInput.length; i++) {
+    const p = customSanitizeInput[i]!;
+    const name = `custom-sanitize-${i + 1}`;
+    if (!safe(p.pattern)) {
+      skippedRules.push(`${name}[skipped:redos]`);
+      continue;
+    }
+    customSanitizeRules.push({ name, pattern: new RegExp(p.pattern, 'gi'), replacement: p.replacement });
+  }
+
+  const allQuarantineRules = [...QUARANTINE_RULES, ...customQuarantineRules];
+  const allSanitizeRules = [...SANITIZE_RULES, ...customSanitizeRules];
 
   const matchedRules: string[] = [];
   for (const rule of allQuarantineRules) {
@@ -47,6 +61,7 @@ export function scanPrompt(text: string, options?: PromptScanOptions): PromptSca
     }
   }
   if (matchedRules.length > 0) {
+    matchedRules.push(...skippedRules);
     return {
       verdict: 'quarantine',
       sanitizedText: normalized,
@@ -62,8 +77,10 @@ export function scanPrompt(text: string, options?: PromptScanOptions): PromptSca
     }
   }
 
+  const verdict = matchedRules.length > 0 ? 'sanitize' : 'allow';
+  matchedRules.push(...skippedRules);
   return {
-    verdict: matchedRules.length > 0 ? 'sanitize' : 'allow',
+    verdict,
     sanitizedText,
     matchedRules,
   };

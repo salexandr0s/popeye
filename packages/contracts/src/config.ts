@@ -13,6 +13,8 @@ export const SecurityConfigSchema = z.object({
   redactionPatterns: z.array(z.string()).default([]),
   promptScanQuarantinePatterns: z.array(z.string()).default([]),
   promptScanSanitizePatterns: z.array(z.object({ pattern: z.string(), replacement: z.string() })).default([]),
+  useSecureCookies: z.boolean().default(false),
+  tokenRotationDays: z.number().int().positive().default(30),
 });
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
@@ -20,6 +22,7 @@ export const TelegramConfigSchema = z.object({
   enabled: z.boolean().default(false),
   allowedUserId: z.string().min(1).optional(),
   maxMessagesPerMinute: z.number().int().positive().default(10),
+  globalMaxMessagesPerMinute: z.number().int().positive().default(30),
   rateLimitWindowSeconds: z.number().int().positive().default(60),
 }).superRefine((data, ctx) => {
   if (data.enabled && !data.allowedUserId) {

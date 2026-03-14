@@ -74,7 +74,7 @@ import {
 
 import { nowIso } from '@popeye/contracts';
 import { z } from 'zod';
-import { readAuthStore } from './auth.js';
+import { readAuthStore, rotateAuthStore } from './auth.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -229,7 +229,10 @@ const TelegramRelayCheckpointRowSchema = z.object({
 const TelegramReplyDeliveryRowSchema = z.object({
   chat_id: z.string(),
   telegram_message_id: z.coerce.number().int(),
-  status: z.enum(['pending', 'sent']),
+  status: z.enum(['pending', 'sending', 'sent', 'uncertain']),
+  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
+  sent_at: z.string().nullable().optional(),
+  run_id: z.string().nullable().optional(),
 });
 
 const RuntimeMemorySearchToolInputSchema = z.object({
@@ -263,6 +266,15 @@ function mapRunEventRow(row: unknown): RunEventRecord {
     type: parsed.type,
     payload: parsed.payload,
     createdAt: parsed.created_at,
+  });
+}
+
+function mapTelegramDeliveryRow(row: unknown): TelegramDeliveryState {
+  const parsed = TelegramReplyDeliveryRowSchema.parse(row);
+  return TelegramDeliveryStateSchema.parse({
+    chatId: parsed.chat_id,
+    telegramMessageId: parsed.telegram_message_id,
+    status: parsed.status,
   });
 }
 
@@ -300,6 +312,7 @@ export class PopeyeRuntimeService {
   private readonly memorySearch: MemorySearchService;
   private readonly memoryLifecycle: MemoryLifecycleService;
   private memoryMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+  private tokenRotationTimer: ReturnType<typeof setInterval> | null = null;
   private vecAvailable = false;
   private readonly vecInitPromise: Promise<void>;
 
@@ -397,6 +410,7 @@ export class PopeyeRuntimeService {
     this.seedDaemonState();
     this.startScheduler();
     this.startMemoryMaintenance();
+    this.startTokenRotationCheck();
     const schedulerReadyMs = Math.round(performance.now() - startupStart);
     this.startupProfile = { dbReadyMs, reconcileMs, schedulerReadyMs };
     this.events.emit('startup_profile', this.startupProfile);
@@ -407,6 +421,10 @@ export class PopeyeRuntimeService {
     if (this.memoryMaintenanceTimer) {
       clearInterval(this.memoryMaintenanceTimer);
       this.memoryMaintenanceTimer = null;
+    }
+    if (this.tokenRotationTimer) {
+      clearInterval(this.tokenRotationTimer);
+      this.tokenRotationTimer = null;
     }
     await this.stopScheduler();
     await this.vecInitPromise;
@@ -633,28 +651,133 @@ export class PopeyeRuntimeService {
     return checkpoint;
   }
 
-  markTelegramReplySent(chatId: string, telegramMessageId: number, input: { workspaceId: string; runId?: string | null }): TelegramDeliveryState | null {
+  markTelegramReplySending(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): TelegramDeliveryState | null {
+    const updatedAt = nowIso();
+    this.databases.app.prepare(`
+      UPDATE telegram_reply_deliveries
+      SET status = CASE
+            WHEN status = 'pending' THEN 'sending'
+            ELSE status
+          END,
+          run_id = COALESCE(?, run_id),
+          updated_at = ?
+      WHERE workspace_id = ?
+        AND chat_id = ?
+        AND telegram_message_id = ?
+    `).run(
+      input.runId ?? null,
+      updatedAt,
+      input.workspaceId,
+      chatId,
+      telegramMessageId,
+    );
+    const row = this.databases.app
+      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .get(input.workspaceId, chatId, telegramMessageId);
+    return row ? mapTelegramDeliveryRow(row) : null;
+  }
+
+  markTelegramReplyPending(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): TelegramDeliveryState | null {
+    const updatedAt = nowIso();
+    this.databases.app.prepare(`
+      UPDATE telegram_reply_deliveries
+      SET status = 'pending',
+          run_id = COALESCE(?, run_id),
+          updated_at = ?
+      WHERE workspace_id = ?
+        AND chat_id = ?
+        AND telegram_message_id = ?
+    `).run(
+      input.runId ?? null,
+      updatedAt,
+      input.workspaceId,
+      chatId,
+      telegramMessageId,
+    );
+    const row = this.databases.app
+      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .get(input.workspaceId, chatId, telegramMessageId);
+    return row ? mapTelegramDeliveryRow(row) : null;
+  }
+
+  markTelegramReplyUncertain(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null; reason?: string | null },
+  ): TelegramDeliveryState | null {
+    const updatedAt = nowIso();
+    const row = this.databases.app
+      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .get(input.workspaceId, chatId, telegramMessageId);
+    if (!row) return null;
+
+    const previous = TelegramReplyDeliveryRowSchema.parse(row);
+    this.databases.app.prepare(`
+      UPDATE telegram_reply_deliveries
+      SET status = 'uncertain',
+          run_id = COALESCE(?, run_id),
+          updated_at = ?
+      WHERE workspace_id = ?
+        AND chat_id = ?
+        AND telegram_message_id = ?
+    `).run(
+      input.runId ?? null,
+      updatedAt,
+      input.workspaceId,
+      chatId,
+      telegramMessageId,
+    );
+    if (previous.status !== 'uncertain') {
+      this.createIntervention(
+        'needs_operator_input',
+        input.runId ?? previous.run_id ?? null,
+        input.reason ?? `Telegram delivery for chat ${chatId} message ${telegramMessageId} became uncertain and needs operator confirmation.`,
+      );
+    }
+
+    const updatedRow = this.databases.app
+      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .get(input.workspaceId, chatId, telegramMessageId);
+    return updatedRow ? mapTelegramDeliveryRow(updatedRow) : null;
+  }
+
+  markTelegramReplySent(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null; sentTelegramMessageId?: number | null },
+  ): TelegramDeliveryState | null {
     const updatedAt = nowIso();
     this.databases.app.prepare(`
       UPDATE telegram_reply_deliveries
       SET status = 'sent',
+          sent_telegram_message_id = COALESCE(?, sent_telegram_message_id),
           sent_at = COALESCE(sent_at, ?),
           run_id = COALESCE(?, run_id),
           updated_at = ?
       WHERE workspace_id = ?
         AND chat_id = ?
         AND telegram_message_id = ?
-    `).run(updatedAt, input.runId ?? null, updatedAt, input.workspaceId, chatId, telegramMessageId);
+    `).run(
+      input.sentTelegramMessageId ?? null,
+      updatedAt,
+      input.runId ?? null,
+      updatedAt,
+      input.workspaceId,
+      chatId,
+      telegramMessageId,
+    );
     const row = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
       .get(input.workspaceId, chatId, telegramMessageId);
-    if (!row) return null;
-    const parsed = TelegramReplyDeliveryRowSchema.parse(row);
-    return TelegramDeliveryStateSchema.parse({
-      chatId: parsed.chat_id,
-      telegramMessageId: parsed.telegram_message_id,
-      status: parsed.status,
-    });
+    return row ? mapTelegramDeliveryRow(row) : null;
   }
 
   // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---
@@ -1505,6 +1628,41 @@ export class PopeyeRuntimeService {
       if (!nextDueAt || dueAt < nextDueAt) nextDueAt = dueAt;
     }
     return nextDueAt;
+  }
+
+  // --- Internal: auth token rotation ---
+
+  private startTokenRotationCheck(): void {
+    const checkIntervalMs = 24 * 60 * 60 * 1000; // Check daily
+    const check = () => {
+      try {
+        const store = readAuthStore(this.config.authFile);
+        const createdAt = new Date(store.current.createdAt);
+        const ageDays = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+        if (ageDays >= this.config.security.tokenRotationDays) {
+          rotateAuthStore(this.config.authFile);
+          this.recordSecurityAuditEvent({
+            code: 'auth_token_rotated',
+            severity: 'info',
+            message: `Auth token auto-rotated after ${Math.floor(ageDays)} days`,
+            component: 'runtime-core',
+            timestamp: nowIso(),
+            details: {},
+          });
+        }
+      } catch (err) {
+        this.recordSecurityAuditEvent({
+          code: 'auth_token_rotation_failed',
+          severity: 'warn',
+          message: `Auth token rotation failed: ${err instanceof Error ? err.message : String(err)}`,
+          component: 'runtime-core',
+          timestamp: nowIso(),
+          details: {},
+        });
+      }
+    };
+    check(); // Run immediately on startup
+    this.tokenRotationTimer = setInterval(check, checkIntervalMs);
   }
 
   // --- Internal: memory maintenance ---

@@ -102,7 +102,9 @@ const CountRowSchema = z.object({
 const TelegramReplyDeliveryDbRowSchema = z.object({
   chat_id: z.string(),
   telegram_message_id: z.number().int(),
-  status: z.enum(['pending', 'sent']),
+  status: z.enum(['pending', 'sending', 'sent', 'uncertain']),
+  sent_telegram_message_id: z.number().int().nullable().optional(),
+  sent_at: z.string().nullable().optional(),
 });
 
 const InputRecordSchema = z.record(z.string(), z.unknown());
@@ -273,7 +275,7 @@ export class MessageIngestionService {
     }
     const rawRow = this.databases.app
       .prepare(
-        'SELECT chat_id, telegram_message_id, status FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?',
+        'SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?',
       )
       .get(workspaceId, chatId, telegramMessageId);
     if (!rawRow) return null;
@@ -391,6 +393,18 @@ export class MessageIngestionService {
       .get(windowStart, senderId, chatId)).count;
   }
 
+  countRecentTelegramIngress(): number {
+    const windowStart = new Date(Date.now() - this.config.telegram.rateLimitWindowSeconds * 1000).toISOString();
+    return CountRowSchema.parse(this.databases.app
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM message_ingress
+        WHERE source = 'telegram'
+          AND created_at >= ?
+      `)
+      .get(windowStart)).count;
+  }
+
   getMessage(messageId: string): MessageRecord | null {
     const rawRow = this.databases.app.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
     if (!rawRow) return null;
@@ -484,6 +498,11 @@ export class MessageIngestionService {
 
       if (!this.config.telegram.allowedUserId || parsed.senderId !== this.config.telegram.allowedUserId) {
         const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_not_allowlisted', 'Telegram sender is not allowlisted', 403);
+        throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      if (this.countRecentTelegramIngress() >= this.config.telegram.globalMaxMessagesPerMinute) {
+        const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_rate_limited', 'Global Telegram rate limit exceeded', 429);
         throw new MessageIngressError(this.buildIngressResponse(denied, false));
       }
 
