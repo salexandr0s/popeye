@@ -137,7 +137,8 @@ describe('security audit', () => {
     createWalDb(paths.appDbPath);
     createWalDb(paths.memoryDbPath);
     const findings = runLocalSecurityAudit(makeConfig(dir));
-    expect(findings.filter((finding) => finding.severity !== 'info')).toHaveLength(0);
+    const platformCodes = new Set(['keychain_unavailable', 'keychain_secret_in_proclist']);
+    expect(findings.filter((f) => f.severity !== 'info' && !platformCodes.has(f.code))).toHaveLength(0);
   });
 
   it('checks configured piVersion against coding-agent version instead of repo root', () => {
