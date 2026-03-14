@@ -38,8 +38,14 @@ export function rotateAuthStore(path: string, overlapHours = 24): AuthRotationRe
   const existing = readAuthStore(path);
   const now = new Date();
   const overlapEndsAt = new Date(now.getTime() + overlapHours * 60 * 60 * 1000).toISOString();
+
+  // If a previous rotation's overlap has expired, promote next → current
+  const promoted = existing.next && existing.overlapEndsAt && now >= new Date(existing.overlapEndsAt)
+    ? existing.next
+    : existing.current;
+
   const updated: AuthRotationRecord = {
-    current: existing.current,
+    current: promoted,
     next: {
       token: generateToken(),
       createdAt: now.toISOString(),

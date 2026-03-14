@@ -151,6 +151,28 @@ describe('auth store', () => {
     expect(validateCsrfToken('wrongtoken', record)).toBe(false);
   });
 
+  it('promotes next token to current on second rotation after overlap expires', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    const initial = initAuthStore(authPath);
+    const originalToken = initial.current.token;
+
+    // First rotation: creates a "next" token, current stays the same
+    const firstRotation = rotateAuthStore(authPath, 0); // 0h overlap = expires immediately
+    expect(firstRotation.current.token).toBe(originalToken);
+    expect(firstRotation.next).toBeDefined();
+    const nextToken = firstRotation.next!.token;
+
+    // Second rotation after overlap expired: next should be promoted to current
+    const secondRotation = rotateAuthStore(authPath, 1);
+    expect(secondRotation.current.token).toBe(nextToken);
+    expect(secondRotation.current.token).not.toBe(originalToken);
+    // And a fresh "next" is generated
+    expect(secondRotation.next).toBeDefined();
+    expect(secondRotation.next!.token).not.toBe(nextToken);
+  });
+
   it('includes Secure flag when secure param is true', () => {
     expect(serializeAuthCookie('test-token', true)).toContain('; Secure');
     expect(serializeCsrfCookie('csrf-token', true)).toContain('; Secure');

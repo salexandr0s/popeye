@@ -400,6 +400,7 @@ export class MessageIngestionService {
         SELECT COUNT(*) AS count
         FROM message_ingress
         WHERE source = 'telegram'
+          AND accepted = 1
           AND created_at >= ?
       `)
       .get(windowStart)).count;

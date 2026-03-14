@@ -29,7 +29,7 @@ const INTERNAL_IDS = {
 } as const;
 const PASSIVE_EXTENSION_UI_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text']);
 
-export function cleanStalePiTempDirs(): number {
+export function cleanStalePiTempDirs(maxAgeMs = 60 * 60 * 1000): number {
   const prefix = 'popeye-pi-extension-';
   const base = tmpdir();
   let cleaned = 0;
@@ -39,10 +39,14 @@ export function cleanStalePiTempDirs(): number {
   } catch {
     return 0;
   }
+  const cutoff = Date.now() - maxAgeMs;
   for (const entry of entries) {
     if (!entry.startsWith(prefix)) continue;
+    const fullPath = join(base, entry);
     try {
-      rmSync(join(base, entry), { recursive: true, force: true });
+      const mtime = statSync(fullPath).mtimeMs;
+      if (mtime > cutoff) continue; // still fresh — likely an active process
+      rmSync(fullPath, { recursive: true, force: true });
       cleaned++;
     } catch {
       // best-effort cleanup

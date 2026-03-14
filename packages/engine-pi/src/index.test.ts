@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1418,20 +1418,28 @@ describe('engine-pi', () => {
   });
 
   describe('cleanStalePiTempDirs', () => {
-    it('removes directories matching the popeye-pi-extension- prefix', () => {
-      // Create fake temp dirs
-      const dir1 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
-      const dir2 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
-      // Also create a non-matching dir to verify it's not cleaned
+    it('removes stale directories matching the prefix but preserves fresh ones', () => {
+      // Create fake temp dirs and backdate their mtime to 2 hours ago
+      const staleDir1 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+      const staleDir2 = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+      const pastTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      utimesSync(staleDir1, pastTime, pastTime);
+      utimesSync(staleDir2, pastTime, pastTime);
+
+      // Create a fresh matching dir (should NOT be cleaned)
+      const freshDir = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+      // Create a non-matching dir (should NOT be cleaned)
       const safeDir = mkdtempSync(join(tmpdir(), 'popeye-other-'));
 
       const cleaned = cleanStalePiTempDirs();
       expect(cleaned).toBeGreaterThanOrEqual(2);
-      expect(existsSync(dir1)).toBe(false);
-      expect(existsSync(dir2)).toBe(false);
+      expect(existsSync(staleDir1)).toBe(false);
+      expect(existsSync(staleDir2)).toBe(false);
+      expect(existsSync(freshDir)).toBe(true);
       expect(existsSync(safeDir)).toBe(true);
 
-      // Clean up the safe dir
+      // Clean up
+      rmSync(freshDir, { recursive: true, force: true });
       rmSync(safeDir, { recursive: true, force: true });
     });
   });

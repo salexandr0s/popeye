@@ -71,9 +71,12 @@ export function scanPrompt(text: string, options?: PromptScanOptions): PromptSca
 
   let sanitizedText = normalized;
   for (const rule of allSanitizeRules) {
-    if (rule.pattern.test(sanitizedText)) {
+    // Replace directly and check if the string changed — avoids lastIndex
+    // pollution from calling .test() on a global regex before .replace().
+    const replaced = sanitizedText.replace(rule.pattern, rule.replacement);
+    if (replaced !== sanitizedText) {
       matchedRules.push(rule.name);
-      sanitizedText = sanitizedText.replace(rule.pattern, rule.replacement);
+      sanitizedText = replaced;
     }
   }
 
