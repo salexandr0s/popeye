@@ -229,6 +229,9 @@ importers:
       '@popeye/observability':
         specifier: workspace:*
         version: link:../observability
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
   packages/runtime-core:
     dependencies:
@@ -271,12 +274,18 @@ importers:
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
   packages/sessions:
     dependencies:
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
 
   packages/telegram:
     dependencies:
