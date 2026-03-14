@@ -76,6 +76,38 @@ Telegram config lives in `AppConfig.telegram`:
 | allowedUserId | string | -- | Telegram user ID allowed to send messages |
 | maxMessagesPerMinute | integer | `10` | Rate limit threshold |
 | rateLimitWindowSeconds | integer | `60` | Rate limit sliding window |
+| maxConcurrentPreparations | integer | `4` | Controls parallel reply preparation. Send + checkpoint ack remain strictly ordered. Max: 16. |
+
+## Delivery states
+
+| State | Meaning |
+|-------|---------|
+| `pending` | Delivery created, reply not yet attempted |
+| `sending` | Relay claimed the delivery, send in progress |
+| `sent` | Reply confirmed delivered |
+| `uncertain` | Ambiguous failure — needs operator attention |
+| `abandoned` | Operator explicitly abandoned the delivery |
+
+## Operator resolution flow
+
+When a delivery reaches `uncertain`, a `needs_operator_input` intervention is created. The operator can resolve it via `POST /v1/telegram/deliveries/:id/resolve` with one of three actions:
+
+- **`confirm_sent`** — Marks delivery `sent`. Optionally records the outbound Telegram message ID.
+- **`resend`** — Resets delivery to `pending`. The relay's per-cycle sweep picks up operator-reset deliveries and re-sends them.
+- **`abandon`** — Marks delivery `abandoned`. No further send attempts.
+
+Each resolution creates a durable `telegram_delivery_resolutions` audit row and resolves the linked intervention.
+
+## Send-attempt auditability
+
+Every `sendMessage` call records a `telegram_send_attempts` row with:
+- Attempt number (auto-incremented per delivery)
+- Content hash (SHA-256 of reply text)
+- Outcome: `sent`, `retryable_failure`, `permanent_failure`, `ambiguous`
+- Error summary (truncated to 500 chars, redacted)
+- Source: `relay` or `operator_resend`
+
+Attempts are best-effort: audit recording failures do not block delivery.
 
 ## Security audit trail
 

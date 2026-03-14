@@ -101,6 +101,17 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-uncertain` | Mark a Telegram reply delivery `uncertain` and open operator follow-up when delivery outcome is ambiguous or permanently blocked. |
 | POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent` | Mark a Telegram reply delivery as sent. Body accepts `workspaceId`, optional `runId`, and optional `sentTelegramMessageId` for Bot API delivery observability. |
 
+### Telegram delivery resolution and send-attempt audit
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/telegram/deliveries/uncertain` | List deliveries in `uncertain` status. Optional query: `workspaceId`. |
+| GET | `/v1/telegram/deliveries/:id` | Get a single delivery record. Returns 404 if not found. |
+| POST | `/v1/telegram/deliveries/:id/resolve` | Resolve an uncertain delivery. Body: `{ workspaceId, action, operatorNote?, sentTelegramMessageId? }`. Actions: `confirm_sent`, `resend`, `abandon`. Returns resolution record. 404 if not found, 409 if not `uncertain`. |
+| GET | `/v1/telegram/deliveries/:id/resolutions` | List resolution audit trail for a delivery (chronological). |
+| GET | `/v1/telegram/deliveries/:id/attempts` | List send attempts for a delivery (chronological). |
+| POST | `/v1/telegram/send-attempts` | Record a send attempt. Body: `{ deliveryId?, chatId?, telegramMessageId?, workspaceId, startedAt, contentHash, outcome, ... }`. |
+
 ### Memory
 
 | Method | Path | Description |

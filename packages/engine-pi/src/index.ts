@@ -988,6 +988,8 @@ export class PiEngineAdapter implements EngineAdapter {
     let sessionEmitted = false;
     let cancelRequested = false;
     let useNativeHostTools = false;
+    let hostToolRegistrationAttempted = false;
+    let hostToolRegistrationTimeout: ReturnType<typeof setTimeout> | undefined;
     const promptState: PromptState = { requested: false, accepted: false, completed: false };
     const diagnosticWarnings: string[] = [];
 
@@ -1196,9 +1198,10 @@ export class PiEngineAdapter implements EngineAdapter {
         }
         const state = RpcStateDataSchema.parse(response.data) as RpcStateData;
         synthesizeSession(state, rawLine);
-        // Register native host tools if available, otherwise rely on extension-UI bridge
+        // Attempt to register native host tools, with fallback to extension-UI bridge
         const hasRuntimeTools = (request.runtimeTools ?? []).length > 0;
-        if (hasRuntimeTools && !useNativeHostTools) {
+        if (hasRuntimeTools && !useNativeHostTools && !hostToolRegistrationAttempted) {
+          hostToolRegistrationAttempted = true;
           sendCommand({
             id: INTERNAL_IDS.registerHostTools,
             type: 'register_host_tools',
@@ -1208,7 +1211,14 @@ export class PiEngineAdapter implements EngineAdapter {
               parameters: t.parameters,
             })),
           });
-          return; // prompt will be sent after register_host_tools response
+          // Set a short fallback timer — if Pi doesn't know this command, it may not respond
+          hostToolRegistrationTimeout = setTimeout(() => {
+            if (!promptState.requested) {
+              promptState.requested = true;
+              sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+            }
+          }, 500);
+          return;
         }
         if (!promptState.requested) {
           promptState.requested = true;
@@ -1218,6 +1228,10 @@ export class PiEngineAdapter implements EngineAdapter {
       }
 
       if (response.id === INTERNAL_IDS.registerHostTools && response.command === 'register_host_tools') {
+        if (hostToolRegistrationTimeout) {
+          clearTimeout(hostToolRegistrationTimeout);
+          hostToolRegistrationTimeout = undefined;
+        }
         if (response.success) {
           useNativeHostTools = true;
         }
@@ -1499,6 +1513,7 @@ export class PiEngineAdapter implements EngineAdapter {
       child.on('close', (code) => {
         if (timeoutTimer != null) clearTimeout(timeoutTimer);
         if (cancelEscalationTimer != null) clearTimeout(cancelEscalationTimer);
+        if (hostToolRegistrationTimeout) clearTimeout(hostToolRegistrationTimeout);
         runtimeToolBridge.cleanup();
 
         if (stdoutBuffer.trim().length > 0) {

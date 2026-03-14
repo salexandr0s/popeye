@@ -49,12 +49,32 @@
 - Session events that include assistant message usage on completion
 - Cancellation via RPC `abort` with process-signal fallback
 
+## Native host-tool RPC protocol (ADR 0010)
+
+Pi now supports a native `register_host_tools` / `host_tool_request` / `host_tool_response` protocol:
+
+### Pi-side additions
+- `rpc-types.ts`: `HostToolDefinition`, `RpcHostToolRequest`, `RpcHostToolResponse`, `register_host_tools` command
+- `rpc-mode.ts`: `createHostToolShim()` creates `AgentTool` shims that emit `host_tool_request` events and await `host_tool_response` on stdin
+- `agent-session.ts`: `addHostTools()` adds tools to `_baseToolRegistry` and refreshes the active tool set
+- Signal-aware cancellation: abort signal on host tool shims, pending requests cancelled on `abort` command
+
+### Popeye-side additions
+- `@popeye/engine-pi` attempts `register_host_tools` after `get_state` succeeds, with 500ms fallback timeout
+- On success: `useNativeHostTools = true`, runtime tools routed via `host_tool_request` / `host_tool_response`
+- On timeout/error: falls back to extension-UI bridge (existing path)
+- Both paths coexist; native path preferred when available
+
+### Protocol semantics
+- **Timeout:** Popeye-owned (configurable `runtimeToolTimeoutMs`). On timeout, sends `host_tool_response` with `status: "cancelled"`
+- **Cancellation:** Popeye can send `status: "cancelled"` at any time. Pi resolves the pending promise
+- **Late results:** Pi deletes pending entry on resolution. Late responses silently ignored
+- **Errors:** `status: "error"` with `{ code, message }`. Pi returns as tool error to agent loop
+
 ## Known limitations
-- The runtime-tool bridge is a host-owned workaround over Pi RPC editor dialogs, not a first-class upstream host-tool callback protocol.
 - Runtime-tool calls are request/response only; no host-side streaming updates are surfaced back into Pi today.
-- Malformed bridge payloads, tool exceptions, timeouts, and cancellation are handled defensively in `@popeye/engine-pi`, but the carrier still inherits UI-channel awkwardness.
 - Timeout hardening improves observability, but it does not change the underlying limitation that the host tool promise keeps running unless Pi gains native host-tool cancellation semantics.
-- Long-term recommendation: replace the workaround with a proper Pi-side host-tool RPC protocol in a future isolated change. See `docs/adr/0010-pi-host-tool-rpc-boundary.md`.
+- The extension-UI bridge is retained as fallback; it will be removed in a future change once the native protocol is stable.
 - If packaging ever changes, ADR 0011 requires vendoring the whole Pi fork behind the same `@popeye/engine-pi` boundary instead of piecemeal copying.
 - Detailed fork patch inventory
 - Compatibility matrix by upstream tag
