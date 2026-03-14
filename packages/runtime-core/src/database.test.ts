@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
-import { initAuthStore } from './auth.js';
-import { openRuntimeDatabases, type RuntimeDatabases } from './database.js';
+import { initAuthStore } from './auth.ts';
+import { openRuntimeDatabases, type RuntimeDatabases } from './database.ts';
 
 function makeConfig(dir: string) {
   const authFile = join(dir, 'config', 'auth.json');
@@ -65,6 +65,27 @@ function seedLegacyAppDatabase(dir: string): void {
       CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE instruction_snapshots (id TEXT PRIMARY KEY, scope TEXT NOT NULL, bundle_json TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE message_ingress (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        chat_id TEXT,
+        chat_type TEXT,
+        telegram_message_id INTEGER,
+        idempotency_key TEXT,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        body TEXT NOT NULL,
+        accepted INTEGER NOT NULL,
+        decision_code TEXT NOT NULL,
+        decision_reason TEXT NOT NULL,
+        http_status INTEGER NOT NULL,
+        message_id TEXT,
+        task_id TEXT,
+        job_id TEXT,
+        run_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     const appliedAt = '2026-03-13T00:00:00.000Z';
     for (const migrationId of [
@@ -193,6 +214,8 @@ describe('openRuntimeDatabases', () => {
           'security_audit',
           'messages',
           'message_ingress',
+          'telegram_relay_checkpoints',
+          'telegram_reply_deliveries',
         ];
 
         for (const table of expectedAppTables) {
@@ -339,17 +362,26 @@ describe('openRuntimeDatabases', () => {
     it('has message_ingress indexes', () => {
       const { databases } = openFresh();
       try {
-        const rows = databases.app
+        const messageIngressRows = databases.app
           .prepare(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_message_ingress%' ORDER BY name",
           )
           .all() as { name: string }[];
-        const indexNames = rows.map((r) => r.name);
+        const telegramRows = databases.app
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_telegram_reply_deliveries%' ORDER BY name",
+          )
+          .all() as { name: string }[];
+        const indexNames = messageIngressRows.map((r) => r.name);
+        const telegramIndexNames = telegramRows.map((r) => r.name);
 
         expect(indexNames).toContain('idx_message_ingress_source_chat_message');
         expect(indexNames).toContain('idx_message_ingress_source_sender_created');
         expect(indexNames).toContain('idx_message_ingress_source_chat_created');
         expect(indexNames).toContain('idx_message_ingress_idempotency_key');
+        expect(telegramIndexNames).toContain('idx_telegram_reply_deliveries_chat_message');
+        expect(telegramIndexNames).toContain('idx_telegram_reply_deliveries_ingress');
+        expect(telegramIndexNames).toContain('idx_telegram_reply_deliveries_run_id');
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -486,6 +518,8 @@ describe('openRuntimeDatabases', () => {
           '005-workspace-project-paths',
           '006-browser-sessions',
           '007-instruction-snapshot-project-context',
+          '008-telegram-relay-state',
+          '009-telegram-relay-workspace-scope',
         ]);
 
         const memMigrations = databases.memory
@@ -518,6 +552,8 @@ describe('openRuntimeDatabases', () => {
           .all() as Array<{ id: string }>;
         expect(migrationIds.map((row) => row.id)).toContain('005-workspace-project-paths');
         expect(migrationIds.map((row) => row.id)).toContain('007-instruction-snapshot-project-context');
+        expect(migrationIds.map((row) => row.id)).toContain('008-telegram-relay-state');
+        expect(migrationIds.map((row) => row.id)).toContain('009-telegram-relay-workspace-scope');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');

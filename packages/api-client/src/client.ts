@@ -35,6 +35,8 @@ import {
   ReceiptRecordSchema,
   type RunEventRecord,
   RunEventRecordSchema,
+  type RunReply,
+  RunReplySchema,
   type RunRecord,
   type RunState,
   RunRecordSchema,
@@ -49,6 +51,12 @@ import {
   TaskCreateResponseSchema,
   type TaskRecord,
   TaskRecordSchema,
+  type TelegramDeliveryState,
+  TelegramDeliveryStateSchema,
+  type TelegramRelayCheckpoint,
+  type TelegramRelayCheckpointCommitRequest,
+  TelegramRelayCheckpointSchema,
+  TelegramRelayCheckpointResponseSchema,
   type UsageSummary,
   UsageSummarySchema,
   type WorkspaceListItem,
@@ -265,6 +273,10 @@ export class PopeyeApiClient {
     }
   }
 
+  async getRunReply(runId: string): Promise<RunReply> {
+    return this.get(`/v1/runs/${encodeURIComponent(runId)}/reply`, RunReplySchema);
+  }
+
   async listRunEvents(runId: string): Promise<RunEventRecord[]> {
     return this.getArray(`/v1/runs/${encodeURIComponent(runId)}/events`, RunEventRecordSchema);
   }
@@ -307,6 +319,29 @@ export class PopeyeApiClient {
 
   async getMessage(id: string): Promise<MessageRecord> {
     return this.get(`/v1/messages/${encodeURIComponent(id)}`, MessageRecordSchema);
+  }
+
+  async getTelegramRelayCheckpoint(workspaceId: string): Promise<TelegramRelayCheckpoint | null> {
+    return this.get(
+      `/v1/telegram/relay/checkpoint${this.buildQuery({ workspaceId })}`,
+      TelegramRelayCheckpointResponseSchema,
+    );
+  }
+
+  async commitTelegramRelayCheckpoint(input: TelegramRelayCheckpointCommitRequest): Promise<TelegramRelayCheckpoint> {
+    return this.post('/v1/telegram/relay/checkpoint', input, TelegramRelayCheckpointSchema);
+  }
+
+  async markTelegramReplySent(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState> {
+    return this.post(
+      `/v1/telegram/replies/${encodeURIComponent(chatId)}/${encodeURIComponent(String(telegramMessageId))}/mark-sent`,
+      input,
+      TelegramDeliveryStateSchema,
+    );
   }
 
   async getInstructionPreview(scope: string, projectId?: string): Promise<CompiledInstructionBundle> {

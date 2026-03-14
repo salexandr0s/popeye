@@ -2,7 +2,7 @@ import type { RunEventRecord } from './execution.js';
 import type { ReceiptRecord } from './receipts.js';
 
 export interface CanonicalRunReply {
-  source: 'completed_output' | 'assistant_message';
+  source: 'completed_output' | 'assistant_message' | 'receipt_fallback';
   text: string;
 }
 
@@ -51,10 +51,28 @@ export function extractCanonicalRunReplyText(events: RunEventRecord[]): string |
   return extractCanonicalRunReply(events)?.text ?? null;
 }
 
+export function buildCanonicalRunReply(
+  events: RunEventRecord[],
+  receipt: ReceiptRecord | null,
+  buildReceiptFallback: (receipt: ReceiptRecord) => string,
+): CanonicalRunReply | null {
+  const eventReply = extractCanonicalRunReply(events);
+  if (eventReply) {
+    return eventReply;
+  }
+  if (!receipt) {
+    return null;
+  }
+  return {
+    source: 'receipt_fallback',
+    text: buildReceiptFallback(receipt),
+  };
+}
+
 export function buildCanonicalRunReplyText(
   events: RunEventRecord[],
   receipt: ReceiptRecord | null,
   buildReceiptFallback: (receipt: ReceiptRecord) => string,
 ): string | null {
-  return extractCanonicalRunReplyText(events) ?? (receipt ? buildReceiptFallback(receipt) : null);
+  return buildCanonicalRunReply(events, receipt, buildReceiptFallback)?.text ?? null;
 }

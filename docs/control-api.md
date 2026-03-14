@@ -64,6 +64,7 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | GET | `/v1/runs` | List all runs |
 | GET | `/v1/runs/:id` | Get a single run. Returns 404 if not found. |
 | GET | `/v1/runs/:id/receipt` | Get the latest receipt for a run. Returns 404 if none exists yet. |
+| GET | `/v1/runs/:id/reply` | Get the packaged terminal reply for a run. Returns 404 if the run does not exist and `409 { error: "run_not_terminal" }` if no terminal receipt exists yet. |
 | GET | `/v1/runs/:id/events` | List engine events for a run |
 | POST | `/v1/runs/:id/retry` | Retry a run by creating a new job |
 | POST | `/v1/runs/:id/cancel` | Cancel an active or queued run |
@@ -93,6 +94,9 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 |--------|------|-------------|
 | POST | `/v1/messages/ingest` | Ingest a message (Telegram, manual, or API). Body validated against `IngestMessageInputSchema`. This is the current Telegram ingress boundary. |
 | GET | `/v1/messages/:id` | Get a message by ID. Returns 404 if not found. |
+| GET | `/v1/telegram/relay/checkpoint?workspaceId=...` | Read the durable Telegram long-poll checkpoint for a workspace. |
+| POST | `/v1/telegram/relay/checkpoint` | Persist the durable Telegram long-poll checkpoint. |
+| POST | `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent` | Mark a Telegram reply delivery as sent. |
 
 ### Memory
 
@@ -137,9 +141,9 @@ Accepted messages create a Task with `autoEnqueue: true`, which immediately crea
 
 Duplicate Telegram messages (same `source + chatId + telegramMessageId`) are detected via idempotency keys and replayed without re-processing.
 
-The control API does **not** expose a Telegram-specific reply endpoint. Instead, the in-repo Telegram relay uses normal control-plane routes (`/v1/messages/ingest`, `/v1/jobs/:id`, `/v1/runs/:id/events`, `/v1/runs/:id/receipt`) to wait for completion and send the reply itself.
+The control API now exposes a packaged reply surface and narrow Telegram relay-state routes. The in-repo Telegram relay stays thin and uses: `/v1/messages/ingest`, `/v1/jobs/:id`, `/v1/runs/:id/reply`, `/v1/telegram/relay/checkpoint`, and `/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent`.
 
-Current reply precedence for that relay is:
+Current packaged reply precedence is:
 
 1. `completed.output` from the terminal run events
 2. the last assistant `message` event text
@@ -147,8 +151,9 @@ Current reply precedence for that relay is:
 
 Current relay delivery behavior is also explicit:
 
-- duplicate replayed ingress responses do not send a second Telegram reply
+- duplicate replayed ingress responses with `telegramDelivery.status === "sent"` do not send a second Telegram reply
 - denied ingress responses do not send a Telegram reply
+- long-poll progress is durably checkpointed only after an update is fully handled
 - Bot API send failures are retried in the relay with bounded backoff
 
 Denied ingress responses and duplicate replay responses are intentionally **silent** at the relay layer. They remain visible through `message_ingress`, jobs/runs, receipts, and `run_completed`/audit events rather than via Telegram-side error messages.

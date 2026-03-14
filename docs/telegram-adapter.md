@@ -18,6 +18,7 @@ The current mainline package implements:
 - Bot API transport (`createTelegramBotClient()`)
 - long-poll receive/send orchestration (`TelegramLongPollRelay`)
 - reply text cleanup + fallback receipt formatting (`formatTelegramReply()`, `buildTelegramRunReply()`)
+- durable long-poll checkpoints and reply-delivery markers via the control API
 - duplicate-delivery suppression at the relay layer
 - bounded Bot API send retry behavior
 
@@ -30,12 +31,12 @@ Current in-repo transport is **end-to-end long-polling**. Webhook hosting is sti
 3. `ingestTelegramUpdate()` calls the runtime's `ingestMessage()` with source `telegram` and the extracted fields.
 4. The runtime applies the full ingress pipeline (see below).
 5. For accepted messages, the relay waits for the related job to reach a terminal state through the control API.
-6. The relay fetches the final run events and derives the reply with this precedence:
+6. The relay fetches `GET /v1/runs/:id/reply`, which packages reply text with this precedence:
    - `completed.output`
    - last assistant `message` text
    - receipt-derived fallback text
-7. The relay sends the formatted reply back to Telegram with `sendMessage`.
-8. Duplicate replayed deliveries and denied ingress responses do **not** produce a Telegram reply; the runtime remains the audit source of truth.
+7. After `sendMessage` succeeds, the relay marks the Telegram delivery `sent`, then commits the durable long-poll checkpoint.
+8. Duplicate replayed deliveries already marked `sent` and denied ingress responses do **not** produce a Telegram reply; the runtime remains the audit source of truth.
 
 ## Runtime ingress pipeline (for Telegram source)
 

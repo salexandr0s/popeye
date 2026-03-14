@@ -21,19 +21,27 @@ import type {
   ProjectRegistrationInput,
   ReceiptRecord,
   RunEventRecord,
+  RunReply,
   RunRecord,
   SchedulerStatusResponse,
   SecurityAuditEvent,
   TaskCreateInput,
   TaskRecord,
+  TelegramDeliveryState,
+  TelegramRelayCheckpoint,
+  TelegramRelayCheckpointCommitRequest,
   UsageSummary,
   WorkspaceRecord,
   WorkspaceRegistrationInput,
 } from '@popeye/contracts';
 import {
+  buildCanonicalRunReply,
   MemoryRecordSchema,
   RunEventRecordSchema,
   RunRecordSchema,
+  RunReplySchema,
+  TelegramDeliveryStateSchema,
+  TelegramRelayCheckpointSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
@@ -93,6 +101,15 @@ function selectSessionKind(source: TaskRecord['source']): Parameters<typeof sele
 }
 
 export { MessageIngressError };
+
+export class RuntimeNotFoundError extends Error {
+  readonly errorCode = 'not_found';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RuntimeNotFoundError';
+  }
+}
 
 export interface RuntimeEvent {
   event: string;
@@ -202,6 +219,19 @@ const ScheduleRowSchema = z.object({
   created_at: z.string(),
 });
 
+const TelegramRelayCheckpointRowSchema = z.object({
+  relay_key: z.literal('telegram_long_poll'),
+  workspace_id: z.string(),
+  last_acknowledged_update_id: z.coerce.number().int().nonnegative(),
+  updated_at: z.string(),
+});
+
+const TelegramReplyDeliveryRowSchema = z.object({
+  chat_id: z.string(),
+  telegram_message_id: z.coerce.number().int(),
+  status: z.enum(['pending', 'sent']),
+});
+
 const RuntimeMemorySearchToolInputSchema = z.object({
   query: z.string().min(1),
   scope: z.string().optional(),
@@ -243,6 +273,20 @@ function parseCountRow(row: unknown): number {
 function parseCreatedAt(row: unknown): string | null {
   const parsed = CreatedAtRowSchema.safeParse(row);
   return parsed.success ? parsed.data.created_at : null;
+}
+
+function buildReceiptFallbackReplyText(receipt: ReceiptRecord): string {
+  const parts = [
+    receipt.summary,
+    `Status: ${receipt.status}`,
+    `Model: ${receipt.usage.provider}/${receipt.usage.model}`,
+    `Tokens: ${receipt.usage.tokensIn}/${receipt.usage.tokensOut}`,
+    `Cost: $${receipt.usage.estimatedCostUsd.toFixed(4)}`,
+  ];
+  if (receipt.status !== 'succeeded' && receipt.details.trim().length > 0) {
+    parts.push(`Details: ${receipt.details}`);
+  }
+  return parts.join('\n');
 }
 
 export class PopeyeRuntimeService {
@@ -555,6 +599,64 @@ export class PopeyeRuntimeService {
     return this.messageIngestion.getMessage(messageId);
   }
 
+  getTelegramRelayCheckpoint(workspaceId: string, relayKey: 'telegram_long_poll' = 'telegram_long_poll'): TelegramRelayCheckpoint | null {
+    const row = this.databases.app
+      .prepare('SELECT relay_key, workspace_id, last_acknowledged_update_id, updated_at FROM telegram_relay_checkpoints WHERE relay_key = ? AND workspace_id = ?')
+      .get(relayKey, workspaceId);
+    if (!row) return null;
+    const parsed = TelegramRelayCheckpointRowSchema.parse(row);
+    return TelegramRelayCheckpointSchema.parse({
+      relayKey: parsed.relay_key,
+      workspaceId: parsed.workspace_id,
+      lastAcknowledgedUpdateId: parsed.last_acknowledged_update_id,
+      updatedAt: parsed.updated_at,
+    });
+  }
+
+  commitTelegramRelayCheckpoint(input: TelegramRelayCheckpointCommitRequest): TelegramRelayCheckpoint {
+    if (!this.getWorkspace(input.workspaceId)) {
+      throw new RuntimeNotFoundError(`Workspace ${input.workspaceId} not found`);
+    }
+    const relayKey = input.relayKey ?? 'telegram_long_poll';
+    const updatedAt = nowIso();
+    this.databases.app.prepare(`
+      INSERT INTO telegram_relay_checkpoints (relay_key, workspace_id, last_acknowledged_update_id, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(relay_key, workspace_id) DO UPDATE SET
+        last_acknowledged_update_id = MAX(telegram_relay_checkpoints.last_acknowledged_update_id, excluded.last_acknowledged_update_id),
+        updated_at = excluded.updated_at
+    `).run(relayKey, input.workspaceId, input.lastAcknowledgedUpdateId, updatedAt);
+    const checkpoint = this.getTelegramRelayCheckpoint(input.workspaceId, relayKey);
+    if (!checkpoint) {
+      throw new Error(`Failed to persist Telegram relay checkpoint for workspace ${input.workspaceId}`);
+    }
+    return checkpoint;
+  }
+
+  markTelegramReplySent(chatId: string, telegramMessageId: number, input: { workspaceId: string; runId?: string | null }): TelegramDeliveryState | null {
+    const updatedAt = nowIso();
+    this.databases.app.prepare(`
+      UPDATE telegram_reply_deliveries
+      SET status = 'sent',
+          sent_at = COALESCE(sent_at, ?),
+          run_id = COALESCE(?, run_id),
+          updated_at = ?
+      WHERE workspace_id = ?
+        AND chat_id = ?
+        AND telegram_message_id = ?
+    `).run(updatedAt, input.runId ?? null, updatedAt, input.workspaceId, chatId, telegramMessageId);
+    const row = this.databases.app
+      .prepare('SELECT chat_id, telegram_message_id, status FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+      .get(input.workspaceId, chatId, telegramMessageId);
+    if (!row) return null;
+    const parsed = TelegramReplyDeliveryRowSchema.parse(row);
+    return TelegramDeliveryStateSchema.parse({
+      chatId: parsed.chat_id,
+      telegramMessageId: parsed.telegram_message_id,
+      status: parsed.status,
+    });
+  }
+
   // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---
 
   getRun(runId: string): RunRecord | null {
@@ -579,6 +681,21 @@ export class PopeyeRuntimeService {
     return z.array(RunEventRowSchema)
       .parse(this.databases.app.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC').all(runId))
       .map(mapRunEventRow);
+  }
+
+  getRunReply(runId: string): RunReply | null {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    const receipt = this.receiptManager.getReceiptByRunId(runId);
+    if (!receipt) return null;
+    const reply = buildCanonicalRunReply(this.listRunEvents(runId), receipt, buildReceiptFallbackReplyText);
+    if (!reply) return null;
+    return RunReplySchema.parse({
+      runId,
+      terminalStatus: receipt.status,
+      source: reply.source,
+      text: reply.text,
+    });
   }
 
   retryRun(runId: string): JobRecord | null {

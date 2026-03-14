@@ -71,8 +71,10 @@ Notes:
   `extension_ui_request(method:"editor")` carrier messages
 - that bridge is a Popeye-owned workaround over Pi's extension UI channel, not
   a first-class upstream host-tool RPC protocol
+- Popeye bounds each bridged runtime-tool call with `engine.runtimeToolTimeoutMs`
+  (default `30000`) and emits structured bridge `tool_call` / `tool_result` diagnostics
 - adapter tests cover malformed bridge payloads, tool exceptions, cancellation
-  during an in-flight bridge request, and multiple tool calls in a single run
+  during an in-flight bridge request, multiple tool calls in a single run, and timeout behavior
 
 ## Pi launch contract
 

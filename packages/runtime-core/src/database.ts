@@ -46,7 +46,7 @@ const APP_MIGRATIONS: Migration[] = [
     id: '002-app-message-ingress',
     statements: [
       'CREATE TABLE IF NOT EXISTS message_ingress (id TEXT PRIMARY KEY, source TEXT NOT NULL, sender_id TEXT NOT NULL, chat_id TEXT, chat_type TEXT, telegram_message_id INTEGER, idempotency_key TEXT, workspace_id TEXT NOT NULL, body TEXT NOT NULL, accepted INTEGER NOT NULL, decision_code TEXT NOT NULL, decision_reason TEXT NOT NULL, http_status INTEGER NOT NULL, message_id TEXT, task_id TEXT, job_id TEXT, run_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);',
-      'CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ingress_source_chat_message ON message_ingress (source, chat_id, telegram_message_id);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ingress_source_chat_message ON message_ingress (workspace_id, source, chat_id, telegram_message_id);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_source_sender_created ON message_ingress (source, sender_id, created_at);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_source_chat_created ON message_ingress (source, chat_id, created_at);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_idempotency_key ON message_ingress (idempotency_key);',
@@ -215,7 +215,7 @@ const APP_MIGRATIONS: Migration[] = [
       'INSERT INTO message_ingress_new SELECT id, source, sender_id, chat_id, chat_type, telegram_message_id, idempotency_key, workspace_id, body, accepted, decision_code, decision_reason, http_status, message_id, task_id, job_id, run_id, created_at, updated_at FROM message_ingress;',
       'DROP TABLE message_ingress;',
       'ALTER TABLE message_ingress_new RENAME TO message_ingress;',
-      'CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ingress_source_chat_message ON message_ingress (source, chat_id, telegram_message_id);',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ingress_source_chat_message ON message_ingress (workspace_id, source, chat_id, telegram_message_id);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_source_sender_created ON message_ingress (source, sender_id, created_at);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_source_chat_created ON message_ingress (source, chat_id, created_at);',
       'CREATE INDEX IF NOT EXISTS idx_message_ingress_idempotency_key ON message_ingress (idempotency_key);',
@@ -255,6 +255,44 @@ const APP_MIGRATIONS: Migration[] = [
     id: '007-instruction-snapshot-project-context',
     statements: [
       'ALTER TABLE instruction_snapshots ADD COLUMN project_id TEXT;',
+    ],
+  },
+  {
+    id: '008-telegram-relay-state',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS telegram_relay_checkpoints (
+        relay_key TEXT NOT NULL,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        last_acknowledged_update_id INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (relay_key, workspace_id)
+      );`,
+      `CREATE TABLE IF NOT EXISTS telegram_reply_deliveries (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        chat_id TEXT NOT NULL,
+        telegram_message_id INTEGER NOT NULL,
+        message_ingress_id TEXT NOT NULL REFERENCES message_ingress(id),
+        task_id TEXT REFERENCES tasks(id),
+        job_id TEXT REFERENCES jobs(id),
+        run_id TEXT REFERENCES runs(id),
+        status TEXT NOT NULL,
+        sent_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_reply_deliveries_chat_message ON telegram_reply_deliveries (workspace_id, chat_id, telegram_message_id);',
+      'CREATE INDEX IF NOT EXISTS idx_telegram_reply_deliveries_ingress ON telegram_reply_deliveries (message_ingress_id);',
+      'CREATE INDEX IF NOT EXISTS idx_telegram_reply_deliveries_run_id ON telegram_reply_deliveries (run_id);',
+    ],
+  },
+  {
+    id: '009-telegram-relay-workspace-scope',
+    statements: [
+      'DROP INDEX IF EXISTS idx_message_ingress_source_chat_message;',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_message_ingress_source_chat_message ON message_ingress (workspace_id, source, chat_id, telegram_message_id);',
+      'DROP INDEX IF EXISTS idx_telegram_reply_deliveries_chat_message;',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_reply_deliveries_chat_message ON telegram_reply_deliveries (workspace_id, chat_id, telegram_message_id);',
     ],
   },
 ];

@@ -37,8 +37,8 @@
 3. **Set bot token** — via `TELEGRAM_BOT_TOKEN` env var (never in config files)
 4. **Deploy adapter** — `popeyed` authenticates to the control API using the runtime auth token and starts the long-poll relay automatically when Telegram is enabled
 5. **Test ingress** — send a DM, verify it appears in `pop run list`
-6. **Test reply delivery** — confirm the bot replies from `completed.output` when present, otherwise the last assistant message, with receipt rendering only as a fallback
-7. **Test replay safety** — resend or replay the same Telegram update and confirm Popeye does not create a second run or send a second reply
+6. **Test reply delivery** — confirm `GET /v1/runs/:id/reply` returns `completed.output` when present, otherwise the last assistant message, with receipt rendering only as a fallback
+7. **Test replay safety** — resend or replay the same Telegram update and confirm Popeye does not create a second run or send a second reply once the delivery is marked `sent` and the long-poll checkpoint advances
 8. **Verify routing** — inspect `message_ingress`, jobs, runs, and receipts if the bot does not answer as expected
 
 ## Intentional omissions

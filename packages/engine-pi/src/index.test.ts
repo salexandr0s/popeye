@@ -4,8 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { NormalizedEngineEvent } from '@popeye/contracts';
-import type { EngineRunRequest, FakeEngineConfig, PiAdapterConfig } from './index.js';
+import { EngineConfigSchema } from '../../contracts/src/config.ts';
+import type { NormalizedEngineEvent } from '../../contracts/src/engine.ts';
+import type { EngineRunRequest, FakeEngineConfig, PiAdapterConfig } from './index.ts';
 import {
   FakeEngineAdapter,
   PiEngineAdapter,
@@ -13,7 +14,7 @@ import {
   checkPiVersion,
   inspectPiCheckout,
   runPiCompatibilityCheck,
-} from './index.js';
+} from './index.ts';
 
 function createFakePiRepo(script: string, options: { defaultCli?: boolean } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-'));
@@ -208,6 +209,11 @@ describe('engine-pi', () => {
     const result = checkPiVersion('0.1.0', '/tmp/definitely-missing-pi');
     expect(result.ok).toBe(false);
     expect(result.message).toContain('not available');
+  });
+
+  it('defaults engine runtimeToolTimeoutMs to 30000', () => {
+    const parsed = EngineConfigSchema.parse({ kind: 'pi' });
+    expect(parsed.runtimeToolTimeoutMs).toBe(30_000);
   });
 
   it('uses Pi RPC responses/events and compatibility checks', async () => {
@@ -537,6 +543,112 @@ describe('engine-pi', () => {
     expect(result.failureClassification).toBeNull();
     expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('memory result ready');
     expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('extension=true');
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'tool_call',
+      payload: expect.objectContaining({
+        toolCallId: 'tc-1',
+        toolName: 'popeye_memory_search',
+        bridge: 'runtime_tool_bridge',
+      }),
+    }));
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      payload: expect.objectContaining({
+        toolCallId: 'tc-1',
+        toolName: 'popeye_memory_search',
+        bridge: 'runtime_tool_bridge',
+        isError: false,
+        contentItems: 1,
+        detailsPresent: true,
+      }),
+    }));
+  });
+
+  it('times out runtime-tool bridge calls and emits structured bridge diagnostics', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:tool-timeout', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-1',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-timeout',
+                tool: 'popeye_memory_search',
+                params: { query: 'slow' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-1') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: String(response.error) }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({ ...explicitConfig(piPath), runtimeToolTimeoutMs: 20 });
+    const result = await adapter.run({
+      prompt: 'tool-timeout',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return { content: [{ type: 'text', text: 'late result' }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain(
+      'Runtime tool popeye_memory_search timed out after 20ms',
+    );
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'tool_call',
+      payload: expect.objectContaining({
+        toolCallId: 'tc-timeout',
+        toolName: 'popeye_memory_search',
+        bridge: 'runtime_tool_bridge',
+      }),
+    }));
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      payload: expect.objectContaining({
+        toolCallId: 'tc-timeout',
+        toolName: 'popeye_memory_search',
+        bridge: 'runtime_tool_bridge',
+        isError: true,
+        errorCode: 'timeout',
+      }),
+    }));
   });
 
   it('returns structured bridge errors for malformed runtime-tool payloads', async () => {

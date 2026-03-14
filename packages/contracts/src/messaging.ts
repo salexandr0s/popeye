@@ -50,6 +50,16 @@ export const MessageIngressRecordSchema = z.object({
 });
 export type MessageIngressRecord = z.infer<typeof MessageIngressRecordSchema>;
 
+export const TelegramDeliveryStatusSchema = z.enum(['pending', 'sent']);
+export type TelegramDeliveryStatus = z.infer<typeof TelegramDeliveryStatusSchema>;
+
+export const TelegramDeliveryStateSchema = z.object({
+  chatId: z.string(),
+  telegramMessageId: z.number().int(),
+  status: TelegramDeliveryStatusSchema,
+});
+export type TelegramDeliveryState = z.infer<typeof TelegramDeliveryStateSchema>;
+
 export const MessageIngressResponseSchema = z.object({
   accepted: z.boolean(),
   duplicate: z.boolean(),
@@ -60,6 +70,7 @@ export const MessageIngressResponseSchema = z.object({
   taskId: z.string().nullable(),
   jobId: z.string().nullable(),
   runId: z.string().nullable(),
+  telegramDelivery: TelegramDeliveryStateSchema.nullable().default(null),
 });
 export type MessageIngressResponse = z.infer<typeof MessageIngressResponseSchema>;
 

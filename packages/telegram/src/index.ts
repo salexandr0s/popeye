@@ -2,11 +2,15 @@ import type {
   IngestMessageInput,
   JobRecord,
   MessageIngressResponse,
+  RunReply,
   ReceiptRecord,
   RunEventRecord,
   TelegramChatType,
+  TelegramDeliveryState,
+  TelegramRelayCheckpoint,
+  TelegramRelayCheckpointCommitRequest,
 } from '@popeye/contracts';
-import { buildCanonicalRunReplyText, extractCanonicalRunReplyText } from '@popeye/contracts';
+import { extractCanonicalRunReplyText } from '@popeye/contracts';
 
 export interface TelegramUserRef {
   id: number | string;
@@ -45,8 +49,14 @@ export interface TelegramIngressClient {
 
 export interface TelegramRunTrackingClient extends TelegramIngressClient {
   getJob(jobId: string): Promise<JobRecord>;
-  listRunEvents(runId: string): Promise<RunEventRecord[]>;
-  getRunReceipt(runId: string): Promise<ReceiptRecord | null>;
+  getRunReply(runId: string): Promise<RunReply>;
+  getTelegramRelayCheckpoint(workspaceId: string): Promise<TelegramRelayCheckpoint | null>;
+  commitTelegramRelayCheckpoint(input: TelegramRelayCheckpointCommitRequest): Promise<TelegramRelayCheckpoint>;
+  markTelegramReplySent(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState>;
 }
 
 export interface TelegramSendMessageInput {
@@ -230,7 +240,7 @@ export class TelegramLongPollRelay {
   private nextOffset: number | undefined;
   private running = false;
   private loopPromise: Promise<void> | null = null;
-  private readonly inflight = new Set<Promise<void>>();
+  private checkpointLoaded = false;
 
   constructor(private readonly options: TelegramLongPollRelayOptions) {}
 
@@ -243,13 +253,6 @@ export class TelegramLongPollRelay {
   async stop(): Promise<void> {
     this.running = false;
     await this.loopPromise;
-    await Promise.allSettled([...this.inflight]);
-  }
-
-  private track(task: Promise<void>): void {
-    this.inflight.add(task);
-    void task.catch(() => undefined);
-    task.finally(() => this.inflight.delete(task));
   }
 
   private async pollLoop(): Promise<void> {
@@ -257,14 +260,14 @@ export class TelegramLongPollRelay {
     const retryDelayMs = this.options.retryDelayMs ?? 1_000;
     while (this.running) {
       try {
+        await this.ensureCheckpointLoaded();
         const updates = await this.options.bot.getUpdates(
           this.nextOffset === undefined
             ? { timeoutSeconds: longPollTimeoutSeconds }
             : { offset: this.nextOffset, timeoutSeconds: longPollTimeoutSeconds },
         );
-        for (const update of updates) {
-          this.nextOffset = Math.max(this.nextOffset ?? 0, update.update_id + 1);
-          this.track(this.handleUpdate(update));
+        for (const update of [...updates].sort((left, right) => left.update_id - right.update_id)) {
+          await this.handleUpdate(update);
         }
       } catch {
         if (!this.running) break;
@@ -273,39 +276,70 @@ export class TelegramLongPollRelay {
     }
   }
 
+  private async ensureCheckpointLoaded(): Promise<void> {
+    if (this.checkpointLoaded) return;
+    const checkpoint = await this.options.control.getTelegramRelayCheckpoint(this.options.workspaceId);
+    this.nextOffset = checkpoint ? checkpoint.lastAcknowledgedUpdateId + 1 : undefined;
+    this.checkpointLoaded = true;
+  }
+
+  private async acknowledgeUpdate(updateId: number): Promise<void> {
+    await this.options.control.commitTelegramRelayCheckpoint({
+      relayKey: 'telegram_long_poll',
+      workspaceId: this.options.workspaceId,
+      lastAcknowledgedUpdateId: updateId,
+    });
+    this.nextOffset = updateId + 1;
+  }
+
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
-    try {
-      const normalized = normalizeTelegramUpdate(update);
-      if (!normalized) return;
-
-      const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
-      if (!ingress?.accepted || ingress.duplicate || !ingress.jobId) return;
-
-      const job = await waitForTerminalJob(
-        this.options.control,
-        ingress.jobId,
-        this.options.jobPollIntervalMs ?? 500,
-        this.options.jobTimeoutMs ?? 300_000,
-      );
-      if (!job?.lastRunId) return;
-
-      const [events, receipt] = await Promise.all([
-        this.options.control.listRunEvents(job.lastRunId),
-        this.options.control.getRunReceipt(job.lastRunId),
-      ]);
-      const replyText = buildCanonicalRunReplyText(events, receipt, buildTelegramRunReply) ?? 'Run completed.';
-
-      await sendTelegramReplyWithRetry(this.options.bot, {
-        chatId: normalized.chatId,
-        text: formatTelegramReply(replyText),
-        replyToMessageId: normalized.telegramMessageId,
-      }, {
-        attempts: this.options.sendRetryAttempts ?? 3,
-        delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
-      });
-    } catch {
-      // Keep the long-poll worker resilient: denied ingress, duplicate replays, and Bot API
-      // failures should not crash the relay loop or produce unhandled rejections.
+    const normalized = normalizeTelegramUpdate(update);
+    if (!normalized) {
+      await this.acknowledgeUpdate(update.update_id);
+      return;
     }
+
+    const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
+    if (!ingress) {
+      await this.acknowledgeUpdate(update.update_id);
+      return;
+    }
+    if (!ingress.accepted) {
+      await this.acknowledgeUpdate(update.update_id);
+      return;
+    }
+    if (ingress.duplicate && ingress.telegramDelivery?.status === 'sent') {
+      await this.acknowledgeUpdate(update.update_id);
+      return;
+    }
+    if (!ingress.jobId) {
+      throw new Error(`Telegram ingress ${ingress.taskId ?? 'unknown'} is missing job linkage`);
+    }
+
+    const job = await waitForTerminalJob(
+      this.options.control,
+      ingress.jobId,
+      this.options.jobPollIntervalMs ?? 500,
+      this.options.jobTimeoutMs ?? 300_000,
+    );
+    if (!job?.lastRunId) {
+      throw new Error(`Telegram job ${ingress.jobId} reached terminal state without a run`);
+    }
+
+    const reply = await this.options.control.getRunReply(job.lastRunId);
+
+    await sendTelegramReplyWithRetry(this.options.bot, {
+      chatId: normalized.chatId,
+      text: formatTelegramReply(reply.text),
+      replyToMessageId: normalized.telegramMessageId,
+    }, {
+      attempts: this.options.sendRetryAttempts ?? 3,
+      delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
+    });
+    await this.options.control.markTelegramReplySent(normalized.chatId, normalized.telegramMessageId, {
+      workspaceId: this.options.workspaceId,
+      runId: job.lastRunId,
+    });
+    await this.acknowledgeUpdate(update.update_id);
   }
 }

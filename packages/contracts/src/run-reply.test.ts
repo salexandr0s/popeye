@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RunEventRecord } from './execution.js';
-import { buildCanonicalRunReplyText, extractCanonicalRunReply, extractCanonicalRunReplyText } from './run-reply.js';
+import type { RunEventRecord } from './execution.ts';
+import { buildCanonicalRunReply, buildCanonicalRunReplyText, extractCanonicalRunReply, extractCanonicalRunReplyText } from './run-reply.ts';
 
 function makeRunEvent(overrides: Partial<RunEventRecord>): RunEventRecord {
   return {
@@ -91,7 +91,7 @@ describe('run reply helpers', () => {
   });
 
   it('uses the provided receipt fallback when the run events do not contain reply text', () => {
-    const reply = buildCanonicalRunReplyText(
+    const reply = buildCanonicalRunReply(
       [
         makeRunEvent({
           id: 'event-1',
@@ -114,6 +114,10 @@ describe('run reply helpers', () => {
       (receipt) => `${receipt.summary}: ${receipt.details}`,
     );
 
-    expect(reply).toBe('Run failed: bad credentials');
+    expect(reply).toEqual({
+      source: 'receipt_fallback',
+      text: 'Run failed: bad credentials',
+    });
+    expect(buildCanonicalRunReplyText([], null, () => 'unused')).toBeNull();
   });
 });

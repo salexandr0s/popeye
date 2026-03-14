@@ -12,12 +12,14 @@ import type {
   TaskRecord,
   JobRecord,
   RunRecord,
+  TelegramDeliveryState,
 } from '@popeye/contracts';
 import {
   IngestMessageInputSchema,
   MessageIngressRecordSchema,
   MessageIngressResponseSchema,
   MessageRecordSchema,
+  TelegramDeliveryStateSchema,
 } from '@popeye/contracts';
 import { redactText } from '@popeye/observability';
 import { z } from 'zod';
@@ -26,11 +28,11 @@ import type { RuntimeDatabases } from './database.js';
 import { scanPrompt, type PromptScanOptions } from './prompt.js';
 import { nowIso } from '@popeye/contracts';
 
-function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
+function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId' | 'workspaceId'>): string | null {
   if (input.source !== 'telegram' || !input.chatId || typeof input.telegramMessageId !== 'number') {
     return null;
   }
-  return `${input.source}:${input.chatId}:${input.telegramMessageId}`;
+  return `${input.source}:${input.workspaceId}:${input.chatId}:${input.telegramMessageId}`;
 }
 
 function readStringField(input: Record<string, unknown>, key: string): string | undefined {
@@ -95,6 +97,12 @@ const MessageDbRowSchema = z.object({
 
 const CountRowSchema = z.object({
   count: z.number().int().nonnegative(),
+});
+
+const TelegramReplyDeliveryDbRowSchema = z.object({
+  chat_id: z.string(),
+  telegram_message_id: z.number().int(),
+  status: z.enum(['pending', 'sent']),
 });
 
 const InputRecordSchema = z.record(z.string(), z.unknown());
@@ -214,6 +222,69 @@ export class MessageIngestionService {
       .run(updates.messageId, updates.taskId, updates.jobId, updates.runId, nowIso(), recordId);
   }
 
+  upsertTelegramReplyDelivery(input: {
+    workspaceId: string;
+    chatId: string;
+    telegramMessageId: number;
+    messageIngressId: string;
+    taskId: string | null;
+    jobId: string | null;
+    runId: string | null;
+  }): void {
+    const timestamp = nowIso();
+    this.databases.app.prepare(`
+      INSERT INTO telegram_reply_deliveries (
+        id,
+        workspace_id,
+        chat_id,
+        telegram_message_id,
+        message_ingress_id,
+        task_id,
+        job_id,
+        run_id,
+        status,
+        sent_at,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+      ON CONFLICT(workspace_id, chat_id, telegram_message_id) DO UPDATE SET
+        message_ingress_id = excluded.message_ingress_id,
+        task_id = excluded.task_id,
+        job_id = excluded.job_id,
+        run_id = COALESCE(excluded.run_id, telegram_reply_deliveries.run_id),
+        updated_at = excluded.updated_at
+    `).run(
+      randomUUID(),
+      input.workspaceId,
+      input.chatId,
+      input.telegramMessageId,
+      input.messageIngressId,
+      input.taskId,
+      input.jobId,
+      input.runId,
+      timestamp,
+      timestamp,
+    );
+  }
+
+  getTelegramDeliveryState(workspaceId: string, chatId: string | null, telegramMessageId: number | null): TelegramDeliveryState | null {
+    if (!workspaceId || !chatId || typeof telegramMessageId !== 'number') {
+      return null;
+    }
+    const rawRow = this.databases.app
+      .prepare(
+        'SELECT chat_id, telegram_message_id, status FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?',
+      )
+      .get(workspaceId, chatId, telegramMessageId);
+    if (!rawRow) return null;
+    const row = TelegramReplyDeliveryDbRowSchema.parse(rawRow);
+    return TelegramDeliveryStateSchema.parse({
+      chatId: row.chat_id,
+      telegramMessageId: row.telegram_message_id,
+      status: row.status,
+    });
+  }
+
   linkAcceptedIngressToRun(taskId: string, jobId: string, runId: string): void {
     const updatedAt = nowIso();
     this.databases.app
@@ -232,6 +303,18 @@ export class MessageIngestionService {
         )
       `)
       .run(runId, taskId, jobId);
+    this.databases.app
+      .prepare(`
+        UPDATE telegram_reply_deliveries
+        SET run_id = ?, updated_at = ?
+        WHERE message_ingress_id IN (
+          SELECT id
+          FROM message_ingress
+          WHERE accepted = 1
+            AND (task_id = ? OR job_id = ?)
+        )
+      `)
+      .run(runId, updatedAt, taskId, jobId);
   }
 
   buildIngressResponse(record: MessageIngressRecord, duplicate: boolean): MessageIngressResponse {
@@ -245,6 +328,7 @@ export class MessageIngestionService {
       taskId: record.taskId,
       jobId: record.jobId,
       runId: record.runId,
+      telegramDelivery: this.getTelegramDeliveryState(record.workspaceId, record.chatId, record.telegramMessageId),
     });
   }
 
@@ -380,6 +464,11 @@ export class MessageIngestionService {
     }
 
     if (parsed.source === 'telegram') {
+      const chatId = parsed.chatId;
+      const telegramMessageId = parsed.telegramMessageId;
+      if (!chatId || typeof telegramMessageId !== 'number') {
+        throw new Error('Validated telegram ingress is missing chat linkage');
+      }
       const redacted = redactText(parsed.text, this.config.security.redactionPatterns);
       for (const event of redacted.events) this.callbacks.recordSecurityAudit(event);
 
@@ -398,7 +487,7 @@ export class MessageIngestionService {
         throw new MessageIngressError(this.buildIngressResponse(denied, false));
       }
 
-      if (this.countRecentTelegramIngressAttempts(parsed.senderId, parsed.chatId) >= this.config.telegram.maxMessagesPerMinute) {
+      if (this.countRecentTelegramIngressAttempts(parsed.senderId, chatId) >= this.config.telegram.maxMessagesPerMinute) {
         const denied = this.persistDeniedIngress(parsed, redacted.text, 'telegram_rate_limited', 'Telegram rate limit exceeded', 429);
         throw new MessageIngressError(this.buildIngressResponse(denied, false));
       }
@@ -437,9 +526,9 @@ export class MessageIngestionService {
         id: randomUUID(),
         source: parsed.source,
         senderId: parsed.senderId,
-        chatId: parsed.chatId,
+        chatId,
         chatType: parsed.chatType,
-        telegramMessageId: parsed.telegramMessageId,
+        telegramMessageId,
         idempotencyKey,
         workspaceId: parsed.workspaceId,
         body: message.body,
@@ -470,6 +559,15 @@ export class MessageIngestionService {
         jobId: created.job?.id ?? null,
         runId: created.run?.id ?? null,
       });
+      this.upsertTelegramReplyDelivery({
+        workspaceId: parsed.workspaceId,
+        chatId,
+        telegramMessageId,
+        messageIngressId: ingressRecord.id,
+        taskId: created.task.id,
+        jobId: created.job?.id ?? null,
+        runId: created.run?.id ?? null,
+      });
 
       return MessageIngressResponseSchema.parse({
         accepted: true,
@@ -481,6 +579,11 @@ export class MessageIngestionService {
         taskId: created.task.id,
         jobId: created.job?.id ?? null,
         runId: created.run?.id ?? null,
+        telegramDelivery: {
+          chatId,
+          telegramMessageId,
+          status: 'pending',
+        },
       });
     }
 

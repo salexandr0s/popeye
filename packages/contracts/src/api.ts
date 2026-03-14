@@ -97,6 +97,45 @@ export const ErrorResponseSchema = z.object({
 });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
+export const RunReplySourceSchema = z.enum(['completed_output', 'assistant_message', 'receipt_fallback']);
+export type RunReplySource = z.infer<typeof RunReplySourceSchema>;
+
+export const RunReplySchema = z.object({
+  runId: z.string(),
+  terminalStatus: z.enum(['succeeded', 'failed', 'cancelled', 'abandoned']),
+  source: RunReplySourceSchema,
+  text: z.string(),
+});
+export type RunReply = z.infer<typeof RunReplySchema>;
+
+export const TelegramRelayKeySchema = z.literal('telegram_long_poll');
+export type TelegramRelayKey = z.infer<typeof TelegramRelayKeySchema>;
+
+export const TelegramRelayCheckpointSchema = z.object({
+  relayKey: TelegramRelayKeySchema,
+  workspaceId: z.string(),
+  lastAcknowledgedUpdateId: z.number().int(),
+  updatedAt: z.string(),
+});
+export type TelegramRelayCheckpoint = z.infer<typeof TelegramRelayCheckpointSchema>;
+
+export const TelegramRelayCheckpointResponseSchema = TelegramRelayCheckpointSchema.nullable();
+export type TelegramRelayCheckpointResponse = z.infer<typeof TelegramRelayCheckpointResponseSchema>;
+
+export const TelegramRelayCheckpointCommitRequestSchema = z.object({
+  relayKey: TelegramRelayKeySchema.default('telegram_long_poll'),
+  workspaceId: z.string().min(1),
+  lastAcknowledgedUpdateId: z.number().int().nonnegative(),
+});
+export type TelegramRelayCheckpointCommitRequest = z.infer<typeof TelegramRelayCheckpointCommitRequestSchema>;
+
+export const TelegramReplyDeliveryMarkSentRequestSchema = z.object({
+  workspaceId: z.string().min(1),
+  runId: z.string().min(1).nullable().optional(),
+});
+export type TelegramReplyDeliveryMarkSentRequest = z.infer<typeof TelegramReplyDeliveryMarkSentRequestSchema>;
+
+
 export const WorkspaceListItemSchema = WorkspaceRecordSchema;
 export type WorkspaceListItem = z.infer<typeof WorkspaceListItemSchema>;
 

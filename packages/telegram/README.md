@@ -58,14 +58,13 @@ relay.start();
 
 Reply behavior:
 
-- canonical success reply source is `completed.output` from `/v1/runs/:id/events`
-- fallback is the last assistant `message` event text
-- receipt rendering is only used when no conversational reply text exists
-- duplicate Telegram deliveries are replay-safe and do not send a second reply
+- canonical reply text comes from `GET /v1/runs/:id/reply`
+- reply precedence is `completed.output`, then last assistant `message`, then receipt fallback
+- duplicate Telegram deliveries marked `sent` are replay-safe and do not send a second reply
 - denied ingress is silent at the relay layer; the runtime remains the audit source of truth
+- long-poll progress is durably checkpointed through control-plane relay routes
 - Bot API send failures are retried with bounded backoff
 
-This package remains a thin bridge. It does not introduce a channel system or
-Telegram-specific runtime endpoints.
+This package remains a thin bridge. It does not introduce a channel system or bypass the control API.
 
 See `src/index.test.ts` for normalization, relay, and transport tests.

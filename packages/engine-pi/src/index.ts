@@ -21,6 +21,7 @@ const MAX_STDERR_BYTES = 1_048_576;
 const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
 const MAX_EVENTS = 10_000;
 const CANCEL_GRACE_MS = 5_000;
+const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30_000;
 const INTERNAL_IDS = {
   getState: 'popeye:get_state',
   prompt: 'popeye:prompt',
@@ -114,6 +115,7 @@ export interface PiAdapterConfig {
   command?: string;
   args?: string[];
   timeoutMs?: number;
+  runtimeToolTimeoutMs?: number;
 }
 
 export interface PiCheckoutStatus {
@@ -222,6 +224,15 @@ const RuntimeToolCallSchema = z.object({
   tool: z.string(),
   params: z.unknown().optional(),
 });
+
+class RuntimeToolBridgeTimeoutError extends Error {
+  readonly code = 'timeout';
+
+  constructor(toolName: string, timeoutMs: number) {
+    super(`Runtime tool ${toolName} timed out after ${timeoutMs}ms`);
+    this.name = 'RuntimeToolBridgeTimeoutError';
+  }
+}
 
 export class PiEngineAdapterNotConfiguredError extends Error {
   constructor(message = 'Pi engine adapter is not configured in this repository yet') {
@@ -643,6 +654,27 @@ function resolveSpawnCwd(piPath: string, cwd?: string): string {
   return cwd;
 }
 
+function executeWithTimeout<T>(operation: () => Promise<T> | T, timeoutMs: number, toolName: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new RuntimeToolBridgeTimeoutError(toolName, timeoutMs));
+    }, timeoutMs);
+
+    Promise.resolve()
+      .then(() => operation())
+      .then(
+        (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+  });
+}
+
 export interface FakeEngineConfig {
   mode?: 'success' | 'transient_failure' | 'permanent_failure' | 'timeout' | 'protocol_error';
   delayMs?: number;
@@ -857,6 +889,7 @@ export class PiEngineAdapter implements EngineAdapter {
   private readonly command: string;
   private readonly args: string[];
   private readonly timeoutMs: number | undefined;
+  private readonly runtimeToolTimeoutMs: number;
 
   constructor(config: PiAdapterConfig = {}) {
     const status = assertPiCheckoutAvailable(config.piPath);
@@ -864,6 +897,7 @@ export class PiEngineAdapter implements EngineAdapter {
     this.command = config.command ?? 'node';
     this.args = config.args ?? [];
     this.timeoutMs = config.timeoutMs;
+    this.runtimeToolTimeoutMs = config.runtimeToolTimeoutMs ?? DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
     if (config.piVersion) {
       const versionCheck = checkPiVersion(config.piVersion, config.piPath);
       if (!versionCheck.ok) {
@@ -952,9 +986,49 @@ export class PiEngineAdapter implements EngineAdapter {
       child.stdin.write(serializeRpcCommand(command));
     };
 
+    const emitBridgeToolCall = (
+      payload: { toolCallId: string; toolName: string; params?: unknown },
+      raw?: string,
+    ): void => {
+      safeEmit(normalizeStructuredEvent('tool_call', {
+        toolCallId: payload.toolCallId,
+        toolName: payload.toolName,
+        args: payload.params ?? null,
+        bridge: 'runtime_tool_bridge',
+      }, raw));
+    };
+
+    const emitBridgeToolResult = (
+      payload: {
+        toolCallId: string | null;
+        toolName: string | null;
+        isError: boolean;
+        durationMs: number;
+        error?: string;
+        errorCode?: string;
+        contentItems?: number;
+        detailsPresent?: boolean;
+      },
+      raw?: string,
+    ): void => {
+      safeEmit(normalizeStructuredEvent('tool_result', {
+        toolCallId: payload.toolCallId,
+        toolName: payload.toolName,
+        isError: payload.isError,
+        durationMs: payload.durationMs,
+        bridge: 'runtime_tool_bridge',
+        error: payload.error ?? null,
+        errorCode: payload.errorCode ?? null,
+        contentItems: payload.contentItems ?? null,
+        detailsPresent: payload.detailsPresent ?? null,
+      }, raw));
+    };
+
     const respondToRuntimeToolRequest = async (
       uiRequest: z.infer<typeof RpcExtensionUiRequestSchema>,
     ): Promise<void> => {
+      const rawRequest = JSON.stringify(uiRequest);
+      const startedAt = Date.now();
       try {
         if (uiRequest.method !== 'editor' || uiRequest.title !== 'popeye.runtime_tool') {
           throw new Error(`unsupported Pi RPC extension UI request: ${uiRequest.method}`);
@@ -962,6 +1036,14 @@ export class PiEngineAdapter implements EngineAdapter {
         const payload = RuntimeToolCallSchema.parse(JSON.parse(String(uiRequest.prefill ?? '')));
         const tool = runtimeToolBridge.toolsByName.get(payload.tool);
         if (!tool?.execute) {
+          emitBridgeToolResult({
+            toolCallId: payload.toolCallId,
+            toolName: payload.tool,
+            isError: true,
+            durationMs: Date.now() - startedAt,
+            error: `Unknown runtime tool: ${payload.tool}`,
+            errorCode: 'unknown_tool',
+          }, rawRequest);
           sendCommand({
             type: 'extension_ui_response',
             id: uiRequest.id,
@@ -969,7 +1051,25 @@ export class PiEngineAdapter implements EngineAdapter {
           });
           return;
         }
-        const result = await tool.execute(payload.params);
+        emitBridgeToolCall({
+          toolCallId: payload.toolCallId,
+          toolName: payload.tool,
+          params: payload.params,
+        }, rawRequest);
+        const execute = tool.execute;
+        const result = await executeWithTimeout(
+          () => execute(payload.params),
+          this.runtimeToolTimeoutMs,
+          payload.tool,
+        );
+        emitBridgeToolResult({
+          toolCallId: payload.toolCallId,
+          toolName: payload.tool,
+          isError: false,
+          durationMs: Date.now() - startedAt,
+          contentItems: result.content.length,
+          detailsPresent: result.details !== undefined,
+        }, rawRequest);
         sendCommand({
           type: 'extension_ui_response',
           id: uiRequest.id,
@@ -980,6 +1080,28 @@ export class PiEngineAdapter implements EngineAdapter {
           }),
         });
       } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        const parsedPayload = (() => {
+          try {
+            return RuntimeToolCallSchema.parse(JSON.parse(String(uiRequest.prefill ?? '')));
+          } catch {
+            return null;
+          }
+        })();
+        emitBridgeToolResult({
+          toolCallId: parsedPayload?.toolCallId ?? null,
+          toolName: parsedPayload?.tool ?? null,
+          isError: true,
+          durationMs,
+          error: error instanceof Error ? error.message : String(error),
+          errorCode: error instanceof RuntimeToolBridgeTimeoutError
+            ? error.code
+            : error instanceof SyntaxError || error instanceof z.ZodError
+              ? 'malformed_payload'
+              : error instanceof Error && error.message.startsWith('unsupported Pi RPC extension UI request:')
+                ? 'unsupported_request'
+              : 'execution_error',
+        }, rawRequest);
         sendCommand({
           type: 'extension_ui_response',
           id: uiRequest.id,
@@ -1335,6 +1457,9 @@ export function createEngineAdapter(config: AppConfig): EngineAdapter {
       ...(config.engine.piPath === undefined ? {} : { piPath: config.engine.piPath }),
       ...(config.engine.piVersion === undefined ? {} : { piVersion: config.engine.piVersion }),
       ...(config.engine.timeoutMs === undefined ? {} : { timeoutMs: config.engine.timeoutMs }),
+      ...(config.engine.runtimeToolTimeoutMs === undefined
+        ? {}
+        : { runtimeToolTimeoutMs: config.engine.runtimeToolTimeoutMs }),
     });
   }
   return new FakeEngineAdapter();

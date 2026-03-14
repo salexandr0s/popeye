@@ -60,14 +60,19 @@ Behavior notes:
   - durable rate limiting
   - prompt-injection screening
   - duplicate delivery replay keyed by `(source, chatId, telegramMessageId)`
-- Current in-repo Telegram support includes long-poll receive/send transport in `@popeye/telegram`, using standard control-plane routes rather than a Telegram-specific reply endpoint.
-- Current Telegram relay reply precedence on those routes is:
+- Current in-repo Telegram support includes long-poll receive/send transport in `@popeye/telegram`, using standard control-plane routes plus narrow relay-state endpoints.
+- Control-plane reply packaging is exposed at `GET /v1/runs/:id/reply` with precedence:
   - `completed.output`
   - last assistant `message` event text
   - receipt-derived fallback text
+- Telegram relay-state routes are:
+  - `GET /v1/telegram/relay/checkpoint?workspaceId=...`
+  - `POST /v1/telegram/relay/checkpoint`
+  - `POST /v1/telegram/replies/:chatId/:telegramMessageId/mark-sent`
 - Relay behavior is intentionally thin:
-  - duplicate replayed Telegram ingress responses do not trigger a second reply
+  - duplicate replayed Telegram ingress responses with `telegramDelivery.status === "sent"` do not trigger a second reply
   - denied ingress responses do not trigger a Telegram reply
+  - long-poll replay safety relies on durable checkpoints plus runtime idempotency
 - Telegram ingress status mapping:
   - `403`: disabled / non-private chat / not allowlisted
   - `400`: invalid payload / prompt injection

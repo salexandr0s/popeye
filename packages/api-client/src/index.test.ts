@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, PopeyeApiClient } from './client.js';
+import { ApiError, PopeyeApiClient } from './client.ts';
 
 describe('PopeyeApiClient', () => {
   const originalFetch = globalThis.fetch;
@@ -183,6 +183,49 @@ describe('PopeyeApiClient', () => {
 
     await expect(client.getJob('job-1')).resolves.toMatchObject({ id: 'job-1', lastRunId: 'run-1' });
     await expect(client.getRunReceipt('run-1')).resolves.toMatchObject({ id: 'receipt-1', runId: 'run-1' });
+  });
+
+  it('fetches packaged run replies and Telegram relay state', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, {
+      runId: 'run-1',
+      terminalStatus: 'succeeded',
+      source: 'completed_output',
+      text: 'All green.',
+    });
+    mockFetch(200, null);
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 55,
+      updatedAt: '2026-03-14T00:00:00Z',
+    });
+    mockFetch(200, {
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'sent',
+    });
+
+    await expect(client.getRunReply('run-1')).resolves.toMatchObject({ text: 'All green.' });
+    await expect(client.getTelegramRelayCheckpoint('default')).resolves.toBeNull();
+    await expect(
+      client.commitTelegramRelayCheckpoint({
+        relayKey: 'telegram_long_poll',
+        workspaceId: 'default',
+        lastAcknowledgedUpdateId: 55,
+      }),
+    ).resolves.toMatchObject({ lastAcknowledgedUpdateId: 55 });
+    await expect(
+      client.markTelegramReplySent('777', 9, { workspaceId: 'default', runId: 'run-1' }),
+    ).resolves.toEqual({
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'sent',
+    });
   });
 
   it('encodes memory search options into query params', async () => {

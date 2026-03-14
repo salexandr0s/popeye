@@ -5,9 +5,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { AUTH_COOKIE_NAME, initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '@popeye/runtime-core';
+import { AUTH_COOKIE_NAME, initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '../../runtime-core/src/index.ts';
 
-import { createControlApi } from './index.js';
+import { createControlApi } from './index.ts';
 
 function insertMemoryForPromotion(
   runtime: ReturnType<typeof createRuntimeService>,
@@ -398,9 +398,15 @@ describe('control api', () => {
       jobId: string | null;
       taskId: string | null;
       message: { id: string } | null;
+      telegramDelivery: { chatId: string; telegramMessageId: number; status: string } | null;
     };
     expect(ingressBody.accepted).toBe(true);
     expect(ingressBody.jobId).toBeTruthy();
+    expect(ingressBody.telegramDelivery).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 11,
+      status: 'pending',
+    });
 
     const terminal = ingressBody.jobId
       ? await runtime.waitForJobTerminalState(ingressBody.jobId, 5_000)
@@ -425,12 +431,23 @@ describe('control api', () => {
       url: `/v1/runs/${terminal?.run?.id}/receipt`,
       headers: { authorization: `Bearer ${store.current.token}` },
     });
+    const replyResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal?.run?.id}/reply`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
     expect(receiptResponse.statusCode).toBe(200);
     expect(receiptResponse.json()).toMatchObject({
       runId: terminal?.run?.id,
       jobId: ingressBody.jobId,
       taskId: ingressBody.taskId,
       status: terminal?.receipt?.status,
+    });
+    expect(replyResponse.statusCode).toBe(200);
+    expect(replyResponse.json()).toMatchObject({
+      runId: terminal?.run?.id,
+      terminalStatus: terminal?.receipt?.status,
+      source: 'completed_output',
     });
 
     const messageRow = runtime.databases.app
@@ -481,6 +498,7 @@ describe('control api', () => {
       message: { id: string } | null;
       jobId: string | null;
       taskId: string | null;
+      telegramDelivery: { chatId: string; telegramMessageId: number; status: string } | null;
     };
     const terminal = ingressBody.jobId ? await runtime.waitForJobTerminalState(ingressBody.jobId, 5_000) : null;
 
@@ -509,6 +527,11 @@ describe('control api', () => {
       taskId: ingressBody.taskId,
       status: terminal?.receipt?.status,
     });
+    expect(ingressBody.telegramDelivery).toEqual({
+      chatId: 'chat-7',
+      telegramMessageId: 7,
+      status: 'pending',
+    });
 
     const messageRow = runtime.databases.app
       .prepare('SELECT related_run_id FROM messages WHERE id = ?')
@@ -523,6 +546,170 @@ describe('control api', () => {
       job_id: terminal?.job.id ?? null,
       run_id: terminal?.run?.id ?? null,
     });
+
+    const checkpointBefore = await app.inject({
+      method: 'GET',
+      url: '/v1/telegram/relay/checkpoint?workspaceId=default',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(checkpointBefore.statusCode).toBe(200);
+    expect(checkpointBefore.json()).toBeNull();
+
+    const checkpointSaved = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/relay/checkpoint',
+      headers,
+      payload: { workspaceId: 'default', lastAcknowledgedUpdateId: 88 },
+    });
+    expect(checkpointSaved.statusCode).toBe(200);
+    expect(checkpointSaved.json()).toMatchObject({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 88,
+    });
+
+    const checkpointRegressed = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/relay/checkpoint',
+      headers,
+      payload: { workspaceId: 'default', lastAcknowledgedUpdateId: 12 },
+    });
+    expect(checkpointRegressed.statusCode).toBe(200);
+    expect(checkpointRegressed.json()).toMatchObject({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 88,
+    });
+
+    const markSent = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/replies/chat-7/7/mark-sent',
+      headers,
+      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null },
+    });
+    expect(markSent.statusCode).toBe(200);
+    expect(markSent.json()).toEqual({
+      chatId: 'chat-7',
+      telegramMessageId: 7,
+      status: 'sent',
+    });
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/v1/messages/ingest',
+      headers,
+      payload: { source: 'telegram', senderId: '42', text: 'hello', chatId: 'chat-7', chatType: 'private', telegramMessageId: 7, workspaceId: 'default' },
+    });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json()).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      telegramDelivery: {
+        chatId: 'chat-7',
+        telegramMessageId: 7,
+        status: 'sent',
+      },
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns 404 when saving a telegram relay checkpoint for an unknown workspace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-telegram-checkpoint-missing-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const headers = {
+      authorization: `Bearer ${store.current.token}`,
+      'x-popeye-csrf': issueCsrfToken(readAuthStore(authFile)),
+      'sec-fetch-site': 'same-origin',
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/relay/checkpoint',
+      headers,
+      payload: { workspaceId: 'missing', lastAcknowledgedUpdateId: 1 },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'not_found' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns 409 from /v1/runs/:id/reply when the run is not terminal yet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-run-reply-pending-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    runtime.databases.app.prepare('INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'task-pending',
+      'default',
+      null,
+      'pending run',
+      'hello',
+      'manual',
+      'active',
+      JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 }),
+      'read_only',
+      '2026-03-14T00:00:00.000Z',
+    );
+    runtime.databases.app.prepare('INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'job-pending',
+      'task-pending',
+      'default',
+      'running',
+      0,
+      '2026-03-14T00:00:00.000Z',
+      'run-pending',
+      '2026-03-14T00:00:00.000Z',
+      '2026-03-14T00:00:00.000Z',
+    );
+    runtime.databases.app.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      'run-pending',
+      'job-pending',
+      'task-pending',
+      'default',
+      'session-pending',
+      null,
+      'running',
+      '2026-03-14T00:00:00.000Z',
+      null,
+      null,
+    );
+
+    const app = await createControlApi({ runtime });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/runs/run-pending/reply',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'run_not_terminal' });
 
     await runtime.close();
     await app.close();

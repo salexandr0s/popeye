@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 
-import type { AppConfig, ReceiptRecord } from '@popeye/contracts';
-import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '@popeye/engine-pi';
-import { FailingFakeEngineAdapter } from '@popeye/engine-pi';
-import { initAuthStore } from './auth.js';
-import type { InstructionPreviewContextError } from './instruction-query.js';
-import { classifyFailureFromMessage, createRuntimeService } from './runtime-service.js';
+import type { AppConfig, ReceiptRecord } from '../../contracts/src/index.ts';
+import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../engine-pi/src/index.ts';
+import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
+import { initAuthStore } from './auth.ts';
+import type { InstructionPreviewContextError } from './instruction-query.ts';
+import { classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -382,13 +382,65 @@ describe('PopeyeRuntimeService', () => {
     });
 
     expect(first.accepted).toBe(true);
+    expect(first.telegramDelivery).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 1,
+      status: 'pending',
+    });
     expect(second.accepted).toBe(true);
     expect(second.duplicate).toBe(true);
     expect(second.message?.id).toBe(first.message?.id);
+    expect(second.telegramDelivery).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 1,
+      status: 'pending',
+    });
     const ingressCount = runtime.databases.app.prepare('SELECT COUNT(*) AS count FROM message_ingress').get() as { count: number };
     const jobsCount = runtime.databases.app.prepare('SELECT COUNT(*) AS count FROM jobs').get() as { count: number };
+    const deliveryCount = runtime.databases.app.prepare('SELECT COUNT(*) AS count FROM telegram_reply_deliveries').get() as { count: number };
     expect(ingressCount.count).toBe(1);
     expect(jobsCount.count).toBeGreaterThanOrEqual(1);
+    expect(deliveryCount.count).toBe(1);
+    await runtime.close();
+  });
+
+  it('keeps telegram delivery state isolated per workspace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-dup-ws-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      workspaces: [
+        { id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 },
+        { id: 'ops', name: 'Ops workspace', heartbeatEnabled: false, heartbeatIntervalSeconds: 3600 },
+      ],
+    });
+
+    const first = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'default hello',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 9,
+      workspaceId: 'default',
+    });
+    const second = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'ops hello',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 9,
+      workspaceId: 'ops',
+    });
+
+    expect(first.duplicate).toBe(false);
+    expect(second.duplicate).toBe(false);
+    const deliveryCount = runtime.databases.app
+      .prepare('SELECT COUNT(*) AS count FROM telegram_reply_deliveries WHERE chat_id = ? AND telegram_message_id = ?')
+      .get('chat-1', 9) as { count: number };
+    expect(deliveryCount.count).toBe(2);
     await runtime.close();
   });
 
@@ -417,10 +469,102 @@ describe('PopeyeRuntimeService', () => {
     const ingressRow = runtime.databases.app
       .prepare('SELECT run_id FROM message_ingress WHERE message_id = ?')
       .get(response.message?.id) as { run_id: string | null };
+    const deliveryRow = runtime.databases.app
+      .prepare('SELECT task_id, job_id, run_id, status FROM telegram_reply_deliveries WHERE chat_id = ? AND telegram_message_id = ?')
+      .get('chat-1', 7) as { task_id: string | null; job_id: string | null; run_id: string | null; status: string };
 
     expect(terminal?.run?.id).toBeTruthy();
     expect(messageRow.related_run_id).toBe(terminal?.run?.id);
     expect(ingressRow.run_id).toBe(terminal?.run?.id);
+    expect(deliveryRow).toEqual({
+      task_id: response.taskId,
+      job_id: response.jobId,
+      run_id: terminal?.run?.id ?? null,
+      status: 'pending',
+    });
+    const sent = runtime.markTelegramReplySent('chat-1', 7, {
+      workspaceId: 'default',
+      runId: terminal?.run?.id ?? null,
+    });
+    expect(sent).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 7,
+      status: 'sent',
+    });
+    const duplicateAfterSent = runtime.ingestMessage({
+      source: 'telegram',
+      senderId: '42',
+      text: 'link this run',
+      chatId: 'chat-1',
+      chatType: 'private',
+      telegramMessageId: 7,
+      workspaceId: 'default',
+    });
+    expect(duplicateAfterSent.duplicate).toBe(true);
+    expect(duplicateAfterSent.telegramDelivery).toEqual({
+      chatId: 'chat-1',
+      telegramMessageId: 7,
+      status: 'sent',
+    });
+    await runtime.close();
+  });
+
+  it('persists and reads the durable Telegram relay checkpoint', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-telegram-checkpoint-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+    });
+
+    expect(runtime.getTelegramRelayCheckpoint('default')).toBeNull();
+    const checkpoint = runtime.commitTelegramRelayCheckpoint({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 123,
+    });
+    expect(checkpoint).toMatchObject({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 123,
+    });
+    expect(runtime.getTelegramRelayCheckpoint('default')).toMatchObject({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 123,
+    });
+
+    const regressed = runtime.commitTelegramRelayCheckpoint({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 100,
+    });
+    expect(regressed.lastAcknowledgedUpdateId).toBe(123);
+    expect(runtime.getTelegramRelayCheckpoint('default')).toMatchObject({
+      relayKey: 'telegram_long_poll',
+      workspaceId: 'default',
+      lastAcknowledgedUpdateId: 123,
+    });
+
+    await runtime.close();
+  });
+
+  it('rejects telegram relay checkpoints for unknown workspaces', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-telegram-checkpoint-missing-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+    });
+
+    expect(() =>
+      runtime.commitTelegramRelayCheckpoint({
+        relayKey: 'telegram_long_poll',
+        workspaceId: 'missing',
+        lastAcknowledgedUpdateId: 1,
+      }),
+    ).toThrow('Workspace missing not found');
+
     await runtime.close();
   });
 

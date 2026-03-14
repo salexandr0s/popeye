@@ -11,8 +11,13 @@ import {
   PathIdParamSchema,
   ProjectRecordSchema,
   ProjectRegistrationInputSchema,
+  RunReplySchema,
   RunStateSchema,
   TaskCreateInputSchema,
+  TelegramDeliveryStateSchema,
+  TelegramRelayCheckpointCommitRequestSchema,
+  TelegramRelayCheckpointResponseSchema,
+  TelegramReplyDeliveryMarkSentRequestSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -78,6 +83,10 @@ const RunListQueryParamsSchema = z.object({
 
 const InstructionPreviewQueryParamsSchema = z.object({
   projectId: z.string().min(1).optional(),
+});
+
+const TelegramRelayCheckpointQueryParamsSchema = z.object({
+  workspaceId: z.string().min(1),
 });
 
 function parseIdParam(params: unknown): string {
@@ -373,6 +382,14 @@ export async function createControlApi(
     if (!receipt) return reply.code(404).send({ error: 'not_found' });
     return receipt;
   });
+  app.get('/v1/runs/:id/reply', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const run = dependencies.runtime.getRun(id);
+    if (!run) return reply.code(404).send({ error: 'not_found' });
+    const runReply = dependencies.runtime.getRunReply(id);
+    if (!runReply) return reply.code(409).send({ error: 'run_not_terminal' });
+    return RunReplySchema.parse(runReply);
+  });
   app.get('/v1/runs/:id/events', async (request) =>
     dependencies.runtime.listRunEvents(parseIdParam(request.params)),
   );
@@ -498,6 +515,35 @@ export async function createControlApi(
     const message = dependencies.runtime.getMessage(id);
     if (!message) return reply.code(404).send({ error: 'not_found' });
     return message;
+  });
+  app.get('/v1/telegram/relay/checkpoint', async (request) => {
+    const query = TelegramRelayCheckpointQueryParamsSchema.parse(request.query);
+    return TelegramRelayCheckpointResponseSchema.parse(dependencies.runtime.getTelegramRelayCheckpoint(query.workspaceId));
+  });
+  app.post('/v1/telegram/relay/checkpoint', async (request, reply) => {
+    try {
+      return dependencies.runtime.commitTelegramRelayCheckpoint(
+        TelegramRelayCheckpointCommitRequestSchema.parse(request.body),
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === 'RuntimeNotFoundError') {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      throw error;
+    }
+  });
+  app.post('/v1/telegram/replies/:chatId/:telegramMessageId/mark-sent', async (request, reply) => {
+    const params = z.object({
+      chatId: z.string().min(1),
+      telegramMessageId: z.coerce.number().int().nonnegative(),
+    }).parse(request.params);
+    const body = TelegramReplyDeliveryMarkSentRequestSchema.parse(request.body);
+    const delivery = dependencies.runtime.markTelegramReplySent(params.chatId, params.telegramMessageId, {
+      workspaceId: body.workspaceId,
+      ...(body.runId === undefined ? {} : { runId: body.runId }),
+    });
+    if (!delivery) return reply.code(404).send({ error: 'not_found' });
+    return TelegramDeliveryStateSchema.parse(delivery);
   });
 
   app.get('/v1/usage/summary', async () => dependencies.runtime.getUsageSummary());

@@ -73,6 +73,7 @@ describe('telegram-bridge', () => {
         taskId: 'task-1',
         jobId: 'job-1',
         runId: null,
+        telegramDelivery: { chatId: '777', telegramMessageId: 2, status: 'pending' },
       }),
       getJob: vi.fn<TelegramRunTrackingClient['getJob']>().mockResolvedValue({
         id: 'job-1',
@@ -85,20 +86,39 @@ describe('telegram-bridge', () => {
         createdAt: '2026-01-01T00:00:00Z',
         updatedAt: '2026-01-01T00:00:00Z',
       }),
-      listRunEvents: vi.fn<TelegramRunTrackingClient['listRunEvents']>().mockResolvedValue([
-        { id: 'evt-1', runId: 'run-1', type: 'message', payload: JSON.stringify({ role: 'assistant', text: 'done' }), createdAt: '2026-01-01T00:00:00Z' },
-      ]),
-      getRunReceipt: vi.fn<TelegramRunTrackingClient['getRunReceipt']>().mockResolvedValue(null),
+      getRunReply: vi.fn<TelegramRunTrackingClient['getRunReply']>().mockResolvedValue({
+        runId: 'run-1',
+        terminalStatus: 'succeeded',
+        source: 'assistant_message',
+        text: 'done',
+      }),
+      getTelegramRelayCheckpoint: vi.fn<TelegramRunTrackingClient['getTelegramRelayCheckpoint']>().mockResolvedValue(null),
+      commitTelegramRelayCheckpoint: vi.fn<TelegramRunTrackingClient['commitTelegramRelayCheckpoint']>().mockResolvedValue({
+        relayKey: 'telegram_long_poll',
+        workspaceId: 'default',
+        lastAcknowledgedUpdateId: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      }),
+      markTelegramReplySent: vi.fn<TelegramRunTrackingClient['markTelegramReplySent']>().mockResolvedValue({
+        chatId: '777',
+        telegramMessageId: 2,
+        status: 'sent',
+      }),
     };
 
     const bridge = await startTelegramBridge(config, {
       createBotClient: () => bot,
       createControlClient: () => control,
     });
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await vi.waitFor(() => {
+      expect(control.ingestMessage).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'default', text: 'hello' }));
+      expect(bot.sendMessage).toHaveBeenCalledWith({ chatId: '777', text: 'done', replyToMessageId: 2 });
+    }, { timeout: 1_000 });
     await bridge?.stop();
 
-    expect(control.ingestMessage).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'default', text: 'hello' }));
-    expect(bot.sendMessage).toHaveBeenCalledWith({ chatId: '777', text: 'done', replyToMessageId: 2 });
+    expect(control.markTelegramReplySent).toHaveBeenCalledWith('777', 2, {
+      workspaceId: 'default',
+      runId: 'run-1',
+    });
   });
 });
