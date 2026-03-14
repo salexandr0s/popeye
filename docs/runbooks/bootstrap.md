@@ -27,17 +27,30 @@ corepack prepare pnpm@latest --activate
 ### 3. Clone and install
 
 ```bash
-git clone <repo-url> popeye && cd popeye
+git clone <popeye-repo-url> popeye
+git clone <pi-repo-url> pi
+cd popeye
 pnpm install
 ```
 
-### 4. Create configuration
+### 4. Build the sibling Pi checkout
+
+```bash
+cd ../pi
+npm ci
+npm run build
+cd ../popeye
+```
+
+The default Popeye Pi path is the sibling checkout `../pi`.
+
+### 5. Create configuration
 
 ```bash
 cp config/example.json ~/Library/Application\ Support/Popeye/config.json
 ```
 
-### 5. Set config path
+### 6. Set config path
 
 Add to `~/.zprofile`:
 
@@ -45,35 +58,52 @@ Add to `~/.zprofile`:
 export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
 ```
 
-### 6. Edit configuration
+### 7. Edit configuration
 
-Set `runtimeDataDir`, `authFile`, `engine.command`, `engine.piPath` in config.
+Set `runtimeDataDir`, `authFile`, `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in config.
 
-### 7. Initialize auth
+- `config/example.json` defaults `engine.kind` to `"fake"`; change it to `"pi"` before the first real-engine run
+- `engine.kind` should be `"pi"` when using the real engine
+- `engine.piPath` should usually stay `../pi`
+- `engine.piVersion` must match `../pi/packages/coding-agent/package.json`
+
+### 8. Verify the Pi checkout and version pin
+
+```bash
+pnpm verify:pi-checkout -- --pi-path ../pi
+```
+
+### 9. Initialize auth
 
 ```bash
 pop auth init
 ```
 
-### 8. Test foreground start
+### 10. Test foreground start
 
 ```bash
 pop daemon start
 ```
 
-### 9. Run security audit
+### 11. Run security audit
 
 ```bash
 pop security audit
 ```
 
-### 10. Install as LaunchAgent (optional)
+### 12. Run Pi smoke test
+
+```bash
+pop pi smoke
+```
+
+### 13. Install as LaunchAgent (optional)
 
 ```bash
 pop daemon install && pop daemon load
 ```
 
-### 11. Verify
+### 14. Verify
 
 ```bash
 pop daemon status
@@ -83,5 +113,6 @@ pop daemon status
 
 - **Permission denied** — ensure `runtimeDataDir` exists with `chmod 700`
 - **Daemon fails to start** — check `POPEYE_CONFIG_PATH` is set and valid
+- **Pi version mismatch** — run `pnpm verify:pi-checkout -- --pi-path ../pi` and copy the `packages/coding-agent/package.json` version into `engine.piVersion`
 - **Security audit fails** — most common: directory permissions not 700
 - **LaunchAgent not loading** — check `~/Library/LaunchAgents/` permissions

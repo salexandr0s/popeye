@@ -10,6 +10,7 @@ export default defineConfig({
       'packages/**/src/**/*.test.tsx',
       'apps/**/src/**/*.test.ts',
       'apps/**/src/**/*.test.tsx',
+      'scripts/**/*.test.mjs',
     ],
     coverage: {
       reportsDirectory: '.vitest-coverage',

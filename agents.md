@@ -237,6 +237,13 @@ Before adding engine-like capability, answer: (1) does Pi already do this? (2) d
 - Pin exact engine versions. No floating ranges.
 - Pi fork lives in a separate `pi` repo.
 
+### Contamination checklist for Pi-related changes
+
+- No direct Pi imports, checkout paths, or protocol wiring outside `@popeye/engine-pi`.
+- No piecemeal copied Pi modules in runtime or interface packages.
+- No Pi checkout layout or Pi-only config shapes promoted into Popeye public APIs by accident.
+- If packaging ever changes, vendor the whole Pi fork and keep the `@popeye/engine-pi` boundary intact.
+
 ### Upgrades
 
 - Upgrade deliberately. Never mix Pi upgrades with unrelated runtime changes.
@@ -488,6 +495,7 @@ Before returning work, confirm all:
 - [ ] Kept critical instruction files protected?
 - [ ] Added or updated tests?
 - [ ] Updated docs?
+- [ ] Pi contamination checklist satisfied?
 - [ ] Classified provenance and layer?
 - [ ] Security impact assessed?
 - [ ] Memory impact assessed?

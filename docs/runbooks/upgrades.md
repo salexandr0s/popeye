@@ -12,13 +12,16 @@
 
 1. Stop daemon — `pop daemon stop`
 2. Update `../pi` checkout to target version
-3. Run Pi smoke tests — `pnpm test:pi-smoke`
-4. Review Pi RPC contract (`get_state` / `prompt` / `abort`, JSONL responses + session events)
-5. Update `docs/pi-fork-delta.md` with changes
-6. Run full test suite — `dev-verify`
-7. Start daemon — `pop daemon start`
-8. Verify reconciliation in logs
-9. Commit as isolated changeset
+3. Rebuild Pi — `cd ../pi && npm ci && npm run build && cd ../popeye`
+4. Update the repo pin in `config/example.json` so `engine.piVersion` matches `../pi/packages/coding-agent/package.json`
+5. Verify checkout + version — `pnpm verify:pi-checkout -- --pi-path ../pi`
+6. Run Pi smoke tests — `pnpm test:pi-smoke`
+7. Review Pi RPC contract (`get_state` / `prompt` / `abort`, JSONL responses + session events)
+8. Update `docs/pi-fork-delta.md` with changes
+9. Run full test suite — `dev-verify`
+10. Start daemon — `pop daemon start`
+11. Verify reconciliation in logs
+12. Commit as isolated changeset
 
 ### Rollback
 
@@ -56,6 +59,7 @@
 ## Common failures
 
 - **Pi smoke tests fail** — check `docs/pi-fork-delta.md` for incompatibilities
+- **Pi version check fails** — compare `config/example.json` `engine.piVersion` against `../pi/packages/coding-agent/package.json`
 - **Reconciliation errors** — check for schema changes in `app.db`
 - **Scheduler not running** — verify `daemon_state` table; check logs
 - **Security audit fails** — new checks may flag pre-existing issues

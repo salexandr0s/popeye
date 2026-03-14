@@ -43,6 +43,7 @@ jobs:
         working-directory: external-pi
       - run: npm run build
         working-directory: external-pi
+      - run: pnpm verify:pi-checkout -- --pi-path "${{ github.workspace }}/external-pi" --command "${{ inputs.pi_smoke_command }}" --args-json '${{ inputs.pi_smoke_args_json }}'
       - run: pnpm typecheck
       - run: pnpm test:pi-smoke
         env:

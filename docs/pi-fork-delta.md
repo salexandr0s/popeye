@@ -5,6 +5,7 @@
 - Popeye points to that checkout through `config.engine.piPath`
 - Real Pi mode is selected with `config.engine.kind = "pi"`
 - Engine version is pinned via `config.engine.piVersion` against `packages/coding-agent/package.json`
+- `config/example.json` is the repo-visible Pi pin and must match the Pi `packages/coding-agent/package.json` version
 - Current local upstream shape observed during this rebuild:
   - repo root version: `0.0.3`
   - `packages/coding-agent` version: `0.57.1`
@@ -19,7 +20,7 @@
 ## Current child-process contract
 - Popeye starts the configured Pi command from `config.engine.piPath` and appends `--mode rpc`.
 - If `engine.command === "node"` and `engine.args` is empty, `@popeye/engine-pi` defaults to `packages/coding-agent/dist/cli.js` inside the Pi checkout.
-- The Popeye-owned `EngineAdapter` surface now takes a structured `EngineRunRequest` only, but the Pi RPC bridge still submits a prompt-oriented RPC flow underneath.
+- The runtime now passes a structured `EngineRunRequest` into `@popeye/engine-pi`, but the Pi RPC bridge still submits a prompt-oriented RPC flow underneath.
 - Structured request execution controls currently honored by `@popeye/engine-pi`: `cwd`, `modelOverride`, and `runtimeTools`.
 - Runtime metadata fields such as `workspaceId`, `projectId`, `sessionPolicy`, `instructionSnapshotId`, and `trigger` are accepted but not yet forwarded into Pi RPC semantics.
 - Popeye speaks strict JSONL over stdin/stdout.
@@ -50,6 +51,7 @@
 - Runtime-tool calls are request/response only; no host-side streaming updates are surfaced back into Pi today.
 - Malformed bridge payloads, tool exceptions, and cancellation are handled defensively in `@popeye/engine-pi`, but the carrier still inherits UI-channel awkwardness.
 - Long-term recommendation: replace the workaround with a proper Pi-side host-tool RPC protocol in a future isolated change. See `docs/adr/0010-pi-host-tool-rpc-boundary.md`.
+- If packaging ever changes, ADR 0011 requires vendoring the whole Pi fork behind the same `@popeye/engine-pi` boundary instead of piecemeal copying.
 - Detailed fork patch inventory
 - Compatibility matrix by upstream tag
 - Continuous smoke suite against a real local Pi checkout in CI beyond the manual workflow
