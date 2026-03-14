@@ -61,9 +61,13 @@ Reply behavior:
 - canonical reply text comes from `GET /v1/runs/:id/reply`
 - reply precedence is `completed.output`, then last assistant `message`, then receipt fallback
 - duplicate Telegram deliveries marked `sent` are replay-safe and do not send a second reply
+- the relay now claims delivery as `sending` before `sendMessage`; replayed stale claims are marked `uncertain` instead of being auto-sent again
+- when `sendMessage` succeeds, the relay forwards Telegram's outbound `message_id` into the control plane so the runtime retains delivery evidence for audit/debugging
+- retryable definitive Bot API failures reset delivery back to `pending`; ambiguous transport failures and permanent Bot API failures are marked `uncertain` and require operator follow-up
 - denied ingress is silent at the relay layer; the runtime remains the audit source of truth
-- long-poll progress is durably checkpointed through control-plane relay routes
-- Bot API send failures are retried with bounded backoff
+- long-poll progress is durably checkpointed through control-plane relay routes, and checkpoint commits are monotonic per workspace
+- reply preparation is bounded-concurrent by default, but reply send + checkpoint acknowledgement stay ordered
+- only retryable definitive Bot API failures are retried automatically; ambiguous transport failures are not blindly retried
 
 This package remains a thin bridge. It does not introduce a channel system or bypass the control API.
 

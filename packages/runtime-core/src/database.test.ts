@@ -520,6 +520,7 @@ describe('openRuntimeDatabases', () => {
           '007-instruction-snapshot-project-context',
           '008-telegram-relay-state',
           '009-telegram-relay-workspace-scope',
+          '010-telegram-reply-delivery-observability',
         ]);
 
         const memMigrations = databases.memory
@@ -554,6 +555,7 @@ describe('openRuntimeDatabases', () => {
         expect(migrationIds.map((row) => row.id)).toContain('007-instruction-snapshot-project-context');
         expect(migrationIds.map((row) => row.id)).toContain('008-telegram-relay-state');
         expect(migrationIds.map((row) => row.id)).toContain('009-telegram-relay-workspace-scope');
+        expect(migrationIds.map((row) => row.id)).toContain('010-telegram-reply-delivery-observability');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');
@@ -563,6 +565,9 @@ describe('openRuntimeDatabases', () => {
 
         const snapshotColumns = databases.app.pragma('table_info(instruction_snapshots)') as Array<{ name: string }>;
         expect(snapshotColumns.map((column) => column.name)).toContain('project_id');
+
+        const telegramDeliveryColumns = databases.app.pragma('table_info(telegram_reply_deliveries)') as Array<{ name: string }>;
+        expect(telegramDeliveryColumns.map((column) => column.name)).toContain('sent_telegram_message_id');
 
         const workspace = databases.app.prepare('SELECT id, name, root_path FROM workspaces WHERE id = ?').get('ws-1') as {
           id: string;

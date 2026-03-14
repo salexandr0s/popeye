@@ -60,7 +60,7 @@ describe('telegram-bridge', () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
           return [];
         }),
-      sendMessage: vi.fn<TelegramBotClient['sendMessage']>().mockResolvedValue(undefined),
+      sendMessage: vi.fn<TelegramBotClient['sendMessage']>().mockResolvedValue({ messageId: 901 }),
     };
     const control: TelegramRunTrackingClient = {
       ingestMessage: vi.fn<TelegramRunTrackingClient['ingestMessage']>().mockResolvedValue({
@@ -99,6 +99,21 @@ describe('telegram-bridge', () => {
         lastAcknowledgedUpdateId: 1,
         updatedAt: '2026-01-01T00:00:00Z',
       }),
+      markTelegramReplySending: vi.fn<TelegramRunTrackingClient['markTelegramReplySending']>().mockResolvedValue({
+        chatId: '777',
+        telegramMessageId: 2,
+        status: 'sending',
+      }),
+      markTelegramReplyPending: vi.fn<TelegramRunTrackingClient['markTelegramReplyPending']>().mockResolvedValue({
+        chatId: '777',
+        telegramMessageId: 2,
+        status: 'pending',
+      }),
+      markTelegramReplyUncertain: vi.fn<TelegramRunTrackingClient['markTelegramReplyUncertain']>().mockResolvedValue({
+        chatId: '777',
+        telegramMessageId: 2,
+        status: 'uncertain',
+      }),
       markTelegramReplySent: vi.fn<TelegramRunTrackingClient['markTelegramReplySent']>().mockResolvedValue({
         chatId: '777',
         telegramMessageId: 2,
@@ -119,6 +134,7 @@ describe('telegram-bridge', () => {
     expect(control.markTelegramReplySent).toHaveBeenCalledWith('777', 2, {
       workspaceId: 'default',
       runId: 'run-1',
+      sentTelegramMessageId: 901,
     });
   });
 });

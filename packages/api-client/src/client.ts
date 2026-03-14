@@ -335,10 +335,46 @@ export class PopeyeApiClient {
   async markTelegramReplySent(
     chatId: string,
     telegramMessageId: number,
-    input: { workspaceId: string; runId?: string | null },
+    input: { workspaceId: string; runId?: string | null; sentTelegramMessageId?: number | null },
   ): Promise<TelegramDeliveryState> {
     return this.post(
       `/v1/telegram/replies/${encodeURIComponent(chatId)}/${encodeURIComponent(String(telegramMessageId))}/mark-sent`,
+      input,
+      TelegramDeliveryStateSchema,
+    );
+  }
+
+  async markTelegramReplySending(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState> {
+    return this.post(
+      `/v1/telegram/replies/${encodeURIComponent(chatId)}/${encodeURIComponent(String(telegramMessageId))}/mark-sending`,
+      input,
+      TelegramDeliveryStateSchema,
+    );
+  }
+
+  async markTelegramReplyPending(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState> {
+    return this.post(
+      `/v1/telegram/replies/${encodeURIComponent(chatId)}/${encodeURIComponent(String(telegramMessageId))}/mark-pending`,
+      input,
+      TelegramDeliveryStateSchema,
+    );
+  }
+
+  async markTelegramReplyUncertain(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null; reason?: string | null },
+  ): Promise<TelegramDeliveryState> {
+    return this.post(
+      `/v1/telegram/replies/${encodeURIComponent(chatId)}/${encodeURIComponent(String(telegramMessageId))}/mark-uncertain`,
       input,
       TelegramDeliveryStateSchema,
     );

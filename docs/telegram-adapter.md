@@ -20,7 +20,8 @@ The current mainline package implements:
 - reply text cleanup + fallback receipt formatting (`formatTelegramReply()`, `buildTelegramRunReply()`)
 - durable long-poll checkpoints and reply-delivery markers via the control API
 - duplicate-delivery suppression at the relay layer
-- bounded Bot API send retry behavior
+- bounded concurrent reply preparation with ordered send/ack
+- explicit ambiguous-delivery handling (`pending` → `sending` → `sent` / `uncertain`)
 
 Current in-repo transport is **end-to-end long-polling**. Webhook hosting is still outside the package.
 
@@ -35,8 +36,17 @@ Current in-repo transport is **end-to-end long-polling**. Webhook hosting is sti
    - `completed.output`
    - last assistant `message` text
    - receipt-derived fallback text
-7. After `sendMessage` succeeds, the relay marks the Telegram delivery `sent`, then commits the durable long-poll checkpoint.
-8. Duplicate replayed deliveries already marked `sent` and denied ingress responses do **not** produce a Telegram reply; the runtime remains the audit source of truth.
+7. Before calling Telegram `sendMessage`, the relay durably claims the delivery as `sending`.
+8. After `sendMessage` succeeds, the relay marks the Telegram delivery `sent`, passes the outbound Bot API `message_id` for runtime observability, then commits the durable long-poll checkpoint.
+9. Retryable definitive Bot API failures reset the delivery to `pending` and leave the update unacked so replay can try again.
+10. Ambiguous transport failures, permanent Bot API failures, and replayed stale `sending` deliveries are marked `uncertain`, create `needs_operator_input`, and do **not** auto-send a duplicate reply.
+
+Current delivery semantics are intentionally explicit:
+
+- reply delivery is still not exactly-once, but the relay now prefers duplicate suppression over blind resend when delivery becomes ambiguous
+- a crash between successful `sendMessage` and `mark-sent` now leaves the delivery in durable `sending`; replay marks it `uncertain` instead of auto-sending a duplicate
+- relay checkpoint commits are monotonic max-acks per workspace and do not regress
+- reply preparation is bounded-concurrent, while send + checkpoint acknowledgement stay ordered for correctness
 
 ## Runtime ingress pipeline (for Telegram source)
 
@@ -52,9 +62,9 @@ The runtime service applies these checks in order when `source === "telegram"`:
 
 ## Idempotency
 
-Telegram messages are deduped via an idempotency key: `telegram:{chatId}:{telegramMessageId}`. Duplicate deliveries replay the original response without re-processing.
+Telegram messages are deduped via a workspace-scoped idempotency key: `telegram:{workspaceId}:{chatId}:{telegramMessageId}`. Duplicate deliveries replay the original response without re-processing.
 
-This is also the current restart/offset story for long-poll mode: if Telegram replays an update after daemon restart, the runtime replay is accepted as a duplicate and the relay stays silent rather than sending a second reply.
+This is also the current restart/offset story for long-poll mode: if Telegram replays an update after daemon restart, the runtime replay is accepted as a duplicate. Deliveries already marked `sent` stay silent; deliveries still marked `sending` are escalated to `uncertain` rather than re-sent automatically.
 
 ## Configuration
 

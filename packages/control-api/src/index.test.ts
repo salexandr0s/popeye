@@ -585,7 +585,7 @@ describe('control api', () => {
       method: 'POST',
       url: '/v1/telegram/replies/chat-7/7/mark-sent',
       headers,
-      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null },
+      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null, sentTelegramMessageId: 907 },
     });
     expect(markSent.statusCode).toBe(200);
     expect(markSent.json()).toEqual({
@@ -593,7 +593,6 @@ describe('control api', () => {
       telegramMessageId: 7,
       status: 'sent',
     });
-
     const duplicate = await app.inject({
       method: 'POST',
       url: '/v1/messages/ingest',
@@ -610,6 +609,85 @@ describe('control api', () => {
         status: 'sent',
       },
     });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('exposes Telegram reply delivery state transitions and uncertain-delivery intervention creation', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-telegram-delivery-states-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: true, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const headers = { authorization: `Bearer ${store.current.token}`, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' };
+
+    const ingest = await app.inject({
+      method: 'POST',
+      url: '/v1/messages/ingest',
+      headers,
+      payload: { source: 'telegram', senderId: '42', text: 'hello', chatId: 'chat-9', chatType: 'private', telegramMessageId: 9, workspaceId: 'default' },
+    });
+    expect(ingest.statusCode).toBe(200);
+    const ingressBody = ingest.json() as { jobId: string | null };
+    const terminal = ingressBody.jobId ? await runtime.waitForJobTerminalState(ingressBody.jobId, 5_000) : null;
+
+    const sending = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/replies/chat-9/9/mark-sending',
+      headers,
+      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null },
+    });
+    expect(sending.statusCode).toBe(200);
+    expect(sending.json()).toEqual({
+      chatId: 'chat-9',
+      telegramMessageId: 9,
+      status: 'sending',
+    });
+
+    const pending = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/replies/chat-9/9/mark-pending',
+      headers,
+      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null },
+    });
+    expect(pending.statusCode).toBe(200);
+    expect(pending.json()).toEqual({
+      chatId: 'chat-9',
+      telegramMessageId: 9,
+      status: 'pending',
+    });
+
+    const uncertain = await app.inject({
+      method: 'POST',
+      url: '/v1/telegram/replies/chat-9/9/mark-uncertain',
+      headers,
+      payload: { workspaceId: 'default', runId: terminal?.run?.id ?? null, reason: 'transport failed after send claim' },
+    });
+    expect(uncertain.statusCode).toBe(200);
+    expect(uncertain.json()).toEqual({
+      chatId: 'chat-9',
+      telegramMessageId: 9,
+      status: 'uncertain',
+    });
+    expect(runtime.listInterventions()).toEqual([
+      expect.objectContaining({
+        code: 'needs_operator_input',
+        runId: terminal?.run?.id ?? null,
+        reason: 'transport failed after send claim',
+      }),
+    ]);
 
     await runtime.close();
     await app.close();

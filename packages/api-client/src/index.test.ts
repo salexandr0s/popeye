@@ -207,6 +207,21 @@ describe('PopeyeApiClient', () => {
     mockFetch(200, {
       chatId: '777',
       telegramMessageId: 9,
+      status: 'sending',
+    });
+    mockFetch(200, {
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'pending',
+    });
+    mockFetch(200, {
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'uncertain',
+    });
+    mockFetch(200, {
+      chatId: '777',
+      telegramMessageId: 9,
       status: 'sent',
     });
 
@@ -220,7 +235,28 @@ describe('PopeyeApiClient', () => {
       }),
     ).resolves.toMatchObject({ lastAcknowledgedUpdateId: 55 });
     await expect(
-      client.markTelegramReplySent('777', 9, { workspaceId: 'default', runId: 'run-1' }),
+      client.markTelegramReplySending('777', 9, { workspaceId: 'default', runId: 'run-1' }),
+    ).resolves.toEqual({
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'sending',
+    });
+    await expect(
+      client.markTelegramReplyPending('777', 9, { workspaceId: 'default', runId: 'run-1' }),
+    ).resolves.toEqual({
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'pending',
+    });
+    await expect(
+      client.markTelegramReplyUncertain('777', 9, { workspaceId: 'default', runId: 'run-1', reason: 'transport failed' }),
+    ).resolves.toEqual({
+      chatId: '777',
+      telegramMessageId: 9,
+      status: 'uncertain',
+    });
+    await expect(
+      client.markTelegramReplySent('777', 9, { workspaceId: 'default', runId: 'run-1', sentTelegramMessageId: 901 }),
     ).resolves.toEqual({
       chatId: '777',
       telegramMessageId: 9,

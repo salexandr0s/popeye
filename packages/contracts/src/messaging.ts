@@ -50,7 +50,7 @@ export const MessageIngressRecordSchema = z.object({
 });
 export type MessageIngressRecord = z.infer<typeof MessageIngressRecordSchema>;
 
-export const TelegramDeliveryStatusSchema = z.enum(['pending', 'sent']);
+export const TelegramDeliveryStatusSchema = z.enum(['pending', 'sending', 'sent', 'uncertain']);
 export type TelegramDeliveryStatus = z.infer<typeof TelegramDeliveryStatusSchema>;
 
 export const TelegramDeliveryStateSchema = z.object({

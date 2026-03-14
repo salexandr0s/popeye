@@ -132,8 +132,20 @@ export type TelegramRelayCheckpointCommitRequest = z.infer<typeof TelegramRelayC
 export const TelegramReplyDeliveryMarkSentRequestSchema = z.object({
   workspaceId: z.string().min(1),
   runId: z.string().min(1).nullable().optional(),
+  sentTelegramMessageId: z.number().int().nonnegative().nullable().optional(),
 });
 export type TelegramReplyDeliveryMarkSentRequest = z.infer<typeof TelegramReplyDeliveryMarkSentRequestSchema>;
+
+export const TelegramReplyDeliveryStateUpdateRequestSchema = z.object({
+  workspaceId: z.string().min(1),
+  runId: z.string().min(1).nullable().optional(),
+});
+export type TelegramReplyDeliveryStateUpdateRequest = z.infer<typeof TelegramReplyDeliveryStateUpdateRequestSchema>;
+
+export const TelegramReplyDeliveryMarkUncertainRequestSchema = TelegramReplyDeliveryStateUpdateRequestSchema.extend({
+  reason: z.string().min(1).max(1_000).nullable().optional(),
+});
+export type TelegramReplyDeliveryMarkUncertainRequest = z.infer<typeof TelegramReplyDeliveryMarkUncertainRequestSchema>;
 
 
 export const WorkspaceListItemSchema = WorkspaceRecordSchema;

@@ -32,6 +32,8 @@
 - When runtime-owned tools are supplied, `@popeye/engine-pi` generates a temporary Pi extension, loads it with `--extension`, and tunnels tool calls through `extension_ui_request(method:"editor", title:"popeye.runtime_tool")` / `extension_ui_response(value)`.
 - That path is explicitly a Popeye-owned workaround over Pi's extension UI carrier, not a first-class Pi host-tool RPC protocol.
 - Popeye bounds each bridged runtime-tool call with `config.engine.runtimeToolTimeoutMs` (default `30000`) and emits structured bridge diagnostics through normalized `tool_call` / `tool_result` events.
+- That timeout is a Popeye-side wait bound only; it does not cancel the underlying host tool execution.
+- When a timed-out host tool settles later, `@popeye/engine-pi` suppresses the late settlement and records a diagnostic warning when it is observed before run completion.
 - Popeye preserves stderr as diagnostic evidence and maps it into runtime failures when needed.
 - Session refs are taken from `get_state.sessionId` and normalized into Popeye `session` events.
 - Usage is derived from the latest assistant message usage and normalized into Popeye `usage` events, with zero-value defaults when Pi provides none.
@@ -51,6 +53,7 @@
 - The runtime-tool bridge is a host-owned workaround over Pi RPC editor dialogs, not a first-class upstream host-tool callback protocol.
 - Runtime-tool calls are request/response only; no host-side streaming updates are surfaced back into Pi today.
 - Malformed bridge payloads, tool exceptions, timeouts, and cancellation are handled defensively in `@popeye/engine-pi`, but the carrier still inherits UI-channel awkwardness.
+- Timeout hardening improves observability, but it does not change the underlying limitation that the host tool promise keeps running unless Pi gains native host-tool cancellation semantics.
 - Long-term recommendation: replace the workaround with a proper Pi-side host-tool RPC protocol in a future isolated change. See `docs/adr/0010-pi-host-tool-rpc-boundary.md`.
 - If packaging ever changes, ADR 0011 requires vendoring the whole Pi fork behind the same `@popeye/engine-pi` boundary instead of piecemeal copying.
 - Detailed fork patch inventory

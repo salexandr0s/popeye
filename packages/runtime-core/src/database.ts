@@ -295,6 +295,12 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_reply_deliveries_chat_message ON telegram_reply_deliveries (workspace_id, chat_id, telegram_message_id);',
     ],
   },
+  {
+    id: '010-telegram-reply-delivery-observability',
+    statements: [
+      'ALTER TABLE telegram_reply_deliveries ADD COLUMN sent_telegram_message_id INTEGER;',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

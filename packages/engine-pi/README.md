@@ -73,6 +73,11 @@ Notes:
   a first-class upstream host-tool RPC protocol
 - Popeye bounds each bridged runtime-tool call with `engine.runtimeToolTimeoutMs`
   (default `30000`) and emits structured bridge `tool_call` / `tool_result` diagnostics
+- a runtime-tool timeout is a Popeye-side bridge race only: the bridge returns
+  a timeout result, but it does not cancel the underlying tool promise
+- when a timed-out tool settles later, `@popeye/engine-pi` suppresses the late
+  settlement and records it in adapter warnings when it is observed before run
+  completion
 - adapter tests cover malformed bridge payloads, tool exceptions, cancellation
   during an in-flight bridge request, multiple tool calls in a single run, and timeout behavior
 

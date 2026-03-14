@@ -52,10 +52,25 @@ export interface TelegramRunTrackingClient extends TelegramIngressClient {
   getRunReply(runId: string): Promise<RunReply>;
   getTelegramRelayCheckpoint(workspaceId: string): Promise<TelegramRelayCheckpoint | null>;
   commitTelegramRelayCheckpoint(input: TelegramRelayCheckpointCommitRequest): Promise<TelegramRelayCheckpoint>;
-  markTelegramReplySent(
+  markTelegramReplySending(
     chatId: string,
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState>;
+  markTelegramReplyPending(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null },
+  ): Promise<TelegramDeliveryState>;
+  markTelegramReplyUncertain(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null; reason?: string | null },
+  ): Promise<TelegramDeliveryState>;
+  markTelegramReplySent(
+    chatId: string,
+    telegramMessageId: number,
+    input: { workspaceId: string; runId?: string | null; sentTelegramMessageId?: number | null },
   ): Promise<TelegramDeliveryState>;
 }
 
@@ -65,9 +80,13 @@ export interface TelegramSendMessageInput {
   replyToMessageId?: number;
 }
 
+export interface TelegramSentMessage {
+  messageId: number;
+}
+
 export interface TelegramBotClient {
   getUpdates(options?: { offset?: number; timeoutSeconds?: number }): Promise<TelegramUpdate[]>;
-  sendMessage(input: TelegramSendMessageInput): Promise<void>;
+  sendMessage(input: TelegramSendMessageInput): Promise<TelegramSentMessage>;
 }
 
 export interface TelegramBotClientOptions {
@@ -86,10 +105,38 @@ export interface TelegramLongPollRelayOptions {
   jobTimeoutMs?: number;
   sendRetryAttempts?: number;
   sendRetryDelayMs?: number;
+  maxConcurrentPreparations?: number;
 }
 
 const TERMINAL_JOB_STATUSES = new Set<JobRecord['status']>(['succeeded', 'failed_final', 'cancelled']);
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+
+export class TelegramBotApiError extends Error {
+  readonly kind = 'api';
+
+  constructor(
+    readonly method: string,
+    readonly status: number,
+    message?: string,
+  ) {
+    super(message ?? `Telegram Bot API ${method} failed with ${status}`);
+    this.name = 'TelegramBotApiError';
+  }
+}
+
+export class TelegramBotTransportError extends Error {
+  readonly kind = 'transport';
+  override readonly cause: unknown;
+
+  constructor(
+    readonly method: string,
+    cause?: unknown,
+  ) {
+    super(`Telegram Bot API ${method} transport failed`);
+    this.name = 'TelegramBotTransportError';
+    this.cause = cause;
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -167,17 +214,22 @@ export function createTelegramBotClient(options: TelegramBotClientOptions): Tele
   const baseUrl = (options.baseUrl ?? 'https://api.telegram.org').replace(/\/$/, '');
 
   async function request<T>(method: string, body: Record<string, unknown>): Promise<T> {
-    const response = await fetchImpl(`${baseUrl}/bot${options.token}/${method}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(`${baseUrl}/bot${options.token}/${method}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new TelegramBotTransportError(method, error);
+    }
     if (!response.ok) {
-      throw new Error(`Telegram Bot API ${method} failed with ${response.status}`);
+      throw new TelegramBotApiError(method, response.status);
     }
     const payload = await response.json() as { ok?: boolean; result?: T; description?: string };
     if (!payload.ok) {
-      throw new Error(payload.description ?? `Telegram Bot API ${method} returned not ok`);
+      throw new TelegramBotApiError(method, response.status, payload.description ?? `Telegram Bot API ${method} returned not ok`);
     }
     return payload.result as T;
   }
@@ -191,13 +243,18 @@ export function createTelegramBotClient(options: TelegramBotClientOptions): Tele
       });
     },
     async sendMessage(input) {
-      await request('sendMessage', {
+      const result = await request<{ message_id: number }>('sendMessage', {
         chat_id: input.chatId,
         text: truncateTelegramText(input.text),
         reply_to_message_id: input.replyToMessageId,
       });
+      return { messageId: result.message_id };
     },
   };
+}
+
+function isRetryableTelegramSendError(error: unknown): error is TelegramBotApiError {
+  return error instanceof TelegramBotApiError && (error.status === 429 || error.status >= 500);
 }
 
 async function waitForTerminalJob(
@@ -221,14 +278,13 @@ async function sendTelegramReplyWithRetry(
   bot: TelegramBotClient,
   input: TelegramSendMessageInput,
   options: { attempts: number; delayMs: number },
-): Promise<void> {
+): Promise<TelegramSentMessage> {
   const maxAttempts = Math.max(1, options.attempts);
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      await bot.sendMessage(input);
-      return;
+      return await bot.sendMessage(input);
     } catch (error) {
-      if (attempt >= maxAttempts) {
+      if (attempt >= maxAttempts || !isRetryableTelegramSendError(error)) {
         throw error;
       }
       await sleep(options.delayMs);
@@ -236,11 +292,59 @@ async function sendTelegramReplyWithRetry(
   }
 }
 
+function buildTelegramDeliveryKey(workspaceId: string, chatId: string, telegramMessageId: number): string {
+  return `${workspaceId}:${chatId}:${telegramMessageId}`;
+}
+
+function describeTelegramSendFailure(error: unknown): string {
+  if (error instanceof TelegramBotApiError) {
+    return `Telegram Bot API sendMessage failed with status ${error.status}: ${error.message}`;
+  }
+  if (error instanceof TelegramBotTransportError) {
+    return `${error.message}${error.cause instanceof Error ? `: ${error.cause.message}` : ''}`;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+interface PreparedTelegramAckUpdate {
+  kind: 'ack';
+  updateId: number;
+}
+
+interface PreparedTelegramSendUpdate {
+  kind: 'send';
+  updateId: number;
+  deliveryKey: string;
+  chatId: string;
+  telegramMessageId: number;
+  runId: string;
+  text: string;
+}
+
+interface PreparedTelegramUncertainUpdate {
+  kind: 'uncertain';
+  updateId: number;
+  deliveryKey: string;
+  chatId: string;
+  telegramMessageId: number;
+  runId: string | null;
+  reason: string;
+}
+
+type PreparedTelegramUpdate =
+  | PreparedTelegramAckUpdate
+  | PreparedTelegramSendUpdate
+  | PreparedTelegramUncertainUpdate;
+
 export class TelegramLongPollRelay {
   private nextOffset: number | undefined;
   private running = false;
   private loopPromise: Promise<void> | null = null;
   private checkpointLoaded = false;
+  private readonly activeDeliveryKeys = new Set<string>();
 
   constructor(private readonly options: TelegramLongPollRelayOptions) {}
 
@@ -266,9 +370,7 @@ export class TelegramLongPollRelay {
             ? { timeoutSeconds: longPollTimeoutSeconds }
             : { offset: this.nextOffset, timeoutSeconds: longPollTimeoutSeconds },
         );
-        for (const update of [...updates].sort((left, right) => left.update_id - right.update_id)) {
-          await this.handleUpdate(update);
-        }
+        await this.processUpdates([...updates].sort((left, right) => left.update_id - right.update_id));
       } catch {
         if (!this.running) break;
         await sleep(retryDelayMs);
@@ -292,54 +394,159 @@ export class TelegramLongPollRelay {
     this.nextOffset = updateId + 1;
   }
 
-  private async handleUpdate(update: TelegramUpdate): Promise<void> {
-    const normalized = normalizeTelegramUpdate(update);
-    if (!normalized) {
-      await this.acknowledgeUpdate(update.update_id);
+  private async processUpdates(updates: TelegramUpdate[]): Promise<void> {
+    if (updates.length === 0) {
       return;
     }
 
+    const maxConcurrentPreparations = Math.max(1, this.options.maxConcurrentPreparations ?? 4);
+    const pendingPreparations = updates
+      .slice(0, maxConcurrentPreparations)
+      .map((update) => this.prepareUpdate(update));
+
+    let nextIndex = pendingPreparations.length;
+    try {
+      while (pendingPreparations.length > 0) {
+        const prepared = await pendingPreparations[0]!;
+        pendingPreparations.shift();
+        if (nextIndex < updates.length) {
+          pendingPreparations.push(this.prepareUpdate(updates[nextIndex]!));
+          nextIndex += 1;
+        }
+        await this.completePreparedUpdate(prepared);
+      }
+    } catch (error) {
+      await Promise.allSettled(pendingPreparations);
+      this.activeDeliveryKeys.clear();
+      throw error;
+    }
+  }
+
+  private async prepareUpdate(update: TelegramUpdate): Promise<PreparedTelegramUpdate> {
+    const normalized = normalizeTelegramUpdate(update);
+    if (!normalized) {
+      return { kind: 'ack', updateId: update.update_id };
+    }
+
+    const deliveryKey = buildTelegramDeliveryKey(this.options.workspaceId, normalized.chatId, normalized.telegramMessageId);
     const ingress = await ingestTelegramUpdate(this.options.control, update, this.options.workspaceId);
     if (!ingress) {
-      await this.acknowledgeUpdate(update.update_id);
-      return;
+      return { kind: 'ack', updateId: update.update_id };
     }
     if (!ingress.accepted) {
-      await this.acknowledgeUpdate(update.update_id);
-      return;
+      return { kind: 'ack', updateId: update.update_id };
     }
-    if (ingress.duplicate && ingress.telegramDelivery?.status === 'sent') {
-      await this.acknowledgeUpdate(update.update_id);
-      return;
+    if (ingress.duplicate) {
+      if (ingress.telegramDelivery?.status === 'sent' || ingress.telegramDelivery?.status === 'uncertain') {
+        return { kind: 'ack', updateId: update.update_id };
+      }
+      if (this.activeDeliveryKeys.has(deliveryKey)) {
+        return { kind: 'ack', updateId: update.update_id };
+      }
+      if (ingress.telegramDelivery?.status === 'sending') {
+        return {
+          kind: 'uncertain',
+          updateId: update.update_id,
+          deliveryKey,
+          chatId: normalized.chatId,
+          telegramMessageId: normalized.telegramMessageId,
+          runId: ingress.runId ?? null,
+          reason: 'Telegram delivery replay observed after a durable send claim; original send may have succeeded before relay recovery.',
+        };
+      }
     }
     if (!ingress.jobId) {
       throw new Error(`Telegram ingress ${ingress.taskId ?? 'unknown'} is missing job linkage`);
     }
 
-    const job = await waitForTerminalJob(
-      this.options.control,
-      ingress.jobId,
-      this.options.jobPollIntervalMs ?? 500,
-      this.options.jobTimeoutMs ?? 300_000,
-    );
-    if (!job?.lastRunId) {
-      throw new Error(`Telegram job ${ingress.jobId} reached terminal state without a run`);
+    this.activeDeliveryKeys.add(deliveryKey);
+
+    try {
+      const job = await waitForTerminalJob(
+        this.options.control,
+        ingress.jobId,
+        this.options.jobPollIntervalMs ?? 500,
+        this.options.jobTimeoutMs ?? 300_000,
+      );
+      if (!job?.lastRunId) {
+        throw new Error(`Telegram job ${ingress.jobId} reached terminal state without a run`);
+      }
+
+      const reply = await this.options.control.getRunReply(job.lastRunId);
+      return {
+        kind: 'send',
+        updateId: update.update_id,
+        deliveryKey,
+        chatId: normalized.chatId,
+        telegramMessageId: normalized.telegramMessageId,
+        runId: job.lastRunId,
+        text: formatTelegramReply(reply.text),
+      };
+    } catch (error) {
+      this.activeDeliveryKeys.delete(deliveryKey);
+      throw error;
+    }
+  }
+
+  private async completePreparedUpdate(prepared: PreparedTelegramUpdate): Promise<void> {
+    if (prepared.kind === 'ack') {
+      await this.acknowledgeUpdate(prepared.updateId);
+      return;
     }
 
-    const reply = await this.options.control.getRunReply(job.lastRunId);
+    try {
+      if (prepared.kind === 'uncertain') {
+        await this.options.control.markTelegramReplyUncertain(prepared.chatId, prepared.telegramMessageId, {
+          workspaceId: this.options.workspaceId,
+          runId: prepared.runId,
+          reason: prepared.reason,
+        });
+        await this.acknowledgeUpdate(prepared.updateId);
+        return;
+      }
 
-    await sendTelegramReplyWithRetry(this.options.bot, {
-      chatId: normalized.chatId,
-      text: formatTelegramReply(reply.text),
-      replyToMessageId: normalized.telegramMessageId,
-    }, {
-      attempts: this.options.sendRetryAttempts ?? 3,
-      delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
-    });
-    await this.options.control.markTelegramReplySent(normalized.chatId, normalized.telegramMessageId, {
-      workspaceId: this.options.workspaceId,
-      runId: job.lastRunId,
-    });
-    await this.acknowledgeUpdate(update.update_id);
+      const delivery = await this.options.control.markTelegramReplySending(prepared.chatId, prepared.telegramMessageId, {
+        workspaceId: this.options.workspaceId,
+        runId: prepared.runId,
+      });
+      if (delivery.status === 'sent' || delivery.status === 'uncertain') {
+        await this.acknowledgeUpdate(prepared.updateId);
+        return;
+      }
+
+      try {
+        const sentMessage = await sendTelegramReplyWithRetry(this.options.bot, {
+          chatId: prepared.chatId,
+          text: prepared.text,
+          replyToMessageId: prepared.telegramMessageId,
+        }, {
+          attempts: this.options.sendRetryAttempts ?? 3,
+          delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
+        });
+        await this.options.control.markTelegramReplySent(prepared.chatId, prepared.telegramMessageId, {
+          workspaceId: this.options.workspaceId,
+          runId: prepared.runId,
+          sentTelegramMessageId: sentMessage.messageId,
+        });
+        await this.acknowledgeUpdate(prepared.updateId);
+      } catch (error) {
+        if (isRetryableTelegramSendError(error)) {
+          await this.options.control.markTelegramReplyPending(prepared.chatId, prepared.telegramMessageId, {
+            workspaceId: this.options.workspaceId,
+            runId: prepared.runId,
+          });
+          throw error;
+        }
+
+        await this.options.control.markTelegramReplyUncertain(prepared.chatId, prepared.telegramMessageId, {
+          workspaceId: this.options.workspaceId,
+          runId: prepared.runId,
+          reason: describeTelegramSendFailure(error),
+        });
+        await this.acknowledgeUpdate(prepared.updateId);
+      }
+    } finally {
+      this.activeDeliveryKeys.delete(prepared.deliveryKey);
+    }
   }
 }

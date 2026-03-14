@@ -37,6 +37,9 @@ protocol** exposed by Pi itself and consumed only through `@popeye/engine-pi`.
   which is more fragile than a typed RPC envelope.
 - Cancellation semantics are indirect: Popeye cancels the run, not the
   individual tool call.
+- Timeout handling is also host-side only today: Popeye can stop waiting on a
+  tool call and suppress late settlement, but it cannot actually cancel the
+  underlying host tool execution.
 - Host-side streaming progress and partial tool updates are not surfaced back
   into Pi.
 - Error handling works, but only by emulating tool results over a UI response
@@ -127,4 +130,6 @@ mechanism for host tools with the following minimum properties:
 - No immediate Pi protocol change is required for this pass.
 - The current bridge remains supported, tested, and explicitly documented as a
   workaround.
+- Recent hardening improves timeout diagnostics and late-settlement suppression,
+  but does not change the long-term architectural target.
 - Future Pi work now has a clear architectural target and migration path.
