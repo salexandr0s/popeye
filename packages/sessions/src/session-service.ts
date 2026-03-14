@@ -34,6 +34,8 @@ export class SessionService {
       reason,
       createdAt: nowIso(),
       resolvedAt: null,
+      updatedAt: null,
+      resolutionNote: null,
     };
     this.deps.app.prepare('INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       intervention.id,
@@ -52,8 +54,9 @@ export class SessionService {
     return row ? mapInterventionRow(row) : null;
   }
 
-  resolveIntervention(interventionId: string): InterventionRecord | null {
-    this.deps.app.prepare('UPDATE interventions SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', nowIso(), interventionId);
+  resolveIntervention(interventionId: string, resolutionNote?: string): InterventionRecord | null {
+    const now = nowIso();
+    this.deps.app.prepare('UPDATE interventions SET status = ?, resolved_at = ?, updated_at = ?, resolution_note = COALESCE(?, resolution_note) WHERE id = ?').run('resolved', now, now, resolutionNote ?? null, interventionId);
     return this.getIntervention(interventionId);
   }
 }

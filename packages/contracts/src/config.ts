@@ -24,6 +24,7 @@ export const TelegramConfigSchema = z.object({
   maxMessagesPerMinute: z.number().int().positive().default(10),
   globalMaxMessagesPerMinute: z.number().int().positive().default(30),
   rateLimitWindowSeconds: z.number().int().positive().default(60),
+  maxConcurrentPreparations: z.number().int().positive().min(1).max(16).default(4),
 }).superRefine((data, ctx) => {
   if (data.enabled && !data.allowedUserId) {
     ctx.addIssue({

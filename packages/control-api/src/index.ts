@@ -16,12 +16,16 @@ import {
   RunReplySchema,
   RunStateSchema,
   TaskCreateInputSchema,
+  TelegramDeliveryRecordSchema,
+  TelegramDeliveryResolutionRecordSchema,
+  TelegramDeliveryResolutionRequestSchema,
   TelegramDeliveryStateSchema,
   TelegramRelayCheckpointCommitRequestSchema,
   TelegramRelayCheckpointResponseSchema,
   TelegramReplyDeliveryMarkUncertainRequestSchema,
   TelegramReplyDeliveryMarkSentRequestSchema,
   TelegramReplyDeliveryStateUpdateRequestSchema,
+  TelegramSendAttemptRecordSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -30,6 +34,8 @@ import {
   AUTH_COOKIE_NAME,
   InstructionPreviewContextError,
   MessageIngressError,
+  RuntimeConflictError,
+  RuntimeNotFoundError,
   issueCsrfToken,
   serializeAuthCookie,
   serializeCsrfCookie,
@@ -430,9 +436,10 @@ export async function createControlApi(
     }
   });
   app.get('/v1/interventions', async () => dependencies.runtime.listInterventions());
-  app.post('/v1/interventions/:id/resolve', async (request) =>
-    dependencies.runtime.resolveIntervention(parseIdParam(request.params)),
-  );
+  app.post('/v1/interventions/:id/resolve', async (request) => {
+    const body = z.object({ resolutionNote: z.string().max(2000).optional() }).default({}).parse(request.body ?? {});
+    return dependencies.runtime.resolveIntervention(parseIdParam(request.params), body.resolutionNote);
+  });
 
   app.get('/v1/memory/search', async (request) => {
     const params = MemorySearchQueryParamsSchema.parse(request.query);
@@ -595,6 +602,85 @@ export async function createControlApi(
     });
     if (!delivery) return reply.code(404).send({ error: 'not_found' });
     return TelegramDeliveryStateSchema.parse(delivery);
+  });
+
+  // --- Telegram delivery resolution & send-attempt routes ---
+
+  const TelegramDeliveryListQuerySchema = z.object({
+    workspaceId: z.string().min(1).optional(),
+  });
+
+  app.get('/v1/telegram/deliveries/uncertain', async (request) => {
+    const query = TelegramDeliveryListQuerySchema.parse(request.query);
+    return z.array(TelegramDeliveryRecordSchema).parse(
+      dependencies.runtime.listUncertainDeliveries(query.workspaceId),
+    );
+  });
+
+  app.get('/v1/telegram/deliveries/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const delivery = dependencies.runtime.getDeliveryById(id);
+    if (!delivery) return reply.code(404).send({ error: 'not_found' });
+    return TelegramDeliveryRecordSchema.parse(delivery);
+  });
+
+  app.post('/v1/telegram/deliveries/:id/resolve', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = TelegramDeliveryResolutionRequestSchema.parse(request.body);
+    try {
+      return TelegramDeliveryResolutionRecordSchema.parse(
+        dependencies.runtime.resolveTelegramDelivery(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/telegram/deliveries/:id/resolutions', async (request) => {
+    const id = parseIdParam(request.params);
+    return z.array(TelegramDeliveryResolutionRecordSchema).parse(
+      dependencies.runtime.listDeliveryResolutions(id),
+    );
+  });
+
+  app.get('/v1/telegram/deliveries/:id/attempts', async (request) => {
+    const id = parseIdParam(request.params);
+    return z.array(TelegramSendAttemptRecordSchema).parse(
+      dependencies.runtime.listTelegramSendAttempts(id),
+    );
+  });
+
+  app.post('/v1/telegram/send-attempts', async (request, reply) => {
+    const body = z.object({
+      deliveryId: z.string().min(1).optional(),
+      chatId: z.string().min(1).optional(),
+      telegramMessageId: z.number().int().optional(),
+      workspaceId: z.string().min(1),
+      startedAt: z.string().min(1),
+      finishedAt: z.string().optional(),
+      runId: z.string().optional(),
+      contentHash: z.string().min(1),
+      outcome: z.enum(['sent', 'retryable_failure', 'permanent_failure', 'ambiguous']),
+      sentTelegramMessageId: z.number().int().optional(),
+      errorSummary: z.string().max(500).optional(),
+      source: z.string().optional(),
+    }).parse(request.body);
+    try {
+      return TelegramSendAttemptRecordSchema.parse(
+        dependencies.runtime.recordTelegramSendAttempt(body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/usage/summary', async () => dependencies.runtime.getUsageSummary());

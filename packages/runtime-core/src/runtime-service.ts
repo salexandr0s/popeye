@@ -28,8 +28,12 @@ import type {
   TaskCreateInput,
   TaskRecord,
   TelegramDeliveryState,
+  TelegramDeliveryRecord,
+  TelegramDeliveryResolutionRecord,
+  TelegramDeliveryResolutionRequest,
   TelegramRelayCheckpoint,
   TelegramRelayCheckpointCommitRequest,
+  TelegramSendAttemptRecord,
   UsageSummary,
   WorkspaceRecord,
   WorkspaceRegistrationInput,
@@ -40,8 +44,11 @@ import {
   RunEventRecordSchema,
   RunRecordSchema,
   RunReplySchema,
+  TelegramDeliveryRecordSchema,
+  TelegramDeliveryResolutionRecordSchema,
   TelegramDeliveryStateSchema,
   TelegramRelayCheckpointSchema,
+  TelegramSendAttemptRecordSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
@@ -108,6 +115,15 @@ export class RuntimeNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RuntimeNotFoundError';
+  }
+}
+
+export class RuntimeConflictError extends Error {
+  readonly errorCode = 'conflict';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RuntimeConflictError';
   }
 }
 
@@ -229,10 +245,55 @@ const TelegramRelayCheckpointRowSchema = z.object({
 const TelegramReplyDeliveryRowSchema = z.object({
   chat_id: z.string(),
   telegram_message_id: z.coerce.number().int(),
-  status: z.enum(['pending', 'sending', 'sent', 'uncertain']),
+  status: z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']),
   sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
   sent_at: z.string().nullable().optional(),
   run_id: z.string().nullable().optional(),
+});
+
+const TelegramReplyDeliveryFullRowSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  chat_id: z.string(),
+  telegram_message_id: z.coerce.number().int(),
+  message_ingress_id: z.string(),
+  task_id: z.string().nullable(),
+  job_id: z.string().nullable(),
+  run_id: z.string().nullable(),
+  status: z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']),
+  sent_at: z.string().nullable(),
+  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const TelegramDeliveryResolutionRowSchema = z.object({
+  id: z.string(),
+  delivery_id: z.string(),
+  workspace_id: z.string(),
+  action: z.enum(['confirm_sent', 'resend', 'abandon']),
+  intervention_id: z.string().nullable(),
+  operator_note: z.string().nullable(),
+  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
+  previous_status: z.string(),
+  new_status: z.string(),
+  created_at: z.string(),
+});
+
+const TelegramSendAttemptRowSchema = z.object({
+  id: z.string(),
+  delivery_id: z.string(),
+  workspace_id: z.string(),
+  attempt_number: z.coerce.number().int(),
+  started_at: z.string(),
+  finished_at: z.string().nullable(),
+  run_id: z.string().nullable(),
+  content_hash: z.string(),
+  outcome: z.enum(['sent', 'retryable_failure', 'permanent_failure', 'ambiguous']),
+  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
+  error_summary: z.string().nullable(),
+  source: z.string(),
+  created_at: z.string(),
 });
 
 const RuntimeMemorySearchToolInputSchema = z.object({
@@ -579,8 +640,8 @@ export class PopeyeRuntimeService {
     return this.sessionService.listInterventions();
   }
 
-  resolveIntervention(interventionId: string): InterventionRecord | null {
-    return this.sessionService.resolveIntervention(interventionId);
+  resolveIntervention(interventionId: string, resolutionNote?: string): InterventionRecord | null {
+    return this.sessionService.resolveIntervention(interventionId, resolutionNote);
   }
 
   getSecurityAuditFindings() {
@@ -778,6 +839,221 @@ export class PopeyeRuntimeService {
       .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
       .get(input.workspaceId, chatId, telegramMessageId);
     return row ? mapTelegramDeliveryRow(row) : null;
+  }
+
+  // --- Telegram delivery resolution (Step 1) ---
+
+  private mapFullDeliveryRow(row: unknown): TelegramDeliveryRecord {
+    const parsed = TelegramReplyDeliveryFullRowSchema.parse(row);
+    return TelegramDeliveryRecordSchema.parse({
+      id: parsed.id,
+      workspaceId: parsed.workspace_id,
+      chatId: parsed.chat_id,
+      telegramMessageId: parsed.telegram_message_id,
+      messageIngressId: parsed.message_ingress_id,
+      taskId: parsed.task_id,
+      jobId: parsed.job_id,
+      runId: parsed.run_id,
+      status: parsed.status,
+      sentAt: parsed.sent_at,
+      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
+      createdAt: parsed.created_at,
+      updatedAt: parsed.updated_at,
+    });
+  }
+
+  private mapResolutionRow(row: unknown): TelegramDeliveryResolutionRecord {
+    const parsed = TelegramDeliveryResolutionRowSchema.parse(row);
+    return TelegramDeliveryResolutionRecordSchema.parse({
+      id: parsed.id,
+      deliveryId: parsed.delivery_id,
+      workspaceId: parsed.workspace_id,
+      action: parsed.action,
+      interventionId: parsed.intervention_id,
+      operatorNote: parsed.operator_note,
+      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
+      previousStatus: parsed.previous_status,
+      newStatus: parsed.new_status,
+      createdAt: parsed.created_at,
+    });
+  }
+
+  private mapSendAttemptRow(row: unknown): TelegramSendAttemptRecord {
+    const parsed = TelegramSendAttemptRowSchema.parse(row);
+    return TelegramSendAttemptRecordSchema.parse({
+      id: parsed.id,
+      deliveryId: parsed.delivery_id,
+      workspaceId: parsed.workspace_id,
+      attemptNumber: parsed.attempt_number,
+      startedAt: parsed.started_at,
+      finishedAt: parsed.finished_at,
+      runId: parsed.run_id,
+      contentHash: parsed.content_hash,
+      outcome: parsed.outcome,
+      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
+      errorSummary: parsed.error_summary,
+      source: parsed.source,
+      createdAt: parsed.created_at,
+    });
+  }
+
+  listUncertainDeliveries(workspaceId?: string): TelegramDeliveryRecord[] {
+    const sql = workspaceId
+      ? "SELECT * FROM telegram_reply_deliveries WHERE status = 'uncertain' AND workspace_id = ?"
+      : "SELECT * FROM telegram_reply_deliveries WHERE status = 'uncertain'";
+    const rows = workspaceId
+      ? this.databases.app.prepare(sql).all(workspaceId)
+      : this.databases.app.prepare(sql).all();
+    return rows.map((row) => this.mapFullDeliveryRow(row));
+  }
+
+  getDeliveryById(id: string): TelegramDeliveryRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM telegram_reply_deliveries WHERE id = ?').get(id);
+    return row ? this.mapFullDeliveryRow(row) : null;
+  }
+
+  resolveTelegramDelivery(deliveryId: string, input: TelegramDeliveryResolutionRequest): TelegramDeliveryResolutionRecord {
+    const delivery = this.getDeliveryById(deliveryId);
+    if (!delivery) {
+      throw new RuntimeNotFoundError(`Delivery ${deliveryId} not found`);
+    }
+    if (delivery.status !== 'uncertain') {
+      throw new RuntimeConflictError(`Delivery ${deliveryId} status is '${delivery.status}', expected 'uncertain'`);
+    }
+
+    const actionToStatus: Record<string, string> = {
+      confirm_sent: 'sent',
+      resend: 'pending',
+      abandon: 'abandoned',
+    };
+    const newStatus = actionToStatus[input.action]!;
+    const now = nowIso();
+
+    // Find linked open intervention
+    const interventionRow = this.databases.app
+      .prepare("SELECT id FROM interventions WHERE run_id = ? AND code = 'needs_operator_input' AND status = 'open' ORDER BY created_at DESC LIMIT 1")
+      .get(delivery.runId);
+    const interventionId = interventionRow ? z.object({ id: z.string() }).parse(interventionRow).id : null;
+
+    // Update delivery status
+    const updateSql = newStatus === 'sent'
+      ? `UPDATE telegram_reply_deliveries SET status = ?, sent_telegram_message_id = COALESCE(?, sent_telegram_message_id), sent_at = COALESCE(sent_at, ?), updated_at = ? WHERE id = ?`
+      : 'UPDATE telegram_reply_deliveries SET status = ?, updated_at = ? WHERE id = ?';
+    if (newStatus === 'sent') {
+      this.databases.app.prepare(updateSql).run(newStatus, input.sentTelegramMessageId ?? null, now, now, deliveryId);
+    } else {
+      this.databases.app.prepare(updateSql).run(newStatus, now, deliveryId);
+    }
+
+    // Insert resolution record
+    const resolutionId = randomUUID();
+    this.databases.app.prepare(`
+      INSERT INTO telegram_delivery_resolutions (id, delivery_id, workspace_id, action, intervention_id, operator_note, sent_telegram_message_id, previous_status, new_status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      resolutionId,
+      deliveryId,
+      input.workspaceId,
+      input.action,
+      interventionId,
+      input.operatorNote ?? null,
+      input.sentTelegramMessageId ?? null,
+      delivery.status,
+      newStatus,
+      now,
+    );
+
+    // Resolve linked intervention
+    if (interventionId) {
+      this.resolveIntervention(interventionId, input.operatorNote);
+    }
+
+    this.emit('telegram_delivery_resolved', { deliveryId, action: input.action, newStatus });
+
+    const resolutionRow = this.databases.app
+      .prepare('SELECT * FROM telegram_delivery_resolutions WHERE id = ?')
+      .get(resolutionId);
+    return this.mapResolutionRow(resolutionRow);
+  }
+
+  listDeliveryResolutions(deliveryId: string): TelegramDeliveryResolutionRecord[] {
+    const rows = this.databases.app
+      .prepare('SELECT * FROM telegram_delivery_resolutions WHERE delivery_id = ? ORDER BY created_at ASC')
+      .all(deliveryId);
+    return rows.map((row) => this.mapResolutionRow(row));
+  }
+
+  getResendableDeliveries(workspaceId: string): TelegramDeliveryRecord[] {
+    const rows = this.databases.app
+      .prepare("SELECT * FROM telegram_reply_deliveries WHERE status = 'pending' AND updated_at > created_at AND workspace_id = ?")
+      .all(workspaceId);
+    return rows.map((row) => this.mapFullDeliveryRow(row));
+  }
+
+  // --- Telegram send-attempt audit (Step 2) ---
+
+  recordTelegramSendAttempt(input: {
+    deliveryId?: string;
+    chatId?: string;
+    telegramMessageId?: number;
+    workspaceId: string;
+    startedAt: string;
+    finishedAt?: string;
+    runId?: string;
+    contentHash: string;
+    outcome: string;
+    sentTelegramMessageId?: number;
+    errorSummary?: string;
+    source?: string;
+  }): TelegramSendAttemptRecord {
+    let deliveryId = input.deliveryId;
+    if (!deliveryId && input.chatId !== undefined && input.telegramMessageId !== undefined) {
+      const row = this.databases.app
+        .prepare('SELECT id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
+        .get(input.workspaceId, input.chatId, input.telegramMessageId);
+      if (row) {
+        deliveryId = z.object({ id: z.string() }).parse(row).id;
+      }
+    }
+    if (!deliveryId) {
+      throw new RuntimeNotFoundError('Cannot resolve delivery for send-attempt recording');
+    }
+    const id = randomUUID();
+    const now = nowIso();
+    const countRow = this.databases.app
+      .prepare('SELECT COALESCE(MAX(attempt_number), 0) as max_attempt FROM telegram_send_attempts WHERE delivery_id = ?')
+      .get(deliveryId);
+    const attemptNumber = z.object({ max_attempt: z.coerce.number().int() }).parse(countRow).max_attempt + 1;
+    const errorSummary = input.errorSummary ? input.errorSummary.slice(0, 500) : null;
+
+    this.databases.app.prepare(`
+      INSERT INTO telegram_send_attempts (id, delivery_id, workspace_id, attempt_number, started_at, finished_at, run_id, content_hash, outcome, sent_telegram_message_id, error_summary, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      deliveryId,
+      input.workspaceId,
+      attemptNumber,
+      input.startedAt,
+      input.finishedAt ?? null,
+      input.runId ?? null,
+      input.contentHash,
+      input.outcome,
+      input.sentTelegramMessageId ?? null,
+      errorSummary,
+      input.source ?? 'relay',
+      now,
+    );
+
+    const row = this.databases.app.prepare('SELECT * FROM telegram_send_attempts WHERE id = ?').get(id);
+    return this.mapSendAttemptRow(row);
+  }
+
+  listTelegramSendAttempts(deliveryId: string): TelegramSendAttemptRecord[] {
+    const rows = this.databases.app
+      .prepare('SELECT * FROM telegram_send_attempts WHERE delivery_id = ? ORDER BY created_at ASC')
+      .all(deliveryId);
+    return rows.map((row) => this.mapSendAttemptRow(row));
   }
 
   // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---

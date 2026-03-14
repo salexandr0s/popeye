@@ -301,6 +301,49 @@ const APP_MIGRATIONS: Migration[] = [
       'ALTER TABLE telegram_reply_deliveries ADD COLUMN sent_telegram_message_id INTEGER;',
     ],
   },
+  {
+    id: '011-telegram-operator-resolution',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS telegram_delivery_resolutions (
+        id TEXT PRIMARY KEY,
+        delivery_id TEXT NOT NULL REFERENCES telegram_reply_deliveries(id),
+        workspace_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        intervention_id TEXT REFERENCES interventions(id),
+        operator_note TEXT,
+        sent_telegram_message_id INTEGER,
+        previous_status TEXT NOT NULL,
+        new_status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_tdr_delivery ON telegram_delivery_resolutions(delivery_id);',
+      'CREATE INDEX IF NOT EXISTS idx_tdr_intervention ON telegram_delivery_resolutions(intervention_id);',
+      'ALTER TABLE interventions ADD COLUMN updated_at TEXT;',
+      'ALTER TABLE interventions ADD COLUMN resolution_note TEXT;',
+    ],
+  },
+  {
+    id: '012-telegram-send-attempts',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS telegram_send_attempts (
+        id TEXT PRIMARY KEY,
+        delivery_id TEXT NOT NULL REFERENCES telegram_reply_deliveries(id),
+        workspace_id TEXT NOT NULL,
+        attempt_number INTEGER NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        run_id TEXT,
+        content_hash TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        sent_telegram_message_id INTEGER,
+        error_summary TEXT,
+        source TEXT NOT NULL DEFAULT 'relay',
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_tsa_delivery ON telegram_send_attempts(delivery_id);',
+      'CREATE INDEX IF NOT EXISTS idx_tsa_workspace_created ON telegram_send_attempts(workspace_id, created_at);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

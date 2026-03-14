@@ -107,6 +107,8 @@ export const InterventionRecordSchema = z.object({
   reason: z.string(),
   createdAt: z.string(),
   resolvedAt: z.string().nullable(),
+  updatedAt: z.string().nullable().default(null),
+  resolutionNote: z.string().nullable().default(null),
 });
 export type InterventionRecord = z.infer<typeof InterventionRecordSchema>;
 

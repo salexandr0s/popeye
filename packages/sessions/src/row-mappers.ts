@@ -30,6 +30,8 @@ const InterventionRowSchema = z.object({
   reason: z.string(),
   created_at: z.string(),
   resolved_at: z.string().nullable(),
+  updated_at: z.string().nullable().optional(),
+  resolution_note: z.string().nullable().optional(),
 });
 
 export function mapSessionRootRow(row: unknown) {
@@ -52,5 +54,7 @@ export function mapInterventionRow(row: unknown) {
     reason: parsed.reason,
     createdAt: parsed.created_at,
     resolvedAt: parsed.resolved_at,
+    updatedAt: parsed.updated_at ?? null,
+    resolutionNote: parsed.resolution_note ?? null,
   });
 }

@@ -51,12 +51,19 @@ import {
   TaskCreateResponseSchema,
   type TaskRecord,
   TaskRecordSchema,
+  type TelegramDeliveryRecord,
+  TelegramDeliveryRecordSchema,
+  type TelegramDeliveryResolutionRecord,
+  TelegramDeliveryResolutionRecordSchema,
+  type TelegramDeliveryResolutionRequest,
   type TelegramDeliveryState,
   TelegramDeliveryStateSchema,
   type TelegramRelayCheckpoint,
   type TelegramRelayCheckpointCommitRequest,
   TelegramRelayCheckpointSchema,
   TelegramRelayCheckpointResponseSchema,
+  type TelegramSendAttemptRecord,
+  TelegramSendAttemptRecordSchema,
   type UsageSummary,
   UsageSummarySchema,
   type WorkspaceListItem,
@@ -448,6 +455,65 @@ export class PopeyeApiClient {
 
   async securityAudit(): Promise<SecurityAuditResponse> {
     return this.get('/v1/security/audit', SecurityAuditResponseSchema);
+  }
+
+  // --- Telegram delivery resolution & send-attempt client methods ---
+
+  async listUncertainDeliveries(workspaceId?: string): Promise<TelegramDeliveryRecord[]> {
+    return this.getArray(
+      `/v1/telegram/deliveries/uncertain${this.buildQuery({ workspaceId })}`,
+      TelegramDeliveryRecordSchema,
+    );
+  }
+
+  async getDelivery(id: string): Promise<TelegramDeliveryRecord> {
+    return this.get(`/v1/telegram/deliveries/${encodeURIComponent(id)}`, TelegramDeliveryRecordSchema);
+  }
+
+  async resolveTelegramDelivery(id: string, input: TelegramDeliveryResolutionRequest): Promise<TelegramDeliveryResolutionRecord> {
+    return this.post(
+      `/v1/telegram/deliveries/${encodeURIComponent(id)}/resolve`,
+      input,
+      TelegramDeliveryResolutionRecordSchema,
+    );
+  }
+
+  async listDeliveryResolutions(deliveryId: string): Promise<TelegramDeliveryResolutionRecord[]> {
+    return this.getArray(
+      `/v1/telegram/deliveries/${encodeURIComponent(deliveryId)}/resolutions`,
+      TelegramDeliveryResolutionRecordSchema,
+    );
+  }
+
+  async getResendableDeliveries(workspaceId: string): Promise<TelegramDeliveryRecord[]> {
+    return this.getArray(
+      `/v1/telegram/deliveries/uncertain${this.buildQuery({ workspaceId })}`,
+      TelegramDeliveryRecordSchema,
+    );
+  }
+
+  async listTelegramSendAttempts(deliveryId: string): Promise<TelegramSendAttemptRecord[]> {
+    return this.getArray(
+      `/v1/telegram/deliveries/${encodeURIComponent(deliveryId)}/attempts`,
+      TelegramSendAttemptRecordSchema,
+    );
+  }
+
+  async recordTelegramSendAttempt(input: {
+    deliveryId?: string;
+    chatId?: string;
+    telegramMessageId?: number;
+    workspaceId: string;
+    startedAt: string;
+    finishedAt?: string;
+    runId?: string;
+    contentHash: string;
+    outcome: string;
+    sentTelegramMessageId?: number;
+    errorSummary?: string;
+    source?: string;
+  }): Promise<TelegramSendAttemptRecord> {
+    return this.post('/v1/telegram/send-attempts', input, TelegramSendAttemptRecordSchema);
   }
 
   subscribeEvents(callback: (event: { event: string; data: string }) => void): () => void {

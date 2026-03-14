@@ -15,7 +15,8 @@
     "allowedUserId": "operator-telegram-id",
     "maxMessagesPerMinute": 10,
     "globalMaxMessagesPerMinute": 30,
-    "rateLimitWindowSeconds": 60
+    "rateLimitWindowSeconds": 60,
+    "maxConcurrentPreparations": 4
   },
   "embeddings": {
     "provider": "disabled",

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   IngestMessageInput,
   JobRecord,
@@ -6,9 +7,11 @@ import type {
   ReceiptRecord,
   RunEventRecord,
   TelegramChatType,
+  TelegramDeliveryRecord,
   TelegramDeliveryState,
   TelegramRelayCheckpoint,
   TelegramRelayCheckpointCommitRequest,
+  TelegramSendAttemptRecord,
 } from '@popeye/contracts';
 import { extractCanonicalRunReplyText } from '@popeye/contracts';
 
@@ -72,6 +75,21 @@ export interface TelegramRunTrackingClient extends TelegramIngressClient {
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null; sentTelegramMessageId?: number | null },
   ): Promise<TelegramDeliveryState>;
+  getResendableDeliveries(workspaceId: string): Promise<TelegramDeliveryRecord[]>;
+  recordSendAttempt(input: {
+    deliveryId?: string;
+    chatId?: string;
+    telegramMessageId?: number;
+    workspaceId: string;
+    startedAt: string;
+    finishedAt?: string;
+    runId?: string;
+    contentHash: string;
+    outcome: string;
+    sentTelegramMessageId?: number;
+    errorSummary?: string;
+    source?: string;
+  }): Promise<TelegramSendAttemptRecord>;
 }
 
 export interface TelegramSendMessageInput {
@@ -274,16 +292,63 @@ async function waitForTerminalJob(
   return null;
 }
 
+function computeContentHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+interface SendWithRetryContext {
+  deliveryId?: string;
+  chatId: string;
+  telegramMessageId: number;
+  workspaceId: string;
+  runId?: string;
+  control: TelegramRunTrackingClient;
+}
+
 async function sendTelegramReplyWithRetry(
   bot: TelegramBotClient,
   input: TelegramSendMessageInput,
   options: { attempts: number; delayMs: number },
+  auditContext?: SendWithRetryContext,
 ): Promise<TelegramSentMessage> {
   const maxAttempts = Math.max(1, options.attempts);
+  const contentHash = auditContext ? computeContentHash(input.text) : '';
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = new Date().toISOString();
     try {
-      return await bot.sendMessage(input);
+      const result = await bot.sendMessage(input);
+      if (auditContext) {
+        await auditContext.control.recordSendAttempt({
+          deliveryId: auditContext.deliveryId,
+          chatId: auditContext.chatId,
+          telegramMessageId: auditContext.telegramMessageId,
+          workspaceId: auditContext.workspaceId,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          runId: auditContext.runId,
+          contentHash,
+          outcome: 'sent',
+          sentTelegramMessageId: result.messageId,
+        }).catch(() => { /* best-effort audit */ });
+      }
+      return result;
     } catch (error) {
+      if (auditContext) {
+        const isRetryable = isRetryableTelegramSendError(error);
+        const isLast = attempt >= maxAttempts;
+        await auditContext.control.recordSendAttempt({
+          deliveryId: auditContext.deliveryId,
+          chatId: auditContext.chatId,
+          telegramMessageId: auditContext.telegramMessageId,
+          workspaceId: auditContext.workspaceId,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          runId: auditContext.runId,
+          contentHash,
+          outcome: isRetryable ? 'retryable_failure' : (isLast ? 'ambiguous' : 'permanent_failure'),
+          errorSummary: describeTelegramSendFailure(error).slice(0, 500),
+        }).catch(() => { /* best-effort audit */ });
+      }
       if (attempt >= maxAttempts || !isRetryableTelegramSendError(error)) {
         throw error;
       }
@@ -396,6 +461,7 @@ export class TelegramLongPollRelay {
 
   private async processUpdates(updates: TelegramUpdate[]): Promise<void> {
     if (updates.length === 0) {
+      await this.sweepResendableDeliveries();
       return;
     }
 
@@ -419,6 +485,39 @@ export class TelegramLongPollRelay {
       await Promise.allSettled(pendingPreparations);
       this.activeDeliveryKeys.clear();
       throw error;
+    }
+
+    await this.sweepResendableDeliveries();
+  }
+
+  private async sweepResendableDeliveries(): Promise<void> {
+    let deliveries: TelegramDeliveryRecord[];
+    try {
+      deliveries = await this.options.control.getResendableDeliveries(this.options.workspaceId);
+    } catch {
+      return; // best-effort
+    }
+    for (const delivery of deliveries) {
+      const deliveryKey = buildTelegramDeliveryKey(this.options.workspaceId, delivery.chatId, delivery.telegramMessageId);
+      if (this.activeDeliveryKeys.has(deliveryKey)) continue;
+      if (!delivery.runId) continue;
+
+      this.activeDeliveryKeys.add(deliveryKey);
+      try {
+        const reply = await this.options.control.getRunReply(delivery.runId);
+        const prepared: PreparedTelegramSendUpdate = {
+          kind: 'send',
+          updateId: -1, // synthetic — no checkpoint ack
+          deliveryKey,
+          chatId: delivery.chatId,
+          telegramMessageId: delivery.telegramMessageId,
+          runId: delivery.runId,
+          text: formatTelegramReply(reply.text),
+        };
+        await this.completePreparedUpdate(prepared);
+      } catch {
+        this.activeDeliveryKeys.delete(deliveryKey);
+      }
     }
   }
 
@@ -488,9 +587,15 @@ export class TelegramLongPollRelay {
     }
   }
 
+  private async acknowledgeIfReal(updateId: number): Promise<void> {
+    if (updateId >= 0) {
+      await this.acknowledgeUpdate(updateId);
+    }
+  }
+
   private async completePreparedUpdate(prepared: PreparedTelegramUpdate): Promise<void> {
     if (prepared.kind === 'ack') {
-      await this.acknowledgeUpdate(prepared.updateId);
+      await this.acknowledgeIfReal(prepared.updateId);
       return;
     }
 
@@ -501,7 +606,7 @@ export class TelegramLongPollRelay {
           runId: prepared.runId,
           reason: prepared.reason,
         });
-        await this.acknowledgeUpdate(prepared.updateId);
+        await this.acknowledgeIfReal(prepared.updateId);
         return;
       }
 
@@ -510,7 +615,7 @@ export class TelegramLongPollRelay {
         runId: prepared.runId,
       });
       if (delivery.status === 'sent' || delivery.status === 'uncertain') {
-        await this.acknowledgeUpdate(prepared.updateId);
+        await this.acknowledgeIfReal(prepared.updateId);
         return;
       }
 
@@ -522,13 +627,19 @@ export class TelegramLongPollRelay {
         }, {
           attempts: this.options.sendRetryAttempts ?? 3,
           delayMs: this.options.sendRetryDelayMs ?? (this.options.retryDelayMs ?? 1_000),
+        }, {
+          chatId: prepared.chatId,
+          telegramMessageId: prepared.telegramMessageId,
+          workspaceId: this.options.workspaceId,
+          runId: prepared.runId,
+          control: this.options.control,
         });
         await this.options.control.markTelegramReplySent(prepared.chatId, prepared.telegramMessageId, {
           workspaceId: this.options.workspaceId,
           runId: prepared.runId,
           sentTelegramMessageId: sentMessage.messageId,
         });
-        await this.acknowledgeUpdate(prepared.updateId);
+        await this.acknowledgeIfReal(prepared.updateId);
       } catch (error) {
         if (isRetryableTelegramSendError(error)) {
           await this.options.control.markTelegramReplyPending(prepared.chatId, prepared.telegramMessageId, {
@@ -543,7 +654,7 @@ export class TelegramLongPollRelay {
           runId: prepared.runId,
           reason: describeTelegramSendFailure(error),
         });
-        await this.acknowledgeUpdate(prepared.updateId);
+        await this.acknowledgeIfReal(prepared.updateId);
       }
     } finally {
       this.activeDeliveryKeys.delete(prepared.deliveryKey);
