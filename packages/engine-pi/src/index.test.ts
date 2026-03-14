@@ -4,8 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { EngineConfigSchema } from '../../contracts/src/config.ts';
-import type { NormalizedEngineEvent } from '../../contracts/src/engine.ts';
+import { EngineConfigSchema, type NormalizedEngineEvent } from '@popeye/contracts';
 import type { EngineRunRequest, FakeEngineConfig, PiAdapterConfig } from './index.ts';
 import {
   FakeEngineAdapter,

@@ -898,5 +898,64 @@ describe('MemoryLifecycleService', () => {
       const result = service.indexWorkspaceDocs('ws-1', '/nonexistent/path');
       expect(result).toEqual({ indexed: 0, skipped: 0 });
     });
+
+    it('recursively indexes markdown files in subdirectories', () => {
+      mkdirSync(join(docsDir, 'docs', 'adr'), { recursive: true });
+      mkdirSync(join(docsDir, 'notes'), { recursive: true });
+      mkdirSync(join(docsDir, 'node_modules', 'pkg'), { recursive: true });
+      mkdirSync(join(docsDir, '.git'), { recursive: true });
+
+      writeFileSync(join(docsDir, 'README.md'), '# Root doc');
+      writeFileSync(join(docsDir, 'docs', 'adr', 'decision-001.md'), '# ADR 1');
+      writeFileSync(join(docsDir, 'notes', 'weekly.md'), '# Weekly notes');
+      writeFileSync(join(docsDir, 'node_modules', 'pkg', 'README.md'), '# Pkg readme');
+      writeFileSync(join(docsDir, '.git', 'config.md'), '# Git config');
+
+      const result = service.indexWorkspaceDocs('ws-1', docsDir);
+      expect(result.indexed).toBe(3);
+
+      const rows = memoryDb
+        .prepare("SELECT description FROM memories WHERE source_type = 'workspace_doc'")
+        .all() as Array<{ description: string }>;
+      const descriptions = rows.map(r => r.description);
+      expect(descriptions).toContain('Workspace doc: README.md');
+      expect(descriptions).toContain('Workspace doc: docs/adr/decision-001.md');
+      expect(descriptions).toContain('Workspace doc: notes/weekly.md');
+      // Skipped directories should not appear
+      expect(descriptions).not.toContain(expect.stringContaining('node_modules'));
+      expect(descriptions).not.toContain(expect.stringContaining('.git'));
+    });
+
+    it('redacts sensitive content before storing', () => {
+      const redactConfig = makeConfig({ redactionPatterns: ['sk-[a-zA-Z0-9]{20,}'] });
+      const svc = new MemoryLifecycleService(databases, redactConfig, searchService);
+
+      writeFileSync(join(docsDir, 'secrets.md'), 'API key: sk-abcdefghijklmnopqrstuvwxyz should not appear'); // secret-scan: allow
+
+      svc.indexWorkspaceDocs('ws-1', docsDir);
+
+      const rows = memoryDb
+        .prepare("SELECT content FROM memories WHERE source_type = 'workspace_doc' AND archived_at IS NULL")
+        .all() as Array<{ content: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].content).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+      expect(rows[0].content).toContain('[REDACTED:');
+    });
+
+    it('indexed docs are searchable via FTS5', async () => {
+      writeFileSync(join(docsDir, 'architecture.md'), '# Architecture\n\nThe system uses a layered approach with clear boundaries.');
+
+      service.indexWorkspaceDocs('ws-1', docsDir);
+
+      const response = await searchService.search({
+        query: 'layered architecture',
+        includeContent: true,
+      });
+
+      expect(response.results.length).toBeGreaterThanOrEqual(1);
+      const match = response.results.find(r => r.sourceType === 'workspace_doc');
+      expect(match).toBeTruthy();
+      expect(match!.content).toContain('layered approach');
+    });
   });
 });

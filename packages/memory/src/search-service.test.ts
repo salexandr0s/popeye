@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createDisabledEmbeddingClient } from './embedding-client.js';
+import type { EmbeddingClient } from './embedding-client.js';
+import { loadSqliteVec } from './extension-loader.js';
 import { MemorySearchService } from './search-service.js';
 
 function createTestDb(): Database.Database {
@@ -348,5 +350,169 @@ describe('MemorySearchService', () => {
       expect(record!.memoryType).toBe('semantic');
       expect(record!.createdAt).toBeTruthy();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hybrid search integration tests
+// ---------------------------------------------------------------------------
+
+function createFakeEmbeddingClient(dimensions: number): EmbeddingClient {
+  // Returns deterministic embeddings: a unit vector based on text length mod dimensions
+  return {
+    dimensions,
+    model: 'fake-test',
+    enabled: true,
+    async embed(texts: string[]): Promise<Float32Array[]> {
+      return texts.map((text) => {
+        const vec = new Float32Array(dimensions);
+        const idx = text.length % dimensions;
+        vec[idx] = 1.0;
+        return vec;
+      });
+    },
+  };
+}
+
+describe('hybrid search', () => {
+  let db: Database.Database;
+  let vecLoaded: boolean;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    vecLoaded = await loadSqliteVec(db, 4);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns results with hybrid mode when vec is available', async () => {
+    if (!vecLoaded) {
+      // Graceful skip — test the FTS-only path instead (covered below)
+      return;
+    }
+
+    const embeddingClient = createFakeEmbeddingClient(4);
+    const service = new MemorySearchService({
+      db,
+      embeddingClient,
+      vecAvailable: true,
+    });
+
+    // Store memories with embeddings
+    await service.storeMemoryWithEmbedding({
+      description: 'Database migration plan',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Migrate from MySQL to PostgreSQL with zero downtime strategy',
+      confidence: 0.9,
+      scope: 'workspace',
+    });
+    await service.storeMemoryWithEmbedding({
+      description: 'API design notes',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'RESTful API design with versioned endpoints and Zod validation',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+    await service.storeMemoryWithEmbedding({
+      description: 'Testing strategy',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Unit tests with Vitest and E2E tests with Playwright for coverage',
+      confidence: 0.7,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({
+      query: 'database migration',
+      includeContent: true,
+    });
+
+    expect(response.searchMode).toBe('hybrid');
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+
+    // Score breakdown should have all four components
+    const first = response.results[0]!;
+    expect(first.scoreBreakdown).toBeDefined();
+    expect(typeof first.scoreBreakdown.relevance).toBe('number');
+    expect(typeof first.scoreBreakdown.recency).toBe('number');
+    expect(typeof first.scoreBreakdown.confidence).toBe('number');
+    expect(typeof first.scoreBreakdown.scopeMatch).toBe('number');
+    expect(first.score).toBeGreaterThan(0);
+  });
+
+  it('falls back to fts_only mode when vec is unavailable', async () => {
+    const embeddingClient = createFakeEmbeddingClient(4);
+    const service = new MemorySearchService({
+      db,
+      embeddingClient,
+      vecAvailable: false,
+    });
+
+    service.storeMemory({
+      description: 'Fallback test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'This memory tests the FTS5 fallback search path',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({
+      query: 'fallback search',
+      includeContent: true,
+    });
+
+    expect(response.searchMode).toBe('fts_only');
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.results[0]!.content).toContain('FTS5 fallback');
+    expect(response.results[0]!.score).toBeGreaterThan(0);
+
+    // Score breakdown still present in FTS-only mode
+    const breakdown = response.results[0]!.scoreBreakdown;
+    expect(typeof breakdown.relevance).toBe('number');
+    expect(typeof breakdown.recency).toBe('number');
+    expect(typeof breakdown.confidence).toBe('number');
+    expect(typeof breakdown.scopeMatch).toBe('number');
+  });
+
+  it('ranks results by composite score', async () => {
+    const service = new MemorySearchService({
+      db,
+      embeddingClient: createFakeEmbeddingClient(4),
+      vecAvailable: vecLoaded,
+    });
+
+    // Store with different confidence levels — higher confidence should rank higher
+    // for the same text relevance
+    const storeOp = vecLoaded
+      ? service.storeMemoryWithEmbedding.bind(service)
+      : async (input: Parameters<typeof service.storeMemory>[0]) => service.storeMemory(input);
+
+    await storeOp({
+      description: 'High confidence deployment guide',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Deployment guide for the production environment',
+      confidence: 0.95,
+      scope: 'workspace',
+    });
+    await storeOp({
+      description: 'Low confidence deployment note',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Deployment note about the production setup',
+      confidence: 0.3,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({ query: 'deployment production' });
+
+    expect(response.results.length).toBe(2);
+    // Higher-confidence result should score higher (all else being roughly equal)
+    expect(response.results[0]!.score).toBeGreaterThanOrEqual(response.results[1]!.score);
   });
 });

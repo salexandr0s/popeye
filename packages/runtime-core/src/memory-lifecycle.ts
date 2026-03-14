@@ -25,6 +25,34 @@ import type { RuntimeDatabases } from './database.js';
 import { nowIso } from '@popeye/contracts';
 import { z } from 'zod';
 
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'coverage', 'build',
+  '.next', '.turbo', '.cache', 'out', '.svn',
+]);
+
+function walkMarkdownFiles(rootPath: string, skipDirs: Set<string>): string[] {
+  const results: string[] = [];
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // Permission denied or other FS error — skip this directory
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name) || entry.name.startsWith('.')) continue;
+        walk(resolve(dir, entry.name));
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        results.push(resolve(dir, entry.name));
+      }
+    }
+  };
+  walk(rootPath);
+  return results;
+}
+
 const MemoryConfidenceRowSchema = z.object({
   confidence: z.number(),
   content: z.string(),
@@ -458,11 +486,8 @@ export class MemoryLifecycleService {
 
     if (!existsSync(rootPath)) return { indexed, skipped };
 
-    const entries = readdirSync(rootPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-
-      const filePath = resolve(rootPath, entry.name);
+    const files = walkMarkdownFiles(rootPath, SKIP_DIRS);
+    for (const filePath of files) {
       const content = readFileSync(filePath, 'utf-8');
       const contentHash = sha256(content);
       const dedupKey = `workspace_doc:${sha256(resolve(filePath))}`;
@@ -487,9 +512,10 @@ export class MemoryLifecycleService {
           .run(nowIso(), existing.id);
       }
 
+      const relPath = relative(rootPath, filePath);
       const redacted = redactText(content, this.config.security.redactionPatterns);
       const result = this.insertMemory({
-        description: `Workspace doc: ${entry.name}`,
+        description: `Workspace doc: ${relPath}`,
         classification: 'embeddable',
         sourceType: 'workspace_doc',
         content: redacted.text,

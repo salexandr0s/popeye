@@ -1,12 +1,39 @@
+import { execFile } from 'node:child_process';
 import { chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
 import type { AppConfig } from '@popeye/contracts';
 import { initAuthStore, createRuntimeService } from '@popeye/runtime-core';
 import { renderReceipt } from '@popeye/receipts';
+
+const execFileAsync = promisify(execFile);
+
+interface CliResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+/** Spawn the CLI via tsx (no config needed for help/version/error paths). */
+async function runPop(...args: string[]): Promise<CliResult> {
+  const tsx = resolve('node_modules', '.bin', 'tsx');
+  const entry = resolve('apps', 'cli', 'src', 'index.ts');
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      tsx,
+      ['--tsconfig', 'tsconfig.base.json', entry, ...args],
+      { env: { PATH: process.env.PATH, HOME: process.env.HOME }, timeout: 15_000 },
+    );
+    return { stdout, stderr, code: 0 };
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; code?: number };
+    return { stdout: e.stdout ?? '', stderr: e.stderr ?? '', code: e.code ?? 1 };
+  }
+}
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -177,5 +204,55 @@ describe('CLI command workflows (service-level)', () => {
     expect(rendered).toContain('Estimated cost');
 
     await runtime.close();
+  });
+});
+
+describe('CLI help and discoverability', () => {
+  it('--help with no command prints help with version and exits 0', async () => {
+    const r = await runPop('--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('pop v0.1.0');
+    expect(r.stdout).toContain('Popeye CLI');
+    expect(r.stdout).toContain('--version');
+    expect(r.stdout).toContain('--json');
+  });
+
+  it('--version prints version and exits 0', async () => {
+    const r = await runPop('--version');
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe('pop v0.1.0');
+  });
+
+  it('pop auth --help prints auth subcommands', async () => {
+    const r = await runPop('auth', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('pop auth');
+    expect(r.stdout).toContain('init');
+    expect(r.stdout).toContain('rotate');
+  });
+
+  it('pop task run --help prints task run usage', async () => {
+    const r = await runPop('task', 'run', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('pop task run');
+  });
+
+  it('unknown command exits 1 with error', async () => {
+    const r = await runPop('bogus');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Unknown command: bogus');
+  });
+
+  it('unknown subcommand exits 1 with error and shows command help', async () => {
+    const r = await runPop('daemon', 'bogus');
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Unknown subcommand: daemon bogus');
+    expect(r.stdout).toContain('pop daemon');
+  });
+
+  it('bare pop (no args) prints help and exits 0', async () => {
+    const r = await runPop();
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('pop v0.1.0');
   });
 });

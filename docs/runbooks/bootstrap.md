@@ -111,21 +111,69 @@ pop daemon status
 
 ## Bundled install (alternative)
 
-Instead of running from the monorepo checkout, you can build standalone bundles:
+Instead of running from the monorepo checkout, you can build standalone bundles.
+
+### Prerequisites
+
+- **Node.js 22 LTS** — required runtime
+- **pnpm** — `corepack enable && corepack prepare pnpm@latest --activate`
+
+### Run the installer
 
 ```bash
-bash scripts/install.sh
+bash scripts/install.sh [--prefix /custom/path] [--force]
 ```
 
-This will:
-1. Install dependencies and typecheck
-2. Bundle CLI and daemon with tsup (inlines all `@popeye/*` packages)
-3. Symlink `pop` to `/usr/local/bin/pop`
-4. Create default config at `~/Library/Application Support/Popeye/` if missing
+| Flag | Effect |
+|------|--------|
+| `--prefix <path>` | Symlink location (default: `/usr/local/bin`) |
+| `--force` | Overwrite existing `config.json` |
 
-Use `--prefix /custom/path` to change the symlink location.
+### What install.sh does
 
-After install, set `POPEYE_CONFIG_PATH` and run `pop auth init` as usual.
+1. Checks for `pnpm` and warns if Node < 22
+2. Runs `pnpm install --frozen-lockfile`
+3. Type-checks the project
+4. Bundles CLI → `apps/cli/dist/index.js` (tsup, inlines all `@popeye/*` packages)
+5. Bundles daemon → `apps/daemon/dist/index.js`
+6. Symlinks `pop` → `<prefix>/pop`
+7. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
+
+### Where things end up
+
+| Artifact | Location |
+|----------|----------|
+| CLI bundle | `apps/cli/dist/index.js` |
+| Daemon bundle | `apps/daemon/dist/index.js` |
+| Symlink | `/usr/local/bin/pop` (or custom prefix) |
+| Config | `~/Library/Application Support/Popeye/config.json` |
+| Runtime data | Configured via `runtimeDataDir` in config |
+| Auth store | Configured via `authFile` in config |
+
+### After install
+
+```bash
+# 1. Set config path in ~/.zprofile
+export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
+
+# 2. Edit config (set engine.kind, piPath, runtimeDataDir, etc.)
+
+# 3. Initialize auth
+pop auth init
+
+# 4. Verify
+pop --version
+```
+
+### How `pop daemon install` works in bundled mode
+
+When running from a bundle, `pop daemon install` detects bundled mode and resolves the daemon entrypoint relative to the CLI bundle:
+
+- CLI: `apps/cli/dist/index.js`
+- Daemon: `apps/daemon/dist/index.js` (resolved as `../../daemon/dist/index.js` from CLI bundle)
+- Working directory: monorepo root (resolved as `../../../` from CLI bundle)
+
+The generated LaunchAgent plist points to `node apps/daemon/dist/index.js` with `POPEYE_CONFIG_PATH` set. In dev mode, it points to `apps/daemon/src/index.ts` via tsx instead.
 
 ## Common issues
 
@@ -134,3 +182,5 @@ After install, set `POPEYE_CONFIG_PATH` and run `pop auth init` as usual.
 - **Pi version mismatch** — run `pnpm verify:pi-checkout -- --pi-path ../pi` and copy the `packages/coding-agent/package.json` version into `engine.piVersion`
 - **Security audit fails** — most common: directory permissions not 700
 - **LaunchAgent not loading** — check `~/Library/LaunchAgents/` permissions
+- **CLI bundle not found** — run `pnpm pack:cli` to regenerate the bundle
+- **Daemon bundle not found** — run `pnpm pack:daemon` to regenerate the bundle

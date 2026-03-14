@@ -28,9 +28,14 @@ import {
   verifyBackup,
 } from '@popeye/runtime-core';
 
+const VERSION = '0.1.0';
+
 // --json flag: when present, output raw JSON instead of human-readable text
 const jsonFlag = process.argv.includes('--json');
-const positionalArgs = process.argv.filter((a) => a !== '--json' && a !== '--help' && a !== '-h');
+const versionFlag = process.argv.includes('--version') || process.argv.includes('-v');
+const positionalArgs = process.argv.filter(
+  (a) => a !== '--json' && a !== '--help' && a !== '-h' && a !== '--version' && a !== '-v',
+);
 const helpFlag = process.argv.includes('--help') || process.argv.includes('-h');
 const [, , command, subcommand, arg1, arg2] = positionalArgs;
 
@@ -56,7 +61,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string }>> 
     plist: { desc: 'Print LaunchAgent plist', usage: 'pop daemon plist' },
   },
   backup: {
-    create: { desc: 'Create runtime backup', usage: 'pop backup create [path]' },
+    create: { desc: 'Create runtime backup (optionally include workspace dirs)', usage: 'pop backup create [path] [workspace...]' },
     verify: { desc: 'Verify backup integrity', usage: 'pop backup verify <path>' },
     restore: { desc: 'Restore from backup', usage: 'pop backup restore <path>' },
   },
@@ -105,7 +110,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string }>> 
 };
 
 function showHelp(): void {
-  console.info('pop — Popeye CLI\n');
+  console.info(`pop v${VERSION} — Popeye CLI\n`);
   console.info('Usage: pop <command> <subcommand> [args] [--json] [--help]\n');
   for (const [group, subs] of Object.entries(COMMANDS)) {
     const entries = Object.entries(subs);
@@ -115,6 +120,11 @@ function showHelp(): void {
       console.info(`    ${group} ${name.padEnd(20)} ${meta.desc}`);
     }
   }
+  console.info('\nFlags:');
+  console.info('  --json             Output raw JSON instead of human-readable text');
+  console.info('  --full             Include full content in search results');
+  console.info('  --help, -h         Show help for a command');
+  console.info('  --version, -v      Print version');
 }
 
 function showCommandHelp(cmd: string): void {
@@ -129,6 +139,23 @@ function showCommandHelp(cmd: string): void {
     console.info(`  ${meta.usage.padEnd(45)} ${meta.desc}`);
     void name;
   }
+}
+
+function showSubcommandHelp(cmd: string, sub: string): void {
+  const subs = COMMANDS[cmd];
+  if (!subs) {
+    console.error(`Unknown command: ${cmd}`);
+    showHelp();
+    process.exit(1);
+  }
+  const meta = subs[sub];
+  if (!meta) {
+    console.error(`Unknown subcommand: ${cmd} ${sub}`);
+    showCommandHelp(cmd);
+    process.exit(1);
+  }
+  console.info(`${meta.usage}\n`);
+  console.info(`  ${meta.desc}`);
 }
 
 function requireArg(value: string | undefined, label: string): asserts value is string {
@@ -172,25 +199,48 @@ function isBundledMode(): boolean {
   return selfPath.includes(`${join('dist', 'index')}`);
 }
 
-const configPath = process.env.POPEYE_CONFIG_PATH;
-
-if (!configPath) {
-  throw new Error('POPEYE_CONFIG_PATH is required');
+// Early exits that don't require configuration
+if (versionFlag) {
+  console.info(`pop v${VERSION}`);
+  process.exit(0);
 }
+
+if (!command) {
+  showHelp();
+  process.exit(0);
+}
+
+if (helpFlag) {
+  if (subcommand) {
+    showSubcommandHelp(command, subcommand);
+  } else {
+    showCommandHelp(command);
+  }
+  process.exit(0);
+}
+
+if (!COMMANDS[command]) {
+  console.error(`Unknown command: ${command}. Run 'pop --help' for usage.`);
+  process.exit(1);
+}
+
+if (subcommand && !COMMANDS[command][subcommand]) {
+  console.error(`Unknown subcommand: ${command} ${subcommand}`);
+  showCommandHelp(command);
+  process.exit(1);
+}
+
+const configPath = ((): string => {
+  const p = process.env.POPEYE_CONFIG_PATH;
+  if (!p) throw new Error('POPEYE_CONFIG_PATH is required');
+  return p;
+})();
 
 const config = loadAppConfig(configPath);
 mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
 const paths = deriveRuntimePaths(config.runtimeDataDir);
 
 async function main(): Promise<void> {
-  if (!command) {
-    showHelp();
-    return;
-  }
-  if (helpFlag && command) {
-    showCommandHelp(command);
-    return;
-  }
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile), null, 2));
     return;
@@ -222,13 +272,25 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'install') {
-    const daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+    let daemonEntryPoint: string;
+    let workingDirectory: string;
+    if (isBundledMode()) {
+      const selfPath = typeof import.meta.filename === 'string'
+        ? import.meta.filename
+        : fileURLToPath(import.meta.url);
+      const selfDir = dirname(selfPath);
+      daemonEntryPoint = resolve(selfDir, '..', '..', 'daemon', 'dist', 'index.js');
+      workingDirectory = resolve(selfDir, '..', '..', '..');
+    } else {
+      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+      workingDirectory = process.cwd();
+    }
     console.info(
       JSON.stringify(
         installLaunchAgent({
           configPath,
           daemonEntryPoint,
-          workingDirectory: process.cwd(),
+          workingDirectory,
         }),
         null,
         2,
@@ -242,7 +304,7 @@ async function main(): Promise<void> {
       const selfPath = typeof import.meta.filename === 'string'
         ? import.meta.filename
         : fileURLToPath(import.meta.url);
-      const bundledDaemon = resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.mjs');
+      const bundledDaemon = resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.js');
       if (!existsSync(bundledDaemon)) {
         console.error(`Bundled daemon not found at ${bundledDaemon}. Run 'pnpm pack:daemon' first.`);
         process.exit(1);
@@ -290,18 +352,36 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'plist') {
+    let daemonEntryPoint: string;
+    let workingDirectory: string;
+    if (isBundledMode()) {
+      const selfPath = typeof import.meta.filename === 'string'
+        ? import.meta.filename
+        : fileURLToPath(import.meta.url);
+      const selfDir = dirname(selfPath);
+      daemonEntryPoint = resolve(selfDir, '..', '..', 'daemon', 'dist', 'index.js');
+      workingDirectory = resolve(selfDir, '..', '..', '..');
+    } else {
+      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+      workingDirectory = process.cwd();
+    }
     console.info(
       createLaunchdPlist({
         configPath,
-        daemonEntryPoint: resolve(process.cwd(), 'apps/daemon/src/index.ts'),
-        workingDirectory: process.cwd(),
+        daemonEntryPoint,
+        workingDirectory,
       }),
     );
     return;
   }
   if (command === 'backup' && subcommand === 'create') {
     const destination = arg1 ? resolve(arg1) : join(paths.backupsDir, new Date().toISOString().replaceAll(':', '-'));
-    console.info(createBackup({ destinationDir: destination, runtimePaths: paths }));
+    const workspacePaths = positionalArgs.slice(6).map((p) => resolve(p));
+    console.info(createBackup({
+      destinationDir: destination,
+      runtimePaths: paths,
+      ...(workspacePaths.length > 0 && { workspacePaths }),
+    }));
     return;
   }
   if (command === 'backup' && subcommand === 'verify') {
@@ -559,7 +639,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  showHelp();
+  // Valid command/subcommand but no handler matched — missing subcommand
+  if (command && COMMANDS[command]) {
+    showCommandHelp(command);
+    process.exit(1);
+  }
+  console.error(`Unknown command: ${command ?? ''}. Run 'pop --help' for usage.`);
+  process.exit(1);
 }
 
 await main();
