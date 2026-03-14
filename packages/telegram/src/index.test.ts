@@ -73,6 +73,22 @@ function createControl(overrides: Partial<TelegramRunTrackingClient> = {}): Tele
       telegramMessageId: 50,
       status: 'sent',
     }),
+    getResendableDeliveries: vi.fn<TelegramRunTrackingClient['getResendableDeliveries']>().mockResolvedValue([]),
+    recordSendAttempt: vi.fn<TelegramRunTrackingClient['recordSendAttempt']>().mockResolvedValue({
+      id: 'attempt-1',
+      deliveryId: 'delivery-1',
+      workspaceId: 'default',
+      attemptNumber: 1,
+      startedAt: '2026-01-01T00:00:00Z',
+      finishedAt: '2026-01-01T00:00:01Z',
+      runId: null,
+      contentHash: 'abc',
+      outcome: 'sent',
+      sentTelegramMessageId: null,
+      errorSummary: null,
+      source: 'relay',
+      createdAt: '2026-01-01T00:00:00Z',
+    }),
     ...overrides,
   };
 }

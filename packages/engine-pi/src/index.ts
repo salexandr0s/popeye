@@ -24,6 +24,7 @@ const CANCEL_GRACE_MS = 5_000;
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30_000;
 const INTERNAL_IDS = {
   getState: 'popeye:get_state',
+  registerHostTools: 'popeye:register_host_tools',
   prompt: 'popeye:prompt',
   abort: 'popeye:abort',
 } as const;
@@ -986,6 +987,7 @@ export class PiEngineAdapter implements EngineAdapter {
     let startedEmitted = false;
     let sessionEmitted = false;
     let cancelRequested = false;
+    let useNativeHostTools = false;
     const promptState: PromptState = { requested: false, accepted: false, completed: false };
     const diagnosticWarnings: string[] = [];
 
@@ -1194,6 +1196,32 @@ export class PiEngineAdapter implements EngineAdapter {
         }
         const state = RpcStateDataSchema.parse(response.data) as RpcStateData;
         synthesizeSession(state, rawLine);
+        // Register native host tools if available, otherwise rely on extension-UI bridge
+        const hasRuntimeTools = (request.runtimeTools ?? []).length > 0;
+        if (hasRuntimeTools && !useNativeHostTools) {
+          sendCommand({
+            id: INTERNAL_IDS.registerHostTools,
+            type: 'register_host_tools',
+            tools: (request.runtimeTools ?? []).map((t) => ({
+              name: t.name,
+              description: t.description,
+              parameters: t.parameters,
+            })),
+          });
+          return; // prompt will be sent after register_host_tools response
+        }
+        if (!promptState.requested) {
+          promptState.requested = true;
+          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+        }
+        return;
+      }
+
+      if (response.id === INTERNAL_IDS.registerHostTools && response.command === 'register_host_tools') {
+        if (response.success) {
+          useNativeHostTools = true;
+        }
+        // Proceed to prompt regardless of registration outcome (fallback to extension bridge)
         if (!promptState.requested) {
           promptState.requested = true;
           sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
@@ -1320,6 +1348,44 @@ export class PiEngineAdapter implements EngineAdapter {
 
         if (parsed.type === 'response') {
           handleResponse(RpcResponseSchema.parse(parsed) as RpcResponse, rawLine);
+          return;
+        }
+
+        if (parsed.type === 'host_tool_request' && useNativeHostTools) {
+          const toolCallId = typeof parsed.toolCallId === 'string' ? parsed.toolCallId : '';
+          const toolName = typeof parsed.tool === 'string' ? parsed.tool : '';
+          const params = (parsed.params ?? {}) as Record<string, unknown>;
+          const tool = runtimeToolBridge.toolsByName.get(toolName);
+          if (!tool?.execute) {
+            sendCommand({ type: 'host_tool_response', toolCallId, status: 'error', error: { code: 'unknown_tool', message: `Unknown runtime tool: ${toolName}` } });
+            return;
+          }
+          emitBridgeToolCall({ toolCallId, toolName, params }, rawLine);
+          const startedAt = Date.now();
+          const timeoutWarning = `Runtime tool ${toolName} timed out after ${this.runtimeToolTimeoutMs}ms; underlying execution was not cancelled and any later settlement was suppressed.`;
+          void executeWithTimeout(
+            () => tool.execute!(params),
+            this.runtimeToolTimeoutMs,
+            toolName,
+            {
+              onTimeout: () => { appendWarning(timeoutWarning); },
+              onLateSettle: ({ status }) => { appendWarning(`Suppressed late runtime tool ${status} after timeout: ${toolName} (${toolCallId})`); },
+            },
+          ).then((result) => {
+            emitBridgeToolResult({
+              toolCallId, toolName, isError: false, durationMs: Date.now() - startedAt,
+              contentItems: result.content.length, detailsPresent: result.details !== undefined,
+            }, rawLine);
+            const text = result.content.map((c: { type: string; text?: string }) => c.type === 'text' ? c.text ?? '' : '').join('');
+            sendCommand({ type: 'host_tool_response', toolCallId, status: 'success', result: text });
+          }).catch((error: unknown) => {
+            emitBridgeToolResult({
+              toolCallId, toolName, isError: true, durationMs: Date.now() - startedAt,
+              error: error instanceof Error ? error.message : String(error),
+              errorCode: error instanceof RuntimeToolBridgeTimeoutError ? error.code : 'execution_error',
+            }, rawLine);
+            sendCommand({ type: 'host_tool_response', toolCallId, status: 'error', error: { code: 'execution_error', message: error instanceof Error ? error.message : String(error) } });
+          });
           return;
         }
 
