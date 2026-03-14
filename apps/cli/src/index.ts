@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { ApiError, type PopeyeApiClient } from '@popeye/api-client';
 import type { AppConfig, RunRecord } from '@popeye/contracts';
@@ -29,8 +30,116 @@ import {
 
 // --json flag: when present, output raw JSON instead of human-readable text
 const jsonFlag = process.argv.includes('--json');
-const positionalArgs = process.argv.filter((a) => a !== '--json');
+const positionalArgs = process.argv.filter((a) => a !== '--json' && a !== '--help' && a !== '-h');
+const helpFlag = process.argv.includes('--help') || process.argv.includes('-h');
 const [, , command, subcommand, arg1, arg2] = positionalArgs;
+
+const COMMANDS: Record<string, Record<string, { desc: string; usage: string }>> = {
+  auth: {
+    init: { desc: 'Initialize auth store', usage: 'pop auth init' },
+    rotate: { desc: 'Rotate auth token', usage: 'pop auth rotate' },
+  },
+  security: {
+    audit: { desc: 'Run local security audit', usage: 'pop security audit' },
+  },
+  pi: {
+    smoke: { desc: 'Run Pi engine compatibility check', usage: 'pop pi smoke' },
+  },
+  daemon: {
+    install: { desc: 'Install LaunchAgent', usage: 'pop daemon install' },
+    start: { desc: 'Start daemon in foreground', usage: 'pop daemon start' },
+    status: { desc: 'Show daemon status', usage: 'pop daemon status' },
+    load: { desc: 'Load LaunchAgent', usage: 'pop daemon load' },
+    stop: { desc: 'Stop (unload) daemon', usage: 'pop daemon stop' },
+    restart: { desc: 'Restart LaunchAgent', usage: 'pop daemon restart' },
+    uninstall: { desc: 'Uninstall LaunchAgent', usage: 'pop daemon uninstall' },
+    plist: { desc: 'Print LaunchAgent plist', usage: 'pop daemon plist' },
+  },
+  backup: {
+    create: { desc: 'Create runtime backup', usage: 'pop backup create [path]' },
+    verify: { desc: 'Verify backup integrity', usage: 'pop backup verify <path>' },
+    restore: { desc: 'Restore from backup', usage: 'pop backup restore <path>' },
+  },
+  task: {
+    run: { desc: 'Create and enqueue a task', usage: 'pop task run [title] [prompt]' },
+  },
+  run: {
+    show: { desc: 'Show run details', usage: 'pop run show <runId>' },
+  },
+  runs: {
+    tail: { desc: 'List recent runs', usage: 'pop runs tail' },
+    failures: { desc: 'List failed runs', usage: 'pop runs failures' },
+  },
+  interventions: {
+    list: { desc: 'List open interventions', usage: 'pop interventions list' },
+  },
+  recovery: {
+    retry: { desc: 'Retry a failed run', usage: 'pop recovery retry <runId>' },
+  },
+  receipt: {
+    show: { desc: 'Show receipt details', usage: 'pop receipt show <receiptId>' },
+    search: { desc: 'Search episodic memories', usage: 'pop receipt search <query>' },
+  },
+  memory: {
+    search: { desc: 'Search memories', usage: 'pop memory search <query> [--full]' },
+    audit: { desc: 'Show memory audit stats', usage: 'pop memory audit' },
+    list: { desc: 'List memories', usage: 'pop memory list [type]' },
+    show: { desc: 'Show memory by ID', usage: 'pop memory show <id>' },
+    maintenance: { desc: 'Trigger memory maintenance', usage: 'pop memory maintenance' },
+  },
+  knowledge: {
+    search: { desc: 'Search knowledge memories', usage: 'pop knowledge search <query> [--full]' },
+  },
+  jobs: {
+    list: { desc: 'List jobs', usage: 'pop jobs list' },
+    pause: { desc: 'Pause a job', usage: 'pop jobs pause <jobId>' },
+    resume: { desc: 'Resume a paused job', usage: 'pop jobs resume <jobId>' },
+  },
+  sessions: {
+    list: { desc: 'List session roots', usage: 'pop sessions list' },
+  },
+  migrate: {
+    qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
+    'openclaw-memory': { desc: 'Import OpenClaw memory files', usage: 'pop migrate openclaw-memory <directory>' },
+  },
+};
+
+function showHelp(): void {
+  console.info('pop — Popeye CLI\n');
+  console.info('Usage: pop <command> <subcommand> [args] [--json] [--help]\n');
+  for (const [group, subs] of Object.entries(COMMANDS)) {
+    const entries = Object.entries(subs);
+    const subNames = entries.map(([name]) => name).join(', ');
+    console.info(`  ${group} <${subNames}>`);
+    for (const [name, meta] of entries) {
+      console.info(`    ${group} ${name.padEnd(20)} ${meta.desc}`);
+    }
+  }
+}
+
+function showCommandHelp(cmd: string): void {
+  const subs = COMMANDS[cmd];
+  if (!subs) {
+    console.error(`Unknown command: ${cmd}`);
+    showHelp();
+    process.exit(1);
+  }
+  console.info(`pop ${cmd}\n`);
+  for (const [name, meta] of Object.entries(subs)) {
+    console.info(`  ${meta.usage.padEnd(45)} ${meta.desc}`);
+    void name;
+  }
+}
+
+function requireArg(value: string | undefined, label: string): asserts value is string {
+  if (!value) {
+    console.error(`Missing required argument: <${label}>`);
+    const subs = command ? COMMANDS[command] : undefined;
+    const sub = subs && subcommand ? subs[subcommand] : undefined;
+    if (sub) console.error(`Usage: ${sub.usage}`);
+    process.exit(1);
+  }
+}
 
 function formatRun(run: RunRecord): string {
   const lines = [
@@ -56,6 +165,13 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
   return client;
 }
 
+function isBundledMode(): boolean {
+  const selfPath = typeof import.meta.filename === 'string'
+    ? import.meta.filename
+    : fileURLToPath(import.meta.url);
+  return selfPath.includes(`${join('dist', 'index')}`);
+}
+
 const configPath = process.env.POPEYE_CONFIG_PATH;
 
 if (!configPath) {
@@ -67,6 +183,14 @@ mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
 const paths = deriveRuntimePaths(config.runtimeDataDir);
 
 async function main(): Promise<void> {
+  if (!command || helpFlag && !command) {
+    showHelp();
+    return;
+  }
+  if (helpFlag && command) {
+    showCommandHelp(command);
+    return;
+  }
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile), null, 2));
     return;
@@ -113,10 +237,24 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'start') {
-    const tsxBinary = resolve(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
-    const daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+    let execArgs: [string, string[]];
+    if (isBundledMode()) {
+      const selfPath = typeof import.meta.filename === 'string'
+        ? import.meta.filename
+        : fileURLToPath(import.meta.url);
+      const bundledDaemon = resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.mjs');
+      if (!existsSync(bundledDaemon)) {
+        console.error(`Bundled daemon not found at ${bundledDaemon}. Run 'pnpm pack:daemon' first.`);
+        process.exit(1);
+      }
+      execArgs = [process.execPath, [bundledDaemon]];
+    } else {
+      const tsxBinary = resolve(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
+      const daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+      execArgs = [tsxBinary, [daemonEntryPoint]];
+    }
     await new Promise<void>((resolveStart, rejectStart) => {
-      const child = spawn(tsxBinary, [daemonEntryPoint], {
+      const child = spawn(execArgs[0], execArgs[1], {
         stdio: 'inherit',
         env: { ...process.env, POPEYE_CONFIG_PATH: configPath },
       });
@@ -166,9 +304,15 @@ async function main(): Promise<void> {
     console.info(createBackup({ destinationDir: destination, runtimePaths: paths }));
     return;
   }
+  if (command === 'backup' && subcommand === 'verify') {
+    requireArg(arg1, 'path');
+  }
   if (command === 'backup' && subcommand === 'verify' && arg1) {
     console.info(JSON.stringify(verifyBackup(resolve(arg1)), null, 2));
     return;
+  }
+  if (command === 'backup' && subcommand === 'restore') {
+    requireArg(arg1, 'path');
   }
   if (command === 'backup' && subcommand === 'restore' && arg1) {
     restoreBackup(resolve(arg1), paths);
@@ -198,6 +342,9 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (command === 'run' && subcommand === 'show') {
+    requireArg(arg1, 'runId');
+  }
   if (command === 'run' && subcommand === 'show' && arg1) {
     try {
       const client = await requireDaemonClient(config);
@@ -215,6 +362,9 @@ async function main(): Promise<void> {
       throw error;
     }
     return;
+  }
+  if (command === 'receipt' && subcommand === 'show') {
+    requireArg(arg1, 'receiptId');
   }
   if (command === 'receipt' && subcommand === 'show' && arg1) {
     try {
@@ -256,12 +406,18 @@ async function main(): Promise<void> {
     console.info(JSON.stringify(await client.listInterventions(), null, 2));
     return;
   }
+  if (command === 'recovery' && subcommand === 'retry') {
+    requireArg(arg1, 'runId');
+  }
   if (command === 'recovery' && subcommand === 'retry' && arg1) {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.retryRun(arg1), null, 2));
     return;
   }
 
+  if (command === 'memory' && subcommand === 'search') {
+    requireArg(arg1, 'query');
+  }
   if (command === 'memory' && subcommand === 'search' && arg1) {
     const includeContent = process.argv.includes('--full');
     const client = await requireDaemonClient(config);
@@ -281,6 +437,9 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (command === 'memory' && subcommand === 'show') {
+    requireArg(arg1, 'id');
+  }
   if (command === 'memory' && subcommand === 'show' && arg1) {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.getMemory(arg1), null, 2));
@@ -290,6 +449,9 @@ async function main(): Promise<void> {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.triggerMemoryMaintenance(), null, 2));
     return;
+  }
+  if (command === 'knowledge' && subcommand === 'search') {
+    requireArg(arg1, 'query');
   }
   if (command === 'knowledge' && subcommand === 'search' && arg1) {
     const client = await requireDaemonClient(config);
@@ -301,6 +463,9 @@ async function main(): Promise<void> {
     });
     console.info(JSON.stringify(result, null, 2));
     return;
+  }
+  if (command === 'receipt' && subcommand === 'search') {
+    requireArg(arg1, 'query');
   }
   if (command === 'receipt' && subcommand === 'search' && arg1) {
     const client = await requireDaemonClient(config);
@@ -319,11 +484,17 @@ async function main(): Promise<void> {
     console.info(JSON.stringify(await client.listJobs(), null, 2));
     return;
   }
+  if (command === 'jobs' && subcommand === 'pause') {
+    requireArg(arg1, 'jobId');
+  }
   if (command === 'jobs' && subcommand === 'pause' && arg1) {
     const client = await requireDaemonClient(config);
     const result = await client.pauseJob(arg1);
     console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not in pauseable state');
     return;
+  }
+  if (command === 'jobs' && subcommand === 'resume') {
+    requireArg(arg1, 'jobId');
   }
   if (command === 'jobs' && subcommand === 'resume' && arg1) {
     const client = await requireDaemonClient(config);
@@ -337,7 +508,58 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.info('Usage: pop auth <init|rotate> | pop security audit | pop pi smoke | pop daemon <install|start|load|stop|restart|status|uninstall|plist> | pop backup <create|verify|restore> | pop task run [title] [prompt] | pop run show <runId> | pop runs <tail|failures> | pop interventions list | pop recovery retry <runId> | pop receipt show <receiptId> | pop memory <search|audit|list|show|maintenance> | pop knowledge search <query> | pop receipt search <query> | pop jobs <list|pause|resume> | pop sessions list');
+  if (command === 'migrate' && (subcommand === 'qmd' || subcommand === 'openclaw-memory')) {
+    requireArg(arg1, 'directory');
+  }
+  if (command === 'migrate' && subcommand === 'qmd' && arg1) {
+    const dir = resolve(arg1);
+    if (!existsSync(dir)) {
+      console.error(`Directory not found: ${dir}`);
+      process.exit(1);
+    }
+    const client = await requireDaemonClient(config);
+    const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+    let imported = 0;
+    for (const file of files) {
+      const content = readFileSync(join(dir, file), 'utf-8');
+      await client.importMemory({
+        description: `QMD import: ${file}`,
+        content,
+        sourceType: 'workspace_doc',
+        classification: 'embeddable',
+      });
+      imported++;
+      if (imported % 10 === 0) console.info(`  ${imported}/${files.length} imported`);
+    }
+    console.info(`Imported ${imported} files from ${dir}`);
+    return;
+  }
+
+  if (command === 'migrate' && subcommand === 'openclaw-memory' && arg1) {
+    const dir = resolve(arg1);
+    if (!existsSync(dir)) {
+      console.error(`Directory not found: ${dir}`);
+      process.exit(1);
+    }
+    const client = await requireDaemonClient(config);
+    const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+    let imported = 0;
+    for (const file of files) {
+      const content = readFileSync(join(dir, file), 'utf-8');
+      await client.importMemory({
+        description: `OpenClaw memory: ${file}`,
+        content,
+        sourceType: 'curated_memory',
+        classification: 'embeddable',
+      });
+      imported++;
+      if (imported % 10 === 0) console.info(`  ${imported}/${files.length} imported`);
+    }
+    console.info(`Imported ${imported} files from ${dir}`);
+    return;
+  }
+
+  showHelp();
 }
 
 await main();

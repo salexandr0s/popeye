@@ -109,6 +109,24 @@ pop daemon install && pop daemon load
 pop daemon status
 ```
 
+## Bundled install (alternative)
+
+Instead of running from the monorepo checkout, you can build standalone bundles:
+
+```bash
+bash scripts/install.sh
+```
+
+This will:
+1. Install dependencies and typecheck
+2. Bundle CLI and daemon with tsup (inlines all `@popeye/*` packages)
+3. Symlink `pop` to `/usr/local/bin/pop`
+4. Create default config at `~/Library/Application Support/Popeye/` if missing
+
+Use `--prefix /custom/path` to change the symlink location.
+
+After install, set `POPEYE_CONFIG_PATH` and run `pop auth init` as usual.
+
 ## Common issues
 
 - **Permission denied** — ensure `runtimeDataDir` exists with `chmod 700`
