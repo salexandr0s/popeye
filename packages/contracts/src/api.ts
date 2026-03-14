@@ -214,6 +214,23 @@ export const ProjectRegistrationInputSchema = z.object({
 });
 export type ProjectRegistrationInput = z.infer<typeof ProjectRegistrationInputSchema>;
 
+export const MemoryImportInputSchema = z.object({
+  description: z.string().min(1),
+  content: z.string().min(1),
+  sourceType: z.string().default('curated_memory'),
+  memoryType: z.enum(['episodic', 'semantic', 'procedural']).optional(),
+  scope: z.string().default('workspace'),
+  confidence: z.number().min(0).max(1).default(0.8),
+  classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']).default('embeddable'),
+});
+export type MemoryImportInput = z.infer<typeof MemoryImportInputSchema>;
+
+export const MemoryImportResponseSchema = z.object({
+  memoryId: z.string(),
+  embedded: z.boolean(),
+});
+export type MemoryImportResponse = z.infer<typeof MemoryImportResponseSchema>;
+
 export const InstructionResolutionContextSchema = z.object({
   workspaceId: z.string().min(1),
   projectId: z.string().min(1).optional(),

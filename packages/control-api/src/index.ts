@@ -6,6 +6,7 @@ import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 
 import {
+  MemoryImportInputSchema,
   AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
@@ -473,6 +474,11 @@ export async function createControlApi(
   });
 
   app.post('/v1/memory/maintenance', async () => dependencies.runtime.triggerMemoryMaintenance());
+
+  app.post('/v1/memory/import', async (request) => {
+    const input = MemoryImportInputSchema.parse(request.body);
+    return dependencies.runtime.importMemory(input);
+  });
 
   app.post('/v1/memory/:id/promote/propose', async (request, reply) => {
     const id = parseIdParam(request.params);

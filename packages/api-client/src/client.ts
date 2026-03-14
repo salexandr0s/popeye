@@ -445,6 +445,18 @@ export class PopeyeApiClient {
     return this.post('/v1/memory/maintenance', {}, MemoryMaintenanceResultSchema);
   }
 
+  async importMemory(input: {
+    description: string;
+    content: string;
+    sourceType?: string;
+    memoryType?: string;
+    scope?: string;
+    confidence?: number;
+    classification?: string;
+  }): Promise<{ memoryId: string; embedded: boolean }> {
+    return this.post('/v1/memory/import', input, z.object({ memoryId: z.string(), embedded: z.boolean() }));
+  }
+
   async listSessionRoots(): Promise<SessionRootRecord[]> {
     return this.getArray('/v1/sessions', SessionRootRecordSchema);
   }
