@@ -196,6 +196,9 @@ importers:
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
       '@popeye/runtime-core':
         specifier: workspace:*
         version: link:../runtime-core
@@ -310,6 +313,9 @@ importers:
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
 
   packages/testkit:
     dependencies:

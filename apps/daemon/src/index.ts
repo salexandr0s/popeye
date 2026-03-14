@@ -37,6 +37,7 @@ const app = await createControlApi({
   authExemptPaths: new Set(['/v1/auth/exchange']),
   validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
   useSecureCookies: config.security.useSecureCookies,
+  logger: log.child({}),
 });
 
 // Serve web inspector static files
@@ -80,6 +81,7 @@ let telegramBridge: Awaited<ReturnType<typeof startTelegramBridge>> | null = nul
 const shutdown = async (code = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  log.info('daemon shutting down');
   await telegramBridge?.stop();
   await app.close();
   await runtime.close();
@@ -105,4 +107,8 @@ await app.listen({
   host: config.security.bindHost,
   port: config.security.bindPort,
 });
+log.info('control api listening', { host: config.security.bindHost, port: config.security.bindPort });
 telegramBridge = await startTelegramBridge(config);
+if (telegramBridge) {
+  log.info('telegram bridge started');
+}

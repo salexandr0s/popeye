@@ -45,6 +45,7 @@ import {
   type PopeyeRuntimeService,
 } from '@popeye/runtime-core';
 import { nowIso, type SecurityAuditEvent } from '@popeye/contracts';
+import type { PopeyeLogger } from '@popeye/observability';
 
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
@@ -56,6 +57,8 @@ export interface ControlApiDependencies {
   useSecureCookies?: boolean;
   /** Maximum concurrent SSE connections. Defaults to 10. */
   maxSseConnections?: number;
+  /** Optional structured logger for security and operational events. */
+  logger?: PopeyeLogger;
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -223,6 +226,7 @@ export async function createControlApi(
   });
 
   const authExemptPaths = dependencies.authExemptPaths ?? new Set<string>();
+  const log = dependencies.logger ?? null;
 
   app.addHook('preHandler', async (request, reply) => {
     const path = request.url.split('?')[0]!;
@@ -239,6 +243,7 @@ export async function createControlApi(
     if (authHeader !== undefined) {
       const authStore = dependencies.runtime.loadAuthStore();
       if (!validateBearerToken(authHeader, authStore)) {
+        log?.warn('bearer auth failed', { path, method: request.method });
         return reply.code(401).send({ error: 'unauthorized' });
       }
       request.popeyeAuthContext = {
@@ -248,10 +253,12 @@ export async function createControlApi(
     } else {
       const sessionId = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
       if (!sessionId) {
+        log?.warn('browser session missing', { path });
         return reply.code(401).send({ error: 'unauthorized' });
       }
       const sessionResult = dependencies.runtime.validateBrowserSession(sessionId);
       if (sessionResult.status !== 'valid') {
+        log?.warn('browser session rejected', { path, status: sessionResult.status });
         recordBrowserSessionAudit(dependencies.runtime, request, sessionResult.status);
         return reply.code(401).send({ error: 'unauthorized' });
       }
@@ -270,6 +277,7 @@ export async function createControlApi(
         ? validateCsrfToken(csrf, dependencies.runtime.loadAuthStore())
         : csrf === authContext?.csrfToken;
       if (!csrfValid) {
+        log?.warn('csrf validation failed', { path, method: request.method });
         return reply.code(403).send({ error: 'csrf_invalid' });
       }
       // POP-SEC-007: Sec-Fetch-Site may be absent in non-browser clients.
@@ -279,6 +287,7 @@ export async function createControlApi(
         typeof secFetchSite === 'string' &&
         !['same-origin', 'none'].includes(secFetchSite)
       ) {
+        log?.warn('cross-site request blocked', { path, secFetchSite });
         return reply.code(403).send({ error: 'csrf_cross_site_blocked' });
       }
     }
@@ -498,6 +507,7 @@ export async function createControlApi(
   const sseConnections = new Set<ServerResponse>();
   app.get('/v1/events/stream', (_request, reply) => {
     if (sseConnections.size >= MAX_SSE_CONNECTIONS) {
+      log?.warn('sse connection limit reached', { current: sseConnections.size, max: MAX_SSE_CONNECTIONS });
       void reply.code(429).send({ error: 'too_many_sse_connections' });
       return;
     }

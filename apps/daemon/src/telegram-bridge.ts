@@ -45,6 +45,7 @@ export async function startTelegramBridge(
     control,
     workspaceId: resolveTelegramWorkspaceId(config),
     maxConcurrentPreparations: config.telegram.maxConcurrentPreparations,
+    logger: log,
   });
   relay.start();
 

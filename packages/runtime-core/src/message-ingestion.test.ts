@@ -6,8 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AppConfig } from '../../contracts/src/index.ts';
 import { initAuthStore } from './auth.ts';
-import { MessageIngressError } from './message-ingestion.ts';
-import { createRuntimeService } from './runtime-service.ts';
+import { createRuntimeService, MessageIngressError } from './runtime-service.ts';
 
 function makeConfig(dir: string, overrides?: Partial<{ telegram: Partial<AppConfig['telegram']>; security: Partial<AppConfig['security']> }>): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');

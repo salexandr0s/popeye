@@ -60,7 +60,7 @@ import {
   type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
 import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, loadSqliteVec } from '@popeye/memory';
-import { redactText } from '@popeye/observability';
+import { createLogger, redactText, type PopeyeLogger } from '@popeye/observability';
 import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
 import { selectSessionRoot, SessionService } from '@popeye/sessions';
 
@@ -183,16 +183,6 @@ const RunEventRowSchema = z.object({
   type: z.string(),
   payload: z.string(),
   created_at: z.string(),
-});
-
-const MemorySearchRowSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  description: z.union([z.string(), z.number()]),
-  confidence: z.union([z.string(), z.number()]),
-  scope: z.union([z.string(), z.number()]),
-  source_type: z.union([z.string(), z.number()]),
-  created_at: z.union([z.string(), z.number()]),
-  snippet: z.union([z.string(), z.number()]).nullable().optional(),
 });
 
 const MemoryListRowSchema = z.object({
@@ -378,6 +368,7 @@ export class PopeyeRuntimeService {
   private vecAvailable = false;
   private readonly vecInitPromise: Promise<void>;
 
+  private readonly log: PopeyeLogger;
   private readonly activeRuns = new Map<string, ActiveRunContext>();
   private readonly scheduler: SchedulerInternals = {
     running: false,
@@ -401,12 +392,13 @@ export class PopeyeRuntimeService {
   private readonly taskManager: TaskManager;
   private readonly queryService: QueryService;
 
-  constructor(config: AppConfig, engineOverride?: EngineAdapter) {
+  constructor(config: AppConfig, engineOverride?: EngineAdapter, loggerOverride?: PopeyeLogger) {
     const startupStart = performance.now();
     if (config.security.bindHost !== '127.0.0.1') {
       throw new Error(`Popeye requires config.security.bindHost to be 127.0.0.1, received ${config.security.bindHost}`);
     }
     this.config = config;
+    this.log = loggerOverride ?? createLogger('runtime', config.security.redactionPatterns);
     this.startedAt = nowIso();
     this.databases = openRuntimeDatabases(config);
     this.engine = engineOverride ?? createEngineAdapter(config);
@@ -476,10 +468,12 @@ export class PopeyeRuntimeService {
     this.startTokenRotationCheck();
     const schedulerReadyMs = Math.round(performance.now() - startupStart);
     this.startupProfile = { dbReadyMs, reconcileMs, schedulerReadyMs };
+    this.log.info('runtime started', { dbReadyMs, reconcileMs, schedulerReadyMs });
     this.events.emit('startup_profile', this.startupProfile);
   }
 
   async close(): Promise<void> {
+    this.log.info('runtime closing');
     this.closed = true;
     if (this.memoryMaintenanceTimer) {
       clearInterval(this.memoryMaintenanceTimer);
@@ -1170,6 +1164,7 @@ export class PopeyeRuntimeService {
     this.scheduler.leaseTimer = setInterval(() => void this.processLeaseSweep(), this.scheduler.leaseRefreshIntervalMs);
     void this.processSchedulerTick();
     void this.processLeaseSweep();
+    this.log.info('scheduler started');
   }
 
   async runSchedulerCycle(): Promise<void> {
@@ -1178,6 +1173,7 @@ export class PopeyeRuntimeService {
   }
 
   async stopScheduler(): Promise<void> {
+    this.log.info('scheduler stopping', { activeRuns: this.activeRuns.size });
     if (this.scheduler.tickTimer) clearInterval(this.scheduler.tickTimer);
     if (this.scheduler.leaseTimer) clearInterval(this.scheduler.leaseTimer);
     this.scheduler.tickTimer = null;
@@ -1205,39 +1201,6 @@ export class PopeyeRuntimeService {
   }
 
   // --- Memory public API ---
-
-  searchMemories(
-    query: string,
-  ): Array<{
-    id: string;
-    description: string;
-    confidence: number;
-    scope: string;
-    sourceType: string;
-    createdAt: string;
-    snippet: string;
-  }> {
-    const rows = z.array(MemorySearchRowSchema).parse(this.databases.memory
-      .prepare(
-        `SELECT m.id, m.description, m.confidence, m.scope, m.source_type, m.created_at,
-                snippet(memories_fts, 2, '<b>', '</b>', '...', 32) AS snippet
-         FROM memories_fts
-         JOIN memories m ON m.id = memories_fts.memory_id
-         WHERE memories_fts MATCH ?
-         ORDER BY rank
-         LIMIT 20`,
-      )
-      .all(query));
-    return rows.map((row) => ({
-      id: String(row.id),
-      description: String(row.description),
-      confidence: Number(row.confidence),
-      scope: String(row.scope),
-      sourceType: String(row.source_type),
-      createdAt: String(row.created_at),
-      snippet: String(row.snippet ?? ''),
-    }));
-  }
 
   async searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse> {
     return this.memorySearch.search(query);
@@ -1533,6 +1496,9 @@ export class PopeyeRuntimeService {
         .prepare("SELECT id FROM jobs WHERE status = 'queued' AND available_at <= ? ORDER BY available_at ASC, created_at ASC")
         .all(nowIso()));
 
+      if (dueJobs.length > 0) {
+        this.log.debug('scheduler tick', { dueJobs: dueJobs.length });
+      }
       for (const row of dueJobs) {
         const job = this.getJob(row.id);
         if (!job) continue;
@@ -1561,6 +1527,9 @@ export class PopeyeRuntimeService {
       const expiredLeases = z.array(JobIdRowSchema).parse(this.databases.app
         .prepare('SELECT job_id FROM job_leases WHERE lease_expires_at <= ?')
         .all(nowIso()));
+      if (expiredLeases.length > 0) {
+        this.log.debug('lease sweep', { expired: expiredLeases.length });
+      }
       for (const lease of expiredLeases) {
         const job = this.getJob(lease.job_id);
         if (!job) continue;
@@ -1659,6 +1628,15 @@ export class PopeyeRuntimeService {
     this.messageIngestion.linkAcceptedIngressToRun(task.id, job.id, run.id);
     this.emit('run_started', run);
 
+    const runLog = this.log.child({
+      workspaceId: task.workspaceId,
+      projectId: task.projectId ?? undefined,
+      taskId: task.id,
+      jobId: job.id,
+      runId: run.id,
+      sessionRootId: sessionRoot.id,
+    });
+
     try {
       const engineRequest: EngineRunRequest = {
         prompt: fullPrompt,
@@ -1687,11 +1665,13 @@ export class PopeyeRuntimeService {
       this.activeRuns.set(run.id, activeRun);
       this.refreshLease(job.id, handle.pid ? `worker:${handle.pid}` : `popeyed:${process.pid}`);
       this.databases.app.prepare('UPDATE runs SET state = ? WHERE id = ?').run('running', run.id);
+      runLog.info('run started');
       void this.awaitRunCompletion(activeRun);
       return this.getRun(run.id);
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
       const safeMessage = this.redactError(rawMessage) ?? rawMessage;
+      runLog.error('run startup failed', { error: safeMessage });
       this.releaseWorkspaceLock(job.workspaceId);
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), safeMessage, run.id);
@@ -1722,6 +1702,7 @@ export class PopeyeRuntimeService {
       createdAt: nowIso(),
     });
     this.databases.app.prepare('INSERT INTO run_events (id, run_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)').run(record.id, record.runId, record.type, record.payload, record.createdAt);
+    this.log.debug('engine event persisted', { runId, eventType: event.type });
     if (event.type === 'session' && event.payload?.sessionRef) {
       this.databases.app.prepare('UPDATE runs SET engine_session_ref = ? WHERE id = ?').run(event.payload.sessionRef, runId);
     }
@@ -1753,6 +1734,14 @@ export class PopeyeRuntimeService {
     const run = this.getRun(activeRun.runId);
     if (!run) return;
 
+    const runLog = this.log.child({
+      workspaceId: run.workspaceId,
+      taskId: run.taskId,
+      jobId: run.jobId,
+      runId: run.id,
+      sessionRootId: run.sessionRootId,
+    });
+
     const failure = completion.failureClassification;
     if (failure === null) {
       this.databases.app.prepare('UPDATE runs SET state = ?, engine_session_ref = ?, finished_at = ?, error = ? WHERE id = ?').run('succeeded', completion.engineSessionRef, nowIso(), null, run.id);
@@ -1768,6 +1757,13 @@ export class PopeyeRuntimeService {
         usage: completion.usage,
       });
       this.receiptManager.captureMemoryFromReceipt(receipt);
+      runLog.info('run succeeded', {
+        provider: completion.usage.provider,
+        model: completion.usage.model,
+        tokensIn: completion.usage.tokensIn,
+        tokensOut: completion.usage.tokensOut,
+        estimatedCostUsd: completion.usage.estimatedCostUsd,
+      });
       this.emit('run_completed', receipt);
       this.cleanupActiveRun(activeRun);
       return;
@@ -1787,6 +1783,7 @@ export class PopeyeRuntimeService {
         usage: completion.usage,
       });
       this.receiptManager.captureMemoryFromReceipt(receipt);
+      runLog.info('run cancelled');
       this.emit('run_completed', receipt);
       this.cleanupActiveRun(activeRun);
       return;
@@ -1794,6 +1791,7 @@ export class PopeyeRuntimeService {
 
     if (failure === 'transient_failure') {
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_retryable', nowIso(), this.redactError(failure), run.id);
+      runLog.warn('run failed (retryable)', { failure });
       await this.scheduleRetry(activeRun.task, run.jobId, completion, failure);
       this.cleanupActiveRun(activeRun);
       return;
@@ -1812,6 +1810,7 @@ export class PopeyeRuntimeService {
       usage: completion.usage,
     });
     this.receiptManager.captureMemoryFromReceipt(receipt);
+    runLog.error('run failed (final)', { failure });
     this.emit('run_completed', receipt);
     this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
     this.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
@@ -1856,6 +1855,7 @@ export class PopeyeRuntimeService {
   private async abandonRun(runId: string, reason: string): Promise<void> {
     const run = this.getRun(runId);
     if (!run || isTerminalRunState(run.state)) return;
+    this.log.warn('run abandoned', { runId, reason });
     this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), this.redactError(reason), run.id);
     const receipt = this.receiptManager.getReceiptByRunId(run.id);
@@ -1973,6 +1973,7 @@ export class PopeyeRuntimeService {
 
   private startDocIndexing(): void {
     if (!this.config.memory.docIndexEnabled) return;
+    this.log.debug('doc indexing started', { workspaces: this.config.workspaces.length });
 
     const runIndex = () => {
       if (this.closed) return;
@@ -1988,6 +1989,7 @@ export class PopeyeRuntimeService {
   }
 
   private startMemoryMaintenance(): void {
+    this.log.debug('memory maintenance started');
     // Check hourly for maintenance tasks
     this.memoryMaintenanceTimer = setInterval(() => {
       if (this.closed) return;
@@ -2007,6 +2009,6 @@ export class PopeyeRuntimeService {
   }
 }
 
-export function createRuntimeService(config: AppConfig, engineOverride?: EngineAdapter): PopeyeRuntimeService {
-  return new PopeyeRuntimeService(config, engineOverride);
+export function createRuntimeService(config: AppConfig, engineOverride?: EngineAdapter, loggerOverride?: PopeyeLogger): PopeyeRuntimeService {
+  return new PopeyeRuntimeService(config, engineOverride, loggerOverride);
 }

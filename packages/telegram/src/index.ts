@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { PopeyeLogger } from '@popeye/observability';
 import type {
   IngestMessageInput,
   JobRecord,
@@ -124,6 +125,8 @@ export interface TelegramLongPollRelayOptions {
   sendRetryAttempts?: number;
   sendRetryDelayMs?: number;
   maxConcurrentPreparations?: number;
+  /** Optional structured logger for relay operational events. */
+  logger?: PopeyeLogger;
 }
 
 const TERMINAL_JOB_STATUSES = new Set<JobRecord['status']>(['succeeded', 'failed_final', 'cancelled']);
@@ -410,16 +413,21 @@ export class TelegramLongPollRelay {
   private loopPromise: Promise<void> | null = null;
   private checkpointLoaded = false;
   private readonly activeDeliveryKeys = new Set<string>();
+  private readonly log: PopeyeLogger | null;
 
-  constructor(private readonly options: TelegramLongPollRelayOptions) {}
+  constructor(private readonly options: TelegramLongPollRelayOptions) {
+    this.log = options.logger ?? null;
+  }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.log?.info('relay started');
     this.loopPromise = this.pollLoop();
   }
 
   async stop(): Promise<void> {
+    this.log?.info('relay stopping');
     this.running = false;
     await this.loopPromise;
   }
@@ -436,8 +444,9 @@ export class TelegramLongPollRelay {
             : { offset: this.nextOffset, timeoutSeconds: longPollTimeoutSeconds },
         );
         await this.processUpdates([...updates].sort((left, right) => left.update_id - right.update_id));
-      } catch {
+      } catch (error) {
         if (!this.running) break;
+        this.log?.warn('poll loop error, retrying', { error: error instanceof Error ? error.message : String(error) });
         await sleep(retryDelayMs);
       }
     }
@@ -482,6 +491,7 @@ export class TelegramLongPollRelay {
         await this.completePreparedUpdate(prepared);
       }
     } catch (error) {
+      this.log?.error('batch processing failed', { error: error instanceof Error ? error.message : String(error) });
       await Promise.allSettled(pendingPreparations);
       this.activeDeliveryKeys.clear();
       throw error;
@@ -494,7 +504,8 @@ export class TelegramLongPollRelay {
     let deliveries: TelegramDeliveryRecord[];
     try {
       deliveries = await this.options.control.getResendableDeliveries(this.options.workspaceId);
-    } catch {
+    } catch (error) {
+      this.log?.debug('resendable sweep failed', { error: error instanceof Error ? error.message : String(error) });
       return; // best-effort
     }
     for (const delivery of deliveries) {
@@ -515,7 +526,8 @@ export class TelegramLongPollRelay {
           text: formatTelegramReply(reply.text),
         };
         await this.completePreparedUpdate(prepared);
-      } catch {
+      } catch (error) {
+        this.log?.warn('delivery retry failed', { deliveryKey, error: error instanceof Error ? error.message : String(error) });
         this.activeDeliveryKeys.delete(deliveryKey);
       }
     }
@@ -524,6 +536,7 @@ export class TelegramLongPollRelay {
   private async prepareUpdate(update: TelegramUpdate): Promise<PreparedTelegramUpdate> {
     const normalized = normalizeTelegramUpdate(update);
     if (!normalized) {
+      this.log?.debug('skipping non-normalizable update', { updateId: update.update_id });
       return { kind: 'ack', updateId: update.update_id };
     }
 
@@ -601,6 +614,7 @@ export class TelegramLongPollRelay {
 
     try {
       if (prepared.kind === 'uncertain') {
+        this.log?.info('delivery marked uncertain', { chatId: prepared.chatId, telegramMessageId: prepared.telegramMessageId });
         await this.options.control.markTelegramReplyUncertain(prepared.chatId, prepared.telegramMessageId, {
           workspaceId: this.options.workspaceId,
           runId: prepared.runId,
@@ -642,6 +656,7 @@ export class TelegramLongPollRelay {
         await this.acknowledgeIfReal(prepared.updateId);
       } catch (error) {
         if (isRetryableTelegramSendError(error)) {
+          this.log?.warn('send failed (retryable)', { chatId: prepared.chatId, telegramMessageId: prepared.telegramMessageId, error: error instanceof Error ? error.message : String(error) });
           await this.options.control.markTelegramReplyPending(prepared.chatId, prepared.telegramMessageId, {
             workspaceId: this.options.workspaceId,
             runId: prepared.runId,
@@ -649,6 +664,7 @@ export class TelegramLongPollRelay {
           throw error;
         }
 
+        this.log?.warn('send failed, marking uncertain', { chatId: prepared.chatId, telegramMessageId: prepared.telegramMessageId, error: describeTelegramSendFailure(error) });
         await this.options.control.markTelegramReplyUncertain(prepared.chatId, prepared.telegramMessageId, {
           workspaceId: this.options.workspaceId,
           runId: prepared.runId,
