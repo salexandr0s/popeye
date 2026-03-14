@@ -98,7 +98,7 @@ function usePolling<T>(path: string, intervalMs: number): PollingResult<T> {
     return () => clearInterval(timer);
   }, [fetchData, intervalMs]);
 
-  return { data, error, loading, updatedAt, refetch: fetchData };
+  return { data, error, loading, updatedAt, refetch: () => void fetchData() };
 }
 
 function useFetch<T>(path: string | null): PollingResult<T> {
@@ -130,7 +130,7 @@ function useFetch<T>(path: string | null): PollingResult<T> {
     void fetchData();
   }, [fetchData]);
 
-  return { data, error, loading, updatedAt, refetch: fetchData };
+  return { data, error, loading, updatedAt, refetch: () => void fetchData() };
 }
 
 export function useEventStreamFreshness(onEvent?: (event: EventStreamEnvelope) => void): EventStreamFreshness {

@@ -474,7 +474,7 @@ export class TelegramLongPollRelay {
     try {
       while (pendingPreparations.length > 0) {
         const prepared = await pendingPreparations[0]!;
-        pendingPreparations.shift();
+        void pendingPreparations.shift();
         if (nextIndex < updates.length) {
           pendingPreparations.push(this.prepareUpdate(updates[nextIndex]!));
           nextIndex += 1;
