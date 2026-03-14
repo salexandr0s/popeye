@@ -115,7 +115,37 @@ export class QueryService {
 
   getSecurityAuditFindings(): SecurityAuditFinding[] {
     return z.array(SecurityAuditFindingSchema).parse(
-      this.databases.app.prepare('SELECT code, severity, message FROM security_audit ORDER BY timestamp DESC').all(),
+      this.databases.app
+        .prepare(`
+          SELECT
+            code,
+            severity,
+            message,
+            component,
+            timestamp,
+            details_json as details
+          FROM security_audit
+          ORDER BY timestamp DESC
+        `)
+        .all()
+        .map((row) => {
+          const typedRow = row as {
+            code: string;
+            severity: string;
+            message: string;
+            component: string;
+            timestamp: string;
+            details: string;
+          };
+          return {
+            code: typedRow.code,
+            severity: typedRow.severity,
+            message: typedRow.message,
+            component: typedRow.component,
+            timestamp: typedRow.timestamp,
+            details: JSON.parse(typedRow.details || '{}') as Record<string, string>,
+          };
+        }),
     );
   }
 

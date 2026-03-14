@@ -44,15 +44,26 @@ describe('PopeyeRuntimeService', () => {
 
     runtime.databases.app
       .prepare('INSERT INTO security_audit (id, code, severity, message, component, timestamp, details_json) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run('audit-test', 'test_event', 'warn', 'test warning', 'test', new Date().toISOString(), '{}');
+      .run(
+        'audit-test',
+        'test_event',
+        'warn',
+        'test warning',
+        'test',
+        '2026-03-14T10:00:00.000Z',
+        JSON.stringify({ route: '/v1/auth/exchange' }),
+      );
 
     const findings = runtime.getSecurityAuditFindings();
     expect(findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-        code: 'test_event',
-        severity: 'warn',
-        message: 'test warning',
+          code: 'test_event',
+          severity: 'warn',
+          message: 'test warning',
+          component: 'test',
+          timestamp: '2026-03-14T10:00:00.000Z',
+          details: { route: '/v1/auth/exchange' },
         }),
       ]),
     );

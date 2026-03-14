@@ -97,6 +97,91 @@ describe('control api', () => {
     await app.close();
   });
 
+  it('exchanges a bootstrap nonce for an auth cookie on the exempt route', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({
+      runtime,
+      authExemptPaths: new Set(['/v1/auth/exchange']),
+      validateAuthExchangeNonce: (nonce) => nonce === 'valid-bootstrap-nonce' ? 'accepted' : 'invalid',
+    });
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'invalid' },
+    });
+    expect(rejected.statusCode).toBe(401);
+
+    const exchanged = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'valid-bootstrap-nonce' },
+    });
+    expect(exchanged.statusCode).toBe(200);
+    expect(exchanged.json()).toEqual({ ok: true });
+    expect(exchanged.headers['set-cookie']).toContain('popeye_auth=');
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'auth_exchange_succeeded', severity: 'info' }),
+        expect.objectContaining({ code: 'auth_exchange_nonce_invalid', severity: 'warn' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('records expired nonce telemetry during auth exchange', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-expired-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({
+      runtime,
+      authExemptPaths: new Set(['/v1/auth/exchange']),
+      validateAuthExchangeNonce: () => 'expired',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'expired-bootstrap-nonce' },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'auth_exchange_nonce_expired', severity: 'warn' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('maps telegram ingress policy failures to specific status codes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-telegram-'));
     chmodSync(dir, 0o700);

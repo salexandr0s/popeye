@@ -9,9 +9,10 @@ control API.
 Loads configuration from `POPEYE_CONFIG_PATH`, ensures all runtime directories
 exist with secure permissions, creates a `PopeyeRuntimeService`, starts the task
 scheduler, and mounts the Fastify control API on the configured loopback address
-and port. Optionally serves the web inspector static files with injected auth
-tokens. Handles graceful shutdown on SIGTERM/SIGINT, draining in-flight work and
-closing databases cleanly.
+and port. Optionally serves the web inspector static files with a one-time
+bootstrap nonce; the browser exchanges that nonce for an HttpOnly auth cookie
+before calling protected API routes. Handles graceful shutdown on SIGTERM/SIGINT,
+draining in-flight work and closing databases cleanly.
 
 ## Layer
 
@@ -28,7 +29,7 @@ New platform implementation.
 3. Create `PopeyeRuntimeService` (opens databases, initializes engine adapter)
 4. Start the scheduler loop
 5. Create the control API Fastify server
-6. Optionally register web inspector static file serving
+6. Optionally register web inspector static file serving and bootstrap nonce exchange
 7. Bind to `config.security.bindHost:config.security.bindPort`
 8. Register signal handlers for graceful shutdown
 
@@ -55,5 +56,6 @@ pop daemon load
 ## Configuration
 
 Requires `POPEYE_CONFIG_PATH` environment variable. The daemon binds to
-loopback only (`127.0.0.1`) and requires bearer token authentication on
-every endpoint.
+loopback only (`127.0.0.1`). API routes require auth; browser clients obtain
+same-origin session access through the bootstrap nonce exchange and HttpOnly
+cookie.

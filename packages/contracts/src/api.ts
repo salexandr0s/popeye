@@ -26,6 +26,16 @@ export const CsrfTokenResponseSchema = z.object({
 });
 export type CsrfTokenResponse = z.infer<typeof CsrfTokenResponseSchema>;
 
+export const AuthExchangeRequestSchema = z.object({
+  nonce: z.string().min(1),
+});
+export type AuthExchangeRequest = z.infer<typeof AuthExchangeRequestSchema>;
+
+export const AuthExchangeResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type AuthExchangeResponse = z.infer<typeof AuthExchangeResponseSchema>;
+
 export const UsageSummarySchema = z.object({
   runs: z.number().int().nonnegative(),
   tokensIn: z.number().int().nonnegative(),

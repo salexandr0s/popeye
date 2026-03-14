@@ -97,8 +97,11 @@ const CountRowSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+const InputRecordSchema = z.record(z.string(), z.unknown());
+
 function asInputRecord(input: unknown): Record<string, unknown> {
-  return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  const parsed = InputRecordSchema.safeParse(input);
+  return parsed.success ? parsed.data : {};
 }
 
 function parseAccepted(value: number | boolean): boolean {

@@ -4,6 +4,9 @@ import { dirname } from 'node:path';
 
 import { AuthRotationRecordSchema, type AuthRotationRecord } from '@popeye/contracts';
 
+export const AUTH_COOKIE_NAME = 'popeye_auth';
+export const CSRF_COOKIE_NAME = 'popeye_csrf';
+
 export function generateToken(): string {
   return randomBytes(32).toString('hex');
 }
@@ -62,6 +65,26 @@ export function validateBearerToken(header: string | undefined, record: AuthRota
     return false;
   }
   const token = header.replace('Bearer ', '').trim();
+  return validateToken(token, record, now);
+}
+
+export function validateRequestToken(
+  authorizationHeader: string | undefined,
+  cookieHeader: string | string[] | undefined,
+  record: AuthRotationRecord,
+  now = new Date(),
+): boolean {
+  if (authorizationHeader !== undefined) {
+    return validateBearerToken(authorizationHeader, record, now);
+  }
+  const token = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
+  if (!token) {
+    return false;
+  }
+  return validateToken(token, record, now);
+}
+
+function validateToken(token: string, record: AuthRotationRecord, now = new Date()): boolean {
   if (constantTimeEquals(token, record.current.token)) {
     return true;
   }
@@ -69,6 +92,47 @@ export function validateBearerToken(header: string | undefined, record: AuthRota
     return true;
   }
   return false;
+}
+
+export function readCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {
+  const rawHeader = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : cookieHeader;
+  if (!rawHeader) {
+    return undefined;
+  }
+
+  for (const entry of rawHeader.split(';')) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separator).trim();
+    if (key !== name) {
+      continue;
+    }
+
+    const value = trimmed.slice(separator + 1).trim();
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+export function validateAuthCookie(cookieHeader: string | undefined, record: AuthRotationRecord, now = new Date()): boolean {
+  const token = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
+  if (!token) {
+    return false;
+  }
+  return validateToken(token, record, now);
 }
 
 function hashCsrfSeed(seed: string): string {
@@ -82,6 +146,14 @@ function hashCsrfSeed(seed: string): string {
 // be replaced with a random per-session token.
 export function issueCsrfToken(record: AuthRotationRecord): string {
   return hashCsrfSeed(`csrf:${record.current.token}:${record.current.createdAt}`);
+}
+
+export function serializeAuthCookie(token: string): string {
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
+}
+
+export function serializeCsrfCookie(token: string): string {
+  return `${CSRF_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`;
 }
 
 export function validateCsrfToken(token: string | undefined, record: AuthRotationRecord): boolean {

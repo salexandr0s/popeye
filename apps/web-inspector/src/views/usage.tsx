@@ -7,9 +7,30 @@ import { PageHeader } from '../components/page-header';
 import { useUsageSummary, useSecurityAudit, type SecurityAuditFinding } from '../api/hooks';
 import { Badge } from '../components/badge';
 
+function formatAuditTimestamp(value: string | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatAuditDetails(row: SecurityAuditFinding): string {
+  const entries = Object.entries(row.details ?? {}).filter(([, value]) => value.trim().length > 0);
+  if (entries.length === 0) {
+    return row.component ?? '—';
+  }
+
+  const detailSummary = entries
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' · ');
+
+  return row.component ? `${row.component} · ${detailSummary}` : detailSummary;
+}
+
 export function Usage() {
   const { data: usage, error: usageError, loading: usageLoading } = useUsageSummary();
   const { data: audit, error: auditError, loading: auditLoading } = useSecurityAudit();
+  const auditFindings = audit?.findings ?? [];
 
   const auditColumns: Column<SecurityAuditFinding>[] = [
     {
@@ -31,6 +52,21 @@ export function Usage() {
       header: 'Message',
       render: (row) => (
         <span className="text-[14px]">{row.message}</span>
+      ),
+    },
+    {
+      key: 'timestamp',
+      header: 'Observed',
+      render: (row) => (
+        <span className="text-[14px]">{formatAuditTimestamp(row.timestamp)}</span>
+      ),
+      width: '180px',
+    },
+    {
+      key: 'details',
+      header: 'Context',
+      render: (row) => (
+        <span className="text-[14px] text-[var(--color-fg-muted)]">{formatAuditDetails(row)}</span>
       ),
     },
   ];
@@ -71,11 +107,11 @@ export function Usage() {
         {auditLoading ? <Loading /> : null}
         {auditError ? <ErrorDisplay message={auditError} /> : null}
         {audit ? (
-          audit.length > 0 ? (
+          auditFindings.length > 0 ? (
             <DataTable
               columns={auditColumns}
-              data={audit}
-              keyFn={(f) => `${f.code}-${f.message}`}
+              data={auditFindings}
+              keyFn={(f) => `${f.code}-${f.timestamp ?? f.message}`}
             />
           ) : (
             <EmptyState

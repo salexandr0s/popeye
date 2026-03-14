@@ -27,6 +27,9 @@ export const SecurityAuditFindingSchema = z.object({
   code: z.string(),
   severity: z.enum(['info', 'warn', 'error']),
   message: z.string(),
+  component: z.string().optional(),
+  timestamp: z.string().optional(),
+  details: z.record(z.string(), z.string()).optional(),
 });
 export type SecurityAuditFinding = z.infer<typeof SecurityAuditFindingSchema>;
 

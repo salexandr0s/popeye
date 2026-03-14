@@ -7,10 +7,11 @@ interact with the runtime.
 ## Purpose
 
 Mounts versioned REST endpoints on a Fastify server, enforcing bearer token
-authentication on every request and CSRF protection (token + Sec-Fetch-Site
-validation) on all state-changing mutations. Provides SSE streaming for
-real-time event delivery. Contains no business logic -- all operations delegate
-to `PopeyeRuntimeService`.
+authentication on API requests and CSRF protection (token + Sec-Fetch-Site
+validation) on all state-changing mutations. Browser clients can bootstrap a
+same-origin HttpOnly auth cookie through a one-time `/v1/auth/exchange` nonce
+exchange. Provides SSE streaming for real-time event delivery. Contains no
+business logic -- all operations delegate to `PopeyeRuntimeService`.
 
 ## Layer
 
@@ -27,10 +28,11 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~30 routes)
+## Endpoints (~31 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
+| Auth           | `POST /v1/auth/exchange`                                     |
 | Health         | `GET /v1/health`, `GET /v1/status`                           |
 | Daemon         | `GET /v1/daemon/state`, `GET /v1/daemon/scheduler`           |
 | Resources      | `GET /v1/workspaces`, `GET /v1/projects`, `GET /v1/agent-profiles` |
@@ -65,6 +67,15 @@ await app.listen({ host: '127.0.0.1', port: 18789 });
 See `src/index.test.ts`, `src/contract.test.ts`, `src/csrf.test.ts`,
 `src/sec-fetch.test.ts`, and `src/sse.test.ts` for API contract and
 security enforcement tests.
+
+### Browser bootstrap
+
+The web inspector does not receive the long-lived bearer token in HTML. Instead:
+
+1. the daemon serves HTML with a one-time bootstrap nonce
+2. the browser posts that nonce to `POST /v1/auth/exchange`
+3. the control API sets an HttpOnly `popeye_auth` cookie
+4. subsequent same-origin requests rely on the cookie plus CSRF token
 
 ### Memory promotion
 

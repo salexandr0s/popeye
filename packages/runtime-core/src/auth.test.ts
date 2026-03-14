@@ -7,7 +7,17 @@ import { describe, expect, it } from 'vitest';
 
 import type { AuthRotationRecord } from '@popeye/contracts';
 
-import { initAuthStore, issueCsrfToken, readAuthStore, rotateAuthStore, validateBearerToken, validateCsrfToken } from './auth.js';
+import {
+  AUTH_COOKIE_NAME,
+  initAuthStore,
+  issueCsrfToken,
+  readAuthStore,
+  readCookieValue,
+  rotateAuthStore,
+  validateAuthCookie,
+  validateBearerToken,
+  validateCsrfToken,
+} from './auth.js';
 import { runLocalSecurityAudit } from './security-audit.js';
 
 describe('auth store', () => {
@@ -64,6 +74,38 @@ describe('auth store', () => {
     const store = initAuthStore(authPath);
     const wrongToken = 'a'.repeat(64);
     expect(validateBearerToken(`Bearer ${wrongToken}`, store)).toBe(false);
+  });
+
+  it('validates current token from auth cookie', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-cookie-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    const store = initAuthStore(authPath);
+    expect(validateAuthCookie(`${AUTH_COOKIE_NAME}=${store.current.token}`, store)).toBe(true);
+  });
+
+  it('accepts next token from auth cookie during overlap window', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-cookie-next-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    initAuthStore(authPath);
+    const rotated = rotateAuthStore(authPath, 1);
+    expect(validateAuthCookie(`${AUTH_COOKIE_NAME}=${rotated.next?.token}`, rotated)).toBe(true);
+  });
+
+  it('rejects malformed or missing auth cookie values', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-cookie-bad-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    const store = initAuthStore(authPath);
+    expect(validateAuthCookie(undefined, store)).toBe(false);
+    expect(validateAuthCookie('not-a-cookie', store)).toBe(false);
+    expect(validateAuthCookie(`${AUTH_COOKIE_NAME}=`, store)).toBe(false);
+  });
+
+  it('reads cookie values from multi-cookie headers', () => {
+    expect(readCookieValue('foo=bar; popeye_auth=abc123; theme=dark', AUTH_COOKIE_NAME)).toBe('abc123');
+    expect(readCookieValue('foo=bar', AUTH_COOKIE_NAME)).toBeUndefined();
   });
 
   it('rejects raw token without Bearer prefix', () => {

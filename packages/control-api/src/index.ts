@@ -4,6 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 
 import {
+  AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
   MemoryPromotionProposalRequestSchema,
@@ -20,19 +21,31 @@ import {
   MessageIngressError,
   issueCsrfToken,
   readAuthStore,
+  serializeAuthCookie,
+  serializeCsrfCookie,
+  validateAuthCookie,
   validateBearerToken,
   validateCsrfToken,
   type PopeyeRuntimeService,
 } from '@popeye/runtime-core';
+import { nowIso, type SecurityAuditEvent } from '@popeye/contracts';
 
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
   cspNonce?: string;
   /** Paths exempt from bearer auth (e.g. nonce exchange). CSRF is also skipped for these. */
   authExemptPaths?: ReadonlySet<string>;
+  validateAuthExchangeNonce?: (nonce: string) => 'accepted' | 'expired' | 'invalid';
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function readCookieHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
 
 const MemorySearchQueryParamsSchema = z.object({
   q: z.string().max(1000).optional(),
@@ -55,6 +68,49 @@ const RunListQueryParamsSchema = z.object({
 
 function parseIdParam(params: unknown): string {
   return PathIdParamSchema.parse(params).id;
+}
+
+function recordAuthExchangeAudit(
+  runtime: PopeyeRuntimeService,
+  request: { headers: Record<string, unknown>; ip: string | undefined },
+  outcome: 'accepted' | 'expired' | 'invalid',
+): void {
+  const eventByOutcome: Record<typeof outcome, SecurityAuditEvent> = {
+    accepted: {
+      code: 'auth_exchange_succeeded',
+      severity: 'info',
+      message: 'Browser bootstrap nonce exchanged for auth cookie',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+    expired: {
+      code: 'auth_exchange_nonce_expired',
+      severity: 'warn',
+      message: 'Browser bootstrap nonce was expired during auth exchange',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+    invalid: {
+      code: 'auth_exchange_nonce_invalid',
+      severity: 'warn',
+      message: 'Browser bootstrap nonce was invalid during auth exchange',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+  };
+  runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
 }
 
 export async function createControlApi(
@@ -93,13 +149,19 @@ export async function createControlApi(
   const authExemptPaths = dependencies.authExemptPaths ?? new Set<string>();
 
   app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?')[0]!;
+    if (!path.startsWith('/v1/')) {
+      return undefined;
+    }
     // Allow explicitly exempted paths (e.g. nonce exchange) to bypass bearer + CSRF
-    if (authExemptPaths.has(request.url.split('?')[0]!)) {
+    if (authExemptPaths.has(path)) {
       return undefined;
     }
 
     const authStore = getCachedAuthStore();
-    if (!validateBearerToken(request.headers.authorization, authStore)) {
+    const authorizedByBearer = validateBearerToken(request.headers.authorization, authStore);
+    const authorizedByCookie = validateAuthCookie(readCookieHeader(request.headers.cookie), authStore);
+    if (!authorizedByBearer && !authorizedByCookie) {
       return reply.code(401).send({ error: 'unauthorized' });
     }
 
@@ -120,6 +182,21 @@ export async function createControlApi(
       }
     }
     return undefined;
+  });
+
+  app.post('/v1/auth/exchange', async (request, reply) => {
+    if (!dependencies.validateAuthExchangeNonce) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+    const body = AuthExchangeRequestSchema.parse(request.body);
+    const outcome = dependencies.validateAuthExchangeNonce(body.nonce);
+    recordAuthExchangeAudit(dependencies.runtime, request, outcome);
+    if (outcome !== 'accepted') {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    const authStore = getCachedAuthStore();
+    reply.header('set-cookie', serializeAuthCookie(authStore.current.token));
+    return { ok: true as const };
   });
 
   app.get('/v1/health', async () => ({
@@ -333,10 +410,7 @@ export async function createControlApi(
   app.get('/v1/security/csrf-token', async (_request, reply) => {
     const authStore = getCachedAuthStore();
     const token = issueCsrfToken(authStore);
-    reply.header(
-      'set-cookie',
-      `popeye_csrf=${token}; HttpOnly; SameSite=Strict; Path=/`,
-    );
+    reply.header('set-cookie', serializeCsrfCookie(token));
     return { token };
   });
 

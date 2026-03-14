@@ -9,20 +9,39 @@ const ApiContext = createContext<ApiClient | null>(null);
 
 export function ApiProvider({ children }: { children: ReactNode }) {
   const client = useMemo(() => {
-    const token = (window as unknown as { __POPEYE_AUTH_TOKEN__: string })
-      .__POPEYE_AUTH_TOKEN__;
     let csrfToken: string | null = null;
+    let bootstrapped = false;
 
     const baseHeaders = (): Record<string, string> => ({
-      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     });
 
+    const ensureBootstrap = async (): Promise<void> => {
+      if (bootstrapped) return;
+      const nonce = (
+        window as unknown as { __POPEYE_BOOTSTRAP_NONCE__?: string }
+      ).__POPEYE_BOOTSTRAP_NONCE__;
+      if (!nonce) {
+        throw new Error('Missing bootstrap nonce');
+      }
+      const res = await fetch('/v1/auth/exchange', {
+        method: 'POST',
+        headers: baseHeaders(),
+        credentials: 'same-origin',
+        body: JSON.stringify({ nonce }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      bootstrapped = true;
+    };
+
     const ensureCsrf = async (): Promise<string> => {
       if (csrfToken) return csrfToken;
+      await ensureBootstrap();
       const res = await fetch('/v1/security/csrf-token', {
         headers: baseHeaders(),
+        credentials: 'same-origin',
       });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data: { token: string } = await res.json();
       csrfToken = data.token;
       return csrfToken;
@@ -30,7 +49,11 @@ export function ApiProvider({ children }: { children: ReactNode }) {
 
     return {
       get: async <T,>(path: string): Promise<T> => {
-        const res = await fetch(path, { headers: baseHeaders() });
+        await ensureBootstrap();
+        const res = await fetch(path, {
+          headers: baseHeaders(),
+          credentials: 'same-origin',
+        });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json() as Promise<T>;
       },
@@ -38,6 +61,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
         const csrf = await ensureCsrf();
         const res = await fetch(path, {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
             ...baseHeaders(),
             'x-popeye-csrf': csrf,

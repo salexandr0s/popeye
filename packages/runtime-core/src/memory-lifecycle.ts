@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type {
   AppConfig,
@@ -91,6 +91,55 @@ const PromotionRowSchema = z.object({
 const MemoryContentRowSchema = z.object({
   content: z.string(),
 });
+
+function findNearestExistingPath(path: string): string | null {
+  let current = path;
+  while (true) {
+    if (existsSync(current)) {
+      return current;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const rel = relative(rootPath, candidatePath);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function validatePromotionTargetPath(memoryRoot: string, targetPath: string): string {
+  const canonicalMemoryRoot = realpathSync(memoryRoot);
+  const resolvedTargetPath = resolve(targetPath);
+  const nearestExistingPath = findNearestExistingPath(resolvedTargetPath);
+  if (!nearestExistingPath) {
+    throw new Error(`Target path must be within memory directory: ${canonicalMemoryRoot}`);
+  }
+
+  const canonicalAncestor = realpathSync(nearestExistingPath);
+  const canonicalTargetPath = resolve(
+    canonicalAncestor,
+    relative(nearestExistingPath, resolvedTargetPath),
+  );
+
+  if (!isPathWithin(canonicalMemoryRoot, canonicalTargetPath)) {
+    throw new Error(`Target path must be within memory directory: ${canonicalMemoryRoot}`);
+  }
+  if (!isPathWithin(canonicalMemoryRoot, canonicalAncestor)) {
+    throw new Error(`Target path must be within memory directory: ${canonicalMemoryRoot}`);
+  }
+
+  const parentDir = dirname(resolvedTargetPath);
+  if (existsSync(parentDir) && lstatSync(parentDir).isSymbolicLink()) {
+    throw new Error(`Target path must be within memory directory: ${canonicalMemoryRoot}`);
+  }
+
+  return resolvedTargetPath;
+}
 
 function parseCountCRow(row: unknown): number {
   return CountCRowSchema.parse(row).c;
@@ -476,25 +525,21 @@ export class MemoryLifecycleService {
       return { ...request, promoted: false };
     }
 
-    // Validate target path is within memory directory to prevent path traversal
-    const resolved = resolve(request.targetPath);
     const memoryDir = resolve(this.databases.paths.memoryDailyDir, '..');
-    if (!resolved.startsWith(memoryDir)) {
-      throw new Error(`Target path must be within memory directory: ${memoryDir}`);
-    }
+    const resolvedTargetPath = validatePromotionTargetPath(memoryDir, request.targetPath);
 
     const rawRow = this.databases.memory.prepare('SELECT content FROM memories WHERE id = ?').get(request.memoryId);
     const row = rawRow ? MemoryContentRowSchema.parse(rawRow) : null;
     if (!row) return { ...request, promoted: false };
 
-    mkdirSync(dirname(request.targetPath), { recursive: true, mode: 0o700 });
-    writeFileSync(request.targetPath, row.content, { mode: 0o600 });
+    mkdirSync(dirname(resolvedTargetPath), { recursive: true, mode: 0o700 });
+    writeFileSync(resolvedTargetPath, row.content, { mode: 0o600 });
 
     this.databases.memory
       .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(randomUUID(), request.memoryId, 'promoted', JSON.stringify({ targetPath: request.targetPath }), nowIso());
+      .run(randomUUID(), request.memoryId, 'promoted', JSON.stringify({ targetPath: resolvedTargetPath }), nowIso());
 
-    return { ...request, promoted: true };
+    return { ...request, targetPath: resolvedTargetPath, promoted: true };
   }
 }
 

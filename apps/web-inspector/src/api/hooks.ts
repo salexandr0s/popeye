@@ -11,6 +11,7 @@ import type {
   InterventionRecord,
   UsageSummary,
   SchedulerStatusResponse,
+  SecurityAuditResponse,
   SecurityAuditFinding,
   HealthResponse,
   MemorySearchResult,
@@ -40,6 +41,36 @@ export interface EventStreamFreshness {
 export interface EventStreamEnvelope {
   event: string;
   data: string;
+}
+
+let bootstrapPromise: Promise<void> | null = null;
+
+export function resetBrowserBootstrapForTests(): void {
+  bootstrapPromise = null;
+}
+
+function ensureBrowserBootstrap(): Promise<void> {
+  if (bootstrapPromise) return bootstrapPromise;
+  const nonce = (
+    globalThis.window as unknown as { __POPEYE_BOOTSTRAP_NONCE__?: string } | undefined
+  )?.__POPEYE_BOOTSTRAP_NONCE__;
+  if (!nonce) {
+    return Promise.reject(new Error('Missing bootstrap nonce'));
+  }
+  bootstrapPromise = fetch('/v1/auth/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ nonce }),
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+  }).catch((error: unknown) => {
+    bootstrapPromise = null;
+    throw error;
+  });
+  return bootstrapPromise;
 }
 
 function usePolling<T>(path: string, intervalMs: number): PollingResult<T> {
@@ -114,13 +145,6 @@ export function useEventStreamFreshness(onEvent?: (event: EventStreamEnvelope) =
   }, [onEvent]);
 
   useEffect(() => {
-    const token = (globalThis.window as unknown as { __POPEYE_AUTH_TOKEN__?: string } | undefined)?.__POPEYE_AUTH_TOKEN__;
-    if (!token) {
-      setConnected(false);
-      setError('Missing auth token for event stream');
-      return undefined;
-    }
-
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
@@ -128,11 +152,12 @@ export function useEventStreamFreshness(onEvent?: (event: EventStreamEnvelope) =
     const connect = async (): Promise<void> => {
       controller = new AbortController();
       try {
+        await ensureBrowserBootstrap();
         const response = await fetch('/v1/events/stream', {
           headers: {
-            Authorization: `Bearer ${token}`,
             Accept: 'text/event-stream',
           },
+          credentials: 'same-origin',
           signal: controller.signal,
         });
 
@@ -244,7 +269,7 @@ export function useUsageSummary() {
 }
 
 export function useSecurityAudit() {
-  return useFetch<SecurityAuditFinding[]>('/v1/security/audit');
+  return useFetch<SecurityAuditResponse>('/v1/security/audit');
 }
 
 export function useHealth() {

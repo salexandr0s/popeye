@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '@popeye/contracts';
 import { createControlApi } from '@popeye/control-api';
 import { initAuthStore, readAuthStore, createRuntimeService } from '@popeye/runtime-core';
+import { WebBootstrapNonceStore } from './web-bootstrap.js';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -66,5 +67,20 @@ describe('daemon boot integration', () => {
     expect(scheduler.json().nextHeartbeatDueAt).toBeTruthy();
     await runtime.close();
     await app.close();
+  });
+
+  it('bootstrap nonce store expires and rejects stale nonces', () => {
+    let now = 10_000;
+    const store = new WebBootstrapNonceStore(1_000, () => now);
+
+    const nonce = store.issue();
+    expect(store.size()).toBe(1);
+    expect(store.consume(nonce)).toBe('accepted');
+    expect(store.consume(nonce)).toBe('invalid');
+
+    const expiringNonce = store.issue();
+    now += 1_001;
+    expect(store.consume(expiringNonce)).toBe('expired');
+    expect(store.size()).toBe(0);
   });
 });

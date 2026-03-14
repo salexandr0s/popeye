@@ -9,8 +9,8 @@ import {
   createRuntimeService,
   ensureRuntimePaths,
   loadAppConfig,
-  readAuthStore,
 } from '@popeye/runtime-core';
+import { WebBootstrapNonceStore } from './web-bootstrap.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
 if (!configPath) {
@@ -22,7 +22,13 @@ ensureRuntimePaths(config);
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
 const cspNonce = randomBytes(16).toString('base64');
-const app = await createControlApi({ runtime, cspNonce, authExemptPaths: new Set(['/v1/auth/exchange']) });
+const webBootstrap = new WebBootstrapNonceStore();
+const app = await createControlApi({
+  runtime,
+  cspNonce,
+  authExemptPaths: new Set(['/v1/auth/exchange']),
+  validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
+});
 
 // Serve web inspector static files
 const webInspectorDist = resolve(
@@ -30,26 +36,28 @@ const webInspectorDist = resolve(
   '../../web-inspector/dist',
 );
 if (existsSync(webInspectorDist)) {
-  const authStore = readAuthStore(config.authFile);
   const rawHtml = readFileSync(
     resolve(webInspectorDist, 'index.html'),
     'utf8',
   );
-  const injectedHtml = rawHtml
-    .replace('__POPEYE_AUTH_TOKEN__', authStore.current.token)
-    .replace(/<script/g, `<script nonce="${cspNonce}"`);
+  const htmlTemplate = rawHtml.replace(/<script/g, `<script nonce="${cspNonce}"`);
 
   await app.register(fastifyStatic, {
     root: webInspectorDist,
     prefix: '/',
     decorateReply: false,
     wildcard: false,
+    index: false,
   });
 
   app.setNotFoundHandler(async (request, reply) => {
     if (request.url.startsWith('/v1/')) {
       return reply.code(404).send({ error: 'not_found' });
     }
+    const injectedHtml = htmlTemplate.replace(
+      '__POPEYE_BOOTSTRAP_NONCE__',
+      webBootstrap.issue(),
+    );
     return reply.code(200).type('text/html').send(injectedHtml);
   });
 }

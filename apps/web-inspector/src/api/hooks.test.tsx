@@ -3,16 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act, cleanup } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ApiProvider } from './provider';
+import { resetBrowserBootstrapForTests, useDaemonStatus, useRun } from './hooks';
 
-// We cannot import usePolling/useFetch directly since they are not exported.
-// Instead, test through the public hooks that use them.
-// useDaemonStatus uses usePolling, useRun uses useFetch.
-import { useDaemonStatus, useRun } from './hooks';
-
-const AUTH_TOKEN = 'test-auth-token';
-
-// Enable React act() environment
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const BOOTSTRAP_NONCE = 'bootstrap-nonce-test';
 
 function createWrapper() {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -25,7 +20,8 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    (window as unknown as { __POPEYE_AUTH_TOKEN__: string }).__POPEYE_AUTH_TOKEN__ = AUTH_TOKEN;
+    resetBrowserBootstrapForTests();
+    (window as unknown as { __POPEYE_BOOTSTRAP_NONCE__: string }).__POPEYE_BOOTSTRAP_NONCE__ = BOOTSTRAP_NONCE;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -38,6 +34,10 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
 
   it('fetches on mount', async () => {
     const statusData = { state: 'running', uptime: 1234 };
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
     fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(statusData),
@@ -47,10 +47,8 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
       wrapper: createWrapper(),
     });
 
-    // Initially loading
     expect(result.current.loading).toBe(true);
 
-    // Flush microtasks so the fetch promise resolves under fake timers
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -59,9 +57,15 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
     expect(result.current.data).toEqual(statusData);
     expect(result.current.error).toBeNull();
     expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/auth/exchange');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/status');
   });
 
-  it('re-fetches at interval', async () => {
+  it('re-fetches at interval without repeating bootstrap exchange', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
     fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ state: 'running' }),
@@ -71,22 +75,26 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
       wrapper: createWrapper(),
     });
 
-    // Let the initial fetch resolve
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
     const initialCallCount = fetchMock.mock.calls.length;
 
-    // Advance by the polling interval (5000ms for useDaemonStatus)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
 
     expect(fetchMock.mock.calls.length).toBeGreaterThan(initialCallCount);
+    const exchangeCalls = fetchMock.mock.calls.filter(([path]) => path === '/v1/auth/exchange');
+    expect(exchangeCalls).toHaveLength(1);
   });
 
   it('cleans up interval on unmount', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
     fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ state: 'running' }),
@@ -96,15 +104,12 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
       wrapper: createWrapper(),
     });
 
-    // Let the initial fetch resolve
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
     const callCountBeforeUnmount = fetchMock.mock.calls.length;
     unmount();
-
-    // Advance timers after unmount — no additional fetches should happen
     vi.advanceTimersByTime(15000);
 
     expect(fetchMock.mock.calls.length).toBe(callCountBeforeUnmount);
@@ -115,7 +120,8 @@ describe('hooks (useFetch via useRun)', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    (window as unknown as { __POPEYE_AUTH_TOKEN__: string }).__POPEYE_AUTH_TOKEN__ = AUTH_TOKEN;
+    resetBrowserBootstrapForTests();
+    (window as unknown as { __POPEYE_BOOTSTRAP_NONCE__: string }).__POPEYE_BOOTSTRAP_NONCE__ = BOOTSTRAP_NONCE;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -143,6 +149,10 @@ describe('hooks (useFetch via useRun)', () => {
     const runData = { id: 'run-1', state: 'succeeded' };
     fetchMock.mockResolvedValueOnce({
       ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
       json: () => Promise.resolve(runData),
     });
 
@@ -156,9 +166,15 @@ describe('hooks (useFetch via useRun)', () => {
 
     expect(result.current.data).toEqual(runData);
     expect(result.current.error).toBeNull();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/auth/exchange');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/runs/run-1');
   });
 
   it('sets error on fetch failure', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
     fetchMock.mockRejectedValueOnce(new Error('Network failure'));
 
     const { result } = renderHook(() => useRun('run-1'), {

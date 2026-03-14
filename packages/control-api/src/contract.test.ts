@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AgentProfileRecordSchema,
+  AuthExchangeResponseSchema,
   CsrfTokenResponseSchema,
   DaemonStatusResponseSchema,
   JobRecordSchema,
@@ -206,6 +207,27 @@ describe('API contract tests', () => {
     expect(response.statusCode).toBe(200);
     const parsed = CsrfTokenResponseSchema.parse(response.json());
     expect(parsed.token).toBeTruthy();
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/auth/exchange conforms to AuthExchangeResponseSchema', async () => {
+    const { runtime } = createTestEnv();
+    const app = await createControlApi({
+      runtime,
+      authExemptPaths: new Set(['/v1/auth/exchange']),
+      validateAuthExchangeNonce: (nonce) => nonce === 'contract-bootstrap-nonce' ? 'accepted' : 'invalid',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'contract-bootstrap-nonce' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    AuthExchangeResponseSchema.parse(response.json());
 
     await runtime.close();
     await app.close();

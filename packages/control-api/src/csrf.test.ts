@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUTH_COOKIE_NAME,
   createRuntimeService,
   initAuthStore,
   issueCsrfToken,
@@ -157,6 +158,76 @@ describe('CSRF token issuance and validation', () => {
     const body = response.json() as { token: string };
     const expected = issueCsrfToken(readAuthStore(authFile));
     expect(body.token).toBe(expected);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('accepts same-origin cookie auth for web clients', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-csrf-cookie-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: {
+        bindHost: '127.0.0.1',
+        bindPort: 3210,
+        redactionPatterns: [],
+      },
+      telegram: {
+        enabled: false,
+        allowedUserId: '42',
+        maxMessagesPerMinute: 10,
+        rateLimitWindowSeconds: 60,
+      },
+      embeddings: {
+        provider: 'disabled',
+        allowedClassifications: ['embeddable'],
+      },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [
+        {
+          id: 'default',
+          name: 'Default workspace',
+          heartbeatEnabled: true,
+          heartbeatIntervalSeconds: 3600,
+        },
+      ],
+    });
+    const app = await createControlApi({ runtime });
+
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(store.current.token)}` },
+    });
+
+    expect(csrfResponse.statusCode).toBe(200);
+    const body = csrfResponse.json() as { token: string };
+    expect(body.token).toBe(issueCsrfToken(readAuthStore(authFile)));
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: {
+        cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(store.current.token)}`,
+        'x-popeye-csrf': body.token,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        projectId: null,
+        title: 'cookie-auth-task',
+        prompt: 'hello',
+        source: 'manual',
+        autoEnqueue: false,
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
 
     await runtime.close();
     await app.close();

@@ -486,8 +486,12 @@ export class PopeyeRuntimeService {
     return this.sessionService.resolveIntervention(interventionId);
   }
 
-  getSecurityAuditFindings(): Array<{ code: string; severity: string; message: string }> {
+  getSecurityAuditFindings() {
     return this.queryService.getSecurityAuditFindings();
+  }
+
+  recordSecurityAuditEvent(event: SecurityAuditEvent): void {
+    this.recordSecurityAudit(event);
   }
 
   issueCsrfToken(): string {

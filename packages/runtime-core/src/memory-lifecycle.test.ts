@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -198,6 +198,8 @@ describe('MemoryLifecycleService', () => {
     memoryDb = createMemoryDb();
     tmpDir = mkdtempSync(join(tmpdir(), 'popeye-lifecycle-'));
     const paths = makePaths(tmpDir);
+    mkdirSync(join(tmpDir, 'memory'), { recursive: true });
+    mkdirSync(paths.memoryDailyDir, { recursive: true });
     databases = { app: appDb, memory: memoryDb, paths };
     config = makeConfig();
     searchService = new MemorySearchService({
@@ -676,6 +678,28 @@ describe('MemoryLifecycleService', () => {
       const id = insertMemoryRow(memoryDb, { content: 'evil' });
       const evilPath = join(tmpDir, 'memory', '..', '..', 'etc', 'passwd');
       const proposal = service.proposePromotion(id, evilPath);
+      proposal.approved = true;
+
+      expect(() => service.executePromotion(proposal)).toThrow(/Target path must be within memory directory/);
+    });
+
+    it('blocks prefix-collision paths outside memory directory', () => {
+      const id = insertMemoryRow(memoryDb, { content: 'evil' });
+      const prefixCollisionPath = join(tmpDir, 'memory-evil', 'promoted.md');
+      const proposal = service.proposePromotion(id, prefixCollisionPath);
+      proposal.approved = true;
+
+      expect(() => service.executePromotion(proposal)).toThrow(/Target path must be within memory directory/);
+    });
+
+    it('blocks symlinked directories that escape the memory root', () => {
+      const id = insertMemoryRow(memoryDb, { content: 'evil' });
+      const outsideDir = join(tmpDir, 'outside');
+      const linkedDir = join(tmpDir, 'memory', 'linked-outside');
+      mkdirSync(outsideDir, { recursive: true });
+      symlinkSync(outsideDir, linkedDir, 'dir');
+
+      const proposal = service.proposePromotion(id, join(linkedDir, 'promoted.md'));
       proposal.approved = true;
 
       expect(() => service.executePromotion(proposal)).toThrow(/Target path must be within memory directory/);
