@@ -66,14 +66,15 @@ Common failure modes and diagnostic procedures for the Popeye daemon.
 
 **Possible causes:**
 - Pi checkout not found at configured `engine.piPath`.
-- Pi command not executable.
+- Pi command not executable or Pi CLI not built.
 - Engine kind set to `pi` but Pi is not available.
 
 **Steps:**
 1. Verify Pi checkout exists: `ls ../pi/package.json` (or the configured path).
-2. Test the engine command manually.
-3. Check run events for error details.
-4. If Pi is not needed, set `engine.kind` to `"fake"` in config.
+2. Verify the Pi CLI is runnable. Default `node` launches expect `packages/coding-agent/dist/cli.js` inside the Pi checkout.
+3. Test the engine command manually with RPC mode.
+4. Check run events for error details.
+5. If Pi is not needed, set `engine.kind` to `"fake"` in config.
 
 ### Telegram messages rejected
 

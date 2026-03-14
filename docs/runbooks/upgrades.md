@@ -13,7 +13,7 @@
 1. Stop daemon — `pop daemon stop`
 2. Update `../pi` checkout to target version
 3. Run Pi smoke tests — `pnpm test:pi-smoke`
-4. Review child-process contract (JSON stdin, NDJSON stdout)
+4. Review Pi RPC contract (`get_state` / `prompt` / `abort`, JSONL responses + session events)
 5. Update `docs/pi-fork-delta.md` with changes
 6. Run full test suite — `dev-verify`
 7. Start daemon — `pop daemon start`

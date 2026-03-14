@@ -19,7 +19,7 @@
   "engine": {
     "kind": "fake",
     "piPath": "../pi",
-    "piVersion": "0.1.0",
+    "piVersion": "0.0.3",
     "command": "node",
     "args": []
   },

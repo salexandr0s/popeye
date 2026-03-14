@@ -51,5 +51,7 @@ On startup the daemon:
 
 ## Pi smoke workflow
 - Local manual smoke: `pop pi smoke`
-- Test runner smoke: `POPEYE_ENABLE_PI_SMOKE=1 POPEYE_PI_SMOKE_PATH=/path/to/pi POPEYE_PI_SMOKE_COMMAND=node POPEYE_PI_SMOKE_ARGS='["bin/pi.js"]' pnpm test:pi-smoke`
+- Before smoke, ensure the Pi checkout has dependencies installed and a runnable CLI (`packages/coding-agent/dist/cli.js`) built.
+- If no explicit `POPEYE_PI_SMOKE_ARGS` are provided, the smoke test injects a temporary secretless Pi custom-provider extension and model so the RPC contract can be verified without external API credentials.
+- Test runner smoke: `POPEYE_ENABLE_PI_SMOKE=1 POPEYE_PI_SMOKE_PATH=/path/to/pi POPEYE_PI_SMOKE_COMMAND=node POPEYE_PI_SMOKE_ARGS='[]' pnpm test:pi-smoke`
 - CI/manual smoke: run `.github/workflows/pi-smoke.yml` with the Pi repo/ref and command args

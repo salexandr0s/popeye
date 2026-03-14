@@ -6,10 +6,11 @@ directly.
 
 ## Purpose
 
-Spawns Pi as a child process, streams its NDJSON events, and normalizes them
+Spawns Pi as a child process in `--mode rpc`, performs a JSONL handshake
+(`get_state` then `prompt`), and normalizes Pi RPC responses/session events
 into typed Popeye domain events. Handles process lifecycle including timeout
-enforcement with SIGTERM/SIGKILL escalation. Provides deterministic test
-doubles for use in unit and integration tests.
+enforcement, RPC abort on cancellation, and SIGTERM/SIGKILL fallback. Provides
+deterministic test doubles for use in unit and integration tests.
 
 ## Layer
 
@@ -45,5 +46,28 @@ const adapter = createEngineAdapter(config);
 const result = await adapter.run('hello');
 console.log(result.events, result.usage);
 ```
+
+## Pi launch contract
+
+- Popeye owns the subprocess lifecycle and always appends `--mode rpc`
+- Popeye sends JSONL commands on stdin:
+  - `{"id":"popeye:get_state","type":"get_state"}`
+  - `{"id":"popeye:prompt","type":"prompt","message":"..."}`
+  - `{"id":"popeye:abort","type":"abort"}` on cancellation
+- Pi returns JSONL `response` envelopes plus streamed `AgentSessionEvent`
+  objects on stdout
+- `@popeye/engine-pi` synthesizes Popeye `session`, `completed`, and `usage`
+  events from that stream as needed
+- Interactive RPC UI requests (`select`, `confirm`, `input`, `editor`) are
+  treated as `protocol_error`; passive UI notifications (`setWidget`,
+  `setStatus`, `notify`, etc.) are ignored
+
+## Configuration note
+
+- `engine.command` and `engine.args` must resolve to a runnable Pi CLI
+- If `command` is `node` and `args` is empty, the adapter defaults to
+  `packages/coding-agent/dist/cli.js` inside the configured Pi checkout
+- If `command` is `node` and `args` begins with Pi flags (for example
+  `--extension` or `--model`), the adapter prepends the built Pi CLI path
 
 See `src/index.test.ts` for adapter behavior and failure mode tests.

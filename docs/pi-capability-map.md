@@ -13,7 +13,8 @@ These capabilities are delegated to Pi through `@popeye/engine-pi`:
 | Tool calling infrastructure | Invoking tools, parsing results, feeding back into the loop |
 | Session tree | Engine-level session management and context organization |
 | Compaction | Context window management and compaction |
-| Event streaming | Producing structured events on stdout (started, session, message, tool_call, tool_result, completed, failed, usage) |
+| RPC contract | JSONL command/response protocol in `--mode rpc` (`get_state`, `prompt`, `abort`, etc.) |
+| Event streaming | Producing `AgentSessionEvent` objects on stdout during RPC execution |
 | Coding agent capability | Generic coding-agent features (file editing, search, etc.) |
 
 ## Popeye wraps (via @popeye/engine-pi)
@@ -21,11 +22,12 @@ These capabilities are delegated to Pi through `@popeye/engine-pi`:
 | Capability | What Popeye does | What Pi does |
 |-----------|-----------------|-------------|
 | Engine lifecycle | Spawns Pi as a child process, manages stdin/stdout/stderr | Runs as the child process |
-| Event normalization | Parses Pi's newline-delimited JSON events into `NormalizedEngineEvent` | Emits raw events |
-| Session reference capture | Extracts `engineSessionRef` from Pi's `session` events | Produces session events |
-| Usage tracking | Extracts `UsageMetrics` from Pi's `usage` events, provides defaults when absent | Reports usage when available |
-| Failure classification | Maps Pi exit codes and error events to `EngineFailureClassification` | Reports failures via events or exit codes |
-| Cancellation | Sends `SIGTERM` to the Pi process | Handles signal gracefully |
+| RPC handshake | Sends `get_state` then `prompt`, and `abort` on cancel | Responds with typed RPC `response` envelopes |
+| Event normalization | Maps Pi RPC responses/session events into `NormalizedEngineEvent` | Emits raw `AgentSessionEvent` objects |
+| Session reference capture | Synthesizes `engineSessionRef` from `get_state.sessionId` | Reports current session state |
+| Usage tracking | Extracts `UsageMetrics` from the latest assistant message usage, provides defaults when absent | Reports usage on assistant messages |
+| Failure classification | Maps Pi RPC failures, assistant stop reasons, and exit conditions to `EngineFailureClassification` | Reports command failures and terminal message state |
+| Cancellation | Sends RPC `abort` then falls back to `SIGTERM`/`SIGKILL` | Handles abort/signal gracefully |
 | Liveness checking | Polls process PID to check if Pi is still alive | N/A |
 
 ## Popeye owns (runtime layer, not in Pi)
@@ -67,6 +69,6 @@ interface EngineAdapter {
 Two implementations exist:
 
 - **FakeEngineAdapter** -- returns deterministic echo responses. Used in tests and when `config.engine.kind === "fake"`.
-- **PiEngineAdapter** -- spawns a real Pi child process. Used when `config.engine.kind === "pi"` and a valid Pi checkout is available at `config.engine.piPath`.
+- **PiEngineAdapter** -- spawns a real Pi child process in RPC mode. Used when `config.engine.kind === "pi"` and a valid Pi checkout is available at `config.engine.piPath`.
 
 The `createEngineAdapter()` factory selects the implementation based on config.

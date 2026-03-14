@@ -39,6 +39,10 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: npm ci
+        working-directory: external-pi
+      - run: npm run build
+        working-directory: external-pi
       - run: pnpm typecheck
       - run: pnpm test:pi-smoke
         env:

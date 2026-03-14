@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 
 import {
   type AppConfig,
-  EngineFailureClassificationSchema,
   NormalizedEngineEventSchema,
   type EngineFailureClassification,
   type NormalizedEngineEvent,
@@ -15,7 +14,17 @@ import { z } from 'zod';
 
 export type { EngineFailureClassification } from '@popeye/contracts';
 
-const ENGINE_EVENT_TYPES = new Set<NormalizedEngineEvent['type']>(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage', 'compaction']);
+const DEFAULT_PI_CLI_PATH = 'packages/coding-agent/dist/cli.js';
+const MAX_STDERR_BYTES = 1_048_576;
+const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
+const MAX_EVENTS = 10_000;
+const CANCEL_GRACE_MS = 5_000;
+const INTERNAL_IDS = {
+  getState: 'popeye:get_state',
+  prompt: 'popeye:prompt',
+  abort: 'popeye:abort',
+} as const;
+const PASSIVE_EXTENSION_UI_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text']);
 
 export interface EngineRunHandle {
   pid: number | null;
@@ -34,15 +43,15 @@ export interface EngineRunResult {
   engineSessionRef: string | null;
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
-  failureMessage?: string;
-  warnings?: string;
+  failureMessage?: string | undefined;
+  warnings?: string | undefined;
 }
 
 export interface EngineRunCompletion {
   engineSessionRef: string | null;
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
-  warnings?: string;
+  warnings?: string | undefined;
 }
 
 export interface EngineExecution {
@@ -71,30 +80,89 @@ export interface PiCheckoutStatus {
   version: string | null;
 }
 
-export interface PiChildRequest {
-  prompt: string;
-}
-
-export interface PiChildEvent {
-  type: string;
-  payload?: Record<string, unknown>;
-}
-
-const PackageVersionSchema = z.object({
-  version: z.string().optional(),
-}).passthrough();
-
-const PiChildEventSchema = z.object({
-  type: z.string().min(1),
-  payload: z.record(z.string(), z.unknown()).optional(),
-});
-
 export interface PiCompatibilityResult {
   ok: boolean;
   eventTypes: string[];
   eventsObserved: number;
   engineSessionRef: string | null;
 }
+
+interface PrimitiveRecord {
+  [key: string]: string | number | boolean | null;
+}
+
+interface RpcResponse {
+  id?: string | undefined;
+  type: 'response';
+  command: string;
+  success: boolean;
+  data?: unknown;
+  error?: string | undefined;
+}
+
+interface RpcStateData {
+  sessionId: string;
+  sessionFile?: string | undefined;
+  isStreaming?: boolean;
+}
+
+interface PiMessage {
+  role?: string;
+  provider?: string;
+  model?: string;
+  stopReason?: string;
+  errorMessage?: string;
+  usage?: {
+    input?: number;
+    output?: number;
+    cost?: {
+      total?: number;
+    };
+  };
+  content?: unknown;
+}
+
+interface AgentEventBase {
+  type: string;
+}
+
+interface PromptState {
+  requested: boolean;
+  accepted: boolean;
+  completed: boolean;
+}
+
+const PackageVersionSchema = z.object({
+  version: z.string().optional(),
+}).passthrough();
+
+const RpcResponseSchema = z.object({
+  id: z.string().optional(),
+  type: z.literal('response'),
+  command: z.string(),
+  success: z.boolean(),
+  data: z.unknown().optional(),
+  error: z.string().optional(),
+}).passthrough();
+
+const RpcStateDataSchema = z.object({
+  sessionId: z.string(),
+  sessionFile: z.string().optional(),
+  isStreaming: z.boolean().optional(),
+}).passthrough();
+
+const RpcExtensionUiRequestSchema = z.object({
+  type: z.literal('extension_ui_request'),
+  id: z.string(),
+  method: z.string(),
+}).passthrough();
+
+const RpcExtensionErrorSchema = z.object({
+  type: z.literal('extension_error'),
+  error: z.string(),
+  event: z.string().optional(),
+  extensionPath: z.string().optional(),
+}).passthrough();
 
 export class PiEngineAdapterNotConfiguredError extends Error {
   constructor(message = 'Pi engine adapter is not configured in this repository yet') {
@@ -169,21 +237,23 @@ class ProcessHandle implements EngineRunHandle {
   constructor(
     private readonly child: ReturnType<typeof spawn>,
     private readonly completionPromise: Promise<EngineRunCompletion>,
-    private readonly onCancel?: () => void,
+    private readonly onCancel?: () => void | Promise<void>,
   ) {
     this.pid = child.pid ?? null;
   }
 
   async cancel(): Promise<void> {
-    this.onCancel?.();
-    this.child.kill('SIGTERM');
+    await this.onCancel?.();
+    if (this.child.exitCode === null) {
+      this.child.kill('SIGTERM');
+    }
     await new Promise<void>((resolve) => {
       const graceTimer = setTimeout(() => {
         if (this.child.exitCode === null) {
           this.child.kill('SIGKILL');
         }
         resolve();
-      }, 5000);
+      }, CANCEL_GRACE_MS);
       this.child.on('exit', () => {
         clearTimeout(graceTimer);
         resolve();
@@ -207,10 +277,6 @@ class ProcessHandle implements EngineRunHandle {
   }
 }
 
-const MAX_STDERR_BYTES = 1_048_576;
-const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
-const MAX_EVENTS = 10_000;
-
 function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent, onEvent?: (event: NormalizedEngineEvent) => void): void {
   if (events.length < MAX_EVENTS) {
     events.push(event);
@@ -218,40 +284,157 @@ function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent
   onEvent?.(event);
 }
 
-function parseEventLine(line: string): PiChildEvent {
-  return PiChildEventSchema.parse(JSON.parse(line));
-}
-
-function normalizeEvent(line: string): NormalizedEngineEvent {
-  const parsed = parseEventLine(line);
-  if (!ENGINE_EVENT_TYPES.has(parsed.type as NormalizedEngineEvent['type'])) {
-    throw new Error(`unsupported event type: ${parsed.type}`);
-  }
-  const payloadEntries = Object.entries(parsed.payload ?? {}).map(([key, value]) => {
-    // Preserve primitive types (string, number, boolean, null).
-    // Stringify objects/arrays since the schema only allows primitives.
-    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return [key, value];
-    }
-    return [key, JSON.stringify(value)];
-  });
-  return NormalizedEngineEventSchema.parse({
-    type: parsed.type as NormalizedEngineEvent['type'],
-    payload: Object.fromEntries(payloadEntries),
-    raw: line,
-  });
-}
-
-function defaultUsage(provider: string, model: string, _input: string): UsageMetrics {
+function defaultUsage(provider: string, model: string): UsageMetrics {
   return {
     provider,
     model,
-    // Fallback when engine doesn't emit usage — zero is honest since we
-    // don't know the real token count. input.length is not a valid proxy.
     tokensIn: 0,
     tokensOut: 0,
     estimatedCostUsd: 0,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function coercePrimitive(value: unknown): string | number | boolean | null {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function primitivePayload(input: Record<string, unknown>): PrimitiveRecord {
+  return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, coercePrimitive(value)]));
+}
+
+function normalizeStructuredEvent(type: NormalizedEngineEvent['type'], payload: Record<string, unknown>, raw?: string): NormalizedEngineEvent {
+  return NormalizedEngineEventSchema.parse({
+    type,
+    payload: primitivePayload(payload),
+    raw,
+  });
+}
+
+function serializeRpcCommand(command: Record<string, unknown>): string {
+  return `${JSON.stringify(command)}\n`;
+}
+
+function splitJsonlBuffer(buffer: string): { lines: string[]; remainder: string } {
+  const lines: string[] = [];
+  let remainder = buffer;
+  while (true) {
+    const newlineIndex = remainder.indexOf('\n');
+    if (newlineIndex === -1) break;
+    let line = remainder.slice(0, newlineIndex);
+    remainder = remainder.slice(newlineIndex + 1);
+    if (line.endsWith('\r')) {
+      line = line.slice(0, -1);
+    }
+    if (line.trim().length > 0) {
+      lines.push(line);
+    }
+  }
+  return { lines, remainder };
+}
+
+function flattenTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const textParts: string[] = [];
+  const toolCalls: string[] = [];
+  for (const item of content) {
+    if (!isRecord(item)) continue;
+    if (typeof item.text === 'string') {
+      textParts.push(item.text);
+      continue;
+    }
+    if (item.type === 'toolCall' && typeof item.name === 'string') {
+      toolCalls.push(item.name);
+    }
+  }
+  if (textParts.length > 0) return textParts.join('');
+  if (toolCalls.length > 0) return `[tool calls: ${toolCalls.join(', ')}]`;
+  return '';
+}
+
+function parseUsageFromMessage(message: PiMessage | undefined): UsageMetrics | null {
+  if (!message || message.role !== 'assistant' || !message.usage) return null;
+  return {
+    provider: typeof message.provider === 'string' && message.provider.length > 0 ? message.provider : 'pi',
+    model: typeof message.model === 'string' && message.model.length > 0 ? message.model : 'unknown',
+    tokensIn: Number.isFinite(message.usage.input) ? Math.max(0, Math.trunc(message.usage.input ?? 0)) : 0,
+    tokensOut: Number.isFinite(message.usage.output) ? Math.max(0, Math.trunc(message.usage.output ?? 0)) : 0,
+    estimatedCostUsd: Number.isFinite(message.usage.cost?.total) ? Math.max(0, Number(message.usage.cost?.total ?? 0)) : 0,
+  };
+}
+
+function parseMessage(value: unknown): PiMessage | undefined {
+  return isRecord(value) ? value as PiMessage : undefined;
+}
+
+function classifyFailure(message: string | undefined, started: boolean): EngineFailureClassification {
+  const text = (message ?? '').toLowerCase();
+  if (text.includes('api key') || text.includes('oauth') || text.includes('unauthorized') || text.includes('forbidden') || text.includes('authentication') || text.includes('invalid x-api-key')) {
+    return 'auth_failure';
+  }
+  if (text.includes('policy') || text.includes('approval') || text.includes('protected path') || text.includes('not allowed') || text.includes('permission denied')) {
+    return 'policy_failure';
+  }
+  if (text.includes('aborted') || text.includes('cancelled') || text.includes('canceled')) {
+    return 'cancelled';
+  }
+  if (text.includes('rate limit') || text.includes('temporar') || text.includes('timeout') || text.includes('timed out') || text.includes('network')) {
+    return 'transient_failure';
+  }
+  return started ? 'permanent_failure' : 'startup_failure';
+}
+
+function buildPiCommand(piPath: string, command: string, args: string[]): { command: string; args: string[] } {
+  const baseArgs = stripModeArgs(resolveBaseArgs(piPath, command, args));
+  return {
+    command,
+    args: [...baseArgs, '--mode', 'rpc'],
+  };
+}
+
+function resolveBaseArgs(piPath: string, command: string, args: string[]): string[] {
+  if (command !== 'node') {
+    return args;
+  }
+  if (args.length === 0) {
+    return inferDefaultNodePiArgs(piPath);
+  }
+  const firstArg = args[0];
+  if (firstArg === undefined || firstArg.startsWith('-')) {
+    return [...inferDefaultNodePiArgs(piPath), ...args];
+  }
+  return args;
+}
+
+function inferDefaultNodePiArgs(piPath: string): string[] {
+  const defaultCliPath = resolve(piPath, DEFAULT_PI_CLI_PATH);
+  if (!existsSync(defaultCliPath)) {
+    throw new PiEngineAdapterNotConfiguredError(
+      `Could not find built Pi CLI at ${defaultCliPath}. Build Pi or set engine.args explicitly.`,
+    );
+  }
+  return [DEFAULT_PI_CLI_PATH];
+}
+
+function stripModeArgs(args: string[]): string[] {
+  const sanitized: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg === '--mode') {
+      index += 1;
+      continue;
+    }
+    sanitized.push(arg);
+  }
+  return sanitized;
 }
 
 export interface FakeEngineConfig {
@@ -310,19 +493,16 @@ export class FakeEngineAdapter implements EngineAdapter {
 
     options.onHandle?.(handle);
 
-    // Schedule async event emission
     const runEvents = async (): Promise<void> => {
       const { mode } = this.config;
 
       await emitAsync({ type: 'started', payload: { input } });
 
       if (mode === 'timeout') {
-        // Never complete — for timeout testing. The promise stays pending.
         return;
       }
 
       if (mode === 'protocol_error') {
-        // Emit a malformed event (type not in valid set)
         await asyncTick();
         if (this.config.delayMs > 0) await delay(this.config.delayMs);
         options.onEvent?.({ type: 'started' as NormalizedEngineEvent['type'], payload: { '': undefined as unknown as string } });
@@ -355,7 +535,6 @@ export class FakeEngineAdapter implements EngineAdapter {
         return;
       }
 
-      // success mode (default)
       await emitAsync({ type: 'session', payload: { sessionRef } });
       await emitAsync({ type: 'message', payload: { text: `echo:${input}` } });
       await emitAsync({ type: 'completed', payload: { output: `echo:${input}` } });
@@ -376,7 +555,6 @@ export class FakeEngineAdapter implements EngineAdapter {
       });
     };
 
-    // Fire event sequence asynchronously (don't await here — caller gets handle immediately)
     void runEvents();
 
     return handle;
@@ -400,7 +578,6 @@ export class FakeEngineAdapter implements EngineAdapter {
     };
   }
 }
-
 
 export class FailingFakeEngineAdapter implements EngineAdapter {
   private readonly failureClassification: EngineFailureClassification;
@@ -483,76 +660,247 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 
   async startRun(input: string, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    // Security: this.command comes from operator-owned config, validated by Zod at startup,
-    // stored in a 0o700 directory. Adding a safelist would break custom deployments.
-    // Sanitize env to avoid leaking parent process secrets to the child.
-    const child = spawn(this.command, this.args, {
+    const launch = buildPiCommand(this.piPath, this.command, this.args);
+    const child = spawn(launch.command, launch.args, {
       cwd: this.piPath,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        NODE_ENV: process.env.NODE_ENV,
-        TERM: process.env.TERM,
-      },
+      env: { ...process.env },
     });
+
     const events: NormalizedEngineEvent[] = [];
     let stdoutBuffer = '';
     let stderr = '';
     let engineSessionRef: string | null = null;
+    let usage = defaultUsage('pi', 'unknown');
     let failureClassification: EngineFailureClassification | null = null;
     let failureMessage: string | undefined;
+    let lastAssistantText = '';
+    let timedOut = false;
+    let shutdownRequested = false;
+    let closeResolved = false;
+    let usageEmitted = false;
+    let completedEmitted = false;
+    let failedEmitted = false;
+    let startedEmitted = false;
+    let sessionEmitted = false;
     let cancelRequested = false;
-    let usage = defaultUsage('pi', 'external-pi', input);
+    const promptState: PromptState = { requested: false, accepted: false, completed: false };
 
-    const safeEmit = (event: NormalizedEngineEvent) => emitEvent(events, event, options.onEvent);
-    const failProtocol = (line: string, error: Error) => {
-      failureClassification = 'protocol_error';
-      failureMessage = error.message;
-      safeEmit({ type: 'failed', payload: { classification: 'protocol_error', message: error.message }, raw: line });
+    const safeEmit = (event: NormalizedEngineEvent): void => {
+      if (event.type === 'usage') usageEmitted = true;
+      if (event.type === 'completed') completedEmitted = true;
+      if (event.type === 'failed') failedEmitted = true;
+      if (event.type === 'started') startedEmitted = true;
+      if (event.type === 'session') sessionEmitted = true;
+      emitEvent(events, event, options.onEvent);
+    };
+
+    const markFailure = (classification: EngineFailureClassification, message?: string, raw?: string): void => {
+      if (failureClassification === null || failureClassification === 'cancelled') {
+        failureClassification = classification;
+      }
+      if (message) failureMessage = message;
+      if (!failedEmitted) {
+        safeEmit(normalizeStructuredEvent('failed', { classification, message: message ?? '' }, raw));
+      }
+    };
+
+    const synthesizeSession = (state: RpcStateData, raw?: string): void => {
+      engineSessionRef = state.sessionId;
+      if (!sessionEmitted) {
+        safeEmit(normalizeStructuredEvent('session', {
+          sessionRef: state.sessionId,
+          sessionFile: state.sessionFile ?? null,
+        }, raw));
+      }
+    };
+
+    const captureUsage = (candidate: UsageMetrics | null): void => {
+      if (!candidate) return;
+      usage = candidate;
+    };
+
+    const requestShutdown = (signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): void => {
+      if (shutdownRequested || child.exitCode !== null) return;
+      shutdownRequested = true;
+      child.kill(signal);
+    };
+
+    const sendCommand = (command: Record<string, unknown>): void => {
+      if (child.stdin.destroyed) return;
+      child.stdin.write(serializeRpcCommand(command));
+    };
+
+    const handleResponse = (response: RpcResponse, rawLine: string): void => {
+      if (response.id === INTERNAL_IDS.getState && response.command === 'get_state') {
+        if (!response.success) {
+          const classification = classifyFailure(response.error, startedEmitted || promptState.accepted);
+          markFailure(classification, response.error ?? 'get_state failed', rawLine);
+          requestShutdown();
+          return;
+        }
+        const state = RpcStateDataSchema.parse(response.data) as RpcStateData;
+        synthesizeSession(state, rawLine);
+        if (!promptState.requested) {
+          promptState.requested = true;
+          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: input });
+        }
+        return;
+      }
+
+      if (response.id === INTERNAL_IDS.prompt && response.command === 'prompt') {
+        if (!response.success) {
+          const classification = classifyFailure(response.error, startedEmitted || promptState.accepted);
+          markFailure(classification, response.error ?? 'prompt failed', rawLine);
+          requestShutdown();
+          return;
+        }
+        promptState.accepted = true;
+        if (!startedEmitted) {
+          safeEmit(normalizeStructuredEvent('started', { mode: 'rpc' }, rawLine));
+        }
+        return;
+      }
+
+      if (response.id === INTERNAL_IDS.abort && response.command === 'abort') {
+        return;
+      }
+
+      if (!response.success) {
+        const classification = classifyFailure(response.error, startedEmitted || promptState.accepted);
+        markFailure(classification, response.error ?? `RPC command ${response.command} failed`, rawLine);
+        requestShutdown();
+      }
+    };
+
+    const handleAgentEvent = (event: AgentEventBase, rawLine: string): void => {
+      switch (event.type) {
+        case 'message_end': {
+          const message = parseMessage((event as unknown as Record<string, unknown>).message);
+          if (!message) return;
+          const text = flattenTextContent(message.content);
+          if (message.role === 'assistant') {
+            lastAssistantText = text;
+            captureUsage(parseUsageFromMessage(message));
+            if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+              const classification = classifyFailure(message.errorMessage ?? message.stopReason, true);
+              failureClassification = classification;
+              failureMessage = message.errorMessage ?? message.stopReason;
+            }
+          }
+          safeEmit(normalizeStructuredEvent('message', {
+            role: message.role ?? 'unknown',
+            text,
+            provider: message.provider ?? null,
+            model: message.model ?? null,
+            stopReason: message.stopReason ?? null,
+            errorMessage: message.errorMessage ?? null,
+          }, rawLine));
+          return;
+        }
+        case 'tool_execution_start': {
+          const record = event as unknown as Record<string, unknown>;
+          safeEmit(normalizeStructuredEvent('tool_call', {
+            toolCallId: record.toolCallId ?? null,
+            toolName: record.toolName ?? null,
+            args: record.args ?? null,
+          }, rawLine));
+          return;
+        }
+        case 'tool_execution_end': {
+          const record = event as unknown as Record<string, unknown>;
+          safeEmit(normalizeStructuredEvent('tool_result', {
+            toolCallId: record.toolCallId ?? null,
+            toolName: record.toolName ?? null,
+            isError: record.isError ?? false,
+            result: record.result ?? null,
+          }, rawLine));
+          return;
+        }
+        case 'auto_compaction_end': {
+          const record = event as unknown as Record<string, unknown>;
+          const result = isRecord(record.result) ? record.result : undefined;
+          const summary = typeof result?.summary === 'string' ? result.summary : undefined;
+          if (!summary) return;
+          safeEmit(normalizeStructuredEvent('compaction', {
+            content: summary,
+            summary,
+            tokensBefore: result?.tokensBefore ?? null,
+            tokensAfter: result?.tokensAfter ?? null,
+            aborted: record.aborted ?? false,
+            willRetry: record.willRetry ?? false,
+          }, rawLine));
+          return;
+        }
+        case 'agent_end': {
+          const record = event as unknown as Record<string, unknown>;
+          const messages = Array.isArray(record.messages) ? record.messages : [];
+          const lastAssistant = [...messages].reverse().map(parseMessage).find((message) => message?.role === 'assistant');
+          if (lastAssistant) {
+            lastAssistantText = flattenTextContent(lastAssistant.content);
+            captureUsage(parseUsageFromMessage(lastAssistant));
+            if ((lastAssistant.stopReason === 'error' || lastAssistant.stopReason === 'aborted') && failureClassification === null) {
+              failureClassification = classifyFailure(lastAssistant.errorMessage ?? lastAssistant.stopReason, true);
+              failureMessage = lastAssistant.errorMessage ?? lastAssistant.stopReason;
+            }
+          }
+          promptState.completed = true;
+          requestShutdown();
+          return;
+        }
+        default:
+          return;
+      }
+    };
+
+    const handleProtocolFailure = (line: string, error: Error): void => {
+      markFailure('protocol_error', error.message, line);
+      requestShutdown('SIGKILL');
+    };
+
+    const processLine = (rawLine: string): void => {
+      try {
+        const parsed = JSON.parse(rawLine) as unknown;
+        if (!isRecord(parsed) || typeof parsed.type !== 'string') {
+          throw new Error('RPC output is not a typed JSON object');
+        }
+
+        if (parsed.type === 'response') {
+          handleResponse(RpcResponseSchema.parse(parsed) as RpcResponse, rawLine);
+          return;
+        }
+
+        if (parsed.type === 'extension_ui_request') {
+          const request = RpcExtensionUiRequestSchema.parse(parsed);
+          if (!PASSIVE_EXTENSION_UI_METHODS.has(request.method)) {
+            throw new Error(`unsupported Pi RPC extension UI request: ${request.method}`);
+          }
+          return;
+        }
+
+        if (parsed.type === 'extension_error') {
+          const extensionError = RpcExtensionErrorSchema.parse(parsed);
+          throw new Error(`Pi extension error: ${extensionError.error}`);
+        }
+
+        handleAgentEvent(parsed as unknown as AgentEventBase, rawLine);
+      } catch (error) {
+        handleProtocolFailure(rawLine, error instanceof Error ? error : new Error(String(error)));
+      }
     };
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       stdoutBuffer += chunk;
       if (Buffer.byteLength(stdoutBuffer) > MAX_STDOUT_BUFFER_BYTES) {
-        failureClassification = 'protocol_error';
-        failureMessage = 'stdout buffer exceeded 1MB limit';
-        safeEmit({ type: 'failed', payload: { classification: 'protocol_error', message: failureMessage } });
-        child.kill('SIGKILL');
+        markFailure('protocol_error', 'stdout buffer exceeded 1MB limit');
+        requestShutdown('SIGKILL');
         return;
       }
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const rawLine of lines.map((line) => line.trim()).filter(Boolean)) {
-        try {
-          const event = normalizeEvent(rawLine);
-          if (event.type === 'session') {
-            const ref = event.payload.engineSessionRef ?? event.payload.sessionId ?? event.payload.sessionRef;
-            if (typeof ref === 'string') engineSessionRef = ref;
-          }
-          if (event.type === 'usage') {
-            usage = {
-              provider: String(event.payload.provider ?? usage.provider),
-              model: String(event.payload.model ?? usage.model),
-              tokensIn: Number(event.payload.tokensIn ?? usage.tokensIn),
-              tokensOut: Number(event.payload.tokensOut ?? usage.tokensOut),
-              estimatedCostUsd: Number(event.payload.estimatedCostUsd ?? usage.estimatedCostUsd),
-            };
-          }
-          if (event.type === 'failed') {
-            const eventClassification = EngineFailureClassificationSchema.catch('permanent_failure').parse(event.payload.classification);
-            const eventMessage = typeof event.payload.message === 'string' ? event.payload.message : undefined;
-            const shouldPreserveTimeoutFailure = timedOut && eventClassification === 'cancelled';
-            if (!shouldPreserveTimeoutFailure) {
-              failureClassification = eventClassification;
-              if (eventMessage !== undefined) failureMessage = eventMessage;
-            }
-          }
-          safeEmit(event);
-        } catch (error) {
-          failProtocol(rawLine, error instanceof Error ? error : new Error(String(error)));
-        }
+      const split = splitJsonlBuffer(stdoutBuffer);
+      stdoutBuffer = split.remainder;
+      for (const line of split.lines) {
+        processLine(line);
       }
     });
 
@@ -566,83 +914,107 @@ export class PiEngineAdapter implements EngineAdapter {
       }
     });
 
-    child.stdin.write(`${JSON.stringify({ prompt: input } satisfies PiChildRequest)}\n`);
-    child.stdin.end();
-
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
+    let cancelEscalationTimer: ReturnType<typeof setTimeout> | undefined;
 
     if (this.timeoutMs != null) {
-      const gracePeriodMs = 5_000;
       timeoutTimer = setTimeout(() => {
         if (child.exitCode === null) {
           timedOut = true;
           failureClassification = 'transient_failure';
           failureMessage = 'engine timeout exceeded';
-          safeEmit({ type: 'failed', payload: { classification: 'transient_failure', message: 'engine timeout exceeded' } });
-          child.kill('SIGTERM');
-          graceTimer = setTimeout(() => {
+          requestShutdown();
+          cancelEscalationTimer = setTimeout(() => {
             if (child.exitCode === null) {
-              child.kill('SIGKILL');
+              requestShutdown('SIGKILL');
             }
-          }, gracePeriodMs);
+          }, CANCEL_GRACE_MS);
         }
       }, this.timeoutMs);
     }
+
+    const finalizeBeforeResolve = (): void => {
+      if (closeResolved) return;
+      closeResolved = true;
+
+      if (timedOut && failureClassification === null) {
+        failureClassification = 'transient_failure';
+        failureMessage = 'engine timeout exceeded';
+      }
+
+      if (cancelRequested && failureClassification === null) {
+        failureClassification = 'cancelled';
+        failureMessage = failureMessage ?? 'cancelled by operator';
+      }
+
+      if (failureClassification !== null) {
+        if (!failedEmitted) {
+          safeEmit(normalizeStructuredEvent('failed', {
+            classification: failureClassification,
+            message: failureMessage ?? '',
+          }));
+        }
+      } else if (!completedEmitted) {
+        safeEmit(normalizeStructuredEvent('completed', {
+          output: lastAssistantText,
+        }));
+      }
+
+      if (!usageEmitted) {
+        safeEmit(normalizeStructuredEvent('usage', {
+          provider: usage.provider,
+          model: usage.model,
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+          estimatedCostUsd: usage.estimatedCostUsd,
+        }));
+      }
+    };
 
     const completionPromise = new Promise<EngineRunCompletion>((resolveCompletion, rejectCompletion) => {
       child.on('error', rejectCompletion);
       child.on('close', (code) => {
         if (timeoutTimer != null) clearTimeout(timeoutTimer);
-        if (graceTimer != null) clearTimeout(graceTimer);
-
-        const exitCode = code ?? 0;
+        if (cancelEscalationTimer != null) clearTimeout(cancelEscalationTimer);
 
         if (stdoutBuffer.trim().length > 0) {
-          try {
-            const event = normalizeEvent(stdoutBuffer.trim());
-            safeEmit(event);
-          } catch (error) {
-            failProtocol(stdoutBuffer.trim(), error instanceof Error ? error : new Error(String(error)));
-          }
+          processLine(stdoutBuffer.trim());
+          stdoutBuffer = '';
         }
 
-        if (exitCode !== 0 && failureClassification === null) {
-          failureClassification = events.some((event) => event.type === 'started') ? 'permanent_failure' : 'startup_failure';
-          failureMessage = stderr || `Pi process failed with code ${exitCode}`;
-          safeEmit({ type: 'failed', payload: { classification: failureClassification, message: failureMessage, exitCode } });
+        const exitCode = code ?? 0;
+        if (!promptState.completed && failureClassification === null && exitCode !== 0) {
+          failureClassification = promptState.accepted || startedEmitted ? 'permanent_failure' : 'startup_failure';
+          failureMessage = stderr.trim() || `Pi RPC process failed with code ${exitCode}`;
         }
 
-        if (cancelRequested && !events.some((event) => event.type === 'failed') && !events.some((event) => event.type === 'completed')) {
-          failureClassification = 'cancelled';
-          failureMessage = failureMessage ?? 'cancelled by operator';
-          safeEmit({ type: 'failed', payload: { classification: 'cancelled', message: failureMessage } });
+        if (!promptState.requested && failureClassification === null) {
+          failureClassification = 'startup_failure';
+          failureMessage = failureMessage ?? 'Pi RPC process exited before state handshake completed';
         }
 
-        if (!events.some((event) => event.type === 'usage')) {
-          safeEmit({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, estimatedCostUsd: usage.estimatedCostUsd } });
-        }
-
-        if (!events.some((event) => event.type === 'completed') && failureClassification === null) {
-          safeEmit({ type: 'completed', payload: { output: '' } });
-        }
-
-        const warnings = stderr.trim() || undefined;
+        finalizeBeforeResolve();
 
         resolveCompletion({
           engineSessionRef,
           usage,
           failureClassification,
-          warnings,
+          warnings: stderr.trim() || undefined,
         });
       });
     });
 
-    const handle = new ProcessHandle(child, completionPromise, () => {
+    const handle = new ProcessHandle(child, completionPromise, async () => {
       cancelRequested = true;
+      if (child.exitCode !== null) return;
+      if (!child.stdin.destroyed) {
+        sendCommand({ id: INTERNAL_IDS.abort, type: 'abort' });
+      }
     });
     options.onHandle?.(handle);
+
+    sendCommand({ id: INTERNAL_IDS.getState, type: 'get_state' });
+
     return handle;
   }
 
@@ -661,7 +1033,7 @@ export class PiEngineAdapter implements EngineAdapter {
     });
     const completion = await handle.wait();
     const sessionEvent = events.find((event) => event.type === 'session');
-    const sessionRef = sessionEvent?.payload.engineSessionRef ?? sessionEvent?.payload.sessionId ?? sessionEvent?.payload.sessionRef;
+    const sessionRef = sessionEvent?.payload.sessionRef;
     return {
       events,
       engineSessionRef: completion.engineSessionRef ?? (typeof sessionRef === 'string' ? sessionRef : null),
