@@ -11,7 +11,11 @@ import { formatTime } from '../utils/format';
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: run, error, loading, refetch } = useRun(id);
-  const { data: events } = useRunEvents(id);
+  const {
+    data: events,
+    error: eventsError,
+    loading: eventsLoading,
+  } = useRunEvents(id);
   const api = useApi();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -32,14 +36,15 @@ export function RunDetail() {
   const handleRetry = async () => {
     try {
       setActionError(null);
-      await api.post(`/v1/jobs/${run.jobId}/enqueue`);
+      await api.post(`/v1/runs/${run.id}/retry`);
       refetch();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Retry failed');
     }
   };
 
-  const isTerminal = ['succeeded', 'failed_final', 'cancelled', 'abandoned'].includes(run.state);
+  const canCancel = run.state === 'starting' || run.state === 'running';
+  const canRetry = ['failed_retryable', 'failed_final', 'cancelled', 'abandoned'].includes(run.state);
 
   return (
     <div>
@@ -108,7 +113,7 @@ export function RunDetail() {
         {/* Actions */}
         {actionError ? <ErrorDisplay message={actionError} /> : null}
         <div className="flex gap-[8px]">
-          {!isTerminal ? (
+          {canCancel ? (
             <button
               onClick={() => void handleCancel()}
               className="px-[16px] py-[8px] rounded-[var(--radius-sm)] text-[14px] font-medium bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20 transition-colors duration-[var(--duration-fast)]"
@@ -116,7 +121,7 @@ export function RunDetail() {
               Cancel Run
             </button>
           ) : null}
-          {isTerminal && run.state !== 'succeeded' ? (
+          {canRetry ? (
             <button
               onClick={() => void handleRetry()}
               className="px-[16px] py-[8px] rounded-[var(--radius-sm)] text-[14px] font-medium bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20 transition-colors duration-[var(--duration-fast)]"
@@ -137,7 +142,11 @@ export function RunDetail() {
           <h2 className="text-[16px] font-semibold text-[var(--color-fg)] mb-[12px]">
             Events
           </h2>
-          {events && events.length > 0 ? (
+          {eventsLoading ? (
+            <Loading />
+          ) : eventsError ? (
+            <ErrorDisplay message={eventsError} />
+          ) : events && events.length > 0 ? (
             <div className="space-y-[4px]">
               {events.map((evt) => (
                 <div

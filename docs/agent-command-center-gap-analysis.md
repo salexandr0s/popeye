@@ -133,3 +133,51 @@ Recommended first follow-up if no better candidate appears after inspection:
 1. Add tests for `apps/web-inspector/src/views/jobs-list.tsx`
 2. Add tests for `apps/web-inspector/src/views/run-detail.tsx`
 3. Document remaining command-center gaps vs the spec
+
+---
+
+## Gap analysis snapshot — 2026-03-14
+
+### Already implemented
+
+- `/command-center` route, sidebar entry, panel persistence, workspace filter, summary cards, idle/stuck heuristics, and inline detail panes are in place.
+- Related tool routes already exist for run detail, jobs, interventions, instructions, and memory search.
+- `run-detail.tsx` already supported cancel, retry, receipt navigation, and event rendering with control-API-only calls.
+
+### Partially implemented
+
+- `run-detail.tsx` lacked regression coverage for state-based action visibility and operator action flows.
+- `run-detail.tsx` rendered events, but did not distinguish event loading/error/empty states cleanly enough for supervision workflows.
+- `jobs-list.tsx`, `interventions.tsx`, `instructions.tsx`, and `memory-search.tsx` remain useful but lightly tested.
+
+### Missing
+
+- Focused workflow tests for jobs, interventions, instructions, and memory search follow-up pages.
+- Command-center follow-up coverage for status/action visibility outside the main command-center screen.
+
+### Intentionally deferred
+
+- Additive control API endpoints specifically for command-center aggregation.
+- External terminal launching from the browser.
+- Broad coverage expansion for thin read-only wrappers already excluded from coverage policy.
+
+### Slice completed in this follow-up
+
+- Hardened `run-detail.tsx` to show event-specific loading, error, empty, and success states.
+- Added focused tests for:
+  - run loading/error
+  - cancel/retry visibility by run state
+  - cancel/retry success and failure flows
+  - event loading/error/empty/success rendering
+- Added focused workflow tests for:
+  - `jobs-list.tsx` action visibility and pause/resume/enqueue flows
+  - `interventions.tsx` resolve visibility, success, and failure flows
+  - `instructions.tsx` preview fetch, query-param auto-fetch, and loading/error states
+  - `memory-search.tsx` empty-query guard, button/keyboard search, query-param auto-search, and result/error states
+- Updated `instructions.tsx` to support query-param-driven preview loads via `workspaceId` and optional `projectId`.
+- Updated `memory-search.tsx` to sync manual searches back into the `?q=` URL state so the page remains shareable and back/forward friendly.
+
+### Remaining follow-ups
+
+1. Any future additive control API optimization if the command-center payloads become too heavy
+2. External terminal launching, still intentionally deferred by the spec

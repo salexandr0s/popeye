@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../api/provider';
 import type { MemorySearchResponse, MemorySearchResult } from '../api/hooks';
@@ -42,20 +42,19 @@ function MemoryResultCard({ result }: { result: MemorySearchResult }) {
 
 export function MemorySearch() {
   const api = useApi();
-  const [searchParams] = useSearchParams();
-  const initialQuery = searchParams.get('q') ?? '';
-  const [query, setQuery] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryFromParams = searchParams.get('q') ?? '';
+  const [query, setQuery] = useState(queryFromParams);
   const [response, setResponse] = useState<MemorySearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
+  const fetchSearch = useCallback(async (searchQuery: string) => {
     setLoading(true);
     setError(null);
     try {
       const result = await api.post<MemorySearchResponse>('/v1/memory/search', {
-        query: query.trim(),
+        query: searchQuery,
         includeContent: true,
         limit: 20,
       });
@@ -66,35 +65,30 @@ export function MemorySearch() {
     } finally {
       setLoading(false);
     }
+  }, [api]);
+
+  const handleSearch = () => {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return;
+    setSearchParams({ q: normalizedQuery });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      void handleSearch();
+      handleSearch();
     }
   };
 
   useEffect(() => {
-    if (!initialQuery.trim()) return;
-    setQuery(initialQuery);
-    void (async () => {
-      setLoading(true);
+    setQuery(queryFromParams);
+    if (!queryFromParams.trim()) {
+      setResponse(null);
       setError(null);
-      try {
-        const result = await api.post<MemorySearchResponse>('/v1/memory/search', {
-          query: initialQuery.trim(),
-          includeContent: true,
-          limit: 20,
-        });
-        setResponse(result);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-        setResponse(null);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [api, initialQuery]);
+      setLoading(false);
+      return;
+    }
+    void fetchSearch(queryFromParams.trim());
+  }, [fetchSearch, queryFromParams]);
 
   return (
     <div>
@@ -113,7 +107,7 @@ export function MemorySearch() {
           className="flex-1 px-[12px] py-[8px] rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[14px] text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)] transition-colors duration-[var(--duration-fast)] placeholder:text-[var(--color-fg-muted)]/50"
         />
         <button
-          onClick={() => void handleSearch()}
+          onClick={handleSearch}
           disabled={loading || !query.trim()}
           className="px-[16px] py-[8px] rounded-[var(--radius-sm)] text-[14px] font-medium bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors duration-[var(--duration-fast)]"
         >

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../api/provider';
 import type { InstructionBundle } from '../api/hooks';
 import { Loading } from '../components/loading';
@@ -7,18 +8,21 @@ import { PageHeader } from '../components/page-header';
 
 export function Instructions() {
   const api = useApi();
-  const [workspaceId, setWorkspaceId] = useState('default');
-  const [projectId, setProjectId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const workspaceFromParams = searchParams.get('workspaceId') ?? '';
+  const projectFromParams = searchParams.get('projectId') ?? '';
+  const [workspaceId, setWorkspaceId] = useState(workspaceFromParams || 'default');
+  const [projectId, setProjectId] = useState(projectFromParams);
   const [bundle, setBundle] = useState<InstructionBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleFetch = async () => {
+  const fetchPreview = useCallback(async (nextWorkspaceId: string, nextProjectId: string) => {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ workspaceId });
-      if (projectId) params.set('projectId', projectId);
+      const params = new URLSearchParams({ workspaceId: nextWorkspaceId });
+      if (nextProjectId) params.set('projectId', nextProjectId);
       const result = await api.get<InstructionBundle>(
         `/v1/instructions/preview?${params.toString()}`,
       );
@@ -29,6 +33,26 @@ export function Instructions() {
     } finally {
       setLoading(false);
     }
+  }, [api]);
+
+  useEffect(() => {
+    setWorkspaceId(workspaceFromParams || 'default');
+    setProjectId(projectFromParams);
+  }, [projectFromParams, workspaceFromParams]);
+
+  useEffect(() => {
+    if (!workspaceFromParams.trim()) return;
+    void fetchPreview(workspaceFromParams.trim(), projectFromParams.trim());
+  }, [fetchPreview, projectFromParams, workspaceFromParams]);
+
+  const handleFetch = () => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const normalizedProjectId = projectId.trim();
+    if (!normalizedWorkspaceId) return;
+
+    const params = new URLSearchParams({ workspaceId: normalizedWorkspaceId });
+    if (normalizedProjectId) params.set('projectId', normalizedProjectId);
+    setSearchParams(params);
   };
 
   return (
@@ -40,10 +64,14 @@ export function Instructions() {
 
       <div className="flex gap-[8px] items-end mb-[24px]">
         <div>
-          <label className="block text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide mb-[4px]">
+          <label
+            className="block text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide mb-[4px]"
+            htmlFor="instructions-workspace-id"
+          >
             Workspace ID
           </label>
           <input
+            id="instructions-workspace-id"
             type="text"
             value={workspaceId}
             onChange={(e) => setWorkspaceId(e.target.value)}
@@ -51,10 +79,14 @@ export function Instructions() {
           />
         </div>
         <div>
-          <label className="block text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide mb-[4px]">
+          <label
+            className="block text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide mb-[4px]"
+            htmlFor="instructions-project-id"
+          >
             Project ID (optional)
           </label>
           <input
+            id="instructions-project-id"
             type="text"
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
@@ -63,8 +95,8 @@ export function Instructions() {
           />
         </div>
         <button
-          onClick={() => void handleFetch()}
-          disabled={loading || !workspaceId}
+          onClick={handleFetch}
+          disabled={loading || !workspaceId.trim()}
           className="px-[16px] py-[8px] rounded-[var(--radius-sm)] text-[14px] font-medium bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors duration-[var(--duration-fast)]"
         >
           {loading ? 'Fetching...' : 'Preview'}
