@@ -104,9 +104,7 @@ export interface EngineRunRequest {
 }
 
 export interface EngineAdapter {
-  startRun(input: string, options?: EngineRunOptions): Promise<EngineRunHandle>;
   startRun(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunHandle>;
-  run(input: string, options?: EngineRunOptions): Promise<EngineRunResult>;
   run(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunResult>;
 }
 
@@ -396,13 +394,6 @@ function primitivePayload(input: Record<string, unknown>): PrimitiveRecord {
   return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, coercePrimitive(value)]));
 }
 
-function normalizeEngineRunRequest(input: string | EngineRunRequest): EngineRunRequest {
-  if (typeof input === 'string') {
-    return { prompt: input };
-  }
-  return input;
-}
-
 function normalizeStructuredEvent(type: NormalizedEngineEvent['type'], payload: Record<string, unknown>, raw?: string): NormalizedEngineEvent {
   return NormalizedEngineEventSchema.parse({
     type,
@@ -675,8 +666,7 @@ export class FakeEngineAdapter implements EngineAdapter {
     };
   }
 
-  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const request = normalizeEngineRunRequest(input);
+  async startRun(request: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
     const prompt = request.prompt;
     const sessionRef = `fake:${randomUUID()}`;
     const usage: UsageMetrics = {
@@ -777,7 +767,7 @@ export class FakeEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     const handle = await this.startRun(input, {
       ...options,
@@ -806,8 +796,7 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
     this.failureClassification = failureClassification;
   }
 
-  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const request = normalizeEngineRunRequest(input);
+  async startRun(request: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
     const completion: EngineRunCompletion = {
       engineSessionRef: `fake:${randomUUID()}`,
       usage: {
@@ -841,7 +830,7 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     const handle = await this.startRun(input, {
       ...options,
@@ -883,8 +872,7 @@ export class PiEngineAdapter implements EngineAdapter {
     }
   }
 
-  async startRun(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const request = normalizeEngineRunRequest(input);
+  async startRun(request: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
     const runtimeToolBridge = prepareRuntimeToolBridge(request.runtimeTools ?? []);
     const launch = buildPiCommand(
       this.piPath,
@@ -1300,7 +1288,7 @@ export class PiEngineAdapter implements EngineAdapter {
     return handle;
   }
 
-  async run(input: string | EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
+  async run(input: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
     let failureMessage: string | undefined;
     const handle = await this.startRun(input, {
@@ -1329,7 +1317,7 @@ export class PiEngineAdapter implements EngineAdapter {
 
 export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | PiAdapterConfig, prompt = 'compatibility-check'): Promise<PiCompatibilityResult> {
   const adapter = 'startRun' in adapterOrConfig ? adapterOrConfig : new PiEngineAdapter(adapterOrConfig);
-  const result = await adapter.run(prompt);
+  const result = await adapter.run({ prompt });
   return {
     ok: result.failureClassification === null && Boolean(result.engineSessionRef),
     eventTypes: result.events.map((event) => event.type),

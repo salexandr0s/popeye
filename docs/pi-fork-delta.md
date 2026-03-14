@@ -19,7 +19,7 @@
 ## Current child-process contract
 - Popeye starts the configured Pi command from `config.engine.piPath` and appends `--mode rpc`.
 - If `engine.command === "node"` and `engine.args` is empty, `@popeye/engine-pi` defaults to `packages/coding-agent/dist/cli.js` inside the Pi checkout.
-- The runtime now passes a structured `EngineRunRequest` into `@popeye/engine-pi`, but the Pi RPC bridge still submits a prompt-oriented RPC flow underneath.
+- The Popeye-owned `EngineAdapter` surface now takes a structured `EngineRunRequest` only, but the Pi RPC bridge still submits a prompt-oriented RPC flow underneath.
 - Structured request execution controls currently honored by `@popeye/engine-pi`: `cwd`, `modelOverride`, and `runtimeTools`.
 - Runtime metadata fields such as `workspaceId`, `projectId`, `sessionPolicy`, `instructionSnapshotId`, and `trigger` are accepted but not yet forwarded into Pi RPC semantics.
 - Popeye speaks strict JSONL over stdin/stdout.

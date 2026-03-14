@@ -61,10 +61,18 @@ The `EngineAdapter` interface abstracts the engine:
 
 ```typescript
 interface EngineAdapter {
-  startRun(input: string, options?: EngineRunOptions): Promise<EngineRunHandle>;
-  run(input: string, options?: EngineRunOptions): Promise<EngineRunResult>;
+  startRun(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunHandle>;
+  run(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunResult>;
 }
 ```
+
+`EngineRunRequest` carries:
+
+- execution controls already honored by `@popeye/engine-pi`: `prompt`, `cwd`,
+  `modelOverride`, `runtimeTools`
+- runtime metadata accepted by the adapter but not yet forwarded into Pi RPC
+  semantics: `workspaceId`, `projectId`, `sessionPolicy`,
+  `instructionSnapshotId`, `trigger`
 
 Two implementations exist:
 

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { NormalizedEngineEvent } from '@popeye/contracts';
-import type { FakeEngineConfig, PiAdapterConfig } from './index.js';
+import type { EngineRunRequest, FakeEngineConfig, PiAdapterConfig } from './index.js';
 import {
   FakeEngineAdapter,
   PiEngineAdapter,
@@ -32,9 +32,13 @@ function explicitConfig(piPath: string): PiAdapterConfig {
   return { piPath, command: 'node', args: ['bin/pi.js'] };
 }
 
+function runRequest(prompt: string, overrides: Omit<Partial<EngineRunRequest>, 'prompt'> = {}): EngineRunRequest {
+  return { prompt, ...overrides };
+}
+
 describe('engine-pi', () => {
   it('runs fake adapter', async () => {
-    const handle = await new FakeEngineAdapter().startRun('hello');
+    const handle = await new FakeEngineAdapter().startRun(runRequest('hello'));
     const result = await handle.wait();
     expect(result.engineSessionRef).toContain('fake:');
     expect(result.failureClassification).toBeNull();
@@ -45,7 +49,7 @@ describe('engine-pi', () => {
     let handleReceived = false;
 
     const adapter = new FakeEngineAdapter();
-    const handle = await adapter.startRun('async-test', {
+    const handle = await adapter.startRun(runRequest('async-test'), {
       onHandle: () => {
         handleReceived = true;
       },
@@ -64,7 +68,7 @@ describe('engine-pi', () => {
 
   it('fake adapter run() collects all async events correctly', async () => {
     const adapter = new FakeEngineAdapter();
-    const result = await adapter.run('run-test');
+    const result = await adapter.run(runRequest('run-test'));
     expect(result.events.map((e) => e.type)).toEqual(['started', 'session', 'message', 'completed', 'usage']);
     expect(result.engineSessionRef).toContain('fake:');
     expect(result.failureClassification).toBeNull();
@@ -91,7 +95,7 @@ describe('engine-pi', () => {
   it('fake adapter transient_failure mode emits started then failed', async () => {
     const config: FakeEngineConfig = { mode: 'transient_failure' };
     const adapter = new FakeEngineAdapter(config);
-    const result = await adapter.run('fail-transient');
+    const result = await adapter.run(runRequest('fail-transient'));
     expect(result.failureClassification).toBe('transient_failure');
     expect(result.events.map((e) => e.type)).toEqual(['started', 'failed', 'usage']);
     expect(result.events[1]?.payload.classification).toBe('transient_failure');
@@ -100,7 +104,7 @@ describe('engine-pi', () => {
 
   it('fake adapter permanent_failure mode emits started then failed', async () => {
     const adapter = new FakeEngineAdapter({ mode: 'permanent_failure' });
-    const result = await adapter.run('fail-permanent');
+    const result = await adapter.run(runRequest('fail-permanent'));
     expect(result.failureClassification).toBe('permanent_failure');
     expect(result.events.map((e) => e.type)).toEqual(['started', 'failed', 'usage']);
     expect(result.events[1]?.payload.classification).toBe('permanent_failure');
@@ -110,7 +114,7 @@ describe('engine-pi', () => {
     const adapter = new FakeEngineAdapter({ mode: 'timeout' });
     const receivedEvents: NormalizedEngineEvent[] = [];
 
-    const handle = await adapter.startRun('hang', {
+    const handle = await adapter.startRun(runRequest('hang'), {
       onEvent: (event) => receivedEvents.push(event),
     });
 
@@ -129,7 +133,7 @@ describe('engine-pi', () => {
     const adapter = new FakeEngineAdapter({ mode: 'protocol_error' });
     const receivedEvents: NormalizedEngineEvent[] = [];
 
-    const handle = await adapter.startRun('bad-protocol', {
+    const handle = await adapter.startRun(runRequest('bad-protocol'), {
       onEvent: (event) => receivedEvents.push(event),
     });
 
@@ -142,7 +146,7 @@ describe('engine-pi', () => {
   it('fake adapter respects delayMs config', async () => {
     const adapter = new FakeEngineAdapter({ mode: 'success', delayMs: 10 });
     const start = Date.now();
-    const result = await adapter.run('delayed');
+    const result = await adapter.run(runRequest('delayed'));
     const elapsed = Date.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(40);
     expect(result.failureClassification).toBeNull();
@@ -238,7 +242,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('hello');
+    const result = await adapter.run(runRequest('hello'));
 
     expect(result.engineSessionRef).toBe('pi:test-session');
     expect(result.failureClassification).toBeNull();
@@ -285,7 +289,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('warn');
+    const result = await adapter.run(runRequest('warn'));
     expect(result.failureClassification).toBeNull();
     expect(result.warnings).toBe('deprecation warning: old API');
   });
@@ -316,7 +320,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('clean');
+    const result = await adapter.run(runRequest('clean'));
     expect(result.failureClassification).toBeNull();
     expect(result.warnings).toBeUndefined();
   });
@@ -345,7 +349,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('auth');
+    const result = await adapter.run(runRequest('auth'));
     expect(result.failureClassification).toBe('auth_failure');
     expect(result.events.some((event) => event.type === 'started')).toBe(false);
     expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('auth_failure');
@@ -375,7 +379,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node', timeoutMs: 200 });
-    const result = await adapter.run('hang-forever');
+    const result = await adapter.run(runRequest('hang-forever'));
     expect(result.failureClassification).toBe('transient_failure');
     expect(result.failureMessage).toBe('engine timeout exceeded');
     expect(result.events.some((event) => event.type === 'failed' && event.payload.message === 'engine timeout exceeded')).toBe(true);
@@ -411,7 +415,7 @@ describe('engine-pi', () => {
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
     const receivedEvents: NormalizedEngineEvent[] = [];
-    const handle = await adapter.startRun('cancel-me', {
+    const handle = await adapter.startRun(runRequest('cancel-me'), {
       onEvent: (event) => receivedEvents.push(event),
     });
 
@@ -448,7 +452,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('ui');
+    const result = await adapter.run(runRequest('ui'));
     expect(result.failureClassification).toBe('protocol_error');
     expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('protocol_error');
   });
@@ -1183,7 +1187,7 @@ describe('engine-pi', () => {
     `);
 
     const adapter = new PiEngineAdapter({ piPath, command: 'node' });
-    const result = await adapter.run('bad-json');
+    const result = await adapter.run(runRequest('bad-json'));
     expect(result.failureClassification).toBe('protocol_error');
     expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('protocol_error');
   });
@@ -1214,7 +1218,7 @@ describe('engine-pi', () => {
     `, { defaultCli: false });
 
     const adapter = new PiEngineAdapter(explicitConfig(piPath));
-    const result = await adapter.run('explicit');
+    const result = await adapter.run(runRequest('explicit'));
     expect(result.failureClassification).toBeNull();
     expect(result.engineSessionRef).toBe('pi:explicit-session');
     expect(result.usage.tokensIn).toBe(2);

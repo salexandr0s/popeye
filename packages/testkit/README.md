@@ -25,6 +25,7 @@ New platform implementation.
 | --------------------- | ------------------------------------------------------ |
 | `FakeEngineAdapter`   | Deterministic engine adapter with configurable modes   |
 | `EngineAdapter`       | Interface type (re-export)                             |
+| `EngineRunRequest`    | Structured request type for `run()` / `startRun()`     |
 | `EngineRunHandle`     | Handle type for in-flight runs (re-export)             |
 | `EngineRunResult`     | Result type for completed runs (re-export)             |
 | `EngineRunCompletion` | Completion type for awaited handles (re-export)        |
@@ -40,6 +41,6 @@ New platform implementation.
 import { FakeEngineAdapter } from '@popeye/testkit';
 
 const engine = new FakeEngineAdapter({ mode: 'success' });
-const result = await engine.run('test input');
+const result = await engine.run({ prompt: 'test input' });
 expect(result.failureClassification).toBeNull();
 ```

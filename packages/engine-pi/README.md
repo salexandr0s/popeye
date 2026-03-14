@@ -51,13 +51,14 @@ const result = await adapter.run({
 console.log(result.events, result.usage);
 ```
 
-String prompts remain supported for backward compatibility.
-
 ## Structured run request support
 
 Current `EngineRunRequest` behavior:
 
-- supported execution controls: `prompt`, `cwd`, `modelOverride`, `runtimeTools`
+- `EngineAdapter.run()` and `EngineAdapter.startRun()` accept
+  `EngineRunRequest` only
+- supported execution controls: `prompt`, `cwd`, `modelOverride`,
+  `runtimeTools`
 - accepted runtime metadata (not forwarded into Pi RPC semantics yet):
   `workspaceId`, `projectId`, `sessionPolicy`, `instructionSnapshotId`,
   `trigger`
