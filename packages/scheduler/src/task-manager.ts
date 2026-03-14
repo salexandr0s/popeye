@@ -7,26 +7,16 @@ import type {
   TaskRecord,
 } from '@popeye/contracts';
 import {
-  JobLeaseRecordSchema,
   TaskCreateInputSchema,
-  TaskRecordSchema,
+  nowIso,
 } from '@popeye/contracts';
 
-import type { RuntimeDatabases } from './database.js';
-import { nowIso } from './clock.js';
-
-function readJson<T>(value: string): T {
-  return JSON.parse(value) as T;
-}
-
-export interface TaskManagerCallbacks {
-  emit(event: string, payload: unknown): void;
-  processSchedulerTick(): Promise<void>;
-}
+import type { SchedulerDeps, TaskManagerCallbacks } from './types.js';
+import { IdRowSchema, mapJobLeaseRow, mapJobRow, mapTaskRow } from './row-mappers.js';
 
 export class TaskManager {
   constructor(
-    private readonly databases: RuntimeDatabases,
+    private readonly databases: SchedulerDeps,
     private readonly callbacks: TaskManagerCallbacks,
   ) {}
 
@@ -55,19 +45,21 @@ export class TaskManager {
   }
 
   enqueueTask(taskId: string, options?: { availableAt?: string; retryCount?: number }): JobRecord | null {
-    const task = this.databases.app.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, string> | undefined;
-    if (!task) return null;
-    const coalesceKey = (task.coalesce_key as string | null) ?? null;
+    const rawTask = this.databases.app.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    if (!rawTask) return null;
+    const task = mapTaskRow(rawTask);
+    const coalesceKey = task.coalesceKey;
     if (coalesceKey) {
-      const active = this.databases.app
+      const rawActive = this.databases.app
         .prepare(`SELECT j.id FROM jobs j JOIN tasks t ON t.id = j.task_id WHERE t.coalesce_key = ? AND j.status IN ('queued','leased','running','waiting_retry')`)
         .get(coalesceKey);
+      const active = rawActive ? IdRowSchema.parse(rawActive) : null;
       if (active) return null;
     }
     const job: JobRecord = {
       id: randomUUID(),
       taskId,
-      workspaceId: task.workspace_id,
+      workspaceId: task.workspaceId,
       status: 'queued',
       retryCount: options?.retryCount ?? 0,
       availableAt: options?.availableAt ?? nowIso(),
@@ -83,11 +75,11 @@ export class TaskManager {
   }
 
   enqueueJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
+    const job = this.getJob(jobId);
     if (!job) return null;
     if (!['paused', 'blocked_operator', 'failed_final', 'cancelled'].includes(job.status)) return null;
     this.databases.app.prepare('UPDATE jobs SET status = ?, available_at = ?, updated_at = ? WHERE id = ?').run('queued', nowIso(), nowIso(), jobId);
-    return this.listJobs().find((j) => j.id === jobId) ?? null;
+    return this.getJob(jobId);
   }
 
   requeueJob(jobId: string): JobRecord | null {
@@ -101,69 +93,45 @@ export class TaskManager {
   }
 
   listTasks(): TaskRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all() as Array<Record<string, string>>;
-    return rows.map((row) =>
-      TaskRecordSchema.parse({
-        id: row.id,
-        workspaceId: row.workspace_id,
-        projectId: row.project_id ?? null,
-        title: row.title,
-        prompt: row.prompt,
-        source: row.source,
-        status: row.status,
-        retryPolicy: readJson(row.retry_policy_json),
-        sideEffectProfile: row.side_effect_profile,
-        coalesceKey: row.coalesce_key ?? null,
-        createdAt: row.created_at,
-      }),
-    );
+    const rows = this.databases.app.prepare('SELECT * FROM tasks ORDER BY created_at DESC').all();
+    return rows.map((row) => mapTaskRow(row));
   }
 
   getTask(taskId: string): TaskRecord | null {
-    return this.listTasks().find((task) => task.id === taskId) ?? null;
+    const row = this.databases.app.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+    return row ? mapTaskRow(row) : null;
   }
 
   listJobs(): JobRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all() as Array<Record<string, string | number | null>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      taskId: String(row.task_id),
-      workspaceId: String(row.workspace_id),
-      status: row.status as JobRecord['status'],
-      retryCount: Number(row.retry_count),
-      availableAt: String(row.available_at),
-      lastRunId: row.last_run_id ? String(row.last_run_id) : null,
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    }));
+    const rows = this.databases.app.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all();
+    return rows.map((row) => mapJobRow(row));
+  }
+
+  getJob(jobId: string): JobRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    return row ? mapJobRow(row) : null;
   }
 
   getJobLease(jobId: string): JobLeaseRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM job_leases WHERE job_id = ?').get(jobId) as Record<string, string> | undefined;
-    if (!row) return null;
-    return JobLeaseRecordSchema.parse({
-      jobId: row.job_id,
-      leaseOwner: row.lease_owner,
-      leaseExpiresAt: row.lease_expires_at,
-      updatedAt: row.updated_at,
-    });
+    const row = this.databases.app.prepare('SELECT * FROM job_leases WHERE job_id = ?').get(jobId);
+    return row ? mapJobLeaseRow(row) : null;
   }
 
   pauseJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
+    const job = this.getJob(jobId);
     if (!job) return null;
     if (!['queued', 'waiting_retry', 'blocked_operator'].includes(job.status)) return null;
     return this.updateJobStatus(jobId, 'paused');
   }
 
   resumeJob(jobId: string): JobRecord | null {
-    const job = this.listJobs().find((j) => j.id === jobId);
+    const job = this.getJob(jobId);
     if (!job || job.status !== 'paused') return null;
     return this.updateJobStatus(jobId, 'queued');
   }
 
   private updateJobStatus(jobId: string, status: JobRecord['status']): JobRecord | null {
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ?, available_at = ? WHERE id = ?').run(status, nowIso(), nowIso(), jobId);
-    return this.listJobs().find((job) => job.id === jobId) ?? null;
+    return this.getJob(jobId);
   }
 }

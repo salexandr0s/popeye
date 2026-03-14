@@ -40,7 +40,7 @@ New platform implementation.
 | Receipts       | `GET /v1/receipts`, `GET /v1/receipts/:id`                   |
 | Instructions   | `GET /v1/instruction-previews/:scope`                        |
 | Interventions  | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve`|
-| Memory         | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit`, `POST /v1/memory/maintenance` |
+| Memory         | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit`, `POST /v1/memory/maintenance`, `POST /v1/memory/:id/promote/propose`, `POST /v1/memory/:id/promote/execute` |
 | Messages       | `POST /v1/messages/ingest`, `GET /v1/messages/:id`           |
 | Security       | `GET /v1/security/audit`, `GET /v1/security/csrf-token`      |
 | Usage          | `GET /v1/usage/summary`                                      |
@@ -65,3 +65,14 @@ await app.listen({ host: '127.0.0.1', port: 18789 });
 See `src/index.test.ts`, `src/contract.test.ts`, `src/csrf.test.ts`,
 `src/sec-fetch.test.ts`, and `src/sse.test.ts` for API contract and
 security enforcement tests.
+
+### Memory promotion
+
+The memory API includes a two-step promotion flow:
+
+1. `POST /v1/memory/:id/promote/propose` with `{ targetPath }`
+2. Review the returned `{ memoryId, targetPath, diff, approved, promoted }`
+3. `POST /v1/memory/:id/promote/execute` with the approved payload
+
+Promotion routes are covered by contract and behavior tests in
+`src/contract.test.ts` and `src/index.test.ts`.

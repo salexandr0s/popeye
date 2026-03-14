@@ -35,6 +35,7 @@ export type MemoryRecord = z.infer<typeof MemoryRecordSchema>;
 export const MemorySearchResultSchema = z.object({
   id: z.string(),
   description: z.string(),
+  content: z.string().nullable(),
   type: z.string(),
   confidence: z.number(),
   effectiveConfidence: z.number(),
@@ -68,14 +69,6 @@ export const MemoryEventRecordSchema = z.object({
   createdAt: z.string(),
 });
 export type MemoryEventRecord = z.infer<typeof MemoryEventRecordSchema>;
-
-export const MemoryEmbeddingRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  embeddingJson: z.string(),
-  createdAt: z.string(),
-});
-export type MemoryEmbeddingRecord = z.infer<typeof MemoryEmbeddingRecordSchema>;
 
 export const MemorySourceRecordSchema = z.object({
   id: z.string(),

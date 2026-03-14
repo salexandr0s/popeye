@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ApiProvider } from './api/provider';
 import { AppLayout } from './layout/app-layout';
 import { Dashboard } from './views/dashboard';
+import { CommandCenter } from './views/command-center';
 import { RunsList } from './views/runs-list';
 import { RunDetail } from './views/run-detail';
 import { JobsList } from './views/jobs-list';
@@ -41,6 +42,7 @@ export function App() {
           <Routes>
             <Route element={<AppLayout />}>
               <Route index element={<Dashboard />} />
+              <Route path="command-center" element={<CommandCenter />} />
               <Route path="runs" element={<RunsList />} />
               <Route path="runs/:id" element={<RunDetail />} />
               <Route path="jobs" element={<JobsList />} />

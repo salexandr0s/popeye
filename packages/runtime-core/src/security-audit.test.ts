@@ -125,6 +125,6 @@ describe('security audit', () => {
     createWalDb(paths.appDbPath);
     createWalDb(paths.memoryDbPath);
     const findings = runLocalSecurityAudit(makeConfig(dir));
-    expect(findings).toHaveLength(0);
+    expect(findings.filter((finding) => finding.severity !== 'info')).toHaveLength(0);
   });
 });

@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
-    "@popeye/contracts": "workspace:*"
+    "@popeye/contracts": "workspace:*",
+    "@popeye/observability": "workspace:*"
   },
   "scripts": {
     "build": "tsc -b",

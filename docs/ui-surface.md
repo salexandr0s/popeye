@@ -19,6 +19,7 @@ The daemon reads `index.html` from the web inspector dist directory, replaces th
 | View | Route | API Endpoints |
 |------|-------|---------------|
 | Dashboard | `/` | `GET /v1/health`, `GET /v1/status`, `GET /v1/daemon/scheduler`, `GET /v1/usage/summary` |
+| Command Center | `/command-center` | `GET /v1/status`, `GET /v1/daemon/scheduler`, `GET /v1/runs`, `GET /v1/runs/:id/events`, `GET /v1/jobs`, `GET /v1/interventions`, `GET /v1/receipts`, `GET /v1/tasks`, `GET /v1/usage/summary`, `GET /v1/events/stream` |
 | Runs | `/runs`, `/runs/:id` | `GET /v1/runs`, `GET /v1/runs/:id`, `GET /v1/runs/:id/events`, `POST /v1/runs/:id/cancel`, `POST /v1/runs/:id/retry` |
 | Jobs | `/jobs` | `GET /v1/jobs`, `POST /v1/jobs/:id/pause`, `POST /v1/jobs/:id/resume`, `POST /v1/jobs/:id/enqueue` |
 | Receipts | `/receipts`, `/receipts/:id` | `GET /v1/receipts`, `GET /v1/receipts/:id` |
@@ -30,6 +31,13 @@ The daemon reads `index.html` from the web inspector dist directory, replaces th
 ## Design Token Usage
 
 All visual values come from `~/.claude/uiux-contract/design_tokens.json`, mapped to CSS variables in `globals.css`. No hardcoded colors, spacing, or radii.
+
+## Command Center surface notes
+
+- The command center now keeps overview and inline detail panes on the same screen for run, job, and intervention drill-downs.
+- Idle and stuck-risk badges are **operator heuristics** derived from observed run activity (`/v1/runs/:id/events` + SSE `run_started` / `run_event` / `run_completed`) and fall back to `startedAt` when no prior events are loaded.
+- Related tools stay within Popeye boundaries: quick-open links to existing views plus copyable `pop` command snippets. The web inspector does not launch terminals directly.
+- Layout, panel visibility, dense mode, detail width, and current inline selection persist locally in browser storage only.
 
 ## How to Add New Views
 

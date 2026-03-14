@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../api/provider';
 import type { MemorySearchResponse, MemorySearchResult } from '../api/hooks';
 import { Loading } from '../components/loading';
@@ -16,7 +17,7 @@ function MemoryResultCard({ result }: { result: MemorySearchResult }) {
           </p>
           <div className="flex gap-[12px] mt-[8px]">
             <span className="text-[12px] text-[var(--color-fg-muted)]">
-              Type: {result.memoryType}
+              Type: {result.type}
             </span>
             <span className="text-[12px] text-[var(--color-fg-muted)]">
               Scope: {result.scope}
@@ -41,6 +42,8 @@ function MemoryResultCard({ result }: { result: MemorySearchResult }) {
 
 export function MemorySearch() {
   const api = useApi();
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') ?? '';
   const [query, setQuery] = useState('');
   const [response, setResponse] = useState<MemorySearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +73,28 @@ export function MemorySearch() {
       void handleSearch();
     }
   };
+
+  useEffect(() => {
+    if (!initialQuery.trim()) return;
+    setQuery(initialQuery);
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await api.post<MemorySearchResponse>('/v1/memory/search', {
+          query: initialQuery.trim(),
+          includeContent: true,
+          limit: 20,
+        });
+        setResponse(result);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        setResponse(null);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [api, initialQuery]);
 
   return (
     <div>
@@ -108,7 +133,7 @@ export function MemorySearch() {
           {response.results.length > 0 ? (
             <div className="space-y-[8px]">
               {response.results.map((r) => (
-                <MemoryResultCard key={r.memoryId} result={r} />
+                <MemoryResultCard key={r.id} result={r} />
               ))}
             </div>
           ) : (

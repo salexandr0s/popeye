@@ -10,6 +10,7 @@ import {
   CsrfTokenResponseSchema,
   DaemonStatusResponseSchema,
   JobRecordSchema,
+  MemoryPromotionResponseSchema,
   ProjectRecordSchema,
   RunRecordSchema,
   SchedulerStatusResponseSchema,
@@ -20,6 +21,35 @@ import {
 import { createRuntimeService, initAuthStore } from '@popeye/runtime-core';
 
 import { createControlApi } from './index.js';
+
+function insertMemoryForPromotion(runtime: ReturnType<typeof createRuntimeService>): string {
+  const now = new Date().toISOString();
+  const memoryId = 'memory-contract-promote';
+  runtime.databases.memory
+    .prepare(
+      `INSERT INTO memories (
+        id, description, classification, source_type, content, confidence, scope, memory_type,
+        dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      memoryId,
+      'Promotable memory',
+      'embeddable',
+      'compaction_flush',
+      'Promoted content',
+      0.8,
+      'default',
+      'semantic',
+      null,
+      null,
+      null,
+      now,
+      'run-promote',
+      now,
+    );
+  return memoryId;
+}
 
 describe('API contract tests', () => {
   function createTestEnv() {
@@ -234,6 +264,31 @@ describe('API contract tests', () => {
     expect(response.statusCode).toBe(200);
     const parsed = z.array(AgentProfileRecordSchema).parse(response.json());
     expect(Array.isArray(parsed)).toBe(true);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/memory/:id/promote/propose conforms to MemoryPromotionResponseSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const memoryId = insertMemoryForPromotion(runtime);
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    const csrf = CsrfTokenResponseSchema.parse(csrfResponse.json()).token;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/memory/${memoryId}/promote/propose`,
+      headers: { authorization: `Bearer ${store.current.token}`, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' },
+      payload: { targetPath: join(runtime.databases.paths.memoryDailyDir, 'contract-promoted.md') },
+    });
+
+    expect(response.statusCode).toBe(200);
+    MemoryPromotionResponseSchema.parse(response.json());
 
     await runtime.close();
     await app.close();

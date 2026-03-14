@@ -5,7 +5,7 @@
 Popeye's memory is a two-layer system:
 
 - **Markdown layer** (human-readable): `MEMORY.md` (curated), `memory/daily/YYYY-MM-DD.md` (daily notes), workspace knowledge docs.
-- **SQLite layer** (machine-queryable): `memory.db` containing `memories`, `memory_events`, `memory_embeddings` (sqlite-vec), `memory_sources`, `memory_consolidations`, `memories_fts` (FTS5), `memory_vec` (sqlite-vec).
+- **SQLite layer** (machine-queryable): `memory.db` containing `memories`, `memory_events`, `memory_sources`, `memory_consolidations`, `memories_fts` (FTS5), and `memory_vec` (sqlite-vec).
 
 ## Memory Types
 

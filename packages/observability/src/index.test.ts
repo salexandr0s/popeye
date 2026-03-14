@@ -34,6 +34,27 @@ describe('redactText', () => {
     expect(result.events.length).toBeGreaterThan(0);
   });
 
+  it('redacts GCP service account key wrapper', () => {
+    // GCP key content triggers pem-block first; verify the wrapper pattern also fires
+    const result = redactText('Has "private_key": "-----BEGIN PRIVATE KEY-----" in config');
+    expect(result.events.some(e => e.details?.pattern === 'gcp-service-key' || e.details?.pattern === 'pem-block')).toBe(true);
+  });
+
+  it('redacts Azure connection strings', () => {
+    const result = redactText('Connection: SharedAccessKey=YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4');
+    expect(result.text).toContain('[REDACTED:azure-connection-string]');
+  });
+
+  it('redacts database URLs', () => {
+    const result = redactText('DB: postgres://admin:secretpw@db.example.com:5432/mydb');
+    expect(result.text).toContain('[REDACTED:database-url]');
+  });
+
+  it('redacts Stripe keys', () => {
+    const result = redactText('Payment: pk_live_abcdefghijklmnopqrstuvwx');
+    expect(result.text).toContain('[REDACTED:stripe-key]');
+  });
+
   it('truncates oversized input', () => {
     const bigInput = 'x'.repeat(2_000_000);
     const result = redactText(bigInput);

@@ -13,6 +13,10 @@ const BUILTIN_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'github-pat', pattern: /github_pat_[A-Za-z0-9_]{20,}/g },
   { name: 'anthropic-key', pattern: /sk-ant-[A-Za-z0-9-]{20,}/g },
   { name: 'slack-webhook', pattern: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9_/]+/g },
+  { name: 'gcp-service-key', pattern: /"private_key":\s*"-----BEGIN[^"]*-----"/g },
+  { name: 'azure-connection-string', pattern: /(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/=]{20,}/g },
+  { name: 'database-url', pattern: /(?:postgres|mysql|mongodb|redis):\/\/[^\s"']+/g },
+  { name: 'stripe-key', pattern: /(?:sk|pk)_(?:test|live)_[A-Za-z0-9]{10,}/g },
 ];
 
 export interface RedactionResult {

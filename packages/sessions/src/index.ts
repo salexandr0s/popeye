@@ -13,3 +13,6 @@ export function selectSessionRoot(input: SessionSelectionInput): SessionRootReco
     createdAt: new Date().toISOString(),
   };
 }
+
+export { SessionService } from './session-service.js';
+export type { SessionDeps } from './types.js';

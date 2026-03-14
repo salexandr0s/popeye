@@ -55,10 +55,10 @@ export class MemorySearchService {
     if (scope !== undefined) rerankParams.queryScope = scope;
 
     const mapResult = (c: ScoredCandidate): MemorySearchResult => ({
-      memoryId: c.memoryId,
+      id: c.memoryId,
       description: c.description,
       content: includeContent ? c.content : null,
-      memoryType: c.memoryType,
+      type: c.memoryType,
       confidence: c.confidence,
       effectiveConfidence: c.effectiveConfidence,
       scope: c.scope,
@@ -160,11 +160,10 @@ export class MemorySearchService {
     const insertStmt = this.db.prepare(
       'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
-    const result = insertStmt.run(memoryId, input.description, input.classification, input.sourceType, redactedContent, input.confidence, input.scope, memoryType, dedupKey, now, now);
-    const rowid = Number(result.lastInsertRowid);
+    insertStmt.run(memoryId, input.description, input.classification, input.sourceType, redactedContent, input.confidence, input.scope, memoryType, dedupKey, now, now);
 
     // Sync FTS insert
-    syncFtsInsert(this.db, rowid, input.description, redactedContent);
+    syncFtsInsert(this.db, memoryId, input.description, redactedContent);
 
     // Insert memory_sources if sourceRef
     if (input.sourceRef) {
@@ -222,7 +221,7 @@ export class MemorySearchService {
 
   getMemoryContent(memoryId: string): MemoryRecord | null {
     const row = this.db.prepare(
-      'SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at FROM memories WHERE id = ?',
+      'SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE id = ?',
     ).get(memoryId) as {
       id: string;
       description: string;
@@ -236,6 +235,8 @@ export class MemorySearchService {
       last_reinforced_at: string | null;
       archived_at: string | null;
       created_at: string;
+      source_run_id: string | null;
+      source_timestamp: string | null;
     } | undefined;
 
     if (!row) return null;
@@ -248,8 +249,8 @@ export class MemorySearchService {
       content: row.content,
       confidence: row.confidence,
       scope: row.scope,
-      sourceRunId: null,
-      sourceTimestamp: null,
+      sourceRunId: row.source_run_id ?? null,
+      sourceTimestamp: row.source_timestamp ?? null,
       memoryType: row.memory_type as MemoryRecord['memoryType'],
       dedupKey: row.dedup_key,
       lastReinforcedAt: row.last_reinforced_at,
@@ -258,12 +259,12 @@ export class MemorySearchService {
     };
   }
 
-  syncFtsInsert(rowid: number, description: string, content: string): void {
-    syncFtsInsert(this.db, rowid, description, content);
+  syncFtsInsert(memoryId: string, description: string, content: string): void {
+    syncFtsInsert(this.db, memoryId, description, content);
   }
 
-  syncFtsDelete(rowid: number, description: string, content: string): void {
-    syncFtsDelete(this.db, rowid, description, content);
+  syncFtsDelete(memoryId: string, description: string, content: string): void {
+    syncFtsDelete(this.db, memoryId, description, content);
   }
 
   insertVecEmbedding(memoryId: string, embedding: Float32Array): void {

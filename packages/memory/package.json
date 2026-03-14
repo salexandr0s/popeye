@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "dependencies": {
     "@popeye/contracts": "workspace:*",
-    "@popeye/observability": "workspace:*"
+    "@popeye/observability": "workspace:*",
+    "sqlite-vec": "0.1.7-alpha.2"
   },
   "scripts": {
     "build": "tsc -b",

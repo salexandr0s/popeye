@@ -1,5 +1,8 @@
 import type { RetryPolicy } from '@popeye/contracts';
 
+export { TaskManager } from './task-manager.js';
+export type { SchedulerDeps, TaskManagerCallbacks } from './types.js';
+
 export function calculateRetryDelaySeconds(attempt: number, policy: RetryPolicy): number {
   const delay = policy.baseDelaySeconds * policy.multiplier ** Math.max(attempt - 1, 0);
   return Math.min(delay, policy.maxDelaySeconds);

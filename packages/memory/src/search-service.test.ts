@@ -19,10 +19,12 @@ function createTestDb(): Database.Database {
       dedup_key TEXT,
       last_reinforced_at TEXT,
       archived_at TEXT,
+      source_run_id TEXT,
+      source_timestamp TEXT,
       created_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX idx_memories_dedup_key ON memories(dedup_key) WHERE dedup_key IS NOT NULL;
-    CREATE VIRTUAL TABLE memories_fts USING fts5(description, content);
+    CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
     CREATE TABLE memory_sources (
       id TEXT PRIMARY KEY,
       memory_id TEXT NOT NULL,

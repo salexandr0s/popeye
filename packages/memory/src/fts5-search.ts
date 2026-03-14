@@ -53,12 +53,12 @@ export function searchFts5(
 
   const sql = `SELECT m.id, m.description, m.content, m.memory_type, m.confidence, m.scope, m.source_type, m.created_at, m.last_reinforced_at, rank
 FROM memories_fts
-JOIN memories m ON m.rowid = memories_fts.rowid
+JOIN memories m ON m.id = memories_fts.memory_id
 WHERE ${conditions.join(' AND ')}
 ORDER BY rank
 LIMIT ?`;
 
-  const rows = db.prepare(sql).all(...params) as Array<{
+  let rows: Array<{
     id: string;
     description: string;
     content: string;
@@ -70,6 +70,11 @@ LIMIT ?`;
     last_reinforced_at: string | null;
     rank: number;
   }>;
+  try {
+    rows = db.prepare(sql).all(...params) as typeof rows;
+  } catch {
+    return [];
+  }
 
   return rows.map((row) => ({
     memoryId: row.id,
@@ -85,10 +90,10 @@ LIMIT ?`;
   }));
 }
 
-export function syncFtsInsert(db: Database.Database, rowid: number, description: string, content: string): void {
-  db.prepare('INSERT INTO memories_fts(rowid, description, content) VALUES (?, ?, ?)').run(rowid, description, content);
+export function syncFtsInsert(db: Database.Database, memoryId: string, description: string, content: string): void {
+  db.prepare('INSERT INTO memories_fts(memory_id, description, content) VALUES (?, ?, ?)').run(memoryId, description, content);
 }
 
-export function syncFtsDelete(db: Database.Database, rowid: number, _description: string, _content: string): void {
-  db.prepare('DELETE FROM memories_fts WHERE rowid = ?').run(rowid);
+export function syncFtsDelete(db: Database.Database, memoryId: string, _description: string, _content: string): void {
+  db.prepare('DELETE FROM memories_fts WHERE memory_id = ?').run(memoryId);
 }

@@ -918,6 +918,7 @@ describe('Additional schema smoke tests', () => {
     const result = MemorySearchResultSchema.parse({
       id: 'msr-001',
       description: 'Test memory',
+      content: 'Full content here',
       type: 'semantic',
       confidence: 0.9,
       effectiveConfidence: 0.85,
@@ -929,6 +930,7 @@ describe('Additional schema smoke tests', () => {
       scoreBreakdown: { relevance: 0.9, recency: 0.8, confidence: 0.85, scopeMatch: 1.0 },
     });
     expect(result.score).toBe(0.95);
+    expect(result.content).toBe('Full content here');
     expect(result.scoreBreakdown.relevance).toBe(0.9);
   });
 

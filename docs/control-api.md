@@ -89,6 +89,18 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | POST | `/v1/messages/ingest` | Ingest a message (Telegram, manual, or API). Body validated against `IngestMessageInputSchema`. |
 | GET | `/v1/messages/:id` | Get a message by ID. Returns 404 if not found. |
 
+### Memory
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/memory/search` | Hybrid memory search. Query params: `q` or `query`, optional `scope`, `types`, `limit`, `full=true`. |
+| GET | `/v1/memory/audit` | Memory subsystem audit summary. |
+| GET | `/v1/memory/:id` | Get a single memory record. Returns 404 if not found. |
+| GET | `/v1/memory` | List memories. Query params: `type`, `scope`, `limit`. |
+| POST | `/v1/memory/maintenance` | Trigger confidence decay + consolidation maintenance. |
+| POST | `/v1/memory/:id/promote/propose` | Propose promotion of a memory into a curated markdown file. Body: `{ targetPath }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. |
+| POST | `/v1/memory/:id/promote/execute` | Execute a previously reviewed promotion. Body: `{ targetPath, diff, approved, promoted }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. |
+
 ### Events (SSE)
 
 | Method | Path | Description |
@@ -119,6 +131,16 @@ For Telegram messages, the following checks are applied in order:
 Accepted messages create a Task with `autoEnqueue: true`, which immediately creates a Job and schedules execution.
 
 Duplicate Telegram messages (same `source + chatId + telegramMessageId`) are detected via idempotency keys and replayed without re-processing.
+
+## Memory promotion flow
+
+Memory promotion is a two-step mutation flow:
+
+1. Call `POST /v1/memory/:id/promote/propose` with a target markdown path inside the runtime memory directory.
+2. Review the returned `diff`.
+3. Call `POST /v1/memory/:id/promote/execute` with the reviewed payload and `approved: true`.
+
+If approved, the runtime writes the memory content to the target file, records a `promoted` memory event, and returns the final promotion result.
 
 ## Error responses
 

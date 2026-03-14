@@ -1,7 +1,6 @@
 export * from './config.js';
 export * from './auth.js';
 export * from './prompt.js';
-export * from './policy.js';
 export * from './security-audit.js';
 export * from './database.js';
 export * from './backup.js';
@@ -10,13 +9,22 @@ export * from './launchd.js';
 export * from './runtime-service.js';
 export * from './memory-lifecycle.js';
 
+// Backward-compat re-exports from domain packages
+export { evaluateCriticalFileMutation } from '@popeye/workspace';
+export { TaskManager } from '@popeye/scheduler';
+export type { TaskManagerCallbacks, SchedulerDeps } from '@popeye/scheduler';
+export { ReceiptManager } from '@popeye/receipts';
+export type { ReceiptCallbacks, ReceiptDeps } from '@popeye/receipts';
+export { SessionService } from '@popeye/sessions';
+export type { SessionDeps } from '@popeye/sessions';
+
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { redactText } from '@popeye/observability';
+import { evaluateCriticalFileMutation } from '@popeye/workspace';
 
 import { initAuthStore, readAuthStore, validateBearerToken } from './auth.js';
-import { evaluateCriticalFileMutation } from './policy.js';
 
 export const initializeAuthStore = (path: string) => {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

@@ -75,6 +75,11 @@ function hashCsrfSeed(seed: string): string {
   return createHash('sha256').update(seed).digest('hex');
 }
 
+// POP-SEC-002: CSRF token is deterministic (derived from auth token + createdAt).
+// Accepted risk for the loopback-only model: an attacker who can read the auth
+// token already has full API access, so a predictable CSRF derivative adds no
+// additional exposure. If the API is ever exposed beyond loopback, this should
+// be replaced with a random per-session token.
 export function issueCsrfToken(record: AuthRotationRecord): string {
   return hashCsrfSeed(`csrf:${record.current.token}:${record.current.createdAt}`);
 }

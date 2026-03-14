@@ -39,6 +39,8 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/memory/:id` | `MemoryRecordSchema` |
 | GET | `/v1/memory` | `MemoryRecordSchema[]` |
 | POST | `/v1/memory/maintenance` | `{ decayed, archived, merged, deduped }` |
+| POST | `/v1/memory/:id/promote/propose` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionProposalRequestSchema`) |
+| POST | `/v1/memory/:id/promote/execute` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionExecuteRequestSchema`) |
 
 Generated clients: `@popeye/api-client` (TypeScript, Zod-validated) and `generated/swift/PopeyeModels.swift` (Codable structs).
 
@@ -48,6 +50,8 @@ Behavior notes:
 - execution ownership lives with the daemon scheduler loop, not the API caller.
 - `GET /v1/jobs/:id/lease` exposes the active lease record when present.
 - `GET /v1/daemon/state` and `GET /v1/daemon/scheduler` expose runtime-owned scheduler state only.
+- `POST /v1/memory/:id/promote/propose` returns a review payload with `diff`, `approved: false`, and `promoted: false`.
+- `POST /v1/memory/:id/promote/execute` requires an approved proposal payload and writes the promoted markdown file inside the runtime memory directory.
 - `POST /v1/messages/ingest` enforces Telegram policy in the runtime:
   - private-DM-only
   - allowlist-only

@@ -1,7 +1,8 @@
-import { chmodSync, mkdtempSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 import { initAuthStore } from './auth.js';
@@ -51,6 +52,113 @@ function openFresh(): { databases: RuntimeDatabases; dir: string } {
   const config = makeConfig(dir);
   const databases = openRuntimeDatabases(config);
   return { databases, dir };
+}
+
+function seedLegacyAppDatabase(dir: string): void {
+  const stateDir = join(dir, 'state');
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const db = new Database(join(stateDir, 'app.db'));
+  try {
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL, created_at TEXT NOT NULL);
+    `);
+    const appliedAt = '2026-03-13T00:00:00.000Z';
+    for (const migrationId of [
+      '001-app-schema',
+      '002-app-message-ingress',
+      '003-app-coalesce-key',
+      '004-app-schema-hardening',
+    ]) {
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(migrationId, appliedAt);
+    }
+    db.prepare('INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)').run('ws-1', 'Workspace 1', appliedAt);
+    db.prepare('INSERT INTO projects (id, workspace_id, name, created_at) VALUES (?, ?, ?, ?)').run('project-1', 'ws-1', 'Project 1', appliedAt);
+  } finally {
+    db.close();
+  }
+}
+
+function seedLegacyMemoryDatabase(dir: string): void {
+  const stateDir = join(dir, 'state');
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const db = new Database(join(stateDir, 'memory.db'));
+  try {
+    db.exec(`
+      CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        scope TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        memory_type TEXT DEFAULT 'episodic',
+        dedup_key TEXT,
+        last_reinforced_at TEXT,
+        archived_at TEXT,
+        source_run_id TEXT,
+        source_timestamp TEXT
+      );
+      CREATE TABLE memory_events (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE memory_sources (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_ref TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_consolidations (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        merged_into_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        reason TEXT DEFAULT ''
+      );
+      CREATE VIRTUAL TABLE memories_fts USING fts5(description, content);
+    `);
+    const appliedAt = '2026-03-13T00:00:00.000Z';
+    for (const migrationId of [
+      '001-memory-schema',
+      '002-memory-lifecycle',
+      '003-memory-schema-enrichment',
+      '004-memory-consolidation-reason',
+      '005-memory-cleanup',
+    ]) {
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(migrationId, appliedAt);
+    }
+    db.prepare(
+      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, created_at, memory_type, dedup_key, last_reinforced_at, archived_at, source_run_id, source_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      'm-beta',
+      'Beta memory',
+      'embeddable',
+      'curated_memory',
+      'beta content',
+      0.9,
+      'workspace',
+      appliedAt,
+      'semantic',
+      'dedup-beta',
+      appliedAt,
+      null,
+      null,
+      appliedAt,
+    );
+    db.prepare('INSERT INTO memories_fts (rowid, description, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?, ?)').run('m-beta', 'Beta memory', 'beta content');
+  } finally {
+    db.close();
+  }
 }
 
 describe('openRuntimeDatabases', () => {
@@ -107,6 +215,23 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
+    it('does not contain dropped memory_embeddings and retrieval_cache tables', () => {
+      const { databases } = openFresh();
+      try {
+        const embeddings = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_embeddings'")
+          .all();
+        const cache = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='retrieval_cache'")
+          .all();
+        expect(embeddings).toHaveLength(0);
+        expect(cache).toHaveLength(0);
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
     it('creates all expected memory DB tables', () => {
       const { databases } = openFresh();
       try {
@@ -119,10 +244,8 @@ describe('openRuntimeDatabases', () => {
           'schema_migrations',
           'memories',
           'memory_events',
-          'memory_embeddings',
           'memory_sources',
           'memory_consolidations',
-          'retrieval_cache',
           'memories_fts',
         ];
 
@@ -369,7 +492,72 @@ describe('openRuntimeDatabases', () => {
           '002-memory-lifecycle',
           '003-memory-schema-enrichment',
           '004-memory-consolidation-reason',
+          '005-memory-cleanup',
+          '006-memory-fts-stable-id',
         ]);
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('applies app migration 005 and preserves workspace/project rows', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'popeye-db-app-upgrade-'));
+      chmodSync(dir, 0o700);
+      seedLegacyAppDatabase(dir);
+
+      const databases = openRuntimeDatabases(makeConfig(dir));
+      try {
+        const migrationIds = databases.app
+          .prepare('SELECT id FROM schema_migrations ORDER BY id')
+          .all() as Array<{ id: string }>;
+        expect(migrationIds.map((row) => row.id)).toContain('005-workspace-project-paths');
+
+        const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
+        expect(workspaceColumns.map((column) => column.name)).toContain('root_path');
+
+        const projectColumns = databases.app.pragma('table_info(projects)') as Array<{ name: string }>;
+        expect(projectColumns.map((column) => column.name)).toContain('path');
+
+        const workspace = databases.app.prepare('SELECT id, name, root_path FROM workspaces WHERE id = ?').get('ws-1') as {
+          id: string;
+          name: string;
+          root_path: string | null;
+        } | undefined;
+        expect(workspace).toEqual({ id: 'ws-1', name: 'Workspace 1', root_path: null });
+
+        const project = databases.app.prepare('SELECT id, workspace_id, name, path FROM projects WHERE id = ?').get('project-1') as {
+          id: string;
+          workspace_id: string;
+          name: string;
+          path: string | null;
+        } | undefined;
+        expect(project).toEqual({ id: 'project-1', workspace_id: 'ws-1', name: 'Project 1', path: null });
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('applies memory migration 006 and rebuilds FTS entries with stable memory IDs', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'popeye-db-memory-upgrade-'));
+      chmodSync(dir, 0o700);
+      seedLegacyMemoryDatabase(dir);
+
+      const databases = openRuntimeDatabases(makeConfig(dir));
+      try {
+        const migrationIds = databases.memory
+          .prepare('SELECT id FROM schema_migrations ORDER BY id')
+          .all() as Array<{ id: string }>;
+        expect(migrationIds.map((row) => row.id)).toContain('006-memory-fts-stable-id');
+
+        const ftsColumns = databases.memory.pragma('table_info(memories_fts)') as Array<{ name: string }>;
+        expect(ftsColumns.map((column) => column.name)).toEqual(['memory_id', 'description', 'content']);
+
+        const searchRows = databases.memory
+          .prepare("SELECT memory_id, description FROM memories_fts WHERE memories_fts MATCH 'beta'")
+          .all() as Array<{ memory_id: string; description: string }>;
+        expect(searchRows).toEqual([{ memory_id: 'm-beta', description: 'Beta memory' }]);
       } finally {
         databases.app.close();
         databases.memory.close();

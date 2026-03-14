@@ -31,10 +31,9 @@ import type {
   WorkspaceRegistrationInput,
 } from '@popeye/contracts';
 import {
-  ProjectRegistrationInputSchema,
+  MemoryRecordSchema,
   RunEventRecordSchema,
   RunRecordSchema,
-  WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
@@ -45,17 +44,20 @@ import {
 } from '@popeye/engine-pi';
 import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, loadSqliteVec } from '@popeye/memory';
 import { redactText } from '@popeye/observability';
-import { calculateRetryDelaySeconds } from '@popeye/scheduler';
-import { selectSessionRoot } from '@popeye/sessions';
+import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
+import { selectSessionRoot, SessionService } from '@popeye/sessions';
+
+import { ReceiptManager } from '@popeye/receipts';
+
+import { WorkspaceRegistry } from '@popeye/workspace';
 
 import { openRuntimeDatabases, type RuntimeDatabases } from './database.js';
-import { MemoryLifecycleService } from './memory-lifecycle.js';
+import { MemoryLifecycleService, type MemoryInsertInput } from './memory-lifecycle.js';
 import { MessageIngestionService, MessageIngressError } from './message-ingestion.js';
 import { QueryService } from './query-service.js';
-import { ReceiptManager } from './receipt-manager.js';
-import { TaskManager } from './task-manager.js';
 
-import { nowIso } from './clock.js';
+import { nowIso } from '@popeye/contracts';
+import { z } from 'zod';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -109,6 +111,124 @@ interface SchedulerInternals {
   lastLeaseSweepAt: string | null;
 }
 
+const ProjectPathRowSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  path: z.string(),
+});
+
+const WorkspacePathRowSchema = z.object({
+  id: z.string(),
+  root_path: z.string(),
+});
+
+const RunRowSchema = z.object({
+  id: z.string(),
+  job_id: z.string(),
+  task_id: z.string(),
+  workspace_id: z.string(),
+  session_root_id: z.string(),
+  engine_session_ref: z.string().nullable(),
+  state: z.string(),
+  started_at: z.string(),
+  finished_at: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+const RunEventRowSchema = z.object({
+  id: z.string(),
+  run_id: z.string(),
+  type: z.string(),
+  payload: z.string(),
+  created_at: z.string(),
+});
+
+const MemorySearchRowSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  description: z.union([z.string(), z.number()]),
+  confidence: z.union([z.string(), z.number()]),
+  scope: z.union([z.string(), z.number()]),
+  source_type: z.union([z.string(), z.number()]),
+  created_at: z.union([z.string(), z.number()]),
+  snippet: z.union([z.string(), z.number()]).nullable().optional(),
+});
+
+const MemoryListRowSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']),
+  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush']),
+  content: z.string(),
+  confidence: z.number(),
+  scope: z.string(),
+  memory_type: z.enum(['episodic', 'semantic', 'procedural']).nullable(),
+  dedup_key: z.string().nullable(),
+  last_reinforced_at: z.string().nullable(),
+  archived_at: z.string().nullable(),
+  created_at: z.string(),
+  source_run_id: z.string().nullable(),
+  source_timestamp: z.string().nullable(),
+});
+
+const IdRowSchema = z.object({
+  id: z.string(),
+});
+
+const JobIdRowSchema = z.object({
+  job_id: z.string(),
+});
+
+const CountRowSchema = z.object({
+  count: z.coerce.number().int().nonnegative(),
+});
+
+const CreatedAtRowSchema = z.object({
+  created_at: z.string(),
+});
+
+const ScheduleRowSchema = z.object({
+  id: z.string(),
+  task_id: z.string(),
+  interval_seconds: z.coerce.number().nonnegative(),
+  created_at: z.string(),
+});
+
+function mapRunRow(row: unknown): RunRecord {
+  const parsed = RunRowSchema.parse(row);
+  return RunRecordSchema.parse({
+    id: parsed.id,
+    jobId: parsed.job_id,
+    taskId: parsed.task_id,
+    workspaceId: parsed.workspace_id,
+    sessionRootId: parsed.session_root_id,
+    engineSessionRef: parsed.engine_session_ref,
+    state: parsed.state,
+    startedAt: parsed.started_at,
+    finishedAt: parsed.finished_at,
+    error: parsed.error,
+  });
+}
+
+function mapRunEventRow(row: unknown): RunEventRecord {
+  const parsed = RunEventRowSchema.parse(row);
+  return RunEventRecordSchema.parse({
+    id: parsed.id,
+    runId: parsed.run_id,
+    type: parsed.type,
+    payload: parsed.payload,
+    createdAt: parsed.created_at,
+  });
+}
+
+function parseCountRow(row: unknown): number {
+  return CountRowSchema.parse(row).count;
+}
+
+function parseCreatedAt(row: unknown): string | null {
+  const parsed = CreatedAtRowSchema.safeParse(row);
+  return parsed.success ? parsed.data.created_at : null;
+}
+
 export class PopeyeRuntimeService {
   readonly events = new EventEmitter();
   readonly databases: RuntimeDatabases;
@@ -121,6 +241,7 @@ export class PopeyeRuntimeService {
   private readonly memoryLifecycle: MemoryLifecycleService;
   private memoryMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private vecAvailable = false;
+  private readonly vecInitPromise: Promise<void>;
 
   private readonly activeRuns = new Map<string, ActiveRunContext>();
   private readonly scheduler: SchedulerInternals = {
@@ -138,6 +259,8 @@ export class PopeyeRuntimeService {
   readonly startupProfile: { dbReadyMs: number; reconcileMs: number; schedulerReadyMs: number };
 
   // --- Delegate modules ---
+  private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly sessionService: SessionService;
   private readonly receiptManager: ReceiptManager;
   private readonly messageIngestion: MessageIngestionService;
   private readonly taskManager: TaskManager;
@@ -164,12 +287,16 @@ export class PopeyeRuntimeService {
     this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch);
 
     // Try loading sqlite-vec (non-blocking)
-    void loadSqliteVec(this.databases.memory).then((loaded) => {
+    this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions).then((loaded) => {
       this.vecAvailable = loaded;
     });
 
     // Initialize delegate modules
-    this.receiptManager = new ReceiptManager(this.databases, config, this.memoryLifecycle);
+    this.workspaceRegistry = new WorkspaceRegistry({ app: this.databases.app, paths: this.databases.paths });
+    this.sessionService = new SessionService({ app: this.databases.app });
+    this.receiptManager = new ReceiptManager(this.databases, config, {
+      captureMemory: (input) => this.memoryLifecycle.insertMemory(input),
+    });
     this.taskManager = new TaskManager(this.databases, {
       emit: (event, payload) => this.emit(event, payload),
       processSchedulerTick: () => this.processSchedulerTick(),
@@ -187,7 +314,7 @@ export class PopeyeRuntimeService {
       get lastSchedulerTickAt() { return self.scheduler.lastSchedulerTickAt; },
       get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
       computeNextHeartbeatDueAt: () => this.computeNextHeartbeatDueAt(),
-    });
+    }, this.workspaceRegistry);
 
     this.seedReferenceData();
     this.reconcileStartupState();
@@ -207,6 +334,7 @@ export class PopeyeRuntimeService {
       this.memoryMaintenanceTimer = null;
     }
     await this.stopScheduler();
+    await this.vecInitPromise;
     this.databases.app.prepare('UPDATE daemon_state SET last_shutdown_at = ? WHERE id = 1').run(nowIso());
     this.databases.app.close();
     this.databases.memory.close();
@@ -250,6 +378,10 @@ export class PopeyeRuntimeService {
     return this.taskManager.listJobs();
   }
 
+  getJob(jobId: string): JobRecord | null {
+    return this.taskManager.getJob(jobId);
+  }
+
   getJobLease(jobId: string): JobLeaseRecord | null {
     return this.taskManager.getJobLease(jobId);
   }
@@ -291,45 +423,41 @@ export class PopeyeRuntimeService {
   }
 
   listWorkspaces(): WorkspaceRecord[] {
-    return this.queryService.listWorkspaces();
+    return this.workspaceRegistry.listWorkspaces();
   }
 
   getWorkspace(id: string): WorkspaceRecord | null {
-    return this.queryService.getWorkspace(id);
+    return this.workspaceRegistry.getWorkspace(id);
   }
 
   listProjects(): ProjectRecord[] {
-    return this.queryService.listProjects();
+    return this.workspaceRegistry.listProjects();
   }
 
   getProject(id: string): ProjectRecord | null {
-    return this.queryService.getProject(id);
+    return this.workspaceRegistry.getProject(id);
   }
 
   registerWorkspace(input: WorkspaceRegistrationInput): WorkspaceRecord {
-    const parsed = WorkspaceRegistrationInputSchema.parse(input);
-    const now = nowIso();
-    this.databases.app.prepare('INSERT OR REPLACE INTO workspaces (id, name, root_path, created_at) VALUES (?, ?, ?, ?)').run(parsed.id, parsed.name, parsed.rootPath, now);
-    return { id: parsed.id, name: parsed.name, rootPath: parsed.rootPath, createdAt: now };
+    return this.workspaceRegistry.registerWorkspace(input);
   }
 
   registerProject(input: ProjectRegistrationInput): ProjectRecord {
-    const parsed = ProjectRegistrationInputSchema.parse(input);
-    const workspace = this.getWorkspace(parsed.workspaceId);
-    if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
-    const now = nowIso();
-    this.databases.app.prepare('INSERT OR REPLACE INTO projects (id, workspace_id, name, path, created_at) VALUES (?, ?, ?, ?, ?)').run(parsed.id, parsed.workspaceId, parsed.name, parsed.path, now);
-    return { id: parsed.id, workspaceId: parsed.workspaceId, name: parsed.name, path: parsed.path, createdAt: now };
+    return this.workspaceRegistry.registerProject(input);
   }
 
   resolveWorkspaceFromCwd(cwd: string): { workspaceId: string; projectId: string | null } | null {
-    const projects = this.databases.app.prepare('SELECT id, workspace_id, path FROM projects WHERE path IS NOT NULL ORDER BY LENGTH(path) DESC').all() as Array<Record<string, string>>;
+    const projects = z.array(ProjectPathRowSchema).parse(
+      this.databases.app.prepare('SELECT id, workspace_id, path FROM projects WHERE path IS NOT NULL ORDER BY LENGTH(path) DESC').all(),
+    );
     for (const project of projects) {
       if (cwd.startsWith(project.path)) {
         return { workspaceId: project.workspace_id, projectId: project.id };
       }
     }
-    const workspaces = this.databases.app.prepare('SELECT id, root_path FROM workspaces WHERE root_path IS NOT NULL ORDER BY LENGTH(root_path) DESC').all() as Array<Record<string, string>>;
+    const workspaces = z.array(WorkspacePathRowSchema).parse(
+      this.databases.app.prepare('SELECT id, root_path FROM workspaces WHERE root_path IS NOT NULL ORDER BY LENGTH(root_path) DESC').all(),
+    );
     for (const workspace of workspaces) {
       if (cwd.startsWith(workspace.root_path)) {
         return { workspaceId: workspace.id, projectId: null };
@@ -343,7 +471,7 @@ export class PopeyeRuntimeService {
   }
 
   listSessionRoots(): Array<{ id: string; kind: string; scope: string; createdAt: string }> {
-    return this.queryService.listSessionRoots();
+    return this.sessionService.listSessionRoots();
   }
 
   getInstructionPreview(scope: string): CompiledInstructionBundle {
@@ -351,11 +479,11 @@ export class PopeyeRuntimeService {
   }
 
   listInterventions(): InterventionRecord[] {
-    return this.queryService.listInterventions();
+    return this.sessionService.listInterventions();
   }
 
   resolveIntervention(interventionId: string): InterventionRecord | null {
-    return this.queryService.resolveIntervention(interventionId);
+    return this.sessionService.resolveIntervention(interventionId);
   }
 
   getSecurityAuditFindings(): Array<{ code: string; severity: string; message: string }> {
@@ -379,61 +507,27 @@ export class PopeyeRuntimeService {
   // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---
 
   getRun(runId: string): RunRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM runs WHERE id = ?').get(runId) as Record<string, string | null> | undefined;
+    const row = this.databases.app.prepare('SELECT * FROM runs WHERE id = ?').get(runId);
     if (!row) return null;
-    return RunRecordSchema.parse({
-      id: row.id,
-      jobId: row.job_id,
-      taskId: row.task_id,
-      workspaceId: row.workspace_id,
-      sessionRootId: row.session_root_id,
-      engineSessionRef: row.engine_session_ref,
-      state: row.state,
-      startedAt: row.started_at,
-      finishedAt: row.finished_at,
-      error: row.error,
-    });
+    return mapRunRow(row);
   }
 
   listRuns(): RunRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) =>
-      RunRecordSchema.parse({
-        id: row.id,
-        jobId: row.job_id,
-        taskId: row.task_id,
-        workspaceId: row.workspace_id,
-        sessionRootId: row.session_root_id,
-        engineSessionRef: row.engine_session_ref,
-        state: row.state,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        error: row.error,
-      }),
-    );
+    return z.array(RunRowSchema)
+      .parse(this.databases.app.prepare('SELECT * FROM runs ORDER BY started_at DESC').all())
+      .map(mapRunRow);
   }
 
   listFailedRuns(): RunRecord[] {
-    const rows = this.databases.app.prepare("SELECT * FROM runs WHERE state IN ('failed_retryable', 'failed_final', 'abandoned') ORDER BY started_at DESC").all() as Array<Record<string, string | null>>;
-    return rows.map((row) =>
-      RunRecordSchema.parse({
-        id: row.id,
-        jobId: row.job_id,
-        taskId: row.task_id,
-        workspaceId: row.workspace_id,
-        sessionRootId: row.session_root_id,
-        engineSessionRef: row.engine_session_ref,
-        state: row.state,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        error: row.error,
-      }),
-    );
+    return z.array(RunRowSchema)
+      .parse(this.databases.app.prepare("SELECT * FROM runs WHERE state IN ('failed_retryable', 'failed_final', 'abandoned') ORDER BY started_at DESC").all())
+      .map(mapRunRow);
   }
 
   listRunEvents(runId: string): RunEventRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC').all(runId) as Array<Record<string, string>>;
-    return rows.map((row) => RunEventRecordSchema.parse({ id: row.id, runId: row.run_id, type: row.type, payload: row.payload, createdAt: row.created_at }));
+    return z.array(RunEventRowSchema)
+      .parse(this.databases.app.prepare('SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC').all(runId))
+      .map(mapRunEventRow);
   }
 
   retryRun(runId: string): JobRecord | null {
@@ -471,10 +565,10 @@ export class PopeyeRuntimeService {
   async waitForJobTerminalState(jobId: string, timeoutMs = 10_000): Promise<{ job: JobRecord; run: RunRecord | null; receipt: ReceiptRecord | null } | null> {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const job = this.listJobs().find((candidate) => candidate.id === jobId);
+      const job = this.getJob(jobId);
       if (job && isTerminalJobStatus(job.status)) {
         const run = job.lastRunId ? this.getRun(job.lastRunId) : null;
-        const receipt = run ? this.listReceipts().find((candidate) => candidate.runId === run.id) ?? null : null;
+        const receipt = run ? this.receiptManager.getReceiptByRunId(run.id) : null;
         return { job, run, receipt };
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -485,7 +579,7 @@ export class PopeyeRuntimeService {
   async waitForTaskTerminalReceipt(taskId: string, timeoutMs = 10_000): Promise<ReceiptRecord | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
-      const receipt = this.listReceipts().find((entry) => entry.taskId === taskId);
+      const receipt = this.receiptManager.getReceiptByTaskId(taskId);
       if (receipt) return receipt;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -549,17 +643,17 @@ export class PopeyeRuntimeService {
     createdAt: string;
     snippet: string;
   }> {
-    const rows = this.databases.memory
+    const rows = z.array(MemorySearchRowSchema).parse(this.databases.memory
       .prepare(
         `SELECT m.id, m.description, m.confidence, m.scope, m.source_type, m.created_at,
-                snippet(memories_fts, 1, '<b>', '</b>', '...', 32) AS snippet
+                snippet(memories_fts, 2, '<b>', '</b>', '...', 32) AS snippet
          FROM memories_fts
-         JOIN memories m ON m.rowid = memories_fts.rowid
+         JOIN memories m ON m.id = memories_fts.memory_id
          WHERE memories_fts MATCH ?
          ORDER BY rank
          LIMIT 20`,
       )
-      .all(query) as Array<Record<string, string | number>>;
+      .all(query));
     return rows.map((row) => ({
       id: String(row.id),
       description: String(row.description),
@@ -583,6 +677,15 @@ export class PopeyeRuntimeService {
     return this.memoryLifecycle.getMemoryAudit();
   }
 
+  insertMemory(input: MemoryInsertInput): MemoryRecord {
+    const result = this.memoryLifecycle.insertMemory(input);
+    const memory = this.getMemory(result.memoryId);
+    if (!memory) {
+      throw new Error(`Inserted memory ${result.memoryId} could not be loaded`);
+    }
+    return memory;
+  }
+
   listMemories(options?: { type?: string; scope?: string; limit?: number }): MemoryRecord[] {
     const conditions: string[] = ['archived_at IS NULL'];
     const params: unknown[] = [];
@@ -590,22 +693,27 @@ export class PopeyeRuntimeService {
     if (options?.scope) { conditions.push('scope = ?'); params.push(options.scope); }
     const limit = options?.limit ?? 50;
     params.push(limit);
-    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
-    const rows = this.databases.memory.prepare(sql).all(...params) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
-      id: row.id as string,
-      description: row.description as string,
-      classification: row.classification as MemoryRecord['classification'],
-      sourceType: row.source_type as MemoryRecord['sourceType'],
-      content: row.content as string,
-      confidence: row.confidence as number,
-      scope: row.scope as string,
-      memoryType: (row.memory_type as MemoryRecord['memoryType']) ?? 'episodic',
-      dedupKey: (row.dedup_key as string) ?? null,
-      lastReinforcedAt: (row.last_reinforced_at as string) ?? null,
-      archivedAt: (row.archived_at as string) ?? null,
-      createdAt: row.created_at as string,
-    }));
+    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
+    return z.array(MemoryListRowSchema)
+      .parse(this.databases.memory.prepare(sql).all(...params))
+      .map((row) =>
+        MemoryRecordSchema.parse({
+          id: row.id,
+          description: row.description,
+          classification: row.classification,
+          sourceType: row.source_type,
+          content: row.content,
+          confidence: row.confidence,
+          scope: row.scope,
+          sourceRunId: row.source_run_id,
+          sourceTimestamp: row.source_timestamp,
+          memoryType: row.memory_type ?? 'episodic',
+          dedupKey: row.dedup_key,
+          lastReinforcedAt: row.last_reinforced_at,
+          archivedAt: row.archived_at,
+          createdAt: row.created_at,
+        }),
+      );
   }
 
   getMemory(memoryId: string): MemoryRecord | null {
@@ -707,27 +815,27 @@ export class PopeyeRuntimeService {
 
   private reconcileStartupState(): void {
     const reconciledAt = nowIso();
-    const staleRuns = this.databases.app
+    const staleRuns = z.array(RunRowSchema).parse(this.databases.app
       .prepare("SELECT * FROM runs WHERE state IN ('starting', 'running') AND finished_at IS NULL")
-      .all() as Array<Record<string, string | null>>;
+      .all());
 
     for (const row of staleRuns) {
-      const runId = String(row.id);
+      const run = mapRunRow(row);
       this.receiptManager.writeAbandonedReceiptIfMissing(
-        runId,
-        String(row.job_id),
-        String(row.task_id),
-        String(row.workspace_id),
+        run.id,
+        run.jobId,
+        run.taskId,
+        run.workspaceId,
         'Run abandoned during daemon startup reconciliation',
         'Daemon restarted before the run reached a terminal state',
       );
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', reconciledAt, this.redactError('Daemon restarted before the run reached a terminal state'), runId);
-      void this.applyRecoveryDecision(String(row.job_id), runId, 'Daemon restarted before the run reached a terminal state');
+      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', reconciledAt, this.redactError('Daemon restarted before the run reached a terminal state'), run.id);
+      void this.applyRecoveryDecision(run.jobId, run.id, 'Daemon restarted before the run reached a terminal state');
     }
 
-    const staleLeasedJobs = this.databases.app
+    const staleLeasedJobs = z.array(IdRowSchema).parse(this.databases.app
       .prepare("SELECT j.id FROM jobs j LEFT JOIN job_leases l ON l.job_id = j.id WHERE j.status = 'leased' AND (l.job_id IS NULL OR l.lease_expires_at <= ?)")
-      .all(reconciledAt) as Array<{ id: string }>;
+      .all(reconciledAt));
     for (const job of staleLeasedJobs) {
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('queued', reconciledAt, job.id);
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
@@ -756,24 +864,7 @@ export class PopeyeRuntimeService {
   }
 
   private createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void {
-    const intervention: InterventionRecord = {
-      id: randomUUID(),
-      code,
-      runId,
-      status: 'open',
-      reason,
-      createdAt: nowIso(),
-      resolvedAt: null,
-    };
-    this.databases.app.prepare('INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      intervention.id,
-      intervention.code,
-      intervention.runId,
-      intervention.status,
-      intervention.reason,
-      intervention.createdAt,
-      intervention.resolvedAt,
-    );
+    const intervention = this.sessionService.createIntervention(code, runId, reason);
     this.emit('intervention_created', intervention);
   }
 
@@ -785,14 +876,16 @@ export class PopeyeRuntimeService {
       this.scheduler.lastSchedulerTickAt = nowIso();
       this.ensureHeartbeatJobs();
       this.databases.app.prepare("UPDATE jobs SET status = 'queued', updated_at = ? WHERE status = 'waiting_retry' AND available_at <= ?").run(nowIso(), nowIso());
-      const dueJobs = this.databases.app
-        .prepare("SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? ORDER BY available_at ASC, created_at ASC")
-        .all(nowIso()) as Array<Record<string, string | number | null>>;
+      const dueJobs = z.array(IdRowSchema).parse(this.databases.app
+        .prepare("SELECT id FROM jobs WHERE status = 'queued' AND available_at <= ? ORDER BY available_at ASC, created_at ASC")
+        .all(nowIso()));
 
       for (const row of dueJobs) {
-        const workspaceId = String(row.workspace_id);
+        const job = this.getJob(row.id);
+        if (!job) continue;
+        const workspaceId = job.workspaceId;
         if (this.workspaceHasActiveExecution(workspaceId)) continue;
-        await this.startJobExecution(String(row.id));
+        await this.startJobExecution(job.id);
       }
     } catch (error) {
       if (!this.closed) throw error;
@@ -812,11 +905,11 @@ export class PopeyeRuntimeService {
         this.refreshLease(activeRun.jobId, activeRun.handle.pid ? `worker:${activeRun.handle.pid}` : `popeyed:${process.pid}`);
       }
 
-      const expiredLeases = this.databases.app
+      const expiredLeases = z.array(JobIdRowSchema).parse(this.databases.app
         .prepare('SELECT job_id FROM job_leases WHERE lease_expires_at <= ?')
-        .all(nowIso()) as Array<{ job_id: string }>;
+        .all(nowIso()));
       for (const lease of expiredLeases) {
-        const job = this.listJobs().find((candidate) => candidate.id === lease.job_id);
+        const job = this.getJob(lease.job_id);
         if (!job) continue;
         if (job.status === 'leased') {
           this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('queued', nowIso(), job.id);
@@ -832,17 +925,19 @@ export class PopeyeRuntimeService {
   // --- Internal: workspace locks & leases ---
 
   private workspaceHasActiveExecution(workspaceId: string): boolean {
-    const lock = this.databases.app.prepare('SELECT id FROM locks WHERE scope = ?').get(`workspace:${workspaceId}`) as { id: string } | undefined;
+    const rawLock = this.databases.app.prepare('SELECT id FROM locks WHERE scope = ?').get(`workspace:${workspaceId}`);
+    const lock = rawLock ? IdRowSchema.parse(rawLock) : null;
     if (lock) return true;
-    const active = this.databases.app
+    const active = parseCountRow(this.databases.app
       .prepare("SELECT COUNT(*) AS count FROM jobs WHERE workspace_id = ? AND status IN ('leased', 'running')")
-      .get(workspaceId) as { count: number };
-    return active.count > 0;
+      .get(workspaceId));
+    return active > 0;
   }
 
   private acquireWorkspaceLock(workspaceId: string, owner: string): string | null {
     const lockId = `workspace:${workspaceId}`;
-    const existing = this.databases.app.prepare('SELECT id FROM locks WHERE id = ?').get(lockId) as { id: string } | undefined;
+    const rawExisting = this.databases.app.prepare('SELECT id FROM locks WHERE id = ?').get(lockId);
+    const existing = rawExisting ? IdRowSchema.parse(rawExisting) : null;
     if (existing) return null;
     this.databases.app.prepare('INSERT INTO locks (id, scope, owner, created_at) VALUES (?, ?, ?, ?)').run(lockId, lockId, owner, nowIso());
     return lockId;
@@ -861,7 +956,7 @@ export class PopeyeRuntimeService {
   // --- Internal: run execution ---
 
   private async startJobExecution(jobId: string): Promise<RunRecord | null> {
-    const job = this.listJobs().find((candidate) => candidate.id === jobId);
+    const job = this.getJob(jobId);
     if (!job || job.status !== 'queued') return null;
     const task = this.getTask(job.taskId);
     if (!task) return null;
@@ -872,7 +967,7 @@ export class PopeyeRuntimeService {
     this.refreshLease(job.id, `popeyed:${process.pid}`);
 
     const sessionRoot = selectSessionRoot({ kind: selectSessionKind(task.source), scope: job.workspaceId });
-    this.databases.app.prepare('INSERT OR IGNORE INTO session_roots (id, kind, scope, created_at) VALUES (?, ?, ?, ?)').run(sessionRoot.id, sessionRoot.kind, sessionRoot.scope, sessionRoot.createdAt);
+    this.sessionService.ensureSessionRoot(sessionRoot);
 
     const run: RunRecord = {
       id: randomUUID(),
@@ -965,7 +1060,7 @@ export class PopeyeRuntimeService {
     if (event.type === 'compaction' && event.payload?.content) {
       const activeRun = this.activeRuns.get(runId);
       const workspaceId = activeRun?.task.workspaceId ?? 'default';
-      this.memoryLifecycle.processCompactionFlush(runId, event.payload.content, workspaceId);
+      void this.memoryLifecycle.processCompactionFlush(runId, event.payload.content, workspaceId);
     }
     this.emit('run_event', record);
   }
@@ -1136,17 +1231,16 @@ export class PopeyeRuntimeService {
   // --- Internal: heartbeat scheduling ---
 
   private ensureHeartbeatJobs(): void {
-    const schedules = this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all() as Array<Record<string, string | number>>;
+    const schedules = z.array(ScheduleRowSchema).parse(this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all());
     for (const schedule of schedules) {
-      const task = this.getTask(String(schedule.task_id));
+      const task = this.getTask(schedule.task_id);
       if (!task || task.source !== 'heartbeat') continue;
-      const existing = this.databases.app
+      const existing = parseCountRow(this.databases.app
         .prepare("SELECT COUNT(*) AS count FROM jobs WHERE task_id = ? AND status IN ('queued', 'leased', 'running', 'waiting_retry')")
-        .get(task.id) as { count: number };
-      if (existing.count > 0) continue;
-      const latestJob = this.databases.app.prepare('SELECT created_at FROM jobs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(task.id) as { created_at: string } | undefined;
-      const lastTime = latestJob?.created_at ?? String(schedule.created_at);
-      const dueAt = new Date(new Date(lastTime).getTime() + Number(schedule.interval_seconds) * 1000);
+        .get(task.id));
+      if (existing > 0) continue;
+      const lastTime = parseCreatedAt(this.databases.app.prepare('SELECT created_at FROM jobs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(task.id)) ?? schedule.created_at;
+      const dueAt = new Date(new Date(lastTime).getTime() + schedule.interval_seconds * 1000);
       if (Date.now() >= dueAt.getTime()) {
         this.enqueueTask(task.id, { availableAt: nowIso() });
       }
@@ -1154,13 +1248,12 @@ export class PopeyeRuntimeService {
   }
 
   private computeNextHeartbeatDueAt(): string | null {
-    const schedules = this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all() as Array<Record<string, string | number>>;
+    const schedules = z.array(ScheduleRowSchema).parse(this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all());
     if (schedules.length === 0) return null;
     let nextDueAt: string | null = null;
     for (const schedule of schedules) {
-      const latestJob = this.databases.app.prepare('SELECT created_at FROM jobs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(String(schedule.task_id)) as { created_at: string } | undefined;
-      const lastTime = latestJob?.created_at ?? String(schedule.created_at);
-      const dueAt = new Date(new Date(lastTime).getTime() + Number(schedule.interval_seconds) * 1000).toISOString();
+      const lastTime = parseCreatedAt(this.databases.app.prepare('SELECT created_at FROM jobs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(schedule.task_id)) ?? schedule.created_at;
+      const dueAt = new Date(new Date(lastTime).getTime() + schedule.interval_seconds * 1000).toISOString();
       if (!nextDueAt || dueAt < nextDueAt) nextDueAt = dueAt;
     }
     return nextDueAt;

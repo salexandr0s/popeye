@@ -1,13 +1,12 @@
 /**
- * Local type definitions for memory package.
+ * Type definitions for the memory package.
  *
- * MemoryType is re-exported from contracts. MemoryRecord, MemorySearchResult,
- * and MemorySearchResponse remain local because the internal field names
- * (memoryId vs id, loose sourceType) diverge from the contract schemas.
+ * MemorySearchResult and MemorySearchResponse are the single source of truth
+ * from @popeye/contracts. MemoryRecord remains local because the internal
+ * field shapes (loose classification union) diverge from the contract schema.
  */
 
-import type { MemoryType as _MemoryType } from '@popeye/contracts';
-export type MemoryType = _MemoryType;
+export type { MemoryType, MemorySearchResult, MemorySearchResponse } from '@popeye/contracts';
 
 export interface MemoryRecord {
   id: string;
@@ -19,37 +18,9 @@ export interface MemoryRecord {
   scope: string;
   sourceRunId: string | null;
   sourceTimestamp: string | null;
-  memoryType: MemoryType;
+  memoryType: 'episodic' | 'semantic' | 'procedural';
   dedupKey: string | null;
   lastReinforcedAt: string | null;
   archivedAt: string | null;
   createdAt: string;
-}
-
-export interface MemorySearchResult {
-  memoryId: string;
-  description: string;
-  content: string | null;
-  memoryType: MemoryType;
-  confidence: number;
-  effectiveConfidence: number;
-  scope: string;
-  sourceType: string;
-  createdAt: string;
-  lastReinforcedAt: string | null;
-  score: number;
-  scoreBreakdown: {
-    relevance: number;
-    recency: number;
-    confidence: number;
-    scopeMatch: number;
-  };
-}
-
-export interface MemorySearchResponse {
-  results: MemorySearchResult[];
-  query: string;
-  totalCandidates: number;
-  latencyMs: number;
-  searchMode: 'hybrid' | 'fts_only' | 'vec_only';
 }

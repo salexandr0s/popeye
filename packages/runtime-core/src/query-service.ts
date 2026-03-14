@@ -4,22 +4,22 @@ import type {
   CompiledInstructionBundle,
   DaemonStateRecord,
   DaemonStatusResponse,
-  InterventionRecord,
-  ProjectRecord,
+  SecurityAuditFinding,
   SchedulerStatusResponse,
-  WorkspaceRecord,
 } from '@popeye/contracts';
 import {
   AgentProfileRecordSchema,
-  CompiledInstructionBundleSchema,
-  ProjectRecordSchema,
-  WorkspaceRecordSchema,
+  DaemonStateRecordSchema,
+  DaemonStatusResponseSchema,
+  SchedulerStatusResponseSchema,
+  SecurityAuditFindingSchema,
 } from '@popeye/contracts';
-import { compileInstructionBundle, resolveInstructionSources, type ResolverDependencies } from '@popeye/instructions';
+import { z } from 'zod';
+import type { WorkspaceRegistry } from '@popeye/workspace';
 
 import { readAuthStore, issueCsrfToken as issueCsrfTokenFromStore } from './auth.js';
 import type { RuntimeDatabases } from './database.js';
-import { nowIso } from './clock.js';
+import { createInstructionPreview, resolveInstructionBundleForTask } from './instruction-query.js';
 
 export interface QueryServiceState {
   schedulerRunning: boolean;
@@ -30,140 +30,93 @@ export interface QueryServiceState {
   computeNextHeartbeatDueAt(): string | null;
 }
 
+const CountRowSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
+
+const DaemonStateRowSchema = z.object({
+  last_shutdown_at: z.string().nullable(),
+});
+
+function parseCountRow(row: unknown): number {
+  return CountRowSchema.parse(row).count;
+}
+
+function parseLastShutdownAt(row: unknown): string | null {
+  const parsed = DaemonStateRowSchema.safeParse(row);
+  return parsed.success ? parsed.data.last_shutdown_at : null;
+}
+
 export class QueryService {
   constructor(
     private readonly databases: RuntimeDatabases,
     private readonly config: AppConfig,
     private readonly state: QueryServiceState,
+    private readonly workspaceRegistry: WorkspaceRegistry,
   ) {}
 
   getStatus(): DaemonStatusResponse {
-    const runningJobs = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'running'`).get() as { count: number };
-    const queuedJobs = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'queued'`).get() as { count: number };
-    const openInterventions = this.databases.app.prepare(`SELECT COUNT(*) AS count FROM interventions WHERE status = 'open'`).get() as { count: number };
-    const activeLeases = this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
-    const daemonState = this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get() as { last_shutdown_at: string | null } | undefined;
-    return {
+    const runningJobs = parseCountRow(this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'running'`).get());
+    const queuedJobs = parseCountRow(this.databases.app.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'queued'`).get());
+    const openInterventions = parseCountRow(this.databases.app.prepare(`SELECT COUNT(*) AS count FROM interventions WHERE status = 'open'`).get());
+    const activeLeases = parseCountRow(this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get());
+    const lastShutdownAt = parseLastShutdownAt(this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get());
+    return DaemonStatusResponseSchema.parse({
       ok: true,
-      runningJobs: runningJobs.count,
-      queuedJobs: queuedJobs.count,
-      openInterventions: openInterventions.count,
-      activeLeases: activeLeases.count,
+      runningJobs,
+      queuedJobs,
+      openInterventions,
+      activeLeases,
       engineKind: this.config.engine.kind,
       schedulerRunning: this.state.schedulerRunning,
       startedAt: this.state.startedAt,
-      lastShutdownAt: daemonState?.last_shutdown_at ?? null,
-    };
+      lastShutdownAt,
+    });
   }
 
   getDaemonState(): DaemonStateRecord {
-    const daemonState = this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get() as { last_shutdown_at: string | null } | undefined;
-    return {
+    const lastShutdownAt = parseLastShutdownAt(this.databases.app.prepare('SELECT last_shutdown_at FROM daemon_state WHERE id = 1').get());
+    return DaemonStateRecordSchema.parse({
       schedulerRunning: this.state.schedulerRunning,
       activeWorkers: this.state.activeRunsCount,
       lastSchedulerTickAt: this.state.lastSchedulerTickAt,
       lastLeaseSweepAt: this.state.lastLeaseSweepAt,
-      lastShutdownAt: daemonState?.last_shutdown_at ?? null,
-    };
+      lastShutdownAt,
+    });
   }
 
   getSchedulerStatus(): SchedulerStatusResponse {
-    const activeLeases = this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get() as { count: number };
+    const activeLeases = parseCountRow(this.databases.app.prepare('SELECT COUNT(*) AS count FROM job_leases').get());
     const nextHeartbeatDueAt = this.state.computeNextHeartbeatDueAt();
-    return {
+    return SchedulerStatusResponseSchema.parse({
       running: this.state.schedulerRunning,
-      activeLeases: activeLeases.count,
+      activeLeases,
       activeRuns: this.state.activeRunsCount,
       nextHeartbeatDueAt,
-    };
-  }
-
-  listWorkspaces(): WorkspaceRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM workspaces ORDER BY created_at ASC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) => WorkspaceRecordSchema.parse({ id: row.id, name: row.name, rootPath: row.root_path ?? null, createdAt: row.created_at }));
-  }
-
-  getWorkspace(id: string): WorkspaceRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as Record<string, string | null> | undefined;
-    if (!row) return null;
-    return WorkspaceRecordSchema.parse({ id: row.id, name: row.name, rootPath: row.root_path ?? null, createdAt: row.created_at });
-  }
-
-  listProjects(): ProjectRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM projects ORDER BY created_at ASC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) => ProjectRecordSchema.parse({ id: row.id, workspaceId: row.workspace_id, name: row.name, path: row.path ?? null, createdAt: row.created_at }));
-  }
-
-  getProject(id: string): ProjectRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Record<string, string | null> | undefined;
-    if (!row) return null;
-    return ProjectRecordSchema.parse({ id: row.id, workspaceId: row.workspace_id, name: row.name, path: row.path ?? null, createdAt: row.created_at });
+    });
   }
 
   listAgentProfiles(): AgentProfileRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all() as Array<Record<string, string>>;
+    const rows = z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      created_at: z.string(),
+    })).parse(this.databases.app.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all());
     return rows.map((row) => AgentProfileRecordSchema.parse({ id: row.id, name: row.name, createdAt: row.created_at }));
   }
 
-  listSessionRoots(): Array<{ id: string; kind: string; scope: string; createdAt: string }> {
-    return (this.databases.app.prepare('SELECT * FROM session_roots ORDER BY created_at ASC')
-      .all() as Array<Record<string, string>>)
-      .map((row) => ({ id: row.id, kind: row.kind, scope: row.scope, createdAt: row.created_at }));
-  }
-
   getInstructionPreview(scope: string): CompiledInstructionBundle {
-    const context = { workspaceId: scope, identity: 'default' };
-    const sources = resolveInstructionSources(context, this.buildResolverDependencies());
-    const bundle = compileInstructionBundle(sources);
-    this.databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, bundle_json, created_at) VALUES (?, ?, ?, ?)').run(bundle.id, scope, JSON.stringify(bundle), bundle.createdAt);
-    return CompiledInstructionBundleSchema.parse(bundle);
+    return createInstructionPreview(this.databases, this.workspaceRegistry, scope);
   }
 
   resolveInstructionsForRun(task: { workspaceId: string; projectId: string | null; prompt: string }): CompiledInstructionBundle {
-    const context = { workspaceId: task.workspaceId, projectId: task.projectId ?? undefined, taskBrief: task.prompt };
-    const sources = resolveInstructionSources(context, this.buildResolverDependencies());
-    const bundle = compileInstructionBundle(sources);
-    this.databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, bundle_json, created_at) VALUES (?, ?, ?, ?)').run(bundle.id, task.workspaceId, JSON.stringify(bundle), bundle.createdAt);
-    return CompiledInstructionBundleSchema.parse(bundle);
+    return resolveInstructionBundleForTask(this.databases, this.workspaceRegistry, task);
   }
 
-  private buildResolverDependencies(): ResolverDependencies {
-    return {
-      getWorkspace: (id) => {
-        const ws = this.getWorkspace(id);
-        if (!ws) return null;
-        return { id: ws.id, name: ws.name, rootPath: ws.rootPath };
-      },
-      getProject: (id) => {
-        const proj = this.getProject(id);
-        if (!proj) return null;
-        return { id: proj.id, name: proj.name, path: proj.path, workspaceId: proj.workspaceId };
-      },
-      getPopeyeBaseInstructions: () => null,
-      getGlobalOperatorInstructions: () => null,
-    };
-  }
-
-  listInterventions(): InterventionRecord[] {
-    const rows = this.databases.app.prepare('SELECT * FROM interventions ORDER BY created_at DESC').all() as Array<Record<string, string | null>>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      code: row.code as InterventionRecord['code'],
-      runId: row.run_id ? String(row.run_id) : null,
-      status: row.status as InterventionRecord['status'],
-      reason: String(row.reason),
-      createdAt: String(row.created_at),
-      resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
-    }));
-  }
-
-  resolveIntervention(interventionId: string): InterventionRecord | null {
-    this.databases.app.prepare('UPDATE interventions SET status = ?, resolved_at = ? WHERE id = ?').run('resolved', nowIso(), interventionId);
-    return this.listInterventions().find((intervention) => intervention.id === interventionId) ?? null;
-  }
-
-  getSecurityAuditFindings(): Array<{ code: string; severity: string; message: string }> {
-    return this.databases.app.prepare('SELECT code, severity, message FROM security_audit ORDER BY timestamp DESC').all() as Array<{ code: string; severity: string; message: string }>;
+  getSecurityAuditFindings(): SecurityAuditFinding[] {
+    return z.array(SecurityAuditFindingSchema).parse(
+      this.databases.app.prepare('SELECT code, severity, message FROM security_audit ORDER BY timestamp DESC').all(),
+    );
   }
 
   issueCsrfToken(): string {

@@ -369,15 +369,11 @@ describe('engine-pi', () => {
       const adapter = new PiEngineAdapter(config);
       const result = await adapter.run('cancel-me');
 
-      // The timeout fires and emits a 'failed' event with 'transient_failure',
-      // then sends SIGTERM. The fixture's SIGTERM handler responds with its own
-      // 'failed' event using 'cancelled', which overwrites the classification.
-      // The important assertion is that the timeout mechanism fired and terminated
-      // the process -- verified by the presence of the timeout event in the stream.
+      // The timeout fires first and determines the terminal classification.
+      // The child may still emit its SIGTERM-driven 'cancelled' event, but that
+      // must not overwrite the timeout failure classification.
       expect(result.events.some((e) => e.type === 'failed' && e.payload.message === 'engine timeout exceeded')).toBe(true);
-      // Final classification is 'cancelled' because the fixture's SIGTERM handler
-      // emits a 'cancelled' classification after the timeout's 'transient_failure'.
-      expect(result.failureClassification).toBe('cancelled');
+      expect(result.failureClassification).toBe('transient_failure');
     }, 15_000);
   });
 
@@ -489,5 +485,23 @@ describe('engine-pi', () => {
       expect(typeof usageEvent!.payload.tokensOut).toBe('string');
       expect(usageEvent!.payload.tokensOut).toBe('5');
     });
+  });
+
+  it('rejects child events whose payload is not an object', async () => {
+    const piPath = createFakePiRepo(`
+      process.stdin.setEncoding('utf8');
+      let body = '';
+      process.stdin.on('data', (chunk) => body += chunk);
+      process.stdin.on('end', () => {
+        process.stdout.write(JSON.stringify({ type: 'started', payload: {} }) + '\\n');
+        process.stdout.write(JSON.stringify({ type: 'message', payload: 'not-an-object' }) + '\\n');
+      });
+    `);
+
+    const adapter = new PiEngineAdapter({ piPath, command: 'node', args: ['bin/pi.js'] });
+    const result = await adapter.run('bad-payload');
+
+    expect(result.failureClassification).toBe('protocol_error');
+    expect(result.events.some((event) => event.type === 'failed' && event.payload.classification === 'protocol_error')).toBe(true);
   });
 });

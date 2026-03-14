@@ -125,6 +125,69 @@ describe('PopeyeApiClient', () => {
     }
   });
 
+  it('validates workspace list responses with schemas', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, [{ id: 'default', name: 'Default workspace', createdAt: '2026-01-01T00:00:00Z' }]);
+
+    await expect(client.listWorkspaces()).resolves.toEqual([
+      { id: 'default', name: 'Default workspace', rootPath: null, createdAt: '2026-01-01T00:00:00Z' },
+    ]);
+  });
+
+  it('encodes run state filters when listing runs', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, []);
+
+    await client.listRuns({ state: ['failed_retryable', 'failed_final'] });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210/v1/runs?state=failed_retryable%2Cfailed_final',
+      expect.anything(),
+    );
+  });
+
+  it('encodes memory search options into query params', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, {
+      query: 'hello',
+      results: [],
+      totalCandidates: 0,
+      latencyMs: 1,
+      searchMode: 'fts_only',
+    });
+
+    await client.searchMemory({
+      query: 'hello',
+      memoryTypes: ['semantic', 'procedural'],
+      limit: 5,
+      includeContent: true,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210/v1/memory/search?q=hello&types=semantic%2Cprocedural&limit=5&full=true',
+      expect.anything(),
+    );
+  });
+
+  it('returns null for missing memory records', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(404, { error: 'not_found' });
+
+    await expect(client.getMemory('missing')).resolves.toBeNull();
+  });
+
   it('parses SSE events via subscribeEvents callback', () => {
     const chunks = [
       new TextEncoder().encode(

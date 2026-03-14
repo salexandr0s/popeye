@@ -95,4 +95,116 @@ describe('PopeyeApiClient', () => {
     await runtime.close();
     await app.close();
   });
+
+  it('lists filtered runs and session roots from the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-runs-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+
+    const task = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'run-filter-task',
+      prompt: 'hello',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    if (!task.job) throw new Error('expected job to be created');
+
+    const now = new Date().toISOString();
+    runtime.databases.app
+      .prepare('INSERT INTO session_roots (id, kind, scope, created_at) VALUES (?, ?, ?, ?)')
+      .run('session-filter', 'scheduled_task', 'workspace:default', now);
+    runtime.databases.app
+      .prepare(
+        'INSERT INTO runs (id, job_id, task_id, workspace_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        'run-failed-filter',
+        task.job.id,
+        task.task.id,
+        'default',
+        'session-filter',
+        null,
+        'failed_final',
+        now,
+        now,
+        'test failure',
+      );
+
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+    const failedRuns = await client.listRuns({ state: ['failed_final'] });
+    expect(failedRuns).toEqual([
+      expect.objectContaining({ id: 'run-failed-filter', state: 'failed_final' }),
+    ]);
+
+    const sessions = await client.listSessionRoots();
+    expect(Array.isArray(sessions)).toBe(true);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('fetches memory audit/list/show/maintenance through the API client', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-memory-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    const inserted = { id: 'memory-api-client-1' };
+    const now = new Date().toISOString();
+    runtime.databases.memory
+      .prepare(
+        'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        inserted.id,
+        'remember this',
+        'internal',
+        'curated_memory',
+        'semantic note',
+        0.9,
+        'workspace',
+        'semantic',
+        null,
+        null,
+        null,
+        now,
+        null,
+        null,
+      );
+
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+    const audit = await client.memoryAudit();
+    expect(audit.totalMemories).toBeGreaterThan(0);
+
+    const memories = await client.listMemories({ type: 'semantic', limit: 10 });
+    expect(memories).toEqual([expect.objectContaining({ id: inserted.id, memoryType: 'semantic' })]);
+
+    const memory = await client.getMemory(inserted.id);
+    expect(memory).toEqual(expect.objectContaining({ id: inserted.id, description: 'remember this' }));
+
+    const maintenance = await client.triggerMemoryMaintenance();
+    expect(maintenance).toMatchObject({
+      decayed: expect.any(Number),
+      archived: expect.any(Number),
+      merged: expect.any(Number),
+      deduped: expect.any(Number),
+    });
+
+    await runtime.close();
+    await app.close();
+  });
 });

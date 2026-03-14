@@ -1,6 +1,9 @@
-import { join } from 'node:path';
+import { join, resolve, relative } from 'node:path';
 
-import { evaluateCriticalFileMutation } from '@popeye/runtime-core';
+import { evaluateCriticalFileMutation } from './policy.js';
+
+export { evaluateCriticalFileMutation } from './policy.js';
+export { WorkspaceRegistry, type WorkspaceDeps } from './workspace-registry.js';
 
 export const WORKSPACE_CRITICAL_FILES = ['WORKSPACE.md', 'PROJECT.md', 'IDENTITY.md', 'HEARTBEAT.md'] as const;
 
@@ -28,8 +31,12 @@ export function resolveProjectFilePath(projectPath: string, file: keyof typeof P
   return join(projectPath, PROJECT_LAYOUT[file]);
 }
 
-export function resolveIdentityFilePath(rootPath: string, identityName: string): string {
-  return join(rootPath, WORKSPACE_LAYOUT.identitiesDir, `${identityName}.md`);
+export function resolveIdentityFilePath(rootPath: string, identityName: string): string | null {
+  const base = resolve(rootPath, WORKSPACE_LAYOUT.identitiesDir);
+  const target = resolve(base, `${identityName}.md`);
+  const rel = relative(base, target);
+  if (rel.startsWith('..') || target.includes('\0')) return null;
+  return target;
 }
 
 export function canWriteWorkspacePath(path: string, approved: boolean): boolean {

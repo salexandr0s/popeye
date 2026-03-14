@@ -4,10 +4,15 @@ import Database from 'better-sqlite3';
 import safe from 'safe-regex2';
 import type { AppConfig, SecurityAuditFinding } from '@popeye/contracts';
 import { checkPiVersion } from '@popeye/engine-pi';
+import { z } from 'zod';
 
 import { readAuthStore } from './auth.js';
 import { deriveRuntimePaths } from './config.js';
 import { isKeychainAvailable } from './keychain.js';
+
+const JournalModeRowSchema = z.object({
+  journal_mode: z.string(),
+});
 
 export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[] {
   const findings: SecurityAuditFinding[] = [];
@@ -68,7 +73,7 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
     try {
       const db = new Database(dbPath, { readonly: true });
       try {
-        const row = db.pragma('journal_mode') as Array<{ journal_mode: string }>;
+        const row = z.array(JournalModeRowSchema).parse(db.pragma('journal_mode'));
         if (row[0]?.journal_mode !== 'wal') {
           findings.push({ code: `${label}_not_wal`, severity: 'warn', message: `${label} journal_mode is not WAL` });
         }
@@ -110,6 +115,14 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
       code: 'keychain_unavailable',
       severity: 'warn',
       message: 'macOS Keychain is not available — secrets must use file-based storage',
+    });
+  } else {
+    // POP-SEC-004: macOS `security` CLI passes secrets as args, briefly visible in `ps`.
+    // Accepted risk for single-operator daemon; a native Keychain API binding would avoid this.
+    findings.push({
+      code: 'keychain_secret_in_proclist',
+      severity: 'info',
+      message: 'Keychain operations expose secrets in process list (macOS security CLI limitation)',
     });
   }
 

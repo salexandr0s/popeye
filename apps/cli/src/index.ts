@@ -3,14 +3,15 @@ import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
-import type { RunRecord } from '@popeye/contracts';
+import { ApiError, type PopeyeApiClient } from '@popeye/api-client';
+import type { AppConfig, RunRecord } from '@popeye/contracts';
+import { z } from 'zod';
 import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
 import { renderReceipt } from '@popeye/receipts';
 import { tryConnectDaemon } from './api-client.js';
 import {
   createBackup,
   createLaunchdPlist,
-  createRuntimeService,
   daemonStatus,
   deriveRuntimePaths,
   initAuthStore,
@@ -46,6 +47,15 @@ function formatRun(run: RunRecord): string {
   return lines.join('\n');
 }
 
+async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> {
+  const client = await tryConnectDaemon(config);
+  if (!client) {
+    console.error('daemon not running');
+    process.exit(1);
+  }
+  return client;
+}
+
 const configPath = process.env.POPEYE_CONFIG_PATH;
 
 if (!configPath) {
@@ -70,7 +80,15 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'pi' && subcommand === 'smoke') {
-    const smokeArgs = process.env.POPEYE_PI_SMOKE_ARGS ? JSON.parse(process.env.POPEYE_PI_SMOKE_ARGS) as string[] : config.engine.args;
+    let smokeArgs = config.engine.args;
+    if (process.env.POPEYE_PI_SMOKE_ARGS) {
+      try {
+        smokeArgs = z.array(z.string()).parse(JSON.parse(process.env.POPEYE_PI_SMOKE_ARGS));
+      } catch {
+        console.error('POPEYE_PI_SMOKE_ARGS must be a JSON array of strings');
+        process.exit(1);
+      }
+    }
     const adapter = new PiEngineAdapter({
       piPath: process.env.POPEYE_PI_SMOKE_PATH ?? config.engine.piPath,
       command: process.env.POPEYE_PI_SMOKE_COMMAND ?? config.engine.command,
@@ -158,200 +176,164 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'task' && subcommand === 'run') {
-    const client = await tryConnectDaemon(config);
-    if (client) {
-      const result = await client.createTask({
-        workspaceId: 'default',
-        projectId: null,
-        title: arg1 ?? 'cli-task',
-        prompt: arg2 ?? arg1 ?? 'hello from pop',
-        source: 'manual',
-        autoEnqueue: true,
-      });
-      if (jsonFlag) {
-        console.info(JSON.stringify(result, null, 2));
-      } else {
-        const lines = [
-          `Task: ${result.task.title} (${result.task.id})`,
-          `  Status: ${result.task.status}`,
-        ];
-        if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
-        if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);
-        console.info(lines.join('\n'));
-      }
+    const client = await requireDaemonClient(config);
+    const result = await client.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: arg1 ?? 'cli-task',
+      prompt: arg2 ?? arg1 ?? 'hello from pop',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
     } else {
-      const runtime = createRuntimeService(config);
-      runtime.startScheduler();
-      const created = runtime.createTask({
-        workspaceId: 'default',
-        projectId: null,
-        title: arg1 ?? 'cli-task',
-        prompt: arg2 ?? arg1 ?? 'hello from pop',
-        source: 'manual',
-        autoEnqueue: true,
-      });
-      const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 10_000) : null;
-      if (jsonFlag) {
-        console.info(JSON.stringify({ ...created, terminal }, null, 2));
-      } else {
-        const lines = [
-          `Task: ${created.task.title} (${created.task.id})`,
-          `  Status: ${created.task.status}`,
-        ];
-        if (created.job) lines.push(`  Job:    ${created.job.status} (${created.job.id})`);
-        if (created.run) lines.push(`  Run:    ${created.run.state} (${created.run.id})`);
-        if (terminal?.job) lines.push(`  Final:  ${terminal.job.status}`);
-        if (terminal?.run) lines.push(`  Run:    ${terminal.run.state}`);
-        if (terminal?.receipt) lines.push('', renderReceipt(terminal.receipt));
-        console.info(lines.join('\n'));
-      }
-      await runtime.close();
+      const lines = [
+        `Task: ${result.task.title} (${result.task.id})`,
+        `  Status: ${result.task.status}`,
+      ];
+      if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
+      if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);
+      console.info(lines.join('\n'));
     }
     return;
   }
   if (command === 'run' && subcommand === 'show' && arg1) {
-    const client = await tryConnectDaemon(config);
-    if (client) {
+    try {
+      const client = await requireDaemonClient(config);
       const run = await client.getRun(arg1);
       if (jsonFlag) {
         console.info(JSON.stringify(run, null, 2));
       } else {
         console.info(formatRun(run));
       }
-    } else {
-      const runtime = createRuntimeService(config);
-      const run = runtime.getRun(arg1);
-      if (jsonFlag) {
-        console.info(JSON.stringify(run, null, 2));
-      } else if (run) {
-        console.info(formatRun(run));
-      } else {
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
         console.info(`Run not found: ${arg1}`);
+        return;
       }
-      await runtime.close();
+      throw error;
     }
     return;
   }
   if (command === 'receipt' && subcommand === 'show' && arg1) {
-    const client = await tryConnectDaemon(config);
-    if (client) {
+    try {
+      const client = await requireDaemonClient(config);
       const receipt = await client.getReceipt(arg1);
       if (jsonFlag) {
         console.info(JSON.stringify(receipt, null, 2));
       } else {
         console.info(renderReceipt(receipt));
       }
-    } else {
-      const runtime = createRuntimeService(config);
-      const receipt = runtime.getReceipt(arg1);
-      if (jsonFlag) {
-        console.info(JSON.stringify(receipt, null, 2));
-      } else if (receipt) {
-        console.info(renderReceipt(receipt));
-      } else {
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
         console.info(`Receipt not found: ${arg1}`);
+        return;
       }
-      await runtime.close();
+      throw error;
     }
     return;
   }
 
   if (command === 'runs' && subcommand === 'tail') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listRuns().slice(0, 20), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify((await client.listRuns()).slice(0, 20), null, 2));
     return;
   }
   if (command === 'runs' && subcommand === 'failures') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listFailedRuns(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(
+      JSON.stringify(
+        await client.listRuns({ state: ['failed_retryable', 'failed_final', 'abandoned'] }),
+        null,
+        2,
+      ),
+    );
     return;
   }
   if (command === 'interventions' && subcommand === 'list') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listInterventions(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.listInterventions(), null, 2));
     return;
   }
   if (command === 'recovery' && subcommand === 'retry' && arg1) {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.retryRun(arg1), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.retryRun(arg1), null, 2));
     return;
   }
 
   if (command === 'memory' && subcommand === 'search' && arg1) {
-    const runtime = createRuntimeService(config);
     const includeContent = process.argv.includes('--full');
-    const result = await runtime.searchMemory({ query: arg1, limit: 20, includeContent });
+    const client = await requireDaemonClient(config);
+    const result = await client.searchMemory({ query: arg1, limit: 20, includeContent });
     console.info(JSON.stringify(result, null, 2));
-    await runtime.close();
     return;
   }
   if (command === 'memory' && subcommand === 'audit') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.getMemoryAudit(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.memoryAudit(), null, 2));
     return;
   }
   if (command === 'memory' && subcommand === 'list') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listMemories({ type: arg1, limit: 50 }), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(
+      JSON.stringify(await client.listMemories({ ...(arg1 ? { type: arg1 } : {}), limit: 50 }), null, 2),
+    );
     return;
   }
   if (command === 'memory' && subcommand === 'show' && arg1) {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.getMemory(arg1), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.getMemory(arg1), null, 2));
     return;
   }
   if (command === 'memory' && subcommand === 'maintenance') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.triggerMemoryMaintenance(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.triggerMemoryMaintenance(), null, 2));
     return;
   }
   if (command === 'knowledge' && subcommand === 'search' && arg1) {
-    const runtime = createRuntimeService(config);
-    const result = await runtime.searchMemory({ query: arg1, memoryTypes: ['semantic', 'procedural'], limit: 20, includeContent: process.argv.includes('--full') });
+    const client = await requireDaemonClient(config);
+    const result = await client.searchMemory({
+      query: arg1,
+      memoryTypes: ['semantic', 'procedural'],
+      limit: 20,
+      includeContent: process.argv.includes('--full'),
+    });
     console.info(JSON.stringify(result, null, 2));
-    await runtime.close();
     return;
   }
   if (command === 'receipt' && subcommand === 'search' && arg1) {
-    const runtime = createRuntimeService(config);
-    const result = await runtime.searchMemory({ query: arg1, memoryTypes: ['episodic'], limit: 20, includeContent: process.argv.includes('--full') });
+    const client = await requireDaemonClient(config);
+    const result = await client.searchMemory({
+      query: arg1,
+      memoryTypes: ['episodic'],
+      limit: 20,
+      includeContent: process.argv.includes('--full'),
+    });
     console.info(JSON.stringify(result, null, 2));
-    await runtime.close();
     return;
   }
 
   if (command === 'jobs' && subcommand === 'list') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listJobs(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.listJobs(), null, 2));
     return;
   }
   if (command === 'jobs' && subcommand === 'pause' && arg1) {
-    const runtime = createRuntimeService(config);
-    const result = runtime.pauseJob(arg1);
+    const client = await requireDaemonClient(config);
+    const result = await client.pauseJob(arg1);
     console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not in pauseable state');
-    await runtime.close();
     return;
   }
   if (command === 'jobs' && subcommand === 'resume' && arg1) {
-    const runtime = createRuntimeService(config);
-    const result = runtime.resumeJob(arg1);
+    const client = await requireDaemonClient(config);
+    const result = await client.resumeJob(arg1);
     console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not paused');
-    await runtime.close();
     return;
   }
   if (command === 'sessions' && subcommand === 'list') {
-    const runtime = createRuntimeService(config);
-    console.info(JSON.stringify(runtime.listSessionRoots(), null, 2));
-    await runtime.close();
+    const client = await requireDaemonClient(config);
+    console.info(JSON.stringify(await client.listSessionRoots(), null, 2));
     return;
   }
 

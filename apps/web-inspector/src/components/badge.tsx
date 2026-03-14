@@ -53,6 +53,16 @@ const stateColors: Record<string, { dot: string; bg: string; text: string }> = {
     bg: 'bg-[var(--color-warning)]/10',
     text: 'text-[var(--color-warning)]',
   },
+  idle: {
+    dot: 'bg-[var(--color-warning)]',
+    bg: 'bg-[var(--color-warning)]/10',
+    text: 'text-[var(--color-warning)]',
+  },
+  'stuck-risk': {
+    dot: 'bg-[var(--color-danger)]',
+    bg: 'bg-[var(--color-danger)]/10',
+    text: 'text-[var(--color-danger)]',
+  },
   queued: {
     dot: 'bg-[var(--color-fg-muted)]',
     bg: 'bg-[var(--color-fg-muted)]/10',

@@ -27,6 +27,39 @@ function makeConfig(dir: string): AppConfig {
 }
 
 describe('PopeyeRuntimeService', () => {
+  it('returns validated status, agent profiles, and security audit findings', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-query-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const status = runtime.getStatus();
+    expect(status.ok).toBe(true);
+    expect(typeof status.runningJobs).toBe('number');
+    expect(status.engineKind).toBe('fake');
+
+    const profiles = runtime.listAgentProfiles();
+    expect(profiles.length).toBeGreaterThan(0);
+    expect(profiles[0]?.id).toBeTruthy();
+    expect(profiles[0]?.name).toBeTruthy();
+
+    runtime.databases.app
+      .prepare('INSERT INTO security_audit (id, code, severity, message, component, timestamp, details_json) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('audit-test', 'test_event', 'warn', 'test warning', 'test', new Date().toISOString(), '{}');
+
+    const findings = runtime.getSecurityAuditFindings();
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+        code: 'test_event',
+        severity: 'warn',
+        message: 'test warning',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
   it('creates tasks, jobs, and runs with receipts through the scheduler loop', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-'));
     chmodSync(dir, 0o700);

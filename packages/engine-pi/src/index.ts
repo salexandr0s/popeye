@@ -3,7 +3,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import type { AppConfig, EngineFailureClassification, NormalizedEngineEvent, UsageMetrics } from '@popeye/contracts';
+import {
+  type AppConfig,
+  EngineFailureClassificationSchema,
+  NormalizedEngineEventSchema,
+  type EngineFailureClassification,
+  type NormalizedEngineEvent,
+  type UsageMetrics,
+} from '@popeye/contracts';
+import { z } from 'zod';
 
 export type { EngineFailureClassification } from '@popeye/contracts';
 
@@ -72,6 +80,15 @@ export interface PiChildEvent {
   payload?: Record<string, unknown>;
 }
 
+const PackageVersionSchema = z.object({
+  version: z.string().optional(),
+}).passthrough();
+
+const PiChildEventSchema = z.object({
+  type: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).optional(),
+});
+
 export interface PiCompatibilityResult {
   ok: boolean;
   eventTypes: string[];
@@ -96,10 +113,8 @@ export function inspectPiCheckout(piPath?: string): PiCheckoutStatus {
   let version: string | null = null;
   if (available) {
     try {
-      const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
-      if (typeof pkg.version === 'string') {
-        version = pkg.version;
-      }
+      const pkg = PackageVersionSchema.parse(JSON.parse(readFileSync(packageJsonPath, 'utf8')));
+      version = pkg.version ?? null;
     } catch {
       // version stays null if package.json is unreadable
     }
@@ -154,11 +169,13 @@ class ProcessHandle implements EngineRunHandle {
   constructor(
     private readonly child: ReturnType<typeof spawn>,
     private readonly completionPromise: Promise<EngineRunCompletion>,
+    private readonly onCancel?: () => void,
   ) {
     this.pid = child.pid ?? null;
   }
 
   async cancel(): Promise<void> {
+    this.onCancel?.();
     this.child.kill('SIGTERM');
     await new Promise<void>((resolve) => {
       const graceTimer = setTimeout(() => {
@@ -202,11 +219,7 @@ function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent
 }
 
 function parseEventLine(line: string): PiChildEvent {
-  const parsed = JSON.parse(line) as PiChildEvent;
-  if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') {
-    throw new Error('child event missing string type');
-  }
-  return parsed;
+  return PiChildEventSchema.parse(JSON.parse(line));
 }
 
 function normalizeEvent(line: string): NormalizedEngineEvent {
@@ -222,11 +235,11 @@ function normalizeEvent(line: string): NormalizedEngineEvent {
     }
     return [key, JSON.stringify(value)];
   });
-  return {
+  return NormalizedEngineEventSchema.parse({
     type: parsed.type as NormalizedEngineEvent['type'],
     payload: Object.fromEntries(payloadEntries),
     raw: line,
-  };
+  });
 }
 
 function defaultUsage(provider: string, model: string, _input: string): UsageMetrics {
@@ -489,6 +502,7 @@ export class PiEngineAdapter implements EngineAdapter {
     let engineSessionRef: string | null = null;
     let failureClassification: EngineFailureClassification | null = null;
     let failureMessage: string | undefined;
+    let cancelRequested = false;
     let usage = defaultUsage('pi', 'external-pi', input);
 
     const safeEmit = (event: NormalizedEngineEvent) => emitEvent(events, event, options.onEvent);
@@ -527,8 +541,13 @@ export class PiEngineAdapter implements EngineAdapter {
             };
           }
           if (event.type === 'failed') {
-            failureClassification = (event.payload.classification as EngineFailureClassification | undefined) ?? 'permanent_failure';
-            if (typeof event.payload.message === 'string') failureMessage = event.payload.message;
+            const eventClassification = EngineFailureClassificationSchema.catch('permanent_failure').parse(event.payload.classification);
+            const eventMessage = typeof event.payload.message === 'string' ? event.payload.message : undefined;
+            const shouldPreserveTimeoutFailure = timedOut && eventClassification === 'cancelled';
+            if (!shouldPreserveTimeoutFailure) {
+              failureClassification = eventClassification;
+              if (eventMessage !== undefined) failureMessage = eventMessage;
+            }
           }
           safeEmit(event);
         } catch (error) {
@@ -552,11 +571,13 @@ export class PiEngineAdapter implements EngineAdapter {
 
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
 
     if (this.timeoutMs != null) {
       const gracePeriodMs = 5_000;
       timeoutTimer = setTimeout(() => {
         if (child.exitCode === null) {
+          timedOut = true;
           failureClassification = 'transient_failure';
           failureMessage = 'engine timeout exceeded';
           safeEmit({ type: 'failed', payload: { classification: 'transient_failure', message: 'engine timeout exceeded' } });
@@ -593,6 +614,12 @@ export class PiEngineAdapter implements EngineAdapter {
           safeEmit({ type: 'failed', payload: { classification: failureClassification, message: failureMessage, exitCode } });
         }
 
+        if (cancelRequested && !events.some((event) => event.type === 'failed') && !events.some((event) => event.type === 'completed')) {
+          failureClassification = 'cancelled';
+          failureMessage = failureMessage ?? 'cancelled by operator';
+          safeEmit({ type: 'failed', payload: { classification: 'cancelled', message: failureMessage } });
+        }
+
         if (!events.some((event) => event.type === 'usage')) {
           safeEmit({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, estimatedCostUsd: usage.estimatedCostUsd } });
         }
@@ -612,7 +639,9 @@ export class PiEngineAdapter implements EngineAdapter {
       });
     });
 
-    const handle = new ProcessHandle(child, completionPromise);
+    const handle = new ProcessHandle(child, completionPromise, () => {
+      cancelRequested = true;
+    });
     options.onHandle?.(handle);
     return handle;
   }

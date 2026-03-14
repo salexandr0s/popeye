@@ -8,6 +8,7 @@ import type {
   MemoryRecord,
   MemoryType,
 } from '@popeye/contracts';
+import { MemoryAuditResponseSchema } from '@popeye/contracts';
 import {
   classifyMemoryType,
   computeConfidenceDecay,
@@ -21,7 +22,84 @@ import { redactText } from '@popeye/observability';
 
 import type { RuntimeDatabases } from './database.js';
 
-import { nowIso } from './clock.js';
+import { nowIso } from '@popeye/contracts';
+import { z } from 'zod';
+
+const MemoryConfidenceRowSchema = z.object({
+  confidence: z.number(),
+  content: z.string(),
+});
+
+const DecayCandidateRowSchema = z.object({
+  id: z.string(),
+  confidence: z.number(),
+  last_reinforced_at: z.string().nullable(),
+  created_at: z.string(),
+});
+
+const ConsolidationRowSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  content: z.string(),
+  memory_type: z.string().nullable(),
+  confidence: z.number(),
+  scope: z.string(),
+  dedup_key: z.string().nullable(),
+});
+
+const IdRowSchema = z.object({
+  id: z.string(),
+});
+
+const ReceiptSummaryRowSchema = z.object({
+  status: z.string(),
+  summary: z.string(),
+});
+
+const CountCRowSchema = z.object({
+  c: z.coerce.number().int().nonnegative(),
+});
+
+const AvgRowSchema = z.object({
+  a: z.coerce.number().nonnegative(),
+});
+
+const TypeCountRowSchema = z.object({
+  memory_type: z.string().nullable(),
+  c: z.coerce.number().int().nonnegative(),
+});
+
+const ScopeCountRowSchema = z.object({
+  scope: z.string(),
+  c: z.coerce.number().int().nonnegative(),
+});
+
+const ClassificationCountRowSchema = z.object({
+  classification: z.string(),
+  c: z.coerce.number().int().nonnegative(),
+});
+
+const TimestampRowSchema = z.object({
+  t: z.string().nullable(),
+});
+
+const PromotionRowSchema = z.object({
+  description: z.string(),
+  content: z.string(),
+});
+
+const MemoryContentRowSchema = z.object({
+  content: z.string(),
+});
+
+function parseCountCRow(row: unknown): number {
+  return CountCRowSchema.parse(row).c;
+}
+
+function parseTimestampRow(row: unknown): string | null {
+  const parsed = TimestampRowSchema.safeParse(row);
+  return parsed.success ? parsed.data.t : null;
+}
 
 export interface MemoryInsertInput {
   description: string;
@@ -77,9 +155,11 @@ export class MemoryLifecycleService {
   }
 
   reinforceMemory(memoryId: string, additionalContent?: string): void {
-    const row = this.databases.memory
+    const rawRow = this.databases.memory
       .prepare('SELECT confidence, content FROM memories WHERE id = ?')
-      .get(memoryId) as { confidence: number; content: string } | undefined;
+      .get(memoryId);
+    if (!rawRow) return;
+    const row = MemoryConfidenceRowSchema.parse(rawRow);
     if (!row) return;
 
     const newConfidence = computeReinforcedConfidence(row.confidence);
@@ -113,9 +193,9 @@ export class MemoryLifecycleService {
     let decayed = 0;
     let archived = 0;
 
-    const rows = this.databases.memory
+    const rows = z.array(DecayCandidateRowSchema).parse(this.databases.memory
       .prepare('SELECT id, confidence, last_reinforced_at, created_at FROM memories WHERE archived_at IS NULL')
-      .all() as Array<{ id: string; confidence: number; last_reinforced_at: string | null; created_at: string }>;
+      .all());
 
     const updateStmt = this.databases.memory.prepare('UPDATE memories SET confidence = ? WHERE id = ?');
     const archiveStmt = this.databases.memory.prepare('UPDATE memories SET confidence = ?, archived_at = ? WHERE id = ?');
@@ -153,9 +233,9 @@ export class MemoryLifecycleService {
     let merged = 0;
     let deduped = 0;
 
-    const rows = this.databases.memory
+    const rows = z.array(ConsolidationRowSchema).parse(this.databases.memory
       .prepare('SELECT id, description, content, memory_type, confidence, scope, dedup_key FROM memories WHERE archived_at IS NULL ORDER BY scope, memory_type, created_at')
-      .all() as Array<{ id: string; description: string; content: string; memory_type: string; confidence: number; scope: string; dedup_key: string | null }>;
+      .all());
 
     // Group by scope + memory_type
     const groups = new Map<string, typeof rows>();
@@ -199,10 +279,10 @@ export class MemoryLifecycleService {
         // Text overlap merge (O(n^2) but groups should be small)
         // Bulk-fetch archived status to avoid per-row queries
         const archivedIds = new Set(
-          this.databases.memory
+          z.array(IdRowSchema).parse(this.databases.memory
             .prepare('SELECT id FROM memories WHERE archived_at IS NOT NULL')
-            .all()
-            .map((r: unknown) => (r as { id: string }).id),
+            .all())
+            .map((row) => row.id),
         );
         const active = group.filter((r) => !archivedIds.has(r.id));
         for (let i = 0; i < active.length; i++) {
@@ -232,9 +312,9 @@ export class MemoryLifecycleService {
     const dayStart = `${date}T00:00:00.000Z`;
     const dayEnd = `${date}T23:59:59.999Z`;
 
-    const rows = this.databases.app
-      .prepare('SELECT * FROM receipts WHERE workspace_id = ? AND created_at >= ? AND created_at <= ? ORDER BY created_at')
-      .all(workspaceId, dayStart, dayEnd) as Array<Record<string, string>>;
+    const rows = z.array(ReceiptSummaryRowSchema).parse(this.databases.app
+      .prepare('SELECT status, summary FROM receipts WHERE workspace_id = ? AND created_at >= ? AND created_at <= ? ORDER BY created_at')
+      .all(workspaceId, dayStart, dayEnd));
 
     if (rows.length === 0) return null;
 
@@ -273,7 +353,7 @@ export class MemoryLifecycleService {
     return { markdownPath, memoryId: result.memoryId };
   }
 
-  processCompactionFlush(runId: string, compactedContent: string, workspaceId: string): MemoryRecord[] {
+  async processCompactionFlush(runId: string, compactedContent: string, workspaceId: string): Promise<MemoryRecord[]> {
     const redacted = redactText(compactedContent, this.config.security.redactionPatterns);
     const chunks = splitContentChunks(redacted.text);
     const results: MemoryRecord[] = [];
@@ -281,9 +361,9 @@ export class MemoryLifecycleService {
 
     for (const chunk of chunks) {
       const memoryType = classifyMemoryType('compaction_flush', chunk);
-      const result = this.insertMemory({
+      const result = await this.searchService.storeMemoryWithEmbedding({
         description: `Compaction flush from run ${runId}`,
-        classification: 'internal',
+        classification: 'embeddable',
         sourceType: 'compaction_flush',
         content: chunk,
         confidence: this.config.memory.compactionFlushConfidence,
@@ -293,14 +373,19 @@ export class MemoryLifecycleService {
         sourceRefType: 'run',
       });
 
+      // Store provenance columns
+      this.databases.memory
+        .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
+        .run(runId, now, result.memoryId);
+
       this.databases.memory
         .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(randomUUID(), result.memoryId, 'compaction_flushed', JSON.stringify({ runId }), now);
+        .run(randomUUID(), result.memoryId, 'compaction_flushed', JSON.stringify({ runId, embedded: result.embedded }), now);
 
       results.push({
         id: result.memoryId,
         description: `Compaction flush from run ${runId}`,
-        classification: 'internal',
+        classification: 'embeddable',
         sourceType: 'compaction_flush',
         content: chunk,
         confidence: this.config.memory.compactionFlushConfidence,
@@ -319,49 +404,47 @@ export class MemoryLifecycleService {
   }
 
   getMemoryAudit(): MemoryAuditResponse {
-    const total = (this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories').get() as { c: number }).c;
-    const active = (this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories WHERE archived_at IS NULL').get() as { c: number }).c;
+    const total = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories').get());
+    const active = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories WHERE archived_at IS NULL').get());
     const archived = total - active;
 
-    const avgConf = (this.databases.memory.prepare('SELECT COALESCE(AVG(confidence), 0) as a FROM memories WHERE archived_at IS NULL').get() as { a: number }).a;
+    const avgConf = AvgRowSchema.parse(this.databases.memory.prepare('SELECT COALESCE(AVG(confidence), 0) as a FROM memories WHERE archived_at IS NULL').get()).a;
 
-    const staleCount = (
+    const staleCount = parseCountCRow(
       this.databases.memory
         .prepare('SELECT COUNT(*) as c FROM memories WHERE archived_at IS NULL AND confidence < 0.3')
-        .get() as { c: number }
-    ).c;
+        .get(),
+    );
 
-    const consolidations = (this.databases.memory.prepare('SELECT COUNT(*) as c FROM memory_consolidations').get() as { c: number }).c;
+    const consolidations = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memory_consolidations').get());
 
     const byType: Record<string, number> = {};
-    const typeRows = this.databases.memory
+    const typeRows = z.array(TypeCountRowSchema).parse(this.databases.memory
       .prepare('SELECT memory_type, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY memory_type')
-      .all() as Array<{ memory_type: string; c: number }>;
-    for (const row of typeRows) byType[row.memory_type] = row.c;
+      .all());
+    for (const row of typeRows) byType[String(row.memory_type)] = row.c;
 
     const byScope: Record<string, number> = {};
-    const scopeRows = this.databases.memory
+    const scopeRows = z.array(ScopeCountRowSchema).parse(this.databases.memory
       .prepare('SELECT scope, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY scope')
-      .all() as Array<{ scope: string; c: number }>;
+      .all());
     for (const row of scopeRows) byScope[row.scope] = row.c;
 
     const byClassification: Record<string, number> = {};
-    const classRows = this.databases.memory
+    const classRows = z.array(ClassificationCountRowSchema).parse(this.databases.memory
       .prepare('SELECT classification, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY classification')
-      .all() as Array<{ classification: string; c: number }>;
+      .all());
     for (const row of classRows) byClassification[row.classification] = row.c;
 
-    const lastDecay = this.databases.memory
-      .prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'decayed'")
-      .get() as { t: string | null };
-    const lastConsolidation = this.databases.memory
-      .prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'consolidated'")
-      .get() as { t: string | null };
-    const lastDaily = this.databases.memory
-      .prepare("SELECT MAX(created_at) as t FROM memories WHERE source_type = 'daily_summary'")
-      .get() as { t: string | null };
+    const lastDecay = parseTimestampRow(this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'decayed'").get());
+    const lastConsolidation = parseTimestampRow(
+      this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'consolidated'").get(),
+    );
+    const lastDaily = parseTimestampRow(
+      this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memories WHERE source_type = 'daily_summary'").get(),
+    );
 
-    return {
+    return MemoryAuditResponseSchema.parse({
       totalMemories: total,
       activeMemories: active,
       archivedMemories: archived,
@@ -371,17 +454,18 @@ export class MemoryLifecycleService {
       averageConfidence: avgConf,
       staleCount,
       consolidationsPerformed: consolidations,
-      lastDecayRunAt: lastDecay?.t ?? null,
-      lastConsolidationRunAt: lastConsolidation?.t ?? null,
-      lastDailySummaryAt: lastDaily?.t ?? null,
-    };
+      lastDecayRunAt: lastDecay,
+      lastConsolidationRunAt: lastConsolidation,
+      lastDailySummaryAt: lastDaily,
+    });
   }
 
   proposePromotion(memoryId: string, targetPath: string): MemoryPromotionResponse {
-    const row = this.databases.memory.prepare('SELECT * FROM memories WHERE id = ?').get(memoryId) as Record<string, string> | undefined;
-    if (!row) {
+    const rawRow = this.databases.memory.prepare('SELECT description, content FROM memories WHERE id = ?').get(memoryId);
+    if (!rawRow) {
       return { memoryId, targetPath, diff: '', approved: false, promoted: false };
     }
+    const row = PromotionRowSchema.parse(rawRow);
 
     const diff = `+ ${row.description}\n+ ${row.content}`;
     return { memoryId, targetPath, diff, approved: false, promoted: false };
@@ -399,7 +483,8 @@ export class MemoryLifecycleService {
       throw new Error(`Target path must be within memory directory: ${memoryDir}`);
     }
 
-    const row = this.databases.memory.prepare('SELECT content FROM memories WHERE id = ?').get(request.memoryId) as { content: string } | undefined;
+    const rawRow = this.databases.memory.prepare('SELECT content FROM memories WHERE id = ?').get(request.memoryId);
+    const row = rawRow ? MemoryContentRowSchema.parse(rawRow) : null;
     if (!row) return { ...request, promoted: false };
 
     mkdirSync(dirname(request.targetPath), { recursive: true, mode: 0o700 });

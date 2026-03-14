@@ -16,7 +16,7 @@ Popeye replaces QMD with `memory.db`, a SQLite database containing:
 |---|---|
 | `memories` | Core memory records with type, content, confidence, provenance |
 | `memories_fts` | FTS5 virtual table for lexical search |
-| `memory_embeddings` | sqlite-vec table for semantic vector search |
+| `memory_vec` | sqlite-vec table for semantic vector search |
 | `memory_sources` | Provenance tracking (source run, timestamp) |
 | `memory_events` | Memory lifecycle events |
 | `memory_consolidations` | Merge/decay tracking |

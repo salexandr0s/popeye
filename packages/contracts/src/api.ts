@@ -96,6 +96,7 @@ export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
 export const AgentProfileListItemSchema = AgentProfileRecordSchema;
 export type AgentProfileListItem = z.infer<typeof AgentProfileListItemSchema>;
 
+/** Simple FTS search result (used by /v1/memory/search-simple). */
 export const MemorySearchResultItemSchema = z.object({
   id: z.string(),
   description: z.string(),
@@ -117,6 +118,25 @@ export const PathIdParamSchema = z.object({
   id: z.string().min(1).max(100),
 });
 export type PathIdParam = z.infer<typeof PathIdParamSchema>;
+
+export const MemoryPromotionProposalRequestSchema = z.object({
+  targetPath: z.string().min(1),
+});
+export type MemoryPromotionProposalRequest = z.infer<typeof MemoryPromotionProposalRequestSchema>;
+
+export const MemoryPromotionResponseSchema = z.object({
+  memoryId: z.string(),
+  targetPath: z.string(),
+  diff: z.string(),
+  approved: z.boolean(),
+  promoted: z.boolean(),
+});
+export type MemoryPromotionResponse = z.infer<typeof MemoryPromotionResponseSchema>;
+
+export const MemoryPromotionExecuteRequestSchema = MemoryPromotionResponseSchema.omit({
+  memoryId: true,
+});
+export type MemoryPromotionExecuteRequest = z.infer<typeof MemoryPromotionExecuteRequestSchema>;
 
 export const WorkspaceRegistrationInputSchema = z.object({
   id: z.string().min(1),

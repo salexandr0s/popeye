@@ -1,8 +1,8 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 const root = process.cwd();
-const ignores = new Set(['node_modules', '.git', 'dist', 'coverage']);
+const ignores = new Set(['node_modules', '.git', 'dist', 'coverage', '.vitest-coverage']);
 const patterns = [
   /sk-[A-Za-z0-9]{10,}/g,
   /ghp_[A-Za-z0-9]{20,}/g,
@@ -16,7 +16,41 @@ const patterns = [
 
 function isSkippedFile(path) {
   const name = basename(path);
-  return name.endsWith('.test.ts') || name.endsWith('.spec.ts') || name.endsWith('.md');
+  return name.endsWith('.test.ts')
+    || name.endsWith('.spec.ts')
+    || name.endsWith('.test.tsx')
+    || name.endsWith('.spec.tsx')
+    || name.endsWith('.md')
+    || hasGeneratedSourceSibling(path);
+}
+
+function hasGeneratedSourceSibling(path) {
+  const sourcePath = getGeneratedSourceSibling(path);
+  return sourcePath !== null && existsSync(sourcePath);
+}
+
+function getGeneratedSourceSibling(path) {
+  const dir = dirname(path);
+  const name = basename(path);
+
+  const candidates = [];
+  if (name.endsWith('.js.map')) {
+    const stem = name.slice(0, -'.js.map'.length);
+    candidates.push(join(dir, `${stem}.ts`), join(dir, `${stem}.tsx`));
+  } else if (name.endsWith('.d.ts.map')) {
+    const stem = name.slice(0, -'.d.ts.map'.length);
+    candidates.push(join(dir, `${stem}.ts`), join(dir, `${stem}.tsx`));
+  } else if (name.endsWith('.d.ts')) {
+    const stem = name.slice(0, -'.d.ts'.length);
+    candidates.push(join(dir, `${stem}.ts`), join(dir, `${stem}.tsx`));
+  } else if (name.endsWith('.js')) {
+    const stem = name.slice(0, -'.js'.length);
+    candidates.push(join(dir, `${stem}.ts`), join(dir, `${stem}.tsx`));
+  } else {
+    return null;
+  }
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 function walk(dir) {

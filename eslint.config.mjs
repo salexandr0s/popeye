@@ -5,7 +5,21 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
+    ignores: [
+      'dist/**',
+      '**/dist/**',
+      'coverage/**',
+      '.vitest-coverage/**',
+      'node_modules/**',
+      'packages/**/src/**/*.js',
+      'packages/**/src/**/*.js.map',
+      'packages/**/src/**/*.d.ts',
+      'packages/**/src/**/*.d.ts.map',
+      'apps/**/src/**/*.js',
+      'apps/**/src/**/*.js.map',
+      'apps/**/src/**/*.d.ts',
+      'apps/**/src/**/*.d.ts.map',
+    ],
   },
   js.configs.recommended,
   {

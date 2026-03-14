@@ -1,6 +1,7 @@
 node_modules
 .pnpm-store
 coverage
+.vitest-coverage
 dist
 build
 .vscode
@@ -9,3 +10,11 @@ build
 .env
 .env.*
 .turbo
+packages/**/src/**/*.js
+packages/**/src/**/*.js.map
+packages/**/src/**/*.d.ts
+packages/**/src/**/*.d.ts.map
+apps/**/src/**/*.js
+apps/**/src/**/*.js.map
+apps/**/src/**/*.d.ts
+apps/**/src/**/*.d.ts.map

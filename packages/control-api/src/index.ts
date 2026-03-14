@@ -5,9 +5,12 @@ import helmet from '@fastify/helmet';
 
 import {
   AgentProfileRecordSchema,
+  MemoryPromotionExecuteRequestSchema,
+  MemoryPromotionProposalRequestSchema,
   PathIdParamSchema,
   ProjectRecordSchema,
   ProjectRegistrationInputSchema,
+  RunStateSchema,
   TaskCreateInputSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
@@ -44,6 +47,10 @@ const MemoryListQueryParamsSchema = z.object({
   type: z.string().optional(),
   scope: z.string().optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
+});
+
+const RunListQueryParamsSchema = z.object({
+  state: z.string().optional(),
 });
 
 function parseIdParam(params: unknown): string {
@@ -182,7 +189,18 @@ export async function createControlApi(
   );
 
   app.get('/v1/sessions', async () => dependencies.runtime.listSessionRoots());
-  app.get('/v1/runs', async () => dependencies.runtime.listRuns());
+  app.get('/v1/runs', async (request) => {
+    const params = RunListQueryParamsSchema.parse(request.query);
+    const runs = dependencies.runtime.listRuns();
+    if (!params.state) return runs;
+    const states = params.state
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => RunStateSchema.parse(value));
+    if (states.length === 0) return runs;
+    return runs.filter((run) => states.includes(run.state));
+  });
   app.get('/v1/runs/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const run = dependencies.runtime.getRun(id);
@@ -252,7 +270,7 @@ export async function createControlApi(
 
   app.post('/v1/memory/:id/promote/propose', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const body = z.object({ targetPath: z.string().min(1) }).parse(request.body);
+    const body = MemoryPromotionProposalRequestSchema.parse(request.body);
     const result = dependencies.runtime.proposeMemoryPromotion(id, body.targetPath);
     if (!result.diff) return reply.code(404).send({ error: 'not_found' });
     return result;
@@ -260,12 +278,7 @@ export async function createControlApi(
 
   app.post('/v1/memory/:id/promote/execute', async (request) => {
     const id = parseIdParam(request.params);
-    const body = z.object({
-      targetPath: z.string().min(1),
-      diff: z.string(),
-      approved: z.boolean(),
-      promoted: z.boolean(),
-    }).parse(request.body);
+    const body = MemoryPromotionExecuteRequestSchema.parse(request.body);
     return dependencies.runtime.executeMemoryPromotion({ memoryId: id, ...body });
   });
 

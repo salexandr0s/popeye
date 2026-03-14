@@ -20,10 +20,11 @@ import {
   MessageRecordSchema,
 } from '@popeye/contracts';
 import { redactText } from '@popeye/observability';
+import { z } from 'zod';
 
 import type { RuntimeDatabases } from './database.js';
 import { scanPrompt } from './prompt.js';
-import { nowIso } from './clock.js';
+import { nowIso } from '@popeye/contracts';
 
 function buildMessageIngressKey(input: Pick<IngestMessageInput, 'source' | 'chatId' | 'telegramMessageId'>): string | null {
   if (input.source !== 'telegram' || !input.chatId || typeof input.telegramMessageId !== 'number') {
@@ -48,6 +49,60 @@ function readTelegramChatTypeField(input: Record<string, unknown>, key: string):
     return value;
   }
   return undefined;
+}
+
+const MessageIngressDbRowSchema = z.object({
+  id: z.string(),
+  source: z.enum(['telegram', 'manual', 'api']),
+  sender_id: z.string(),
+  chat_id: z.string().nullable(),
+  chat_type: z.enum(['private', 'group', 'supergroup', 'channel']).nullable(),
+  telegram_message_id: z.number().int().nullable(),
+  idempotency_key: z.string().nullable(),
+  workspace_id: z.string(),
+  body: z.string(),
+  accepted: z.union([z.number().int(), z.boolean()]),
+  decision_code: z.enum([
+    'accepted',
+    'duplicate_replayed',
+    'telegram_disabled',
+    'telegram_private_chat_required',
+    'telegram_not_allowlisted',
+    'telegram_rate_limited',
+    'telegram_prompt_injection',
+    'telegram_invalid_message',
+    'prompt_injection_quarantined',
+  ]),
+  decision_reason: z.string(),
+  http_status: z.number().int(),
+  message_id: z.string().nullable(),
+  task_id: z.string().nullable(),
+  job_id: z.string().nullable(),
+  run_id: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const MessageDbRowSchema = z.object({
+  id: z.string(),
+  source: z.enum(['telegram', 'manual', 'api']),
+  sender_id: z.string(),
+  body: z.string(),
+  accepted: z.union([z.number().int(), z.boolean()]),
+  related_run_id: z.string().nullable(),
+  created_at: z.string(),
+});
+
+const CountRowSchema = z.object({
+  count: z.number().int().nonnegative(),
+});
+
+function asInputRecord(input: unknown): Record<string, unknown> {
+  return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+}
+
+function parseAccepted(value: number | boolean): boolean {
+  return typeof value === 'boolean' ? value : value !== 0;
 }
 
 export class MessageIngressError extends Error {
@@ -78,26 +133,27 @@ export class MessageIngestionService {
   ) {}
 
   getMessageIngressByKey(idempotencyKey: string): MessageIngressRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM message_ingress WHERE idempotency_key = ?').get(idempotencyKey) as Record<string, string | number | null> | undefined;
-    if (!row) return null;
+    const rawRow = this.databases.app.prepare('SELECT * FROM message_ingress WHERE idempotency_key = ?').get(idempotencyKey);
+    if (!rawRow) return null;
+    const row = MessageIngressDbRowSchema.parse(rawRow);
     return MessageIngressRecordSchema.parse({
-      id: String(row.id),
+      id: row.id,
       source: row.source,
       senderId: row.sender_id,
-      chatId: row.chat_id ? String(row.chat_id) : null,
-      chatType: row.chat_type ?? null,
-      telegramMessageId: typeof row.telegram_message_id === 'number' ? row.telegram_message_id : row.telegram_message_id === null ? null : Number(row.telegram_message_id),
-      idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : null,
+      chatId: row.chat_id,
+      chatType: row.chat_type,
+      telegramMessageId: row.telegram_message_id,
+      idempotencyKey: row.idempotency_key,
       workspaceId: row.workspace_id,
       body: row.body,
-      accepted: Boolean(row.accepted),
+      accepted: parseAccepted(row.accepted),
       decisionCode: row.decision_code,
       decisionReason: row.decision_reason,
-      httpStatus: Number(row.http_status),
-      messageId: row.message_id ? String(row.message_id) : null,
-      taskId: row.task_id ? String(row.task_id) : null,
-      jobId: row.job_id ? String(row.job_id) : null,
-      runId: row.run_id ? String(row.run_id) : null,
+      httpStatus: row.http_status,
+      messageId: row.message_id,
+      taskId: row.task_id,
+      jobId: row.job_id,
+      runId: row.run_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });
@@ -202,7 +258,7 @@ export class MessageIngestionService {
 
   countRecentTelegramIngressAttempts(senderId: string, chatId: string): number {
     const windowStart = new Date(Date.now() - this.config.telegram.rateLimitWindowSeconds * 1000).toISOString();
-    const row = this.databases.app
+    return CountRowSchema.parse(this.databases.app
       .prepare(`
         SELECT COUNT(*) AS count
         FROM message_ingress
@@ -210,19 +266,19 @@ export class MessageIngestionService {
           AND created_at >= ?
           AND (sender_id = ? OR chat_id = ?)
       `)
-      .get(windowStart, senderId, chatId) as { count: number };
-    return row.count;
+      .get(windowStart, senderId, chatId)).count;
   }
 
   getMessage(messageId: string): MessageRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM messages WHERE id = ?').get(messageId) as Record<string, string | number | null> | undefined;
-    if (!row) return null;
+    const rawRow = this.databases.app.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+    if (!rawRow) return null;
+    const row = MessageDbRowSchema.parse(rawRow);
     return MessageRecordSchema.parse({
       id: row.id,
       source: row.source,
       senderId: row.sender_id,
       body: row.body,
-      accepted: Boolean(row.accepted),
+      accepted: parseAccepted(row.accepted),
       relatedRunId: row.related_run_id,
       createdAt: row.created_at,
     });
@@ -231,7 +287,7 @@ export class MessageIngestionService {
   ingestMessage(input: unknown): MessageIngressResponse {
     const parsedResult = IngestMessageInputSchema.safeParse(input);
     if (!parsedResult.success) {
-      const raw = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
+      const raw = asInputRecord(input);
       const source = readStringField(raw, 'source');
       const telegramCandidate = source === 'telegram';
       if (telegramCandidate) {

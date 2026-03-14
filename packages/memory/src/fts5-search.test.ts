@@ -20,7 +20,7 @@ function createTestDb(): Database.Database {
       archived_at TEXT,
       created_at TEXT NOT NULL
     );
-    CREATE VIRTUAL TABLE memories_fts USING fts5(description, content);
+    CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
   `);
   return db;
 }
@@ -34,8 +34,8 @@ function insertMemory(db: Database.Database, opts: {
   memoryType?: string;
   sourceType?: string;
   archivedAt?: string | null;
-}): number {
-  const result = db.prepare(
+}): string {
+  db.prepare(
     'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     opts.id,
@@ -49,9 +49,8 @@ function insertMemory(db: Database.Database, opts: {
     new Date().toISOString(),
     opts.archivedAt ?? null,
   );
-  const rowid = Number(result.lastInsertRowid);
-  syncFtsInsert(db, rowid, opts.description, opts.content);
-  return rowid;
+  syncFtsInsert(db, opts.id, opts.description, opts.content);
+  return opts.id;
 }
 
 describe('fts5-search', () => {
@@ -130,6 +129,23 @@ describe('fts5-search', () => {
     const results = searchFts5(db, '', {});
     expect(results).toHaveLength(0);
   });
+
+  it('returns empty array on FTS5 query error', () => {
+    // Close the db to force an error on the next query
+    db.close();
+    const brokenDb = new Database(':memory:');
+    // No FTS table exists — query will throw
+    brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT)');
+    brokenDb.exec('CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content)');
+    // Insert with invalid MATCH expression won't reach our try/catch since buildFts5MatchExpression sanitizes.
+    // Instead, drop the table to force a runtime error:
+    brokenDb.exec('DROP TABLE memories');
+    const results = searchFts5(brokenDb, 'test', {});
+    expect(results).toHaveLength(0);
+    brokenDb.close();
+    // Re-create db for afterEach
+    db = createTestDb();
+  });
 });
 
 describe('syncFtsDelete', () => {
@@ -144,14 +160,57 @@ describe('syncFtsDelete', () => {
   });
 
   it('removes entry from FTS index', () => {
-    const rowid = insertMemory(db, { id: 'm1', description: 'deletable', content: 'deletable content' });
+    const memoryId = insertMemory(db, { id: 'm1', description: 'deletable', content: 'deletable content' });
 
     let results = searchFts5(db, 'deletable', {});
     expect(results).toHaveLength(1);
 
-    syncFtsDelete(db, rowid, 'deletable', 'deletable content');
+    syncFtsDelete(db, memoryId, 'deletable', 'deletable content');
 
     results = searchFts5(db, 'deletable', {});
     expect(results).toHaveLength(0);
+  });
+});
+
+describe('stable memory_id FTS linkage', () => {
+  it('does not misjoin after rowid reuse', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          description TEXT NOT NULL,
+          classification TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          scope TEXT NOT NULL,
+          memory_type TEXT NOT NULL DEFAULT 'episodic',
+          dedup_key TEXT,
+          last_reinforced_at TEXT,
+          archived_at TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
+      `);
+
+      insertMemory(db, { id: 'm1', description: 'alpha', content: 'alpha content' });
+      db.prepare('DELETE FROM memories WHERE id = ?').run('m1');
+      insertMemory(db, { id: 'm2', description: 'beta', content: 'beta content' });
+
+      const rows = db.prepare(`
+        SELECT m.id, memories_fts.memory_id
+        FROM memories_fts
+        JOIN memories m ON m.id = memories_fts.memory_id
+        WHERE memories_fts MATCH ?
+        ORDER BY m.id
+      `).all('alpha OR beta') as Array<{ id: string; memory_id: string }>;
+
+      expect(rows).toEqual([
+        { id: 'm2', memory_id: 'm2' },
+      ]);
+    } finally {
+      db.close();
+    }
   });
 });

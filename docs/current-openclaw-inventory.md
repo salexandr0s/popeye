@@ -51,7 +51,6 @@ These packages have no OpenClaw lineage:
 | `@popeye/observability` | New platform implementation |
 | `@popeye/workspace` | New platform implementation |
 | `@popeye/control-api` | New platform implementation |
-| `@popeye/client-ts` | New platform implementation |
 
 ## Verification
 

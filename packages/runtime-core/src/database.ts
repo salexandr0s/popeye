@@ -284,6 +284,22 @@ const MEMORY_MIGRATIONS: Migration[] = [
       "ALTER TABLE memory_consolidations ADD COLUMN reason TEXT DEFAULT '';",
     ],
   },
+  {
+    id: '005-memory-cleanup',
+    statements: [
+      'DROP TABLE IF EXISTS memory_embeddings;',
+      'DROP TABLE IF EXISTS retrieval_cache;',
+    ],
+  },
+  {
+    id: '006-memory-fts-stable-id',
+    statements: [
+      'CREATE VIRTUAL TABLE memories_fts_new USING fts5(memory_id UNINDEXED, description, content);',
+      'INSERT INTO memories_fts_new (memory_id, description, content) SELECT id, description, content FROM memories;',
+      'DROP TABLE memories_fts;',
+      'ALTER TABLE memories_fts_new RENAME TO memories_fts;',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {
@@ -318,4 +334,3 @@ export function openRuntimeDatabases(config: AppConfig): RuntimeDatabases {
   applyMigrations(memory, MEMORY_MIGRATIONS);
   return { app, memory, paths };
 }
-

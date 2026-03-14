@@ -4,23 +4,31 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadSqliteVec } from './extension-loader.js';
 import { deleteVecEmbedding, insertVecEmbedding, searchVec } from './vec-search.js';
 
-let vecAvailable = false;
+const probeDb = new Database(':memory:');
+const vecAvailable = await loadSqliteVec(probeDb, 4);
+probeDb.close();
+
 let db: Database.Database;
 
 beforeEach(async () => {
   db = new Database(':memory:');
-  vecAvailable = await loadSqliteVec(db);
-  if (vecAvailable) {
-    db.exec('CREATE VIRTUAL TABLE memory_vec USING vec0(memory_id TEXT PRIMARY KEY, embedding float[4])');
-  }
+  await loadSqliteVec(db, 4);
 });
 
 afterEach(() => {
   db.close();
 });
 
-describe.skipIf(!vecAvailable)('vec-search', () => {
+describe.runIf(vecAvailable)('vec-search', () => {
   // Note: these tests only run if sqlite-vec is available
+
+  it('creates the memory_vec table during extension load', () => {
+    const row = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_vec'")
+      .get() as { name: string } | undefined;
+
+    expect(row?.name).toBe('memory_vec');
+  });
 
   it('inserts and searches embeddings', () => {
     const embedding = new Float32Array([1, 0, 0, 0]);

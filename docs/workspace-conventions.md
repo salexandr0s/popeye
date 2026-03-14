@@ -61,8 +61,8 @@ Generated at `memory/daily/YYYY-MM-DD.md`:
 To promote a memory to a curated markdown file:
 
 1. `pop memory show <id>` — inspect the memory
-2. Propose promotion with target path
-3. Review the diff
-4. Approve and execute — creates a receipt
+2. `POST /v1/memory/:id/promote/propose` with a target path inside the runtime memory directory
+3. Review the returned diff
+4. `POST /v1/memory/:id/promote/execute` with `approved: true`
 
 Promoted memories are marked with a `promoted` event in the audit trail.
