@@ -8,6 +8,7 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   noExternal: [/@popeye\//],
+  external: ['better-sqlite3', 'sqlite-vec', 'pino'],
   banner: { js: '#!/usr/bin/env node' },
   sourcemap: true,
 });

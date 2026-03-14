@@ -1303,17 +1303,18 @@ export class PopeyeRuntimeService {
   importMemory(input: {
     description: string;
     content: string;
-    sourceType?: string;
+    sourceType?: MemoryInsertInput['sourceType'];
     memoryType?: 'episodic' | 'semantic' | 'procedural';
     scope?: string;
     confidence?: number;
     classification?: 'secret' | 'sensitive' | 'internal' | 'embeddable';
   }): { memoryId: string; embedded: boolean } {
-    const redacted = redactText(input.content, this.config.security.redactionPatterns).text;
+    const redactedContent = redactText(input.content, this.config.security.redactionPatterns).text;
+    const redactedDesc = redactText(input.description, this.config.security.redactionPatterns).text;
     return this.memoryLifecycle.insertMemory({
-      description: input.description,
-      content: redacted,
-      sourceType: (input.sourceType ?? 'curated_memory') as MemoryInsertInput['sourceType'],
+      description: redactedDesc,
+      content: redactedContent,
+      sourceType: input.sourceType ?? 'curated_memory',
       memoryType: input.memoryType,
       scope: input.scope ?? 'workspace',
       confidence: input.confidence ?? 0.8,

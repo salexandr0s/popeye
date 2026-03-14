@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { EngineKindSchema } from './engine.js';
 import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema, AgentProfileRecordSchema } from './execution.js';
+import { MemorySourceTypeSchema, MemoryTypeSchema } from './memory.js';
 import { SecurityAuditFindingSchema } from './security.js';
-import { WorkspaceRecordSchema } from './config.js';
+import { WorkspaceRecordSchema, DataClassificationSchema } from './config.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -217,11 +218,11 @@ export type ProjectRegistrationInput = z.infer<typeof ProjectRegistrationInputSc
 export const MemoryImportInputSchema = z.object({
   description: z.string().min(1),
   content: z.string().min(1),
-  sourceType: z.string().default('curated_memory'),
-  memoryType: z.enum(['episodic', 'semantic', 'procedural']).optional(),
+  sourceType: MemorySourceTypeSchema.default('curated_memory'),
+  memoryType: MemoryTypeSchema.optional(),
   scope: z.string().default('workspace'),
   confidence: z.number().min(0).max(1).default(0.8),
-  classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']).default('embeddable'),
+  classification: DataClassificationSchema.default('embeddable'),
 });
 export type MemoryImportInput = z.infer<typeof MemoryImportInputSchema>;
 

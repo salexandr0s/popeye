@@ -183,7 +183,7 @@ mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
 const paths = deriveRuntimePaths(config.runtimeDataDir);
 
 async function main(): Promise<void> {
-  if (!command || helpFlag && !command) {
+  if (!command) {
     showHelp();
     return;
   }

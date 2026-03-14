@@ -28,7 +28,7 @@ export async function startTelegramBridge(
 ): Promise<StartedTelegramBridge | null> {
   if (!config.telegram.enabled) return null;
 
-  const log = createLogger('telegram-bridge');
+  const log = createLogger('telegram-bridge', config.security.redactionPatterns);
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
     log.warn('Telegram enabled but TELEGRAM_BOT_TOKEN is not set; skipping bridge startup');

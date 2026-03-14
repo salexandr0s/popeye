@@ -468,9 +468,12 @@ export class MemoryLifecycleService {
       const dedupKey = `workspace_doc:${sha256(resolve(filePath))}`;
 
       // Check if we already have this exact content indexed
-      const existing = this.databases.memory
+      const rawExisting = this.databases.memory
         .prepare('SELECT id, content FROM memories WHERE dedup_key = ? AND archived_at IS NULL')
-        .get(dedupKey) as { id: string; content: string } | undefined;
+        .get(dedupKey);
+      const existing = rawExisting
+        ? z.object({ id: z.string(), content: z.string() }).parse(rawExisting)
+        : undefined;
 
       if (existing) {
         const existingHash = sha256(existing.content);

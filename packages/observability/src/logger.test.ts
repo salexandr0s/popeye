@@ -74,4 +74,14 @@ describe('createLogger', () => {
     expect(output[0]).toHaveProperty('msg', 'disk full');
     expect(output[0]).toHaveProperty('usedPct', 99);
   });
+
+  it('redacts sensitive content in details object values', () => {
+    const { stream, lines } = createCapture();
+    const logger = createLogger('test-component', { destination: stream });
+    logger.error('auth failed', { apiKey: 'sk-ant-api03-abcdefghijklmnopqrst', code: 401 }); // secret-scan: allow
+    const output = lines();
+    expect(String(output[0].apiKey)).toContain('[REDACTED:anthropic-key]');
+    expect(String(output[0].apiKey)).not.toContain('sk-ant-api03');
+    expect(output[0].code).toBe(401); // non-string values pass through
+  });
 });

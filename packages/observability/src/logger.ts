@@ -21,24 +21,39 @@ export interface PopeyeLogger {
   child(ids: CorrelationIds): PopeyeLogger;
 }
 
+function redactDetails(
+  details: Record<string, unknown>,
+  customPatterns: string[],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value === 'string') {
+      result[key] = redactText(value, customPatterns).text;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function wrapPino(base: pino.Logger, customPatterns: string[]): PopeyeLogger {
   const redact = (msg: string): string => redactText(msg, customPatterns).text;
 
   return {
     info(msg, details) {
-      if (details) base.info(details, redact(msg));
+      if (details) base.info(redactDetails(details, customPatterns), redact(msg));
       else base.info(redact(msg));
     },
     warn(msg, details) {
-      if (details) base.warn(details, redact(msg));
+      if (details) base.warn(redactDetails(details, customPatterns), redact(msg));
       else base.warn(redact(msg));
     },
     error(msg, details) {
-      if (details) base.error(details, redact(msg));
+      if (details) base.error(redactDetails(details, customPatterns), redact(msg));
       else base.error(redact(msg));
     },
     debug(msg, details) {
-      if (details) base.debug(details, redact(msg));
+      if (details) base.debug(redactDetails(details, customPatterns), redact(msg));
       else base.debug(redact(msg));
     },
     child(ids) {
