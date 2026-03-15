@@ -81,6 +81,7 @@ import {
 
 import { nowIso } from '@popeye/contracts';
 import { z } from 'zod';
+import safe from 'safe-regex2';
 import { readAuthStore, rotateAuthStore } from './auth.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
@@ -392,11 +393,34 @@ export class PopeyeRuntimeService {
   private readonly taskManager: TaskManager;
   private readonly queryService: QueryService;
 
+  private static validateRegexPatterns(config: AppConfig): void {
+    const fields: Array<{ name: string; patterns: string[] }> = [
+      { name: 'redactionPatterns', patterns: config.security.redactionPatterns ?? [] },
+      { name: 'promptScanQuarantinePatterns', patterns: config.security.promptScanQuarantinePatterns ?? [] },
+      { name: 'promptScanSanitizePatterns', patterns: (config.security.promptScanSanitizePatterns ?? []).map((p) => p.pattern) },
+    ];
+    for (const field of fields) {
+      for (const pattern of field.patterns) {
+        let regex: RegExp;
+        try {
+          regex = new RegExp(pattern, 'g');
+        } catch (err: unknown) {
+          const msg = err instanceof SyntaxError ? err.message : String(err);
+          throw new Error(`Invalid regex in security.${field.name}: pattern "${pattern}" — ${msg}`);
+        }
+        if (!safe(regex)) {
+          throw new Error(`ReDoS-vulnerable regex in security.${field.name}: pattern "${pattern}"`);
+        }
+      }
+    }
+  }
+
   constructor(config: AppConfig, engineOverride?: EngineAdapter, loggerOverride?: PopeyeLogger) {
     const startupStart = performance.now();
     if (config.security.bindHost !== '127.0.0.1') {
       throw new Error(`Popeye requires config.security.bindHost to be 127.0.0.1, received ${config.security.bindHost}`);
     }
+    PopeyeRuntimeService.validateRegexPatterns(config);
     this.config = config;
     this.log = loggerOverride ?? createLogger('runtime', config.security.redactionPatterns);
     this.startedAt = nowIso();

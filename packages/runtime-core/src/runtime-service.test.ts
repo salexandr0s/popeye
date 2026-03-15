@@ -1271,3 +1271,49 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 });
+
+describe('startup regex validation', () => {
+  it('throws on invalid redaction regex', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-regex-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.redactionPatterns = ['[invalid'];
+    expect(() => createRuntimeService(config)).toThrow(/redactionPatterns/);
+  });
+
+  it('throws on ReDoS-vulnerable redaction regex', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-regex-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.redactionPatterns = ['(a+)+$'];
+    expect(() => createRuntimeService(config)).toThrow(/ReDoS.*redactionPatterns/);
+  });
+
+  it('throws on invalid prompt scan quarantine pattern', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-regex-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.promptScanQuarantinePatterns = ['[bad'];
+    expect(() => createRuntimeService(config)).toThrow(/promptScanQuarantinePatterns/);
+  });
+
+  it('throws on invalid prompt scan sanitize pattern', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-regex-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.promptScanSanitizePatterns = [{ pattern: '[bad', replacement: 'x' }];
+    expect(() => createRuntimeService(config)).toThrow(/promptScanSanitizePatterns/);
+  });
+
+  it('accepts valid patterns without error', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-regex-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    config.security.redactionPatterns = ['sk-[A-Za-z0-9]{10,}'];
+    config.security.promptScanQuarantinePatterns = ['send.*competitor'];
+    config.security.promptScanSanitizePatterns = [{ pattern: '\\btest\\b', replacement: '[REDACTED]' }];
+    const runtime = createRuntimeService(config);
+    expect(runtime).toBeTruthy();
+    runtime.close();
+  });
+});

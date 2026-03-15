@@ -914,4 +914,131 @@ describe('control api', () => {
     await runtime.close();
     await app.close();
   });
+
+  it('records auth_bearer_invalid audit event on bad bearer token', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-auth-bearer-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const resp = await app.inject({
+      method: 'GET',
+      url: '/v1/health',
+      headers: { authorization: 'Bearer wrong-token' },
+    });
+    expect(resp.statusCode).toBe(401);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'auth_bearer_invalid', severity: 'warn' })]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('records auth_browser_cookie_missing audit event when no auth provided', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-auth-cookie-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const resp = await app.inject({ method: 'GET', url: '/v1/health' });
+    expect(resp.statusCode).toBe(401);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'auth_browser_cookie_missing', severity: 'warn' })]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('records csrf_token_invalid audit event on bad CSRF token', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-csrf-token-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const resp = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: { authorization: `Bearer ${store.current.token}`, 'x-popeye-csrf': 'bad-csrf' },
+      payload: { workspaceId: 'default', projectId: null, title: 't', prompt: 'hello', source: 'manual', autoEnqueue: false },
+    });
+    expect(resp.statusCode).toBe(403);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'csrf_token_invalid', severity: 'warn' })]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('records csrf_cross_site_blocked audit event on cross-site request', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-csrf-cross-site-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const resp = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'cross-site',
+      },
+      payload: { workspaceId: 'default', projectId: null, title: 't', prompt: 'hello', source: 'manual', autoEnqueue: false },
+    });
+    expect(resp.statusCode).toBe(403);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'csrf_cross_site_blocked', severity: 'warn' })]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
 });

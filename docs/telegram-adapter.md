@@ -75,6 +75,7 @@ Telegram config lives in `AppConfig.telegram`:
 | enabled | boolean | `false` | Master switch |
 | allowedUserId | string | -- | Telegram user ID allowed to send messages |
 | maxMessagesPerMinute | integer | `10` | Rate limit threshold |
+| globalMaxMessagesPerMinute | integer | `30` | Global rate limit across all senders |
 | rateLimitWindowSeconds | integer | `60` | Rate limit sliding window |
 | maxConcurrentPreparations | integer | `4` | Controls parallel reply preparation. Send + checkpoint ack remain strictly ordered. Max: 16. |
 

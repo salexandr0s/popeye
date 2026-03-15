@@ -518,8 +518,37 @@ export class MessageIngestionService {
 
       if (promptScan.verdict === 'quarantine') {
         const denied = this.persistDeniedIngress(parsed, redactedPrompt.text, 'telegram_prompt_injection', 'Telegram message was quarantined by prompt-injection detection', 400);
+        this.callbacks.recordSecurityAudit({
+          code: 'prompt_scan_quarantined',
+          severity: 'error',
+          message: 'Prompt scan quarantined a telegram message',
+          component: 'runtime-core',
+          timestamp: nowIso(),
+          details: {
+            source: parsed.source,
+            senderId: parsed.senderId,
+            verdict: promptScan.verdict,
+            matchedRules: promptScan.matchedRules.join(', '),
+          },
+        });
         this.callbacks.createIntervention('prompt_injection_quarantined', null, `Prompt scan blocked telegram message ${denied.id}`);
         throw new MessageIngressError(this.buildIngressResponse(denied, false));
+      }
+
+      if (promptScan.verdict === 'sanitize' && promptScan.matchedRules.length > 0) {
+        this.callbacks.recordSecurityAudit({
+          code: 'prompt_scan_sanitized',
+          severity: 'info',
+          message: 'Prompt scan sanitized a telegram message',
+          component: 'runtime-core',
+          timestamp: nowIso(),
+          details: {
+            source: parsed.source,
+            senderId: parsed.senderId,
+            verdict: promptScan.verdict,
+            matchedRules: promptScan.matchedRules.join(', '),
+          },
+        });
       }
 
       const timestamp = nowIso();
@@ -612,6 +641,19 @@ export class MessageIngestionService {
     for (const event of redacted.events) this.callbacks.recordSecurityAudit(event);
     if (promptScan.verdict === 'quarantine') {
       this.callbacks.createIntervention('prompt_injection_quarantined', null, 'Prompt scan blocked a non-telegram message');
+      this.callbacks.recordSecurityAudit({
+        code: 'prompt_scan_quarantined',
+        severity: 'error',
+        message: 'Prompt scan quarantined a non-telegram message',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          source: parsed.source,
+          senderId: parsed.senderId,
+          verdict: promptScan.verdict,
+          matchedRules: promptScan.matchedRules.join(', '),
+        },
+      });
       throw new MessageIngressError(
         MessageIngressResponseSchema.parse({
           accepted: false,
@@ -625,6 +667,22 @@ export class MessageIngestionService {
           runId: null,
         }),
       );
+    }
+
+    if (promptScan.verdict === 'sanitize' && promptScan.matchedRules.length > 0) {
+      this.callbacks.recordSecurityAudit({
+        code: 'prompt_scan_sanitized',
+        severity: 'info',
+        message: 'Prompt scan sanitized a non-telegram message',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          source: parsed.source,
+          senderId: parsed.senderId,
+          verdict: promptScan.verdict,
+          matchedRules: promptScan.matchedRules.join(', '),
+        },
+      });
     }
 
     const message: MessageRecord = MessageRecordSchema.parse({

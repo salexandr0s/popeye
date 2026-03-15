@@ -205,6 +205,71 @@ function recordBrowserSessionAudit(
   runtime.recordSecurityAuditEvent(event);
 }
 
+function recordAuthFailureAudit(
+  runtime: PopeyeRuntimeService,
+  request: { headers: Record<string, unknown>; ip: string | undefined },
+  outcome: 'bearer_invalid' | 'cookie_missing',
+): void {
+  const eventByOutcome: Record<typeof outcome, SecurityAuditEvent> = {
+    bearer_invalid: {
+      code: 'auth_bearer_invalid',
+      severity: 'warn',
+      message: 'Bearer token authentication failed',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+    cookie_missing: {
+      code: 'auth_browser_cookie_missing',
+      severity: 'warn',
+      message: 'Browser session cookie was missing',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+  };
+  runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
+}
+
+function recordCsrfFailureAudit(
+  runtime: PopeyeRuntimeService,
+  request: { headers: Record<string, unknown>; ip: string | undefined },
+  outcome: 'token_invalid' | 'cross_site_blocked',
+): void {
+  const eventByOutcome: Record<typeof outcome, SecurityAuditEvent> = {
+    token_invalid: {
+      code: 'csrf_token_invalid',
+      severity: 'warn',
+      message: 'CSRF token validation failed',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+    cross_site_blocked: {
+      code: 'csrf_cross_site_blocked',
+      severity: 'warn',
+      message: 'Cross-site request blocked by Sec-Fetch-Site policy',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+        secFetchSite: typeof request.headers['sec-fetch-site'] === 'string' ? request.headers['sec-fetch-site'] : '',
+      },
+    },
+  };
+  runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
+}
+
 export async function createControlApi(
   dependencies: ControlApiDependencies,
 ): Promise<FastifyInstance> {
@@ -244,6 +309,7 @@ export async function createControlApi(
       const authStore = dependencies.runtime.loadAuthStore();
       if (!validateBearerToken(authHeader, authStore)) {
         log?.warn('bearer auth failed', { path, method: request.method });
+        recordAuthFailureAudit(dependencies.runtime, request, 'bearer_invalid');
         return reply.code(401).send({ error: 'unauthorized' });
       }
       request.popeyeAuthContext = {
@@ -254,6 +320,7 @@ export async function createControlApi(
       const sessionId = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
       if (!sessionId) {
         log?.warn('browser session missing', { path });
+        recordAuthFailureAudit(dependencies.runtime, request, 'cookie_missing');
         return reply.code(401).send({ error: 'unauthorized' });
       }
       const sessionResult = dependencies.runtime.validateBrowserSession(sessionId);
@@ -278,6 +345,7 @@ export async function createControlApi(
         : csrf === authContext?.csrfToken;
       if (!csrfValid) {
         log?.warn('csrf validation failed', { path, method: request.method });
+        recordCsrfFailureAudit(dependencies.runtime, request, 'token_invalid');
         return reply.code(403).send({ error: 'csrf_invalid' });
       }
       // POP-SEC-007: Sec-Fetch-Site may be absent in non-browser clients.
@@ -288,6 +356,7 @@ export async function createControlApi(
         !['same-origin', 'none'].includes(secFetchSite)
       ) {
         log?.warn('cross-site request blocked', { path, secFetchSite });
+        recordCsrfFailureAudit(dependencies.runtime, request, 'cross_site_blocked');
         return reply.code(403).send({ error: 'csrf_cross_site_blocked' });
       }
     }
