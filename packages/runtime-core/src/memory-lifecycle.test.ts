@@ -33,10 +33,26 @@ function createMemoryDb(): Database.Database {
       archived_at TEXT,
       created_at TEXT NOT NULL,
       source_run_id TEXT,
-      source_timestamp TEXT
+      source_timestamp TEXT,
+      durable INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX idx_memories_dedup_key ON memories(dedup_key) WHERE dedup_key IS NOT NULL;
     CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
+    CREATE TABLE memory_entities (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_memory_entities_canonical ON memory_entities(canonical_name, entity_type);
+    CREATE TABLE memory_entity_mentions (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      mention_count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE memory_sources (
       id TEXT PRIMARY KEY,
       memory_id TEXT NOT NULL,
@@ -108,6 +124,7 @@ function makeConfig(overrides?: Partial<{
       dailySummaryHour: 23,
       consolidationEnabled: overrides?.consolidationEnabled ?? true,
       compactionFlushConfidence: overrides?.compactionFlushConfidence ?? 0.7,
+      qualitySweepEnabled: false,
     },
     engine: { kind: 'fake', command: 'node', args: [] },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
@@ -364,13 +381,13 @@ describe('MemoryLifecycleService', () => {
       insertMemoryRow(memoryDb, { dedup_key: 'dup-1', scope: 'ws', memory_type: 'semantic' });
       insertMemoryRow(memoryDb, { dedup_key: 'dup-1', scope: 'ws', memory_type: 'semantic' });
       const result = svc.runConsolidation();
-      expect(result).toEqual({ merged: 0, deduped: 0 });
+      expect(result).toEqual({ merged: 0, deduped: 0, qualityArchived: 0 });
     });
 
     it('returns zeros for single-member groups', () => {
       insertMemoryRow(memoryDb, { scope: 'ws', memory_type: 'semantic' });
       const result = service.runConsolidation();
-      expect(result).toEqual({ merged: 0, deduped: 0 });
+      expect(result).toEqual({ merged: 0, deduped: 0, qualityArchived: 0 });
     });
 
     it('deduplicates by exact dedup_key, keeps highest confidence', () => {
@@ -454,6 +471,36 @@ describe('MemoryLifecycleService', () => {
 
       const result = service.runConsolidation();
       expect(result.merged).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // quality sweep in consolidation
+  // -----------------------------------------------------------------------
+
+  describe('quality sweep', () => {
+    it('archives low-quality memories when qualitySweepEnabled is true', () => {
+      const sweepConfig = makeConfig();
+      (sweepConfig as Record<string, unknown>).memory = { ...(sweepConfig.memory as Record<string, unknown>), qualitySweepEnabled: true };
+      const svc = new MemoryLifecycleService(databases, sweepConfig, searchService);
+
+      // Insert junk memory directly (bypasses storeMemory quality gate)
+      insertMemoryRow(memoryDb, { description: 'junk', content: 'x', confidence: 0.5 });
+      // Insert good memory
+      insertMemoryRow(memoryDb, { description: 'good memory', content: 'This is a detailed and useful memory with enough content', confidence: 0.8 });
+
+      const result = svc.runConsolidation();
+      expect(result.qualityArchived).toBe(1);
+
+      const events = memoryDb.prepare("SELECT type FROM memory_events WHERE type = 'quality_archived'").all() as Array<{ type: string }>;
+      expect(events).toHaveLength(1);
+    });
+
+    it('skips quality sweep when qualitySweepEnabled is false', () => {
+      // Default test config has qualitySweepEnabled: false
+      insertMemoryRow(memoryDb, { description: 'junk', content: 'x', confidence: 0.5 });
+      const result = service.runConsolidation();
+      expect(result.qualityArchived).toBe(0);
     });
   });
 
@@ -565,7 +612,7 @@ describe('MemoryLifecycleService', () => {
     });
 
     it('stores provenance in memory_sources table', async () => {
-      const results = await service.processCompactionFlush('run-prov', 'Provenance content', 'default');
+      const results = await service.processCompactionFlush('run-prov', 'Provenance content from a compacted session with important context', 'default');
       expect(results).toHaveLength(1);
 
       const sources = memoryDb.prepare('SELECT source_type, source_ref FROM memory_sources WHERE memory_id = ?').all(results[0].id) as Array<{ source_type: string; source_ref: string }>;
@@ -727,10 +774,10 @@ describe('MemoryLifecycleService', () => {
   describe('insertMemory', () => {
     it('stores a new memory via MemorySearchService.storeMemory', () => {
       const result = service.insertMemory({
-        description: 'test insert',
+        description: 'test insert for memory storage verification',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'some content',
+        content: 'some content that is long enough to pass the quality gate check',
         confidence: 0.9,
         scope: 'default',
       });
@@ -739,17 +786,17 @@ describe('MemoryLifecycleService', () => {
 
       const row = memoryDb.prepare('SELECT * FROM memories WHERE id = ?').get(result.memoryId) as Record<string, unknown> | undefined;
       expect(row).toBeTruthy();
-      expect(row!.description).toBe('test insert');
+      expect(row!.description).toBe('test insert for memory storage verification');
       expect(row!.confidence).toBe(0.9);
       expect(row!.scope).toBe('default');
     });
 
     it('uses provided memoryType over auto-classified type', () => {
       const result = service.insertMemory({
-        description: 'procedural insert',
+        description: 'procedural insert with explicit type override',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'how to do X',
+        content: 'how to do X step by step with detailed instructions for the workflow',
         confidence: 0.8,
         scope: 'default',
         memoryType: 'procedural',
@@ -761,10 +808,10 @@ describe('MemoryLifecycleService', () => {
 
     it('auto-classifies memoryType when not provided', () => {
       const result = service.insertMemory({
-        description: 'auto classify',
+        description: 'auto classify memory type test',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'just some content',
+        content: 'just some content to verify automatic memory type classification',
         confidence: 0.7,
         scope: 'default',
       });
@@ -776,10 +823,10 @@ describe('MemoryLifecycleService', () => {
 
     it('creates memory_events with created type', () => {
       const result = service.insertMemory({
-        description: 'event check',
+        description: 'event check for memory lifecycle tracking',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'event content',
+        content: 'event content for verifying that creation events are recorded properly',
         confidence: 0.8,
         scope: 'default',
       });
@@ -791,18 +838,18 @@ describe('MemoryLifecycleService', () => {
 
     it('reinforces existing memory with same dedup_key instead of creating duplicate', () => {
       const first = service.insertMemory({
-        description: 'dedup test',
+        description: 'dedup test for reinforcement verification',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'same content',
+        content: 'same content that is long enough to pass quality checks for dedup',
         confidence: 0.5,
         scope: 'default',
       });
       const second = service.insertMemory({
-        description: 'dedup test',
+        description: 'dedup test for reinforcement verification',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'same content',
+        content: 'same content that is long enough to pass quality checks for dedup',
         confidence: 0.5,
         scope: 'default',
       });
@@ -817,10 +864,10 @@ describe('MemoryLifecycleService', () => {
 
     it('stores memory_sources when sourceRef is provided', () => {
       const result = service.insertMemory({
-        description: 'sourced memory',
+        description: 'sourced memory with provenance tracking',
         classification: 'internal',
         sourceType: 'curated_memory',
-        content: 'source content',
+        content: 'source content from a specific run for provenance verification',
         confidence: 0.8,
         scope: 'default',
         sourceRef: 'run-123',
@@ -847,8 +894,8 @@ describe('MemoryLifecycleService', () => {
     });
 
     it('indexes markdown files with correct source_type', () => {
-      writeFileSync(join(docsDir, 'README.md'), '# My Project');
-      writeFileSync(join(docsDir, 'NOTES.md'), 'Some notes');
+      writeFileSync(join(docsDir, 'README.md'), '# My Project\n\nThis is a detailed project description with enough content for quality checks.');
+      writeFileSync(join(docsDir, 'NOTES.md'), 'Some notes about the project architecture and design decisions made during development.');
 
       const result = service.indexWorkspaceDocs('ws-1', docsDir);
       expect(result.indexed).toBe(2);
@@ -861,7 +908,7 @@ describe('MemoryLifecycleService', () => {
     });
 
     it('skips unchanged files on re-index (dedup)', () => {
-      writeFileSync(join(docsDir, 'README.md'), '# My Project');
+      writeFileSync(join(docsDir, 'README.md'), '# My Project\n\nThis is a detailed project description with enough content for quality checks.');
 
       service.indexWorkspaceDocs('ws-1', docsDir);
       const result = service.indexWorkspaceDocs('ws-1', docsDir);
@@ -870,10 +917,10 @@ describe('MemoryLifecycleService', () => {
     });
 
     it('re-indexes when file content changes', () => {
-      writeFileSync(join(docsDir, 'README.md'), '# Version 1');
+      writeFileSync(join(docsDir, 'README.md'), '# Version 1\n\nFirst version of the documentation with initial content.');
       service.indexWorkspaceDocs('ws-1', docsDir);
 
-      writeFileSync(join(docsDir, 'README.md'), '# Version 2');
+      writeFileSync(join(docsDir, 'README.md'), '# Version 2\n\nUpdated version with changed content for re-indexing test.');
       const result = service.indexWorkspaceDocs('ws-1', docsDir);
       expect(result.indexed).toBe(1);
       expect(result.skipped).toBe(0);
@@ -886,7 +933,7 @@ describe('MemoryLifecycleService', () => {
     });
 
     it('ignores non-markdown files', () => {
-      writeFileSync(join(docsDir, 'README.md'), '# Docs');
+      writeFileSync(join(docsDir, 'README.md'), '# Docs\n\nDocumentation overview for the project with detailed sections.');
       writeFileSync(join(docsDir, 'data.json'), '{}');
       writeFileSync(join(docsDir, 'script.ts'), 'console.log()');
 
@@ -905,11 +952,11 @@ describe('MemoryLifecycleService', () => {
       mkdirSync(join(docsDir, 'node_modules', 'pkg'), { recursive: true });
       mkdirSync(join(docsDir, '.git'), { recursive: true });
 
-      writeFileSync(join(docsDir, 'README.md'), '# Root doc');
-      writeFileSync(join(docsDir, 'docs', 'adr', 'decision-001.md'), '# ADR 1');
-      writeFileSync(join(docsDir, 'notes', 'weekly.md'), '# Weekly notes');
-      writeFileSync(join(docsDir, 'node_modules', 'pkg', 'README.md'), '# Pkg readme');
-      writeFileSync(join(docsDir, '.git', 'config.md'), '# Git config');
+      writeFileSync(join(docsDir, 'README.md'), '# Root doc\n\nRoot documentation file with detailed project information.');
+      writeFileSync(join(docsDir, 'docs', 'adr', 'decision-001.md'), '# ADR 1\n\nArchitecture decision record for database choice with rationale.');
+      writeFileSync(join(docsDir, 'notes', 'weekly.md'), '# Weekly notes\n\nWeekly engineering notes with progress updates and blockers.');
+      writeFileSync(join(docsDir, 'node_modules', 'pkg', 'README.md'), '# Pkg readme\n\nPackage documentation that should be skipped by indexer.');
+      writeFileSync(join(docsDir, '.git', 'config.md'), '# Git config\n\nGit configuration file that should be skipped by indexer.');
 
       const result = service.indexWorkspaceDocs('ws-1', docsDir);
       expect(result.indexed).toBe(3);

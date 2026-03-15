@@ -14,6 +14,7 @@ export interface FtsCandidate {
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
+  durable: boolean;
   ftsRank: number;
 }
 
@@ -51,7 +52,7 @@ export function searchFts5(
 
   params.push(effectiveLimit);
 
-  const sql = `SELECT m.id, m.description, m.content, m.memory_type, m.confidence, m.scope, m.source_type, m.created_at, m.last_reinforced_at, rank
+  const sql = `SELECT m.id, m.description, m.content, m.memory_type, m.confidence, m.scope, m.source_type, m.created_at, m.last_reinforced_at, m.durable, rank
 FROM memories_fts
 JOIN memories m ON m.id = memories_fts.memory_id
 WHERE ${conditions.join(' AND ')}
@@ -68,6 +69,7 @@ LIMIT ?`;
     source_type: string;
     created_at: string;
     last_reinforced_at: string | null;
+    durable: number;
     rank: number;
   }>;
   try {
@@ -86,6 +88,7 @@ LIMIT ?`;
     sourceType: row.source_type,
     createdAt: row.created_at,
     lastReinforcedAt: row.last_reinforced_at,
+    durable: Boolean(row.durable),
     ftsRank: row.rank,
   }));
 }

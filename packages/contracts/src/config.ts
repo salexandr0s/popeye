@@ -73,6 +73,13 @@ export const WorkspaceConfigSchema = z.object({
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 
+export const BudgetAllocationConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  minPerType: z.number().int().nonnegative().default(1),
+  maxPerType: z.number().int().positive().default(10),
+});
+export type BudgetAllocationConfig = z.infer<typeof BudgetAllocationConfigSchema>;
+
 export const MemoryConfigSchema = z.object({
   confidenceHalfLifeDays: z.number().positive().default(30),
   archiveThreshold: z.number().min(0).max(1).default(0.1),
@@ -81,6 +88,8 @@ export const MemoryConfigSchema = z.object({
   dailySummaryHour: z.number().int().min(0).max(23).default(2),
   docIndexEnabled: z.boolean().default(true),
   docIndexIntervalHours: z.number().int().positive().default(6),
+  budgetAllocation: BudgetAllocationConfigSchema.default({}),
+  qualitySweepEnabled: z.boolean().default(false),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

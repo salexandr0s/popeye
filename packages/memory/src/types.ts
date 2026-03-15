@@ -23,4 +23,12 @@ export interface MemoryRecord {
   lastReinforcedAt: string | null;
   archivedAt: string | null;
   createdAt: string;
+  durable: boolean;
+}
+
+export interface StoreMemoryResult {
+  memoryId: string;
+  embedded: boolean;
+  rejected?: boolean | undefined;
+  rejectionReason?: string | undefined;
 }

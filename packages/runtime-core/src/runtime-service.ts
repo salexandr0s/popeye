@@ -437,6 +437,7 @@ export class PopeyeRuntimeService {
       embeddingClient,
       vecAvailable: () => this.vecAvailable,
       halfLifeDays: config.memory.confidenceHalfLifeDays,
+      budgetConfig: config.memory.budgetAllocation,
     });
     this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch);
 

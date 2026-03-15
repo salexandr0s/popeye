@@ -1,8 +1,9 @@
 import type { MemoryType } from './types.js';
 
-import { computeConfidenceDecay, computeRecencyScore, computeScopeMatchScore, normalizeRelevanceScore } from './pure-functions.js';
+import { computeConfidenceDecay, computeJaccardRelevance, computeRecencyScore, computeScopeMatchScore, normalizeRelevanceScore } from './pure-functions.js';
 import type { FtsCandidate } from './fts5-search.js';
 import type { VecCandidate } from './vec-search.js';
+import type { ScoringWeights } from './strategy.js';
 
 export interface ScoredCandidate {
   memoryId: string;
@@ -15,12 +16,14 @@ export interface ScoredCandidate {
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
+  durable: boolean;
   score: number;
   scoreBreakdown: {
     relevance: number;
     recency: number;
     confidence: number;
     scopeMatch: number;
+    entityBoost?: number;
   };
 }
 
@@ -35,14 +38,34 @@ export interface VecOnlyMetadata {
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
+  durable: boolean;
+}
+
+const DEFAULT_WEIGHTS: ScoringWeights = {
+  relevance: 0.40,
+  recency: 0.25,
+  confidence: 0.20,
+  scopeMatch: 0.15,
+  entityBoost: 0.00,
+};
+
+export interface RerankParams {
+  halfLifeDays: number;
+  queryScope?: string | undefined;
+  now?: Date | undefined;
+  vecOnlyMetadata?: Map<string, VecOnlyMetadata> | undefined;
+  weights?: ScoringWeights | undefined;
+  queryText?: string | undefined;
+  entityMatches?: Map<string, number> | undefined;
 }
 
 export function rerankAndMerge(
   ftsCandidates: FtsCandidate[],
   vecCandidates: VecCandidate[],
-  params: { halfLifeDays: number; queryScope?: string; now?: Date; vecOnlyMetadata?: Map<string, VecOnlyMetadata> },
+  params: RerankParams,
 ): ScoredCandidate[] {
   const now = params.now ?? new Date();
+  const w = params.weights ?? DEFAULT_WEIGHTS;
 
   // Index FTS candidates by memoryId
   const ftsMap = new Map<string, FtsCandidate>();
@@ -72,17 +95,37 @@ export function rerankAndMerge(
     const ftsRelevance = fts ? normalizeRelevanceScore(fts.ftsRank) : 0;
     const vecDistance = vecMap.get(id);
     const vecRelevance = vecDistance !== undefined ? 1 - vecDistance : 0;
-    const relevance = Math.max(ftsRelevance, vecRelevance);
+
+    // Jaccard fallback: when a candidate has FTS relevance but NO vec relevance and queryText is provided
+    let relevance = Math.max(ftsRelevance, vecRelevance);
+    if (ftsRelevance > 0 && vecDistance === undefined && params.queryText) {
+      const jaccardRelevance = computeJaccardRelevance(params.queryText, meta.content) * 0.8;
+      relevance = Math.max(ftsRelevance, jaccardRelevance);
+    }
 
     const recency = computeRecencyScore(meta.createdAt, now);
 
     const referenceDate = meta.lastReinforcedAt ?? meta.createdAt;
     const daysSinceReinforcement = (now.getTime() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
-    const effectiveConfidence = computeConfidenceDecay(meta.confidence, daysSinceReinforcement, params.halfLifeDays);
+    const effectiveHalfLife = meta.durable ? params.halfLifeDays * 10 : params.halfLifeDays;
+    const effectiveConfidence = computeConfidenceDecay(meta.confidence, daysSinceReinforcement, effectiveHalfLife);
 
     const scopeMatch = computeScopeMatchScore(meta.scope, params.queryScope);
 
-    const score = (0.4 * relevance) + (0.25 * recency) + (0.2 * effectiveConfidence) + (0.15 * scopeMatch);
+    const entityMatchCount = params.entityMatches?.get(id) ?? 0;
+    const entityBoostScore = Math.min(1, entityMatchCount / 3);
+
+    const score = (w.relevance * relevance) + (w.recency * recency) + (w.confidence * effectiveConfidence) + (w.scopeMatch * scopeMatch) + (w.entityBoost * entityBoostScore);
+
+    const scoreBreakdown: ScoredCandidate['scoreBreakdown'] = {
+      relevance,
+      recency,
+      confidence: effectiveConfidence,
+      scopeMatch,
+    };
+    if (entityBoostScore > 0) {
+      scoreBreakdown.entityBoost = entityBoostScore;
+    }
 
     results.push({
       memoryId: meta.memoryId,
@@ -95,13 +138,9 @@ export function rerankAndMerge(
       sourceType: meta.sourceType,
       createdAt: meta.createdAt,
       lastReinforcedAt: meta.lastReinforcedAt,
+      durable: meta.durable,
       score,
-      scoreBreakdown: {
-        relevance,
-        recency,
-        confidence: effectiveConfidence,
-        scopeMatch,
-      },
+      scoreBreakdown,
     });
   }
 

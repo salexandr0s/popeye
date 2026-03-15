@@ -10,7 +10,9 @@ import type {
 } from '@popeye/contracts';
 import { MemoryAuditResponseSchema } from '@popeye/contracts';
 import {
+  assessMemoryQuality,
   classifyMemoryType,
+  type StoreMemoryResult,
   computeConfidenceDecay,
   computeReinforcedConfidence,
   computeTextOverlap,
@@ -63,6 +65,7 @@ const DecayCandidateRowSchema = z.object({
   confidence: z.number(),
   last_reinforced_at: z.string().nullable(),
   created_at: z.string(),
+  durable: z.number(),
 });
 
 const ConsolidationRowSchema = z.object({
@@ -195,6 +198,7 @@ export interface MemoryMaintenanceResult {
   archived: number;
   merged: number;
   deduped: number;
+  qualityArchived: number;
 }
 
 export interface MemoryPromotionResponse {
@@ -216,7 +220,7 @@ export class MemoryLifecycleService {
     this.searchService = searchService;
   }
 
-  insertMemory(input: MemoryInsertInput): { memoryId: string; embedded: boolean } {
+  insertMemory(input: MemoryInsertInput): StoreMemoryResult {
     const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
     return this.searchService.storeMemory({
       description: input.description,
@@ -271,7 +275,7 @@ export class MemoryLifecycleService {
     let archived = 0;
 
     const rows = z.array(DecayCandidateRowSchema).parse(this.databases.memory
-      .prepare('SELECT id, confidence, last_reinforced_at, created_at FROM memories WHERE archived_at IS NULL')
+      .prepare('SELECT id, confidence, last_reinforced_at, created_at, durable FROM memories WHERE archived_at IS NULL')
       .all());
 
     const updateStmt = this.databases.memory.prepare('UPDATE memories SET confidence = ? WHERE id = ?');
@@ -284,7 +288,8 @@ export class MemoryLifecycleService {
         const daysSince = (now.getTime() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
         if (daysSince <= 0) continue;
 
-        const newConfidence = computeConfidenceDecay(row.confidence, daysSince, halfLife);
+        const effectiveHalfLife = row.durable ? halfLife * 10 : halfLife;
+        const newConfidence = computeConfidenceDecay(row.confidence, daysSince, effectiveHalfLife);
         if (Math.abs(newConfidence - row.confidence) < 0.001) continue;
 
         if (shouldArchive(newConfidence, archiveThreshold)) {
@@ -303,8 +308,8 @@ export class MemoryLifecycleService {
     return { decayed, archived };
   }
 
-  runConsolidation(): { merged: number; deduped: number } {
-    if (!this.config.memory.consolidationEnabled) return { merged: 0, deduped: 0 };
+  runConsolidation(): { merged: number; deduped: number; qualityArchived: number } {
+    if (!this.config.memory.consolidationEnabled) return { merged: 0, deduped: 0, qualityArchived: 0 };
 
     const nowStr = nowIso();
     let merged = 0;
@@ -382,7 +387,31 @@ export class MemoryLifecycleService {
     });
     tx();
 
-    return { merged, deduped };
+    // Quality sweep: archive memories that fail quality gates
+    let qualityArchived = 0;
+    if (this.config.memory.qualitySweepEnabled) {
+      const activeRows = z.array(z.object({ id: z.string(), description: z.string(), content: z.string() })).parse(
+        this.databases.memory
+          .prepare('SELECT id, description, content FROM memories WHERE archived_at IS NULL')
+          .all(),
+      );
+
+      const sweepTx = this.databases.memory.transaction(() => {
+        for (const row of activeRows) {
+          const assessment = assessMemoryQuality(row.description, row.content);
+          if (!assessment.pass) {
+            this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, row.id);
+            this.databases.memory
+              .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
+              .run(randomUUID(), row.id, 'quality_archived', JSON.stringify({ reason: assessment.reason, score: assessment.score }), nowStr);
+            qualityArchived++;
+          }
+        }
+      });
+      sweepTx();
+    }
+
+    return { merged, deduped, qualityArchived };
   }
 
   generateDailySummary(date: string, workspaceId: string): { markdownPath: string; memoryId: string } | null {
@@ -427,6 +456,7 @@ export class MemoryLifecycleService {
       memoryType: 'episodic',
     });
 
+    if (result.rejected) return null;
     return { markdownPath, memoryId: result.memoryId };
   }
 
@@ -449,6 +479,9 @@ export class MemoryLifecycleService {
         sourceRef: runId,
         sourceRefType: 'run',
       });
+
+      // Skip rejected chunks (quality gate)
+      if (result.rejected) continue;
 
       // Store provenance columns
       this.databases.memory
@@ -474,6 +507,7 @@ export class MemoryLifecycleService {
         lastReinforcedAt: null,
         archivedAt: null,
         createdAt: now,
+        durable: false,
       });
     }
 
@@ -523,6 +557,12 @@ export class MemoryLifecycleService {
         scope: workspaceId,
         memoryType: 'semantic',
       });
+
+      // Skip if quality gate rejected
+      if (result.rejected) {
+        skipped++;
+        continue;
+      }
 
       // Override dedup_key to use file-path-based key for stable identity
       this.databases.memory

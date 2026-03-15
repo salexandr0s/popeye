@@ -132,3 +132,114 @@ export function computeScopeMatchScore(memoryScope: string, queryScope: string |
   if (memoryScope === 'global') return 0.7;
   return 0.1;
 }
+
+// --- Query Sanitization ---
+
+const MEMORY_BLOCK_PATTERNS = [
+  /\[Memory:[\s\S]*?\[\/Memory\]/gi,      // [Memory: ...][/Memory] paired
+  /\[Retrieved Memory\][\s\S]*?\[\/Retrieved Memory\]/gi, // retrieved memory blocks
+  /<gigabrain-context>[\s\S]*?<\/gigabrain-context>/gi, // gigabrain injection
+  /<memory(?:\s[^>]*)?>[\s\S]*?<\/memory>/gi, // <memory>...</memory>
+  /<!--\s*memory[\s\S]*?-->/gi,            // <!-- memory ... -->
+  /\[Memory:[^\]]*\]/gi,                   // standalone [Memory: ...] without closing tag
+];
+
+export function sanitizeSearchQuery(query: string): string {
+  let result = query;
+  for (const pattern of MEMORY_BLOCK_PATTERNS) {
+    result = result.replace(pattern, ' ');
+  }
+  return result.replace(/\s+/g, ' ').trim();
+}
+
+// --- Durable Pattern Detection ---
+
+const DURABLE_NAME_PATTERN = /\b(my name is|i am called|name:\s*)\b/i;
+const DURABLE_DATE_PATTERN = /\b(birthday|born on|anniversary)\b/i;
+const DURABLE_ROLE_PATTERN = /\b(i work as|my role is|i am a|my job is)\b/i;
+const DURABLE_IDENTITY_PATTERN = /\b(my email|my phone|i live in|i am from)\b/i;
+
+export function isDurableMemory(content: string): boolean {
+  if (DURABLE_NAME_PATTERN.test(content)) return true;
+  if (DURABLE_DATE_PATTERN.test(content)) return true;
+  if (DURABLE_ROLE_PATTERN.test(content)) return true;
+  if (DURABLE_IDENTITY_PATTERN.test(content)) return true;
+  return false;
+}
+
+// --- Jaccard Similarity Fallback ---
+
+export function computeJaccardRelevance(query: string, candidateContent: string): number {
+  const queryTokens = new Set(query.toLowerCase().split(/\s+/).filter(Boolean));
+  const contentWords = candidateContent.toLowerCase().split(/\s+/).filter(Boolean);
+  const contentTokens = new Set(contentWords.slice(0, 500));
+
+  if (queryTokens.size === 0 && contentTokens.size === 0) return 0;
+  if (queryTokens.size === 0 || contentTokens.size === 0) return 0;
+
+  let intersection = 0;
+  for (const t of queryTokens) {
+    if (contentTokens.has(t)) intersection++;
+  }
+  const union = queryTokens.size + contentTokens.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// --- Quality Assessment ---
+
+export interface QualityAssessment {
+  pass: boolean;
+  reason?: string;
+  score: number;
+}
+
+const MIN_CONTENT_LENGTH = 20;
+const REPETITION_THRESHOLD = 0.9;
+const SYSTEM_PROMPT_PATTERNS = [
+  /^you are a helpful/i,
+  /^you are an ai/i,
+  /^as an ai language model/i,
+  /^i am a large language model/i,
+  /^system:\s/i,
+];
+
+export function assessMemoryQuality(description: string, content: string): QualityAssessment {
+  if (!description.trim()) {
+    return { pass: false, reason: 'empty_description', score: 0 };
+  }
+
+  const trimmed = content.trim();
+  if (trimmed.length < MIN_CONTENT_LENGTH) {
+    return { pass: false, reason: 'content_too_short', score: 0.1 };
+  }
+
+  // Check for repetitive tokens
+  const tokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length > 0) {
+    const freq = new Map<string, number>();
+    for (const t of tokens) freq.set(t, (freq.get(t) ?? 0) + 1);
+    const maxFreq = Math.max(...freq.values());
+    if (maxFreq / tokens.length > REPETITION_THRESHOLD) {
+      return { pass: false, reason: 'repetitive_content', score: 0.1 };
+    }
+  }
+
+  // Check for content identical to description
+  if (trimmed.toLowerCase() === description.trim().toLowerCase()) {
+    return { pass: false, reason: 'content_equals_description', score: 0.2 };
+  }
+
+  // Check for system prompt echoes
+  for (const pattern of SYSTEM_PROMPT_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return { pass: false, reason: 'system_prompt_echo', score: 0.1 };
+    }
+  }
+
+  // Compute a rough quality score based on content richness
+  const lengthScore = Math.min(1, trimmed.length / 200);
+  const uniqueTokenRatio = tokens.length > 0 ? new Set(tokens).size / tokens.length : 0;
+  const score = 0.5 * lengthScore + 0.5 * uniqueTokenRatio;
+
+  return { pass: true, score };
+}

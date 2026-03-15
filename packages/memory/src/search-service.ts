@@ -1,10 +1,13 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 
-import type { MemoryRecord, MemorySearchResponse, MemorySearchResult, MemoryType } from './types.js';
+import type { MemoryRecord, MemorySearchResponse, MemorySearchResult, MemoryType, StoreMemoryResult } from './types.js';
 import { redactText } from '@popeye/observability';
 
-import { classifyMemoryType, computeDedupKey, computeReinforcedConfidence } from './pure-functions.js';
+import { assessMemoryQuality, classifyMemoryType, computeDedupKey, computeReinforcedConfidence, isDurableMemory, sanitizeSearchQuery } from './pure-functions.js';
+import { extractEntities } from './entity-extraction.js';
+import { applyBudgetAllocation, type BudgetConfig } from './budget-allocation.js';
+import { classifyQueryStrategy, getStrategyWeights } from './strategy.js';
 import type { EmbeddingClient } from './embedding-client.js';
 import { searchFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
 import { rerankAndMerge } from './scoring.js';
@@ -16,8 +19,9 @@ export class MemorySearchService {
   private readonly embeddingClient: EmbeddingClient;
   private readonly getVecAvailable: () => boolean;
   private readonly halfLifeDays: number;
+  private readonly budgetConfig: BudgetConfig | undefined;
 
-  constructor(opts: { db: Database.Database; embeddingClient: EmbeddingClient; vecAvailable: boolean | (() => boolean); halfLifeDays?: number }) {
+  constructor(opts: { db: Database.Database; embeddingClient: EmbeddingClient; vecAvailable: boolean | (() => boolean); halfLifeDays?: number; budgetConfig?: BudgetConfig | undefined }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
     if (typeof opts.vecAvailable === 'function') {
@@ -28,6 +32,7 @@ export class MemorySearchService {
       this.getVecAvailable = () => vecAvailable;
     }
     this.halfLifeDays = opts.halfLifeDays ?? 30;
+    this.budgetConfig = opts.budgetConfig;
   }
 
   async search(query: {
@@ -38,7 +43,7 @@ export class MemorySearchService {
     limit?: number;
     includeContent?: boolean;
   }): Promise<MemorySearchResponse> {
-    const queryText = query.query;
+    const queryText = sanitizeSearchQuery(query.query);
     const minConfidence = query.minConfidence ?? 0.1;
     const limit = query.limit ?? 20;
     const includeContent = query.includeContent ?? false;
@@ -47,8 +52,12 @@ export class MemorySearchService {
 
     const start = performance.now();
 
+    const strategy = classifyQueryStrategy(queryText);
+    const weights = getStrategyWeights(strategy);
+
     let searchMode: 'hybrid' | 'fts_only' | 'vec_only' = 'fts_only';
     let results: MemorySearchResult[];
+    let totalCandidates = 0;
 
     const ftsFilters: { scope?: string; minConfidence?: number; memoryTypes?: MemoryType[]; limit?: number } = {
       minConfidence,
@@ -59,6 +68,29 @@ export class MemorySearchService {
 
     const rerankParams: { halfLifeDays: number; queryScope?: string } = { halfLifeDays: this.halfLifeDays };
     if (scope !== undefined) rerankParams.queryScope = scope;
+
+    // Entity matching for query boost (batched lookup)
+    const queryEntities = extractEntities(queryText);
+    const entityMatches = new Map<string, number>();
+
+    if (queryEntities.length > 0) {
+      const conditions = queryEntities.map(() => '(canonical_name = ? AND entity_type = ?)').join(' OR ');
+      const bindValues = queryEntities.flatMap((qe) => [qe.canonicalName, qe.type]);
+      const entityRows = this.db.prepare(
+        `SELECT id FROM memory_entities WHERE ${conditions}`,
+      ).all(...bindValues) as Array<{ id: string }>;
+      const entityIds = entityRows.map((r) => r.id);
+
+      if (entityIds.length > 0) {
+        const placeholders = entityIds.map(() => '?').join(',');
+        const mentions = this.db.prepare(
+          `SELECT memory_id, COUNT(*) as cnt FROM memory_entity_mentions WHERE entity_id IN (${placeholders}) GROUP BY memory_id`,
+        ).all(...entityIds) as Array<{ memory_id: string; cnt: number }>;
+        for (const m of mentions) {
+          entityMatches.set(m.memory_id, m.cnt);
+        }
+      }
+    }
 
     const mapResult = (c: ScoredCandidate): MemorySearchResult => ({
       id: c.memoryId,
@@ -96,8 +128,8 @@ export class MemorySearchService {
       if (vecOnlyIds.length > 0) {
         const placeholders = vecOnlyIds.map(() => '?').join(',');
         const rows = this.db
-          .prepare(`SELECT id, description, content, memory_type, confidence, scope, source_type, created_at, last_reinforced_at FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
-          .all(...vecOnlyIds) as Array<{ id: string; description: string; content: string; memory_type: string; confidence: number; scope: string; source_type: string; created_at: string; last_reinforced_at: string | null }>;
+          .prepare(`SELECT id, description, content, memory_type, confidence, scope, source_type, created_at, last_reinforced_at, durable FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
+          .all(...vecOnlyIds) as Array<{ id: string; description: string; content: string; memory_type: string; confidence: number; scope: string; source_type: string; created_at: string; last_reinforced_at: string | null; durable: number }>;
         for (const row of rows) {
           vecOnlyMetadata.set(row.id, {
             memoryId: row.id,
@@ -109,26 +141,32 @@ export class MemorySearchService {
             sourceType: row.source_type,
             createdAt: row.created_at,
             lastReinforcedAt: row.last_reinforced_at,
+            durable: Boolean(row.durable),
           });
         }
       }
 
-      const scored = rerankAndMerge(ftsCandidates, vecCandidates, { ...rerankParams, vecOnlyMetadata });
-      results = scored.slice(0, limit).map(mapResult);
+      const scored = rerankAndMerge(ftsCandidates, vecCandidates, { ...rerankParams, vecOnlyMetadata, weights, queryText, entityMatches });
+      totalCandidates = scored.length;
+      const limited = this.budgetConfig ? applyBudgetAllocation(scored, limit, this.budgetConfig) : scored.slice(0, limit);
+      results = limited.map(mapResult);
     } else {
       const ftsCandidates = searchFts5(this.db, queryText, ftsFilters);
-      const scored = rerankAndMerge(ftsCandidates, [], rerankParams);
-      results = scored.slice(0, limit).map(mapResult);
+      const scored = rerankAndMerge(ftsCandidates, [], { ...rerankParams, weights, queryText, entityMatches });
+      totalCandidates = scored.length;
+      const limited = this.budgetConfig ? applyBudgetAllocation(scored, limit, this.budgetConfig) : scored.slice(0, limit);
+      results = limited.map(mapResult);
     }
 
     const latencyMs = performance.now() - start;
 
     return {
       results,
-      query: queryText,
-      totalCandidates: results.length,
+      query: query.query,
+      totalCandidates,
       latencyMs,
       searchMode,
+      strategy,
     };
   }
 
@@ -139,15 +177,15 @@ export class MemorySearchService {
     content: string;
     confidence: number;
     scope: string;
-    memoryType?: MemoryType;
-    sourceRef?: string;
-    sourceRefType?: string;
-  }): { memoryId: string; embedded: boolean } {
+    memoryType?: MemoryType | undefined;
+    sourceRef?: string | undefined;
+    sourceRefType?: string | undefined;
+  }): StoreMemoryResult {
     const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
     const dedupKey = computeDedupKey(input.description, input.content, input.scope);
     const now = new Date().toISOString();
 
-    // Check existing by dedup_key — reinforce instead
+    // Check existing by dedup_key — reinforce instead (skip quality gate for reinforcement)
     const existing = this.db.prepare('SELECT id, confidence FROM memories WHERE dedup_key = ?').get(dedupKey) as { id: string; confidence: number } | undefined;
 
     if (existing) {
@@ -157,16 +195,23 @@ export class MemorySearchService {
       return { memoryId: existing.id, embedded: false };
     }
 
+    // Quality gate — reject junk before new storage
+    const quality = assessMemoryQuality(input.description, input.content);
+    if (!quality.pass) {
+      return { memoryId: '', embedded: false, rejected: true, rejectionReason: quality.reason };
+    }
+
     // Redact content
     const { text: redactedContent } = redactText(input.content);
 
     const memoryId = randomUUID();
+    const durable = isDurableMemory(redactedContent) ? 1 : 0;
 
     // INSERT into memories
     const insertStmt = this.db.prepare(
-      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, created_at, durable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
-    insertStmt.run(memoryId, input.description, input.classification, input.sourceType, redactedContent, input.confidence, input.scope, memoryType, dedupKey, now, now);
+    insertStmt.run(memoryId, input.description, input.classification, input.sourceType, redactedContent, input.confidence, input.scope, memoryType, dedupKey, now, now, durable);
 
     // Sync FTS insert
     syncFtsInsert(this.db, memoryId, input.description, redactedContent);
@@ -184,6 +229,33 @@ export class MemorySearchService {
 
     // Record memory_events
     this.db.prepare("INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, 'created', '{}', ?)").run(randomUUID(), memoryId, now);
+
+    // Extract and persist entity mentions (batched in transaction)
+    const entities = extractEntities(redactedContent);
+    if (entities.length > 0) {
+      const persistEntities = this.db.transaction(() => {
+        for (const entity of entities) {
+          const existingEntity = this.db.prepare(
+            'SELECT id FROM memory_entities WHERE canonical_name = ? AND entity_type = ?',
+          ).get(entity.canonicalName, entity.type) as { id: string } | undefined;
+
+          let entityId: string;
+          if (existingEntity) {
+            entityId = existingEntity.id;
+          } else {
+            entityId = randomUUID();
+            this.db.prepare(
+              'INSERT INTO memory_entities (id, name, entity_type, canonical_name, created_at) VALUES (?, ?, ?, ?, ?)',
+            ).run(entityId, entity.name, entity.type, entity.canonicalName, now);
+          }
+
+          this.db.prepare(
+            'INSERT INTO memory_entity_mentions (id, memory_id, entity_id, mention_count, created_at) VALUES (?, ?, ?, 1, ?)',
+          ).run(randomUUID(), memoryId, entityId, now);
+        }
+      });
+      persistEntities();
+    }
 
     // If embeddable and vec available: generate embedding, insert vec
     let embedded = false;
@@ -203,11 +275,12 @@ export class MemorySearchService {
     content: string;
     confidence: number;
     scope: string;
-    memoryType?: MemoryType;
-    sourceRef?: string;
-    sourceRefType?: string;
-  }): Promise<{ memoryId: string; embedded: boolean }> {
+    memoryType?: MemoryType | undefined;
+    sourceRef?: string | undefined;
+    sourceRefType?: string | undefined;
+  }): Promise<StoreMemoryResult> {
     const result = this.storeMemory(input);
+    if (result.rejected) return result;
 
     if (input.classification === 'embeddable' && this.getVecAvailable() && this.embeddingClient.enabled) {
       try {
@@ -227,7 +300,7 @@ export class MemorySearchService {
 
   getMemoryContent(memoryId: string): MemoryRecord | null {
     const row = this.db.prepare(
-      'SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE id = ?',
+      'SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp, durable FROM memories WHERE id = ?',
     ).get(memoryId) as {
       id: string;
       description: string;
@@ -243,6 +316,7 @@ export class MemorySearchService {
       created_at: string;
       source_run_id: string | null;
       source_timestamp: string | null;
+      durable: number;
     } | undefined;
 
     if (!row) return null;
@@ -262,6 +336,7 @@ export class MemorySearchService {
       lastReinforcedAt: row.last_reinforced_at,
       archivedAt: row.archived_at,
       createdAt: row.created_at,
+      durable: Boolean(row.durable),
     };
   }
 

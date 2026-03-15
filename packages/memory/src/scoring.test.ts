@@ -14,6 +14,7 @@ function makeFtsCandidate(overrides: Partial<FtsCandidate> & { memoryId: string 
     sourceType: 'curated_memory',
     createdAt: new Date().toISOString(),
     lastReinforcedAt: null,
+    durable: false,
     ftsRank: -1,
     ...overrides,
   };

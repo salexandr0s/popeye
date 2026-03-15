@@ -400,6 +400,30 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'ALTER TABLE memories_fts_new RENAME TO memories_fts;',
     ],
   },
+  {
+    id: '007-memory-enhancements',
+    statements: [
+      'ALTER TABLE memories ADD COLUMN durable INTEGER NOT NULL DEFAULT 0;',
+      'CREATE INDEX idx_memories_durable ON memories(durable) WHERE durable = 1;',
+      `CREATE TABLE memory_entities (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        canonical_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX idx_memory_entities_canonical ON memory_entities(canonical_name, entity_type);',
+      `CREATE TABLE memory_entity_mentions (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        mention_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX idx_mem_entity_mentions_memory ON memory_entity_mentions(memory_id);',
+      'CREATE INDEX idx_mem_entity_mentions_entity ON memory_entity_mentions(entity_id);',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

@@ -23,7 +23,8 @@ function createTestDb(): Database.Database {
       archived_at TEXT,
       source_run_id TEXT,
       source_timestamp TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      durable INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX idx_memories_dedup_key ON memories(dedup_key) WHERE dedup_key IS NOT NULL;
     CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
@@ -39,6 +40,21 @@ function createTestDb(): Database.Database {
       memory_id TEXT NOT NULL,
       type TEXT NOT NULL,
       payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_entities (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_memory_entities_canonical ON memory_entities(canonical_name, entity_type);
+    CREATE TABLE memory_entity_mentions (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      mention_count INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
   `);
@@ -85,19 +101,19 @@ describe('MemorySearchService', () => {
 
     it('reinforces existing memory with same dedup key', () => {
       const first = service.storeMemory({
-        description: 'Repeated memory',
+        description: 'Repeated memory about preferences',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Same content',
+        content: 'Same content that is long enough to pass quality checks',
         confidence: 0.5,
         scope: 'workspace',
       });
 
       const second = service.storeMemory({
-        description: 'Repeated memory',
+        description: 'Repeated memory about preferences',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Same content',
+        content: 'Same content that is long enough to pass quality checks',
         confidence: 0.5,
         scope: 'workspace',
       });
@@ -111,10 +127,10 @@ describe('MemorySearchService', () => {
 
     it('stores memory_sources when sourceRef provided', () => {
       service.storeMemory({
-        description: 'Sourced memory',
+        description: 'Sourced memory from run execution',
         classification: 'embeddable',
         sourceType: 'receipt',
-        content: 'From a run',
+        content: 'From a run that completed the database migration task successfully',
         confidence: 0.7,
         scope: 'workspace',
         sourceRef: 'run-123',
@@ -129,10 +145,10 @@ describe('MemorySearchService', () => {
 
     it('records creation event', () => {
       const result = service.storeMemory({
-        description: 'Evented memory',
+        description: 'Evented memory for lifecycle tracking',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Content',
+        content: 'Content that records a creation event in the memory system',
         confidence: 0.8,
         scope: 'workspace',
       });
@@ -144,19 +160,19 @@ describe('MemorySearchService', () => {
 
     it('records reinforcement event for duplicates', () => {
       const first = service.storeMemory({
-        description: 'Dup',
+        description: 'Duplicate memory for reinforcement test',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Same',
+        content: 'Same duplicate content repeated for testing reinforcement tracking',
         confidence: 0.5,
         scope: 'workspace',
       });
 
       service.storeMemory({
-        description: 'Dup',
+        description: 'Duplicate memory for reinforcement test',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Same',
+        content: 'Same duplicate content repeated for testing reinforcement tracking',
         confidence: 0.5,
         scope: 'workspace',
       });
@@ -197,10 +213,10 @@ describe('MemorySearchService', () => {
 
     it('respects explicit memoryType override', () => {
       const result = service.storeMemory({
-        description: 'Override test',
+        description: 'Override test for memory type classification',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Content',
+        content: 'Content for testing explicit memory type override behavior',
         confidence: 0.8,
         scope: 'workspace',
         memoryType: 'episodic',
@@ -307,7 +323,7 @@ describe('MemorySearchService', () => {
           description: `Memory ${i} about testing`,
           classification: 'embeddable',
           sourceType: 'curated_memory',
-          content: `Testing content number ${i}`,
+          content: `Testing content number ${i} with detailed information about the test scenario`,
           confidence: 0.8,
           scope: 'workspace',
         });
@@ -330,10 +346,10 @@ describe('MemorySearchService', () => {
 
     it('returns full record for existing memory', () => {
       const { memoryId } = service.storeMemory({
-        description: 'Full record',
+        description: 'Full record for content retrieval test',
         classification: 'embeddable',
         sourceType: 'curated_memory',
-        content: 'Full content here',
+        content: 'Full content here with enough detail for quality gate',
         confidence: 0.8,
         scope: 'workspace',
       });
@@ -341,14 +357,107 @@ describe('MemorySearchService', () => {
       const record = service.getMemoryContent(memoryId);
       expect(record).not.toBeNull();
       expect(record!.id).toBe(memoryId);
-      expect(record!.description).toBe('Full record');
+      expect(record!.description).toBe('Full record for content retrieval test');
       expect(record!.classification).toBe('embeddable');
       expect(record!.sourceType).toBe('curated_memory');
-      expect(record!.content).toBe('Full content here');
+      expect(record!.content).toBe('Full content here with enough detail for quality gate');
       expect(record!.confidence).toBe(0.8);
       expect(record!.scope).toBe('workspace');
       expect(record!.memoryType).toBe('semantic');
       expect(record!.createdAt).toBeTruthy();
+    });
+  });
+
+  describe('entity extraction on store and search', () => {
+    it('creates entity records when storing memory with entity mentions', () => {
+      service.storeMemory({
+        description: 'Person preference for Alex',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'My name is Alex Smith and I prefer TypeScript over JavaScript for all projects',
+        confidence: 0.9,
+        scope: 'workspace',
+      });
+
+      const entities = db.prepare('SELECT name, entity_type, canonical_name FROM memory_entities').all() as Array<{ name: string; entity_type: string; canonical_name: string }>;
+      expect(entities.length).toBeGreaterThanOrEqual(1);
+
+      const tools = entities.filter((e) => e.entity_type === 'tool');
+      expect(tools.some((t) => t.canonical_name === 'typescript')).toBe(true);
+
+      const mentions = db.prepare('SELECT * FROM memory_entity_mentions').all();
+      expect(mentions.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('boosts search results when query matches stored entities', async () => {
+      // Store two memories — one mentioning TypeScript, one not
+      service.storeMemory({
+        description: 'TypeScript migration decision',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'We decided to use TypeScript for the entire codebase migration project',
+        confidence: 0.7,
+        scope: 'workspace',
+      });
+      service.storeMemory({
+        description: 'Generic coding standards document',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'Our coding standards require strict linting and comprehensive test coverage',
+        confidence: 0.7,
+        scope: 'workspace',
+      });
+
+      // Search with entity that matches first memory
+      const response = await service.search({
+        query: 'what is the TypeScript migration plan',
+        includeContent: true,
+      });
+
+      expect(response.results.length).toBeGreaterThanOrEqual(1);
+      // The TypeScript-mentioning memory should appear (entity + text relevance)
+      expect(response.results.some((r) => r.description === 'TypeScript migration decision')).toBe(true);
+    });
+  });
+
+  describe('totalCandidates', () => {
+    it('reports pre-limit candidate count', async () => {
+      for (let i = 0; i < 5; i++) {
+        service.storeMemory({
+          description: `Memory about deployment number ${i}`,
+          classification: 'embeddable',
+          sourceType: 'curated_memory',
+          content: `Deployment details and configuration for environment number ${i}`,
+          confidence: 0.8,
+          scope: 'workspace',
+        });
+      }
+
+      const response = await service.search({
+        query: 'deployment',
+        limit: 2,
+      });
+
+      expect(response.results.length).toBeLessThanOrEqual(2);
+      expect(response.totalCandidates).toBeGreaterThanOrEqual(response.results.length);
+    });
+  });
+
+  describe('query in response', () => {
+    it('returns the original query, not the sanitized version', async () => {
+      service.storeMemory({
+        description: 'Birthday fact about the user',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'The user birthday is March 15th according to their profile',
+        confidence: 0.9,
+        scope: 'workspace',
+      });
+
+      const queryWithInjection = '[Memory: some old context] birthday';
+      const response = await service.search({ query: queryWithInjection });
+
+      expect(response.query).toBe(queryWithInjection);
     });
   });
 });

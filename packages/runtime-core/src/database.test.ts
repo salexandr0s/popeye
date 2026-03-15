@@ -540,6 +540,7 @@ describe('openRuntimeDatabases', () => {
           '004-memory-consolidation-reason',
           '005-memory-cleanup',
           '006-memory-fts-stable-id',
+          '007-memory-enhancements',
         ]);
       } finally {
         databases.app.close();

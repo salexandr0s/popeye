@@ -29,6 +29,7 @@ export const MemoryRecordSchema = z.object({
   lastReinforcedAt: z.string().nullable().default(null),
   archivedAt: z.string().nullable().default(null),
   createdAt: z.string(),
+  durable: z.boolean().default(false),
 });
 export type MemoryRecord = z.infer<typeof MemoryRecordSchema>;
 
@@ -49,9 +50,13 @@ export const MemorySearchResultSchema = z.object({
     recency: z.number(),
     confidence: z.number(),
     scopeMatch: z.number(),
+    entityBoost: z.number().optional(),
   }),
 });
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>;
+
+export const QueryStrategySchema = z.enum(['factual', 'temporal', 'procedural', 'exploratory']);
+export type QueryStrategy = z.infer<typeof QueryStrategySchema>;
 
 export const MemorySearchResponseSchema = z.object({
   results: z.array(MemorySearchResultSchema),
@@ -59,6 +64,7 @@ export const MemorySearchResponseSchema = z.object({
   totalCandidates: z.number().int().nonnegative(),
   latencyMs: z.number().nonnegative(),
   searchMode: z.enum(['hybrid', 'fts_only', 'vec_only']),
+  strategy: QueryStrategySchema.optional(),
 });
 export type MemorySearchResponse = z.infer<typeof MemorySearchResponseSchema>;
 
