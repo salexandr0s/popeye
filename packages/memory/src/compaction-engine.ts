@@ -170,6 +170,7 @@ export class CompactionEngine {
     // 4. Condensed passes: group leaf summaries and condense until single root
     let currentLevel = leafSummaries;
     let depth = 1;
+    const updateParent = this.db.prepare('UPDATE memory_summaries SET parent_id = ? WHERE id = ?');
 
     while (currentLevel.length > 1) {
       const groups = groupByFanout(currentLevel, this.config.fanout);
@@ -189,12 +190,17 @@ export class CompactionEngine {
         const id = insertSummary(this.db, {
           runId,
           workspaceId,
-          parentId: null, // parent linkage is by run+depth; tree structure built on read
           depth,
           content: summaryText,
           startTime,
           endTime,
         });
+
+        // Link children to this parent
+        for (const child of group) {
+          updateParent.run(id, child.id);
+        }
+
         summaryIds.push(id);
         nextLevel.push({ id, content: summaryText });
       }

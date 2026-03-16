@@ -625,3 +625,215 @@ describe('hybrid search', () => {
     expect(response.results[0]!.score).toBeGreaterThanOrEqual(response.results[1]!.score);
   });
 });
+
+// ---------------------------------------------------------------------------
+// budgetFit tests
+// ---------------------------------------------------------------------------
+
+describe('budgetFit', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('fits results within token budget', async () => {
+    for (let i = 0; i < 5; i++) {
+      service.storeMemory({
+        description: `Budget memory ${i} about testing`,
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: `Content for budget test ${i} with some detail about the scenario`,
+        confidence: 0.8,
+        scope: 'workspace',
+      });
+    }
+
+    const result = await service.budgetFit({
+      query: 'budget testing',
+      maxTokens: 50, // Very small budget
+    });
+
+    expect(result.totalTokensUsed).toBeLessThanOrEqual(result.totalTokensBudget);
+    expect(result.totalTokensBudget).toBe(50);
+  });
+
+  it('drops results that exceed budget', async () => {
+    for (let i = 0; i < 10; i++) {
+      service.storeMemory({
+        description: `Overflow memory ${i} about topics`,
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: `Detailed content for overflow test ${i} with enough text to consume tokens`,
+        confidence: 0.8,
+        scope: 'workspace',
+      });
+    }
+
+    const result = await service.budgetFit({
+      query: 'overflow topics',
+      maxTokens: 30, // Tiny budget
+    });
+
+    expect(result.droppedCount + result.results.length + result.truncatedCount).toBeGreaterThan(0);
+    expect(result.totalTokensUsed).toBeLessThanOrEqual(30);
+  });
+
+  it('includes expansion policy metadata', async () => {
+    service.storeMemory({
+      description: 'Policy test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Content for expansion policy test with details',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const result = await service.budgetFit({
+      query: 'policy test',
+      maxTokens: 8000,
+    });
+
+    expect(result.expansionPolicy).toBeDefined();
+    expect(result.expansionPolicy!.risk).toBe('low');
+    expect(result.expansionPolicy!.route).toBe('answer_directly');
+  });
+
+  it('warns on high-risk queries', async () => {
+    service.storeMemory({
+      description: 'Risk test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Content for high risk test about everything',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const result = await service.budgetFit({
+      query: 'everything from last month',
+      maxTokens: 8000,
+    });
+
+    expect(result.expansionPolicy!.risk).toBe('high');
+    expect(result.expansionPolicy!.warning).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// describeMemory tests
+// ---------------------------------------------------------------------------
+
+describe('describeMemory', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns null for non-existent memory', () => {
+    expect(service.describeMemory('non-existent')).toBeNull();
+  });
+
+  it('returns metadata without content', () => {
+    const { memoryId } = service.storeMemory({
+      description: 'Describe test memory for metadata',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Full content here for describe test with details',
+      confidence: 0.9,
+      scope: 'workspace',
+    });
+
+    const desc = service.describeMemory(memoryId);
+    expect(desc).not.toBeNull();
+    expect(desc!.id).toBe(memoryId);
+    expect(desc!.description).toBe('Describe test memory for metadata');
+    expect(desc!.type).toBe('semantic');
+    expect(desc!.confidence).toBe(0.9);
+    expect(desc!.contentLength).toBeGreaterThan(0);
+    expect(desc!.eventCount).toBeGreaterThanOrEqual(1); // 'created' event
+    expect(desc!.sourceCount).toBe(0);
+    // No 'content' field in the result
+    expect(desc).not.toHaveProperty('content');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandMemory tests
+// ---------------------------------------------------------------------------
+
+describe('expandMemory', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns null for non-existent memory', () => {
+    expect(service.expandMemory('non-existent')).toBeNull();
+  });
+
+  it('returns full content when under token cap', () => {
+    const { memoryId } = service.storeMemory({
+      description: 'Expand test with short content',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Short content for expand test',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const expanded = service.expandMemory(memoryId, 8000);
+    expect(expanded).not.toBeNull();
+    expect(expanded!.truncated).toBe(false);
+    expect(expanded!.content).toBe('Short content for expand test');
+    expect(expanded!.tokenEstimate).toBeGreaterThan(0);
+  });
+
+  it('truncates content when over token cap', () => {
+    // Insert long content directly to bypass quality gate
+    const longContent = Array.from({ length: 200 }, (_, i) =>
+      `Decision ${i}: We decided to use approach ${i} for the deployment pipeline migration task.`,
+    ).join('\n');
+    const memoryId = 'expand-long-test';
+    db.prepare(
+      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'), 0)',
+    ).run(memoryId, 'Long content test', 'embeddable', 'curated_memory', longContent, 0.8, 'workspace', 'semantic');
+
+    const expanded = service.expandMemory(memoryId, 100); // 100 tokens = 400 chars
+    expect(expanded).not.toBeNull();
+    expect(expanded!.truncated).toBe(true);
+    expect(expanded!.content.length).toBeLessThan(longContent.length);
+    expect(expanded!.content).toContain('...');
+  });
+});

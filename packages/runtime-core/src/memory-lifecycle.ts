@@ -523,6 +523,10 @@ export class MemoryLifecycleService {
             .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
             .run(runId, now, memResult.memoryId);
 
+          this.databases.memory
+            .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
+            .run(randomUUID(), memResult.memoryId, 'compaction_flushed', JSON.stringify({ runId, embedded: memResult.embedded, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels }), now);
+
           return [{
             id: memResult.memoryId,
             description: `Compaction summary from run ${runId}`,

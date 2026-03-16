@@ -154,17 +154,21 @@ describe('searchLikeFallback', () => {
     expect(results).toHaveLength(0);
   });
 
-  it('computes synthetic rank proportional to matched tokens', () => {
+  it('computes synthetic rank with FTS5 polarity (closer to 0 = more relevant)', () => {
     insertMemory(db, { description: 'TypeScript migration guide', content: 'Complete migration from JS to TypeScript' });
     insertMemory(db, { description: 'Random note', content: 'This mentions typescript once' });
 
     const results = searchLikeFallback(db, 'typescript migration', {});
-    // Both match at least one token
-    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.length).toBe(2);
     // All results should have negative ftsRank
     for (const r of results) {
-      expect(r.ftsRank).toBeLessThanOrEqual(0);
+      expect(r.ftsRank).toBeLessThan(0);
     }
+    // First memory matches both "typescript" and "migration", second only "typescript"
+    const twoMatch = results.find((r) => r.description === 'TypeScript migration guide')!;
+    const oneMatch = results.find((r) => r.description === 'Random note')!;
+    // FTS5 convention: closer to 0 = more relevant
+    expect(twoMatch.ftsRank).toBeGreaterThan(oneMatch.ftsRank);
   });
 
   it('filters by scope', () => {

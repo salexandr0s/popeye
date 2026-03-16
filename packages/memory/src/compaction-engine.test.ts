@@ -143,6 +143,28 @@ describe('CompactionEngine', () => {
     expect(result.rootSummaryId).toBeTruthy();
   });
 
+  it('links child summaries to parent via parent_id', async () => {
+    const { fn } = createMockSummarizeFn();
+    const engine = new CompactionEngine(db, fn, mockPrompts, { fanout: 2, freshTailCount: 0, maxLeafTokens: 50 });
+
+    // Create enough content for leaf + condensed layers
+    const content = Array.from({ length: 4 }, (_, i) => `Paragraph ${i}: ${'detail '.repeat(20)}`).join('\n\n');
+
+    const result = await engine.compactRun('run-1', content, 'ws-1', '2025-01-01T00:00:00Z', '2025-01-01T01:00:00Z');
+
+    // Verify DAG structure: leaves should have parent_id pointing to condensed summaries
+    const leaves = db.prepare('SELECT id, parent_id, depth FROM memory_summaries WHERE run_id = ? AND depth = 0').all('run-1') as Array<{ id: string; parent_id: string | null; depth: number }>;
+    for (const leaf of leaves) {
+      expect(leaf.parent_id).not.toBeNull();
+    }
+
+    // Root should have no parent
+    if (result.rootSummaryId) {
+      const root = db.prepare('SELECT parent_id FROM memory_summaries WHERE id = ?').get(result.rootSummaryId) as { parent_id: string | null };
+      expect(root.parent_id).toBeNull();
+    }
+  });
+
   it('protects fresh tail from compaction', async () => {
     const { fn, calls } = createMockSummarizeFn();
     const engine = new CompactionEngine(db, fn, mockPrompts, { fanout: 8, freshTailCount: 2, maxLeafTokens: 50 });

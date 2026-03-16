@@ -81,8 +81,8 @@ LIMIT ?`;
 }
 
 /**
- * Compute a synthetic FTS rank based on token match ratio.
- * Returns a negative number (like FTS5 rank) — more negative = less relevant.
+ * Compute a synthetic FTS rank matching FTS5 convention:
+ * closer to 0 = more relevant, further from 0 = less relevant.
  */
 function computeSyntheticRank(description: string, content: string, tokens: string[]): number {
   if (tokens.length === 0) return -1;
@@ -91,7 +91,10 @@ function computeSyntheticRank(description: string, content: string, tokens: stri
   for (const token of tokens) {
     if (text.includes(token)) matched++;
   }
-  return -(matched / tokens.length);
+  // FTS5 convention: closer to 0 = more relevant
+  // All matched → -0.01, none matched → -1.01
+  const matchRatio = matched / tokens.length;
+  return -(1 - matchRatio) - 0.01;
 }
 
 /**
