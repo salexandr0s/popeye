@@ -9,6 +9,7 @@ import type { AuthRotationRecord } from '@popeye/contracts';
 
 import {
   AUTH_COOKIE_NAME,
+  clearBearerCsrfCache,
   initAuthStore,
   issueCsrfToken,
   readAuthStore,
@@ -186,5 +187,53 @@ describe('auth store', () => {
   it('omits Secure flag when secure param is omitted', () => {
     expect(serializeAuthCookie('test-token')).not.toContain('; Secure');
     expect(serializeCsrfCookie('csrf-token')).not.toContain('; Secure');
+  });
+
+  it('issueCsrfToken returns same cached token for same record', () => {
+    clearBearerCsrfCache();
+    const now = new Date().toISOString();
+    const record: AuthRotationRecord = {
+      current: { token: 'b'.repeat(64), createdAt: now },
+    };
+    const first = issueCsrfToken(record);
+    const second = issueCsrfToken(record);
+    expect(first).toBe(second);
+  });
+
+  it('issueCsrfToken generates random token (not derived from auth token)', () => {
+    clearBearerCsrfCache();
+    const now = new Date().toISOString();
+    const record: AuthRotationRecord = {
+      current: { token: 'c'.repeat(64), createdAt: now },
+    };
+    const csrf = issueCsrfToken(record);
+    // Random 32-byte hex = 64 chars, should not contain the auth token substring
+    expect(csrf).toHaveLength(64);
+    expect(csrf).not.toBe(record.current.token);
+  });
+
+  it('validateCsrfToken rejects tokens not in the cache', () => {
+    clearBearerCsrfCache();
+    const now = new Date().toISOString();
+    const record: AuthRotationRecord = {
+      current: { token: 'd'.repeat(64), createdAt: now },
+    };
+    // Without calling issueCsrfToken, no token is in the cache
+    expect(validateCsrfToken('some-random-value', record)).toBe(false);
+  });
+
+  it('clearBearerCsrfCache invalidates cached tokens', () => {
+    clearBearerCsrfCache();
+    const now = new Date().toISOString();
+    const record: AuthRotationRecord = {
+      current: { token: 'f'.repeat(64), createdAt: now },
+    };
+    const token = issueCsrfToken(record);
+    clearBearerCsrfCache();
+    // After clearing, the old random token is no longer valid
+    expect(validateCsrfToken(token, record)).toBe(false);
+    // Issue a new one — it should be different
+    const newToken = issueCsrfToken(record);
+    expect(newToken).not.toBe(token);
   });
 });

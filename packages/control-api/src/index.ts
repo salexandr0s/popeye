@@ -348,16 +348,26 @@ export async function createControlApi(
         recordCsrfFailureAudit(dependencies.runtime, request, 'token_invalid');
         return reply.code(403).send({ error: 'csrf_invalid' });
       }
-      // POP-SEC-007: Sec-Fetch-Site may be absent in non-browser clients.
-      // The bearer token is the primary auth layer; this is defense-in-depth.
       const secFetchSite = request.headers['sec-fetch-site'];
-      if (
-        typeof secFetchSite === 'string' &&
-        !['same-origin', 'none'].includes(secFetchSite)
-      ) {
-        log?.warn('cross-site request blocked', { path, secFetchSite });
-        recordCsrfFailureAudit(dependencies.runtime, request, 'cross_site_blocked');
-        return reply.code(403).send({ error: 'csrf_cross_site_blocked' });
+      if (authContext?.kind === 'browser_session') {
+        // Browser sessions always come from browsers that send Sec-Fetch-Site.
+        // Require it and validate it for defense-in-depth.
+        if (typeof secFetchSite !== 'string' || !['same-origin', 'none'].includes(secFetchSite)) {
+          log?.warn('browser session missing or invalid sec-fetch-site', { path, secFetchSite });
+          recordCsrfFailureAudit(dependencies.runtime, request, 'cross_site_blocked');
+          return reply.code(403).send({ error: 'csrf_sec_fetch_required' });
+        }
+      } else {
+        // Bearer auth: Sec-Fetch-Site is optional (CLI, scripts don't send it),
+        // but if present it must be same-origin or none.
+        if (
+          typeof secFetchSite === 'string' &&
+          !['same-origin', 'none'].includes(secFetchSite)
+        ) {
+          log?.warn('cross-site request blocked', { path, secFetchSite });
+          recordCsrfFailureAudit(dependencies.runtime, request, 'cross_site_blocked');
+          return reply.code(403).send({ error: 'csrf_cross_site_blocked' });
+        }
       }
     }
     return undefined;
@@ -501,11 +511,13 @@ export async function createControlApi(
     return receipt;
   });
 
+  const ScopeParamSchema = z.object({ scope: z.string().min(1).max(100) });
+
   app.get('/v1/instruction-previews/:scope', async (request, reply) => {
-    const params = request.params as { scope: string };
+    const { scope } = ScopeParamSchema.parse(request.params);
     const query = InstructionPreviewQueryParamsSchema.parse(request.query);
     try {
-      return dependencies.runtime.getInstructionPreview(params.scope, query.projectId);
+      return dependencies.runtime.getInstructionPreview(scope, query.projectId);
     } catch (error) {
       if (error instanceof InstructionPreviewContextError) {
         const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;

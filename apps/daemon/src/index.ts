@@ -50,11 +50,9 @@ if (existsSync(webInspectorDist)) {
     resolve(webInspectorDist, 'index.html'),
     'utf8',
   );
-  const htmlTemplate = rawHtml.replace(/<script/g, `<script nonce="${cspNonce}"`);
-  const renderWebInspector = () => htmlTemplate.replace(
-    '__POPEYE_BOOTSTRAP_NONCE__',
-    webBootstrap.issue(),
-  );
+  const renderWebInspector = () => rawHtml
+    .replaceAll('__POPEYE_CSP_NONCE__', cspNonce)
+    .replaceAll('__POPEYE_BOOTSTRAP_NONCE__', webBootstrap.issue());
 
   app.get('/', async (_request, reply) => (
     reply.code(200).type('text/html').send(renderWebInspector())

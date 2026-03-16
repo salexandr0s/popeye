@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -117,17 +117,40 @@ export function readCookieValue(cookieHeader: string | string[] | undefined, nam
   return undefined;
 }
 
-function hashCsrfSeed(seed: string): string {
-  return createHash('sha256').update(seed).digest('hex');
+// POP-SEC-002: Random per-bearer CSRF tokens. A random CSRF token is issued on
+// first request and cached in-memory keyed by auth token. No deterministic
+// fallback — all CSRF tokens are random.
+const bearerCsrfCache = new Map<string, string>();
+
+export function issueCsrfToken(record: AuthRotationRecord): string {
+  const key = record.current.token;
+  const cached = bearerCsrfCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const token = generateToken();
+  bearerCsrfCache.set(key, token);
+  return token;
 }
 
-// POP-SEC-002: CSRF token is deterministic (derived from auth token + createdAt).
-// Accepted risk for the loopback-only model: an attacker who can read the auth
-// token already has full API access, so a predictable CSRF derivative adds no
-// additional exposure. If the API is ever exposed beyond loopback, this should
-// be replaced with a random per-session token.
-export function issueCsrfToken(record: AuthRotationRecord): string {
-  return hashCsrfSeed(`csrf:${record.current.token}:${record.current.createdAt}`);
+export function clearBearerCsrfCache(): void {
+  bearerCsrfCache.clear();
+}
+
+/**
+ * Evict cached CSRF entries for tokens that are no longer valid (post-rotation).
+ * Call after overlap window expires.
+ */
+export function evictStaleBearerCsrfEntries(record: AuthRotationRecord): void {
+  const validKeys = new Set([record.current.token]);
+  if (record.next) {
+    validKeys.add(record.next.token);
+  }
+  for (const key of bearerCsrfCache.keys()) {
+    if (!validKeys.has(key)) {
+      bearerCsrfCache.delete(key);
+    }
+  }
 }
 
 export function serializeAuthCookie(token: string, secure?: boolean): string {
@@ -144,11 +167,15 @@ export function validateCsrfToken(token: string | undefined, record: AuthRotatio
   if (!token) {
     return false;
   }
-  if (constantTimeEquals(token, issueCsrfToken(record))) {
+  const cachedCurrent = bearerCsrfCache.get(record.current.token);
+  if (cachedCurrent && constantTimeEquals(token, cachedCurrent)) {
     return true;
   }
   if (record.next) {
-    return constantTimeEquals(token, hashCsrfSeed(`csrf:${record.next.token}:${record.next.createdAt}`));
+    const cachedNext = bearerCsrfCache.get(record.next.token);
+    if (cachedNext && constantTimeEquals(token, cachedNext)) {
+      return true;
+    }
   }
   return false;
 }

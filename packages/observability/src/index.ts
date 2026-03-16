@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import safe from 'safe-regex2';
 import type { SecurityAuditEvent } from '@popeye/contracts';
 
 export { createLogger } from './logger.js';
@@ -35,13 +36,40 @@ export function redactText(input: string, customPatterns: string[] = []): Redact
     text = text.slice(0, INPUT_SIZE_LIMIT);
   }
   const events: SecurityAuditEvent[] = [];
-  const allPatterns = [
-    ...BUILTIN_PATTERNS,
-    ...customPatterns.map((pattern, index) => ({
-      name: `custom-${index + 1}`,
-      pattern: new RegExp(pattern, 'g'),
-    })),
-  ];
+  const allPatterns = [...BUILTIN_PATTERNS];
+  for (let i = 0; i < customPatterns.length; i++) {
+    const p = customPatterns[i]!;
+    const name = `custom-${i + 1}`;
+    let isSafe: boolean;
+    try {
+      isSafe = safe(p);
+    } catch {
+      isSafe = false;
+    }
+    if (!isSafe) {
+      events.push({
+        code: 'redaction_pattern_skipped',
+        severity: 'warn',
+        message: `Skipped unsafe redaction pattern: ${name}`,
+        component: 'observability',
+        timestamp: new Date().toISOString(),
+        details: { pattern: name, reason: 'redos' },
+      });
+      continue;
+    }
+    try {
+      allPatterns.push({ name, pattern: new RegExp(p, 'g') });
+    } catch {
+      events.push({
+        code: 'redaction_pattern_skipped',
+        severity: 'warn',
+        message: `Skipped invalid redaction pattern: ${name}`,
+        component: 'observability',
+        timestamp: new Date().toISOString(),
+        details: { pattern: name, reason: 'invalid_regex' },
+      });
+    }
+  }
 
   for (const entry of allPatterns) {
     entry.pattern.lastIndex = 0;

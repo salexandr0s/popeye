@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="popeye-bootstrap-nonce" content="__POPEYE_BOOTSTRAP_NONCE__" />
+  <meta name="popeye-csp-nonce" content="__POPEYE_CSP_NONCE__" />
   <title>Popeye Inspector</title>
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
+  <script type="module" src="/src/main.tsx" nonce="__POPEYE_CSP_NONCE__"></script>
 </body>
 </html>

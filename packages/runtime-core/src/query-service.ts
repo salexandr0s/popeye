@@ -17,7 +17,7 @@ import {
 import { z } from 'zod';
 import type { WorkspaceRegistry } from '@popeye/workspace';
 
-import { readAuthStore, issueCsrfToken as issueCsrfTokenFromStore } from './auth.js';
+import { readAuthStore, issueCsrfToken } from './auth.js';
 import type { RuntimeDatabases } from './database.js';
 import { createInstructionPreview, resolveInstructionBundleForTask } from './instruction-query.js';
 
@@ -150,6 +150,6 @@ export class QueryService {
   }
 
   issueCsrfToken(): string {
-    return issueCsrfTokenFromStore(readAuthStore(this.config.authFile));
+    return issueCsrfToken(readAuthStore(this.config.authFile));
   }
 }

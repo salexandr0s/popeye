@@ -12,7 +12,9 @@ const QUARANTINE_RULES: Array<{ name: string; pattern: RegExp }> = [
   { name: 'tool-abuse', pattern: /(run|execute).*(rm -rf|curl .*metadata|scp |ssh )/i },
   { name: 'base64-command', pattern: /(?:execute|run|eval)\s+(?:atob|base64|btoa)/i },
   { name: 'url-exfiltration', pattern: /(?:fetch|curl|wget|xmlhttprequest)\s*\(?\s*['"]https?:\/\//i },
-  { name: 'unicode-bidi-override', pattern: /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/ },
+  { name: 'unicode-bidi-override', pattern: /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/ },
+  { name: 'zero-width-chars', pattern: /[\u200B\u200C\u200D\uFEFF]/ },
+  { name: 'mixed-script-attack', pattern: /(?:[a-zA-Z]+[\u0400-\u04FF]|[\u0400-\u04FF]+[a-zA-Z])/ },
 ];
 
 export interface PromptScanOptions {
@@ -21,8 +23,9 @@ export interface PromptScanOptions {
 }
 
 export function scanPrompt(text: string, options?: PromptScanOptions): PromptScanResult {
-  // Normalize Unicode to NFC to prevent homoglyph bypasses
-  const normalized = text.normalize('NFC');
+  // NFKC normalization decomposes compatibility characters (fullwidth Latin,
+  // ligatures) into base forms, catching more evasion vectors than NFC.
+  const normalized = text.normalize('NFKC');
 
   const customQuarantineInput = options?.customQuarantinePatterns ?? [];
   const customQuarantineRules: Array<{ name: string; pattern: RegExp }> = [];

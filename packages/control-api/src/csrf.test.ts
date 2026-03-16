@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AUTH_COOKIE_NAME,
+  clearBearerCsrfCache,
   createRuntimeService,
   initAuthStore,
   issueCsrfToken,
@@ -112,7 +113,8 @@ describe('CSRF token issuance and validation', () => {
     await app.close();
   });
 
-  it('CSRF token matches the server-issued token', async () => {
+  it('bearer CSRF token is random and stable per session', async () => {
+    clearBearerCsrfCache();
     const dir = mkdtempSync(join(tmpdir(), 'popeye-csrf-match-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
@@ -155,8 +157,16 @@ describe('CSRF token issuance and validation', () => {
     });
 
     const body = response.json() as { token: string };
-    const expected = issueCsrfToken(store);
-    expect(body.token).toBe(expected);
+    // Random CSRF token matches what issueCsrfToken returns (same cache)
+    expect(body.token).toBe(issueCsrfToken(store));
+
+    // Second request returns same token (stable)
+    const response2 = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect((response2.json() as { token: string }).token).toBe(body.token);
 
     await runtime.close();
     await app.close();

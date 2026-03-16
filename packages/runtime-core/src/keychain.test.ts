@@ -1,4 +1,5 @@
 import { type SpawnSyncReturns } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -6,7 +7,21 @@ vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
 }));
 
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    mkdtempSync: actual.mkdtempSync,
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    chmodSync: vi.fn(),
+    existsSync: actual.existsSync,
+    statSync: actual.statSync,
+  };
+});
+
 import { spawnSync } from 'node:child_process';
+import { writeFileSync, chmodSync } from 'node:fs';
 
 import {
   KEYCHAIN_ACCOUNT,
@@ -19,6 +34,8 @@ import {
 } from './keychain.js';
 
 const mockSpawnSync = vi.mocked(spawnSync);
+const mockWriteFileSync = vi.mocked(writeFileSync);
+const mockChmodSync = vi.mocked(chmodSync);
 
 function fakeResult(overrides: Partial<SpawnSyncReturns<string>>): SpawnSyncReturns<string> {
   return {
@@ -48,15 +65,33 @@ describe('keychain', () => {
     expect(isKeychainAvailable()).toBe(false);
   });
 
-  it('keychainSet passes secret as -w argument', () => {
+  it('keychainSet uses file-based secret passing via shell', () => {
     mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 0 }));
+    const callCountBefore = mockSpawnSync.mock.calls.length;
     const result = keychainSet('my-key', 'my-secret');
     expect(result.ok).toBe(true);
-    expect(mockSpawnSync).toHaveBeenCalledWith(
-      'security',
-      ['add-generic-password', '-s', 'com.popeye.my-key', '-a', KEYCHAIN_ACCOUNT, '-w', 'my-secret', '-U'],
-      { encoding: 'utf8' },
+    // Find the keychainSet call (the one after callCountBefore)
+    const setCall = mockSpawnSync.mock.calls[callCountBefore]!;
+    expect(setCall[0]).toBe('/bin/sh');
+    const shellCmd = (setCall[1] as string[])[1]!;
+    expect(shellCmd).toContain('security add-generic-password');
+    expect(shellCmd).toContain('$(cat');
+    expect(shellCmd).not.toContain('my-secret');
+  });
+
+  it('keychainSet writes temp file with 0600 permissions', () => {
+    mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 0 }));
+    keychainSet('perm-key', 'perm-secret');
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('secret'),
+      'perm-secret',
+      { mode: 0o600 },
     );
+  });
+
+  it('keychainSet cleans up temp file even on error', () => {
+    mockSpawnSync.mockImplementationOnce(() => { throw new Error('spawn failed'); });
+    expect(() => keychainSet('err-key', 'err-secret')).toThrow('spawn failed');
   });
 
   it('keychainGet returns ok with value on success', () => {

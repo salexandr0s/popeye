@@ -55,6 +55,29 @@ describe('redactText', () => {
     expect(result.text).toContain('[REDACTED:stripe-key]');
   });
 
+  it('skips ReDoS-vulnerable custom patterns with audit event', () => {
+    const result = redactText('test input', ['(a+)+b']);
+    expect(result.events.some(e => e.code === 'redaction_pattern_skipped' && e.details?.reason === 'redos')).toBe(true);
+  });
+
+  it('skips invalid regex syntax with audit event', () => {
+    const result = redactText('test input', ['[invalid']);
+    expect(result.events.some(e => e.code === 'redaction_pattern_skipped')).toBe(true);
+  });
+
+  it('applies safe custom patterns normally', () => {
+    const result = redactText('my-custom-secret-12345', ['my-custom-secret-\\d+']);
+    expect(result.text).toContain('[REDACTED:custom-1]');
+    expect(result.events.some(e => e.code === 'redaction_pattern_skipped')).toBe(false);
+  });
+
+  it('handles mixed safe and unsafe custom patterns', () => {
+    const result = redactText('my-custom-secret-12345', ['(a+)+b', 'my-custom-secret-\\d+']);
+    expect(result.text).toContain('[REDACTED:custom-2]');
+    expect(result.events.some(e => e.code === 'redaction_pattern_skipped')).toBe(true);
+    expect(result.events.some(e => e.code === 'redaction_applied' && e.details?.pattern === 'custom-2')).toBe(true);
+  });
+
   it('truncates oversized input', () => {
     const bigInput = 'x'.repeat(2_000_000);
     const result = redactText(bigInput);

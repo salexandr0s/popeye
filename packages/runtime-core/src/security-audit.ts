@@ -117,12 +117,14 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
       message: 'macOS Keychain is not available — secrets must use file-based storage',
     });
   } else {
-    // POP-SEC-004: macOS `security` CLI passes secrets as args, briefly visible in `ps`.
-    // Accepted risk for single-operator daemon; a native Keychain API binding would avoid this.
+    // POP-SEC-004: Mitigated — secrets are now passed via temp file with 0600
+    // permissions and deleted immediately after use. The secret no longer appears
+    // in the process argument list. A native Keychain API binding would eliminate
+    // even the brief temp-file window.
     findings.push({
       code: 'keychain_secret_in_proclist',
       severity: 'info',
-      message: 'Keychain operations expose secrets in process list (macOS security CLI limitation)',
+      message: 'Keychain secrets passed via temp file (not process args) — residual risk is brief file existence',
     });
   }
 
