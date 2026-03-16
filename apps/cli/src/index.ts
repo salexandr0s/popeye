@@ -39,7 +39,7 @@ const positionalArgs = process.argv.filter(
 const helpFlag = process.argv.includes('--help') || process.argv.includes('-h');
 const [, , command, subcommand, arg1, arg2] = positionalArgs;
 
-const COMMANDS: Record<string, Record<string, { desc: string; usage: string }>> = {
+const COMMANDS: Record<string, Record<string, { desc: string; usage: string; args?: string; examples?: string[] }>> = {
   auth: {
     init: { desc: 'Initialize auth store', usage: 'pop auth init' },
     rotate: { desc: 'Rotate auth token', usage: 'pop auth rotate' },
@@ -125,6 +125,11 @@ function showHelp(): void {
   console.info('  --full             Include full content in search results');
   console.info('  --help, -h         Show help for a command');
   console.info('  --version, -v      Print version');
+  console.info('\nExamples:');
+  console.info('  pop daemon status              Check if the daemon is running');
+  console.info('  pop task run "fix bug" "..."    Create and enqueue a task');
+  console.info('  pop runs tail --json           List recent runs as JSON');
+  console.info('  pop memory search "auth"       Search memories');
 }
 
 function showCommandHelp(cmd: string): void {
@@ -156,6 +161,15 @@ function showSubcommandHelp(cmd: string, sub: string): void {
   }
   console.info(`${meta.usage}\n`);
   console.info(`  ${meta.desc}`);
+  if (meta.args) {
+    console.info(`\nArguments:\n  ${meta.args}`);
+  }
+  if (meta.examples && meta.examples.length > 0) {
+    console.info('\nExamples:');
+    for (const example of meta.examples) {
+      console.info(`  ${example}`);
+    }
+  }
 }
 
 function requireArg(value: string | undefined, label: string): asserts value is string {
@@ -263,8 +277,9 @@ async function main(): Promise<void> {
         process.exit(1);
       }
     }
+    const piPath = process.env.POPEYE_PI_SMOKE_PATH ?? config.engine.piPath;
     const adapter = new PiEngineAdapter({
-      piPath: process.env.POPEYE_PI_SMOKE_PATH ?? config.engine.piPath,
+      ...(piPath !== undefined && { piPath }),
       command: process.env.POPEYE_PI_SMOKE_COMMAND ?? config.engine.command,
       args: smokeArgs,
     });

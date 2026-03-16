@@ -139,8 +139,9 @@ describe('fts5-search', () => {
     brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT, durable INTEGER NOT NULL DEFAULT 0)');
     brokenDb.exec('CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content)');
     // Insert with invalid MATCH expression won't reach our try/catch since buildFts5MatchExpression sanitizes.
-    // Instead, drop the table to force a runtime error:
-    brokenDb.exec('DROP TABLE memories');
+    // Drop the FTS virtual table to force a runtime error on the FTS path;
+    // the LIKE fallback still needs the base `memories` table.
+    brokenDb.exec('DROP TABLE memories_fts');
     const results = searchFts5(brokenDb, 'test', {});
     expect(results).toHaveLength(0);
     brokenDb.close();

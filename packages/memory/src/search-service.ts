@@ -7,6 +7,7 @@ import { redactText } from '@popeye/observability';
 import { assessMemoryQuality, classifyMemoryType, computeDedupKey, computeReinforcedConfidence, isDurableMemory, sanitizeSearchQuery } from './pure-functions.js';
 import { extractEntities } from './entity-extraction.js';
 import { applyBudgetAllocation, type BudgetConfig } from './budget-allocation.js';
+import { classifyExpansionPolicy } from './expansion-policy.js';
 import { classifyQueryStrategy, getStrategyWeights } from './strategy.js';
 import type { EmbeddingClient } from './embedding-client.js';
 import { searchFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
@@ -337,6 +338,143 @@ export class MemorySearchService {
       archivedAt: row.archived_at,
       createdAt: row.created_at,
       durable: Boolean(row.durable),
+    };
+  }
+
+  async budgetFit(query: {
+    query: string;
+    scope?: string;
+    memoryTypes?: MemoryType[];
+    minConfidence?: number;
+    maxTokens: number;
+    limit?: number;
+  }): Promise<{
+    results: MemorySearchResult[];
+    totalTokensUsed: number;
+    totalTokensBudget: number;
+    truncatedCount: number;
+    droppedCount: number;
+    expansionPolicy?: { risk: string; route: string; warning?: string };
+  }> {
+    const policy = classifyExpansionPolicy(query.query);
+    const effectiveLimit = query.limit ?? policy.recommendedLimit;
+
+    const searchResponse = await this.search({
+      query: query.query,
+      ...(query.scope !== undefined && { scope: query.scope }),
+      ...(query.memoryTypes !== undefined && { memoryTypes: query.memoryTypes }),
+      ...(query.minConfidence !== undefined && { minConfidence: query.minConfidence }),
+      limit: effectiveLimit,
+      includeContent: true,
+    });
+
+    const maxTokens = query.maxTokens;
+    const fitted: MemorySearchResult[] = [];
+    let tokensUsed = 0;
+    let truncatedCount = 0;
+    let droppedCount = 0;
+
+    for (const result of searchResponse.results) {
+      const contentLen = result.content?.length ?? 0;
+      const tokenEst = Math.ceil(contentLen / 4);
+
+      if (tokensUsed + tokenEst <= maxTokens) {
+        fitted.push(result);
+        tokensUsed += tokenEst;
+      } else if (tokensUsed < maxTokens) {
+        // Truncate last result to fit
+        const remaining = (maxTokens - tokensUsed) * 4;
+        fitted.push({
+          ...result,
+          content: result.content ? result.content.slice(0, remaining) + '...' : null,
+        });
+        tokensUsed = maxTokens;
+        truncatedCount++;
+      } else {
+        droppedCount++;
+      }
+    }
+
+    return {
+      results: fitted,
+      totalTokensUsed: tokensUsed,
+      totalTokensBudget: maxTokens,
+      truncatedCount,
+      droppedCount,
+      expansionPolicy: {
+        risk: policy.risk,
+        route: policy.route,
+        ...(policy.warning !== undefined && { warning: policy.warning }),
+      },
+    };
+  }
+
+  describeMemory(memoryId: string): {
+    id: string;
+    description: string;
+    type: string;
+    confidence: number;
+    scope: string;
+    sourceType: string;
+    createdAt: string;
+    lastReinforcedAt: string | null;
+    durable: boolean;
+    contentLength: number;
+    entityCount: number;
+    sourceCount: number;
+    eventCount: number;
+  } | null {
+    const record = this.getMemoryContent(memoryId);
+    if (!record) return null;
+
+    const entityCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM memory_entity_mentions WHERE memory_id = ?',
+    ).get(memoryId) as { c: number }).c;
+
+    const sourceCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM memory_sources WHERE memory_id = ?',
+    ).get(memoryId) as { c: number }).c;
+
+    const eventCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM memory_events WHERE memory_id = ?',
+    ).get(memoryId) as { c: number }).c;
+
+    return {
+      id: record.id,
+      description: record.description,
+      type: record.memoryType,
+      confidence: record.confidence,
+      scope: record.scope,
+      sourceType: record.sourceType,
+      createdAt: record.createdAt,
+      lastReinforcedAt: record.lastReinforcedAt,
+      durable: record.durable,
+      contentLength: record.content.length,
+      entityCount,
+      sourceCount,
+      eventCount,
+    };
+  }
+
+  expandMemory(memoryId: string, maxTokens?: number): {
+    id: string;
+    content: string;
+    tokenEstimate: number;
+    truncated: boolean;
+  } | null {
+    const record = this.getMemoryContent(memoryId);
+    if (!record) return null;
+
+    const cap = maxTokens ?? 8000;
+    const maxChars = cap * 4;
+    const truncated = record.content.length > maxChars;
+    const content = truncated ? record.content.slice(0, maxChars) + '...' : record.content;
+
+    return {
+      id: record.id,
+      content,
+      tokenEstimate: Math.ceil(content.length / 4),
+      truncated,
     };
   }
 

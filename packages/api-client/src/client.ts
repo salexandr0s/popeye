@@ -506,7 +506,7 @@ export class PopeyeApiClient {
     );
   }
 
-  async recordTelegramSendAttempt(input: {
+  async recordSendAttempt(input: {
     deliveryId?: string;
     chatId?: string;
     telegramMessageId?: number;

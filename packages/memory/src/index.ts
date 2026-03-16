@@ -26,8 +26,30 @@ export { rerankAndMerge } from './scoring.js';
 export type { ScoredCandidate, RerankParams } from './scoring.js';
 export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
 export type { FtsCandidate } from './fts5-search.js';
+export { searchLikeFallback, splitQueryTokens, buildLikeQuery } from './like-fallback.js';
 export { searchVec, insertVecEmbedding, deleteVecEmbedding } from './vec-search.js';
 export type { VecCandidate } from './vec-search.js';
+
+// Summary DAG
+export {
+  estimateTokens,
+  insertSummary,
+  linkSummarySource,
+  getSummaryChildren,
+  getSummaryAncestors,
+  getSummaryTree,
+  getLeafSummaries,
+  getSummariesByDepth,
+  getLatestSummary,
+  deleteSummaryChain,
+} from './summary-dag.js';
+
+// Integrity
+export { runIntegrityChecks, isVecTableAvailable } from './integrity-checker.js';
+
+// Expansion policy
+export { classifyExpansionPolicy } from './expansion-policy.js';
+export type { TokenRiskLevel, ExpansionRoute, ExpansionPolicyResult } from './expansion-policy.js';
 
 // Strategy
 export { classifyQueryStrategy, getStrategyWeights } from './strategy.js';
@@ -44,6 +66,14 @@ export type { BudgetConfig } from './budget-allocation.js';
 // Embedding
 export type { EmbeddingClient } from './embedding-client.js';
 export { createOpenAIEmbeddingClient, createDisabledEmbeddingClient } from './embedding-client.js';
+
+// Summarization
+export type { SummarizationClient } from './summarization-client.js';
+export { createOpenAISummarizationClient, createDisabledSummarizationClient } from './summarization-client.js';
+
+// Compaction engine
+export { CompactionEngine, splitIntoChunks, deterministicTruncation, DEFAULT_COMPACTION_CONFIG } from './compaction-engine.js';
+export type { CompactionConfig, CompactionResult, PromptBuilder } from './compaction-engine.js';
 
 // Extension loader
 export { loadSqliteVec } from './extension-loader.js';

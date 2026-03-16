@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import type {
   AppConfig,
+  IntegrityReport,
   MemoryAuditResponse,
   MemoryRecord,
   MemoryType,
@@ -19,7 +20,11 @@ import {
   renderDailySummaryMarkdown,
   shouldArchive,
   type MemorySearchService,
+  runIntegrityChecks,
+  CompactionEngine,
+  type SummarizationClient,
 } from '@popeye/memory';
+import { buildSummarizePrompt, buildRetryPrompt } from './summarize-prompts.js';
 import { redactText, sha256 } from '@popeye/observability';
 
 import type { RuntimeDatabases } from './database.js';
@@ -213,11 +218,13 @@ export class MemoryLifecycleService {
   private readonly databases: RuntimeDatabases;
   private readonly config: AppConfig;
   private readonly searchService: MemorySearchService;
+  private readonly summarizationClient: SummarizationClient | null;
 
-  constructor(databases: RuntimeDatabases, config: AppConfig, searchService: MemorySearchService) {
+  constructor(databases: RuntimeDatabases, config: AppConfig, searchService: MemorySearchService, summarizationClient?: SummarizationClient) {
     this.databases = databases;
     this.config = config;
     this.searchService = searchService;
+    this.summarizationClient = summarizationClient ?? null;
   }
 
   insertMemory(input: MemoryInsertInput): StoreMemoryResult {
@@ -345,15 +352,16 @@ export class MemoryLifecycleService {
           if (dupes.length < 2) continue;
           // Keep highest confidence
           dupes.sort((a, b) => b.confidence - a.confidence);
-          const keeper = dupes[0];
+          const keeper = dupes[0]!;
           for (let i = 1; i < dupes.length; i++) {
-            this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, dupes[i].id);
+            const loser = dupes[i]!;
+            this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, loser.id);
             this.databases.memory
               .prepare('INSERT INTO memory_consolidations (id, memory_id, merged_into_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
-              .run(randomUUID(), dupes[i].id, keeper.id, 'exact_dedup', nowStr);
+              .run(randomUUID(), loser.id, keeper.id, 'exact_dedup', nowStr);
             this.databases.memory
               .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-              .run(randomUUID(), dupes[i].id, 'consolidated', JSON.stringify({ mergedInto: keeper.id }), nowStr);
+              .run(randomUUID(), loser.id, 'consolidated', JSON.stringify({ mergedInto: keeper.id }), nowStr);
             deduped++;
           }
         }
@@ -369,9 +377,11 @@ export class MemoryLifecycleService {
         const active = group.filter((r) => !archivedIds.has(r.id));
         for (let i = 0; i < active.length; i++) {
           for (let j = i + 1; j < active.length; j++) {
-            const overlap = computeTextOverlap(active[i].content, active[j].content);
+            const a = active[i]!;
+            const b = active[j]!;
+            const overlap = computeTextOverlap(a.content, b.content);
             if (overlap > 0.8) {
-              const [keeper, loser] = active[i].confidence >= active[j].confidence ? [active[i], active[j]] : [active[j], active[i]];
+              const [keeper, loser] = a.confidence >= b.confidence ? [a, b] : [b, a];
               this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, loser.id);
               this.databases.memory
                 .prepare('INSERT INTO memory_consolidations (id, memory_id, merged_into_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
@@ -462,7 +472,83 @@ export class MemoryLifecycleService {
 
   async processCompactionFlush(runId: string, compactedContent: string, workspaceId: string): Promise<MemoryRecord[]> {
     const redacted = redactText(compactedContent, this.config.security.redactionPatterns);
-    const chunks = splitContentChunks(redacted.text);
+
+    // If summarization client is available, use multi-pass compaction
+    if (this.summarizationClient?.enabled) {
+      return this.processCompactionFlushWithEngine(runId, redacted.text, workspaceId);
+    }
+
+    // Fallback: original flat behavior
+    return this.processCompactionFlushFlat(runId, redacted.text, workspaceId);
+  }
+
+  private async processCompactionFlushWithEngine(runId: string, content: string, workspaceId: string): Promise<MemoryRecord[]> {
+    const now = nowIso();
+    const engine = new CompactionEngine(
+      this.databases.memory,
+      (input) => this.summarizationClient!.complete(input),
+      { buildSummarizePrompt, buildRetryPrompt },
+      {
+        fanout: this.config.memory.compactionFanout,
+        freshTailCount: this.config.memory.compactionFreshTailCount,
+        maxLeafTokens: this.config.memory.compactionMaxLeafTokens,
+        maxCondensedTokens: this.config.memory.compactionMaxCondensedTokens,
+        maxRetries: this.config.memory.compactionMaxRetries,
+      },
+    );
+
+    const result = await engine.compactRun(runId, content, workspaceId, now, now);
+
+    // Insert top-level summary into memories as summary_rollup
+    if (result.rootSummaryId) {
+      const rootRow = this.databases.memory
+        .prepare('SELECT content FROM memory_summaries WHERE id = ?')
+        .get(result.rootSummaryId) as { content: string } | undefined;
+
+      if (rootRow) {
+        const memResult = await this.searchService.storeMemoryWithEmbedding({
+          description: `Compaction summary from run ${runId}`,
+          classification: 'embeddable',
+          sourceType: 'compaction_flush',
+          content: rootRow.content,
+          confidence: this.config.memory.compactionFlushConfidence,
+          scope: workspaceId,
+          memoryType: classifyMemoryType('compaction_flush', rootRow.content),
+          sourceRef: runId,
+          sourceRefType: 'run',
+        });
+
+        if (!memResult.rejected) {
+          this.databases.memory
+            .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
+            .run(runId, now, memResult.memoryId);
+
+          return [{
+            id: memResult.memoryId,
+            description: `Compaction summary from run ${runId}`,
+            classification: 'embeddable',
+            sourceType: 'compaction_flush',
+            content: rootRow.content,
+            confidence: this.config.memory.compactionFlushConfidence,
+            scope: workspaceId,
+            sourceRunId: runId,
+            sourceTimestamp: now,
+            memoryType: classifyMemoryType('compaction_flush', rootRow.content),
+            dedupKey: null,
+            lastReinforcedAt: null,
+            archivedAt: null,
+            createdAt: now,
+            durable: false,
+          }];
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private async processCompactionFlushFlat(runId: string, content: string, workspaceId: string): Promise<MemoryRecord[]> {
+    const chunks = splitContentChunks(content);
     const results: MemoryRecord[] = [];
     const now = nowIso();
 
@@ -480,10 +566,8 @@ export class MemoryLifecycleService {
         sourceRefType: 'run',
       });
 
-      // Skip rejected chunks (quality gate)
       if (result.rejected) continue;
 
-      // Store provenance columns
       this.databases.memory
         .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
         .run(runId, now, result.memoryId);
@@ -630,6 +714,10 @@ export class MemoryLifecycleService {
       lastConsolidationRunAt: lastConsolidation,
       lastDailySummaryAt: lastDaily,
     });
+  }
+
+  runIntegrityCheck(options?: { fix?: boolean }): IntegrityReport {
+    return runIntegrityChecks(this.databases.memory, options);
   }
 
   proposePromotion(memoryId: string, targetPath: string): MemoryPromotionResponse {

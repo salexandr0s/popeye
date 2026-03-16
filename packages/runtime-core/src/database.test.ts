@@ -541,6 +541,7 @@ describe('openRuntimeDatabases', () => {
           '005-memory-cleanup',
           '006-memory-fts-stable-id',
           '007-memory-enhancements',
+          '008-memory-summary-dag',
         ]);
       } finally {
         databases.app.close();

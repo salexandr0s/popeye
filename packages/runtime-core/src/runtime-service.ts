@@ -7,6 +7,7 @@ import type {
   CompiledInstructionBundle,
   DaemonStateRecord,
   DaemonStatusResponse,
+  IntegrityReport,
   InterventionRecord,
   JobLeaseRecord,
   JobRecord,
@@ -59,7 +60,7 @@ import {
   type EngineRunRequest,
   type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
-import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, loadSqliteVec } from '@popeye/memory';
+import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, createOpenAISummarizationClient, createDisabledSummarizationClient, loadSqliteVec } from '@popeye/memory';
 import { createLogger, redactText, type PopeyeLogger } from '@popeye/observability';
 import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
 import { selectSessionRoot, SessionService } from '@popeye/sessions';
@@ -439,7 +440,10 @@ export class PopeyeRuntimeService {
       halfLifeDays: config.memory.confidenceHalfLifeDays,
       budgetConfig: config.memory.budgetAllocation,
     });
-    this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch);
+    const summarizationClient = config.embeddings.provider === 'openai'
+      ? createOpenAISummarizationClient({})
+      : createDisabledSummarizationClient();
+    this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch, summarizationClient);
 
     // Try loading sqlite-vec (non-blocking)
     this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions).then((loaded) => {
@@ -1228,15 +1232,27 @@ export class PopeyeRuntimeService {
   // --- Memory public API ---
 
   async searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse> {
-    return this.memorySearch.search(query);
+    return this.memorySearch.search({
+      query: query.query,
+      ...(query.scope !== undefined && { scope: query.scope }),
+      ...(query.memoryTypes !== undefined && { memoryTypes: query.memoryTypes }),
+      ...(query.minConfidence !== undefined && { minConfidence: query.minConfidence }),
+      ...(query.limit !== undefined && { limit: query.limit }),
+      ...(query.includeContent !== undefined && { includeContent: query.includeContent }),
+    });
   }
 
   getMemoryContent(memoryId: string): MemoryRecord | null {
-    return this.memorySearch.getMemoryContent(memoryId);
+    const record = this.memorySearch.getMemoryContent(memoryId);
+    return record ? MemoryRecordSchema.parse(record) : null;
   }
 
   getMemoryAudit(): MemoryAuditResponse {
     return this.memoryLifecycle.getMemoryAudit();
+  }
+
+  checkMemoryIntegrity(options?: { fix?: boolean }): IntegrityReport {
+    return this.memoryLifecycle.runIntegrityCheck(options);
   }
 
   insertMemory(input: MemoryInsertInput): MemoryRecord {
@@ -1279,7 +1295,27 @@ export class PopeyeRuntimeService {
   }
 
   getMemory(memoryId: string): MemoryRecord | null {
-    return this.memorySearch.getMemoryContent(memoryId);
+    return this.getMemoryContent(memoryId);
+  }
+
+  async budgetFitMemory(query: {
+    query: string;
+    scope?: string;
+    memoryTypes?: Array<'episodic' | 'semantic' | 'procedural'>;
+    minConfidence?: number;
+    maxTokens: number;
+    limit?: number;
+  }) {
+    return this.memorySearch.budgetFit(query);
+  }
+
+  describeMemory(memoryId: string) {
+    return this.memorySearch.describeMemory(memoryId);
+  }
+
+  expandMemory(memoryId: string, maxTokens?: number) {
+    const cap = maxTokens ?? this.config.memory.expandTokenCap;
+    return this.memorySearch.expandMemory(memoryId, cap);
   }
 
   triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
@@ -1303,7 +1339,7 @@ export class PopeyeRuntimeService {
       description: redactedDesc,
       content: redactedContent,
       sourceType: input.sourceType ?? 'curated_memory',
-      memoryType: input.memoryType,
+      ...(input.memoryType !== undefined && { memoryType: input.memoryType }),
       scope: input.scope ?? 'workspace',
       confidence: input.confidence ?? 0.8,
       classification: input.classification ?? 'embeddable',
@@ -1329,7 +1365,7 @@ export class PopeyeRuntimeService {
       {
         name: 'popeye_memory_search',
         label: 'Popeye Memory Search',
-        description: 'Search Popeye memory for prior facts, receipts, and procedures before answering.',
+        description: 'Search Popeye memory for prior facts, receipts, and procedures. Returns IDs you can pass to popeye_memory_describe or popeye_memory_expand for details.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1352,8 +1388,8 @@ export class PopeyeRuntimeService {
           const lines = response.results.length === 0
             ? ['No matching Popeye memories found.']
             : response.results.map((result, index) => {
-                const snippet = result.snippet ? ` — ${result.snippet}` : '';
-                return `${index + 1}. ${result.description} [${result.scope}/${result.sourceType}]${snippet}`;
+                const snippet = result.content ? ` — ${result.content.slice(0, 100)}` : '';
+                return `${index + 1}. [id:${result.id}] ${result.description} [${result.scope}/${result.sourceType}] score:${result.score.toFixed(2)}${snippet}`;
               });
           return {
             content: [{ type: 'text', text: lines.join('\n') }],
@@ -1365,6 +1401,59 @@ export class PopeyeRuntimeService {
               results: response.results,
             },
           };
+        },
+      },
+      {
+        name: 'popeye_memory_describe',
+        label: 'Popeye Memory Describe',
+        description: 'Get metadata about a specific memory (type, confidence, entities, sources, events) without loading full content. Use after search to decide if expand is needed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            memoryId: { type: 'string', description: 'Memory ID from search results' },
+          },
+          required: ['memoryId'],
+          additionalProperties: false,
+        },
+        execute: async (params) => {
+          const parsed = z.object({ memoryId: z.string().min(1) }).parse(params ?? {});
+          const desc = this.describeMemory(parsed.memoryId);
+          if (!desc) {
+            return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
+          }
+          const lines = [
+            `ID: ${desc.id}`,
+            `Description: ${desc.description}`,
+            `Type: ${desc.type} | Source: ${desc.sourceType} | Scope: ${desc.scope}`,
+            `Confidence: ${desc.confidence.toFixed(2)} | Durable: ${desc.durable}`,
+            `Content length: ${desc.contentLength} chars (~${Math.ceil(desc.contentLength / 4)} tokens)`,
+            `Entities: ${desc.entityCount} | Sources: ${desc.sourceCount} | Events: ${desc.eventCount}`,
+            `Created: ${desc.createdAt}${desc.lastReinforcedAt ? ` | Last reinforced: ${desc.lastReinforcedAt}` : ''}`,
+          ];
+          return { content: [{ type: 'text', text: lines.join('\n') }], details: desc };
+        },
+      },
+      {
+        name: 'popeye_memory_expand',
+        label: 'Popeye Memory Expand',
+        description: 'Load full content of a specific memory. Use after describe to get the actual content when needed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            memoryId: { type: 'string', description: 'Memory ID to expand' },
+            maxTokens: { type: 'number', description: 'Maximum tokens to return (default 8000)' },
+          },
+          required: ['memoryId'],
+          additionalProperties: false,
+        },
+        execute: async (params) => {
+          const parsed = z.object({ memoryId: z.string().min(1), maxTokens: z.number().int().positive().optional() }).parse(params ?? {});
+          const expanded = this.expandMemory(parsed.memoryId, parsed.maxTokens);
+          if (!expanded) {
+            return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
+          }
+          const header = expanded.truncated ? `[Truncated to ~${expanded.tokenEstimate} tokens]\n\n` : '';
+          return { content: [{ type: 'text', text: `${header}${expanded.content}` }], details: expanded };
         },
       },
     ];
@@ -1655,7 +1744,7 @@ export class PopeyeRuntimeService {
 
     const runLog = this.log.child({
       workspaceId: task.workspaceId,
-      projectId: task.projectId ?? undefined,
+      ...(task.projectId != null && { projectId: task.projectId }),
       taskId: task.id,
       jobId: job.id,
       runId: run.id,
@@ -1663,12 +1752,13 @@ export class PopeyeRuntimeService {
     });
 
     try {
+      const taskCwd = this.resolveTaskCwd(task);
       const engineRequest: EngineRunRequest = {
         prompt: fullPrompt,
         workspaceId: task.workspaceId,
         projectId: task.projectId,
         instructionSnapshotId: instructionBundle.id,
-        cwd: this.resolveTaskCwd(task),
+        ...(taskCwd !== undefined && { cwd: taskCwd }),
         sessionPolicy: { type: 'dedicated', rootId: sessionRoot.id },
         trigger: {
           source: task.source,
@@ -1731,7 +1821,7 @@ export class PopeyeRuntimeService {
     if (event.type === 'session' && event.payload?.sessionRef) {
       this.databases.app.prepare('UPDATE runs SET engine_session_ref = ? WHERE id = ?').run(event.payload.sessionRef, runId);
     }
-    if (event.type === 'compaction' && event.payload?.content) {
+    if (event.type === 'compaction' && typeof event.payload?.content === 'string') {
       const activeRun = this.activeRuns.get(runId);
       const workspaceId = activeRun?.task.workspaceId ?? 'default';
       void this.memoryLifecycle.processCompactionFlush(runId, event.payload.content, workspaceId);

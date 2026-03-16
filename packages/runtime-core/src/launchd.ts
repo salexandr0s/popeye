@@ -3,6 +3,12 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+function getUid(): number {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error('process.getuid is not available on this platform (launchd requires macOS/POSIX)');
+  return uid;
+}
+
 export interface LaunchdInstallOptions {
   label?: string;
   configPath: string;
@@ -27,7 +33,7 @@ export function getLaunchAgentPath(label = 'dev.popeye.popeyed'): string {
 }
 
 export function getLaunchAgentTarget(label = 'dev.popeye.popeyed'): string {
-  return `gui/${process.getuid()}/${label}`;
+  return `gui/${getUid()}/${label}`;
 }
 
 function xmlEscape(s: string): string {
@@ -93,7 +99,7 @@ export function daemonStatus(label = 'dev.popeye.popeyed'): { installed: boolean
 
 export function loadLaunchAgent(label = 'dev.popeye.popeyed'): LaunchdCommandResult {
   const plistPath = getLaunchAgentPath(label);
-  const result = spawnSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { encoding: 'utf8' });
+  const result = spawnSync('launchctl', ['bootstrap', `gui/${getUid()}`, plistPath], { encoding: 'utf8' });
   return { ok: result.status === 0, output: result.stdout || result.stderr || '' };
 }
 

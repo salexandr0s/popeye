@@ -424,6 +424,33 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'CREATE INDEX idx_mem_entity_mentions_entity ON memory_entity_mentions(entity_id);',
     ],
   },
+  {
+    id: '008-memory-summary-dag',
+    statements: [
+      `CREATE TABLE memory_summaries (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        parent_id TEXT REFERENCES memory_summaries(id),
+        depth INTEGER NOT NULL DEFAULT 0,
+        content TEXT NOT NULL,
+        token_estimate INTEGER NOT NULL DEFAULT 0,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX idx_memory_summaries_run ON memory_summaries(run_id);',
+      'CREATE INDEX idx_memory_summaries_parent ON memory_summaries(parent_id);',
+      'CREATE INDEX idx_memory_summaries_depth ON memory_summaries(run_id, depth);',
+      `CREATE TABLE memory_summary_sources (
+        id TEXT PRIMARY KEY,
+        summary_id TEXT NOT NULL REFERENCES memory_summaries(id),
+        memory_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX idx_memory_summary_sources_summary ON memory_summary_sources(summary_id);',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

@@ -6,7 +6,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "pnpm typecheck && pnpm --filter @popeye/web-inspector build",
+    "build": "turbo run build",
     "clean": "turbo run clean --concurrency=1 && rm -rf coverage .vitest-coverage",
     "dev-verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
     "lint": "eslint . --max-warnings=0",

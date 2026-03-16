@@ -1208,7 +1208,7 @@ export class PiEngineAdapter implements EngineAdapter {
             tools: (request.runtimeTools ?? []).map((t) => ({
               name: t.name,
               description: t.description,
-              parameters: t.parameters,
+              parameters: t.inputSchema,
             })),
           });
           // Set a short fallback timer — if Pi doesn't know this command, it may not respond

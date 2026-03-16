@@ -109,6 +109,44 @@ Common failure modes and diagnostic procedures for the Popeye daemon.
 2. Include it as `x-popeye-csrf` header on mutating requests.
 3. If using a browser, ensure `Sec-Fetch-Site` is `same-origin` or `none`.
 
+## Memory System Failures
+
+### sqlite-vec load failure
+
+**Symptoms:** Daemon starts but memory search returns errors. Log shows `Failed to load sqlite-vec extension` or similar.
+
+**Possible causes:**
+- `sqlite-vec` native module not built for the current platform/architecture.
+- `better-sqlite3` version mismatch with the `sqlite-vec` extension.
+- Missing or corrupted `memory.db` file.
+
+**Steps:**
+1. Check daemon logs for the exact error message.
+2. Rebuild native modules: `pnpm rebuild better-sqlite3 sqlite-vec`.
+3. Verify the memory database exists: `ls ~/Library/Application\ Support/Popeye/memory.db`.
+4. If the database is corrupted, restore from backup (see [Backup & Restore](docs/runbooks/backup-restore.md)).
+5. Restart the daemon after fixing.
+
+### Embedding API down
+
+**Symptoms:** Memory writes succeed but new memories have no embeddings. Semantic search (`vsearch`) returns no results for recent content. Logs show embedding API errors.
+
+**Possible causes:**
+- OpenAI API key missing or expired.
+- OpenAI API rate limit exceeded.
+- Network connectivity issues to the embedding endpoint.
+
+**Steps:**
+1. Check that the embedding API key is set in the environment or secrets provider.
+2. Test the API key manually: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models`.
+3. Check daemon logs for rate-limit (429) or auth (401) responses.
+4. If the API is temporarily down, the daemon will retry on the next memory maintenance cycle. Trigger manually with `pop memory maintenance`.
+5. FTS5 (lexical) search continues to work even when embeddings are unavailable.
+
+## Cross-references
+
+- **Backup & Restore:** See `docs/runbooks/backup-restore.md` for backup creation, verification, and restore procedures.
+
 ## Escalation
 
 If the issue cannot be resolved with the steps above:

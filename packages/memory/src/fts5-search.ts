@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import { searchLikeFallback } from './like-fallback.js';
 import type { MemoryType } from './types.js';
 
 import { buildFts5MatchExpression } from './pure-functions.js';
@@ -75,7 +76,7 @@ LIMIT ?`;
   try {
     rows = db.prepare(sql).all(...params) as typeof rows;
   } catch {
-    return [];
+    return searchLikeFallback(db, query, filters, limit);
   }
 
   return rows.map((row) => ({

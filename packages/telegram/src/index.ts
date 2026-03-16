@@ -322,13 +322,13 @@ async function sendTelegramReplyWithRetry(
       const result = await bot.sendMessage(input);
       if (auditContext) {
         await auditContext.control.recordSendAttempt({
-          deliveryId: auditContext.deliveryId,
+          ...(auditContext.deliveryId !== undefined && { deliveryId: auditContext.deliveryId }),
           chatId: auditContext.chatId,
           telegramMessageId: auditContext.telegramMessageId,
           workspaceId: auditContext.workspaceId,
           startedAt,
           finishedAt: new Date().toISOString(),
-          runId: auditContext.runId,
+          ...(auditContext.runId !== undefined && { runId: auditContext.runId }),
           contentHash,
           outcome: 'sent',
           sentTelegramMessageId: result.messageId,
@@ -340,13 +340,13 @@ async function sendTelegramReplyWithRetry(
         const isRetryable = isRetryableTelegramSendError(error);
         const isLast = attempt >= maxAttempts;
         await auditContext.control.recordSendAttempt({
-          deliveryId: auditContext.deliveryId,
+          ...(auditContext.deliveryId !== undefined && { deliveryId: auditContext.deliveryId }),
           chatId: auditContext.chatId,
           telegramMessageId: auditContext.telegramMessageId,
           workspaceId: auditContext.workspaceId,
           startedAt,
           finishedAt: new Date().toISOString(),
-          runId: auditContext.runId,
+          ...(auditContext.runId !== undefined && { runId: auditContext.runId }),
           contentHash,
           outcome: isRetryable ? 'retryable_failure' : (isLast ? 'ambiguous' : 'permanent_failure'),
           errorSummary: describeTelegramSendFailure(error).slice(0, 500),
@@ -358,6 +358,7 @@ async function sendTelegramReplyWithRetry(
       await sleep(options.delayMs);
     }
   }
+  throw new Error('unreachable: retry loop completed without return or throw');
 }
 
 function buildTelegramDeliveryKey(workspaceId: string, chatId: string, telegramMessageId: number): string {

@@ -9,6 +9,7 @@ import type {
   MessageIngressResponse,
   MessageRecord,
   SecurityAuditEvent,
+  TaskCreateInput,
   TaskRecord,
   JobRecord,
   RunRecord,
@@ -134,7 +135,7 @@ export class MessageIngressError extends Error {
 
 export interface MessageIngestionCallbacks {
   recordSecurityAudit(event: SecurityAuditEvent): void;
-  createTask(input: { workspaceId: string; projectId: string | null; title: string; prompt: string; source: string; autoEnqueue: boolean }): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null };
+  createTask(input: { workspaceId: string; projectId: string | null; title: string; prompt: string; source: TaskCreateInput['source']; coalesceKey: string | null; autoEnqueue: boolean }): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null };
   createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void;
 }
 
@@ -600,6 +601,7 @@ export class MessageIngestionService {
         title: `message:${message.id}`,
         prompt: message.body,
         source: 'telegram',
+        coalesceKey: null,
         autoEnqueue: true,
       });
       this.updateMessageIngressLinks(ingressRecord.id, {
@@ -703,7 +705,7 @@ export class MessageIngestionService {
       message.relatedRunId,
       message.createdAt,
     );
-    const created = this.callbacks.createTask({ workspaceId: parsed.workspaceId, projectId: null, title: `message:${message.id}`, prompt: message.body, source: parsed.source === 'manual' ? 'manual' : 'api', autoEnqueue: true });
+    const created = this.callbacks.createTask({ workspaceId: parsed.workspaceId, projectId: null, title: `message:${message.id}`, prompt: message.body, source: parsed.source === 'manual' ? 'manual' : 'api', coalesceKey: null, autoEnqueue: true });
     return MessageIngressResponseSchema.parse({
       accepted: true,
       duplicate: false,

@@ -49,7 +49,7 @@ export function processIngressMessage(input: {
   return {
     source: input.source,
     senderId: input.senderId,
-    telegramMessageId: input.telegramMessageId,
+    ...(input.telegramMessageId !== undefined && { telegramMessageId: input.telegramMessageId }),
     redactedText: redacted,
   };
 }

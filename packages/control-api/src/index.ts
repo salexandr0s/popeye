@@ -44,7 +44,7 @@ import {
   validateCsrfToken,
   type PopeyeRuntimeService,
 } from '@popeye/runtime-core';
-import { nowIso, type SecurityAuditEvent } from '@popeye/contracts';
+import { nowIso, stripUndefined, type SecurityAuditEvent } from '@popeye/contracts';
 import type { PopeyeLogger } from '@popeye/observability';
 
 export interface ControlApiDependencies {
@@ -535,6 +535,41 @@ export async function createControlApi(
 
   app.get('/v1/memory/audit', async () => dependencies.runtime.getMemoryAudit());
 
+  app.get('/v1/memory/integrity', async (request) => {
+    const params = z.object({ fix: z.enum(['true', 'false']).optional() }).parse(request.query);
+    return dependencies.runtime.checkMemoryIntegrity({ fix: params.fix === 'true' });
+  });
+
+  app.get('/v1/memory/budget-fit', async (request) => {
+    const params = z.object({
+      q: z.string().max(1000),
+      scope: z.string().optional(),
+      maxTokens: z.coerce.number().int().positive().default(8000),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.budgetFitMemory(stripUndefined({
+      query: params.q,
+      maxTokens: params.maxTokens,
+      scope: params.scope,
+      limit: params.limit,
+    }));
+  });
+
+  app.get('/v1/memory/:id/describe', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const desc = dependencies.runtime.describeMemory(id);
+    if (!desc) return reply.code(404).send({ error: 'not_found' });
+    return desc;
+  });
+
+  app.get('/v1/memory/:id/expand', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const params = z.object({ maxTokens: z.coerce.number().int().positive().optional() }).parse(request.query);
+    const expanded = dependencies.runtime.expandMemory(id, params.maxTokens);
+    if (!expanded) return reply.code(404).send({ error: 'not_found' });
+    return expanded;
+  });
+
   app.get('/v1/memory/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const memory = dependencies.runtime.getMemory(id);
@@ -544,18 +579,18 @@ export async function createControlApi(
 
   app.get('/v1/memory', async (request) => {
     const params = MemoryListQueryParamsSchema.parse(request.query);
-    return dependencies.runtime.listMemories({
+    return dependencies.runtime.listMemories(stripUndefined({
       type: params.type,
       scope: params.scope,
       limit: params.limit ?? 50,
-    });
+    }));
   });
 
   app.post('/v1/memory/maintenance', async () => dependencies.runtime.triggerMemoryMaintenance());
 
   app.post('/v1/memory/import', async (request) => {
     const input = MemoryImportInputSchema.parse(request.body);
-    return dependencies.runtime.importMemory(input);
+    return dependencies.runtime.importMemory(stripUndefined(input));
   });
 
   app.post('/v1/memory/:id/promote/propose', async (request, reply) => {
@@ -758,7 +793,7 @@ export async function createControlApi(
     }).parse(request.body);
     try {
       return TelegramSendAttemptRecordSchema.parse(
-        dependencies.runtime.recordTelegramSendAttempt(body),
+        dependencies.runtime.recordTelegramSendAttempt(stripUndefined(body)),
       );
     } catch (error) {
       if (error instanceof RuntimeNotFoundError) {

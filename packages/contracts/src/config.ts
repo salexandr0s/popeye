@@ -90,6 +90,12 @@ export const MemoryConfigSchema = z.object({
   docIndexIntervalHours: z.number().int().positive().default(6),
   budgetAllocation: BudgetAllocationConfigSchema.default({}),
   qualitySweepEnabled: z.boolean().default(false),
+  compactionFanout: z.number().int().positive().default(8),
+  compactionFreshTailCount: z.number().int().nonnegative().default(4),
+  compactionMaxLeafTokens: z.number().int().positive().default(2000),
+  compactionMaxCondensedTokens: z.number().int().positive().default(4000),
+  compactionMaxRetries: z.number().int().nonnegative().default(1),
+  expandTokenCap: z.number().int().positive().default(8000),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

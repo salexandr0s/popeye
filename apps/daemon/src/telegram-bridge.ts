@@ -38,7 +38,7 @@ export async function startTelegramBridge(
   const authStore = loadAuthStore(config.authFile);
   const baseUrl = `http://${config.security.bindHost}:${config.security.bindPort}`;
   const bot = deps.createBotClient?.(botToken) ?? createTelegramBotClient({ token: botToken });
-  const control = deps.createControlClient?.(baseUrl, authStore.current.token)
+  const control: TelegramRunTrackingClient = deps.createControlClient?.(baseUrl, authStore.current.token)
     ?? new PopeyeApiClient({ baseUrl, token: authStore.current.token });
   const relay = new TelegramLongPollRelay({
     bot,

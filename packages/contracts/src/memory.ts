@@ -119,3 +119,42 @@ export const MemorySearchQuerySchema = z.object({
   includeContent: z.boolean().optional(),
 });
 export type MemorySearchQuery = z.infer<typeof MemorySearchQuerySchema>;
+
+export const BudgetFitResultSchema = z.object({
+  results: z.array(MemorySearchResultSchema),
+  totalTokensUsed: z.number().int().nonnegative(),
+  totalTokensBudget: z.number().int().positive(),
+  truncatedCount: z.number().int().nonnegative(),
+  droppedCount: z.number().int().nonnegative(),
+  expansionPolicy: z.object({
+    risk: z.enum(['low', 'moderate', 'high']),
+    route: z.enum(['answer_directly', 'expand_shallow', 'expand_deep']),
+    warning: z.string().optional(),
+  }).optional(),
+});
+export type BudgetFitResult = z.infer<typeof BudgetFitResultSchema>;
+
+export const MemoryDescribeResultSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  type: z.string(),
+  confidence: z.number(),
+  scope: z.string(),
+  sourceType: z.string(),
+  createdAt: z.string(),
+  lastReinforcedAt: z.string().nullable(),
+  durable: z.boolean(),
+  contentLength: z.number().int().nonnegative(),
+  entityCount: z.number().int().nonnegative(),
+  sourceCount: z.number().int().nonnegative(),
+  eventCount: z.number().int().nonnegative(),
+});
+export type MemoryDescribeResult = z.infer<typeof MemoryDescribeResultSchema>;
+
+export const MemoryExpandResultSchema = z.object({
+  id: z.string(),
+  content: z.string(),
+  tokenEstimate: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+export type MemoryExpandResult = z.infer<typeof MemoryExpandResultSchema>;
