@@ -1,4 +1,5 @@
 # Popeye
+![logo](https://github.com/user-attachments/assets/77bbf39b-d279-4b5a-a427-aab4eb640ecf)
 
 Popeye is my always-on personal agent.
 
