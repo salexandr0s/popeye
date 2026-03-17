@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -110,6 +110,24 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     search: { desc: 'Search indexed files', usage: 'pop files search <query> [--root-id <id>] [--limit <n>]' },
     reindex: { desc: 'Trigger reindex', usage: 'pop files reindex <root-id>' },
     status: { desc: 'Show indexing stats', usage: 'pop files status' },
+  },
+  email: {
+    accounts: { desc: 'List email accounts', usage: 'pop email accounts [--json]' },
+    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail | --proton' },
+    sync: { desc: 'Trigger email sync', usage: 'pop email sync [accountId]' },
+    threads: { desc: 'List email threads', usage: 'pop email threads [--unread] [--limit <n>] [--json]' },
+    search: { desc: 'Search email', usage: 'pop email search <query> [--limit <n>] [--json]' },
+    digest: { desc: 'Show latest email digest', usage: 'pop email digest [--generate] [--json]' },
+    providers: { desc: 'Show available email providers', usage: 'pop email providers [--json]' },
+  },
+  github: {
+    accounts: { desc: 'List GitHub accounts', usage: 'pop github accounts [--json]' },
+    repos: { desc: 'List synced repos', usage: 'pop github repos [--limit <n>] [--json]' },
+    prs: { desc: 'List pull requests', usage: 'pop github prs [--state open|closed|all] [--limit <n>] [--json]' },
+    issues: { desc: 'List issues', usage: 'pop github issues [--assigned] [--state open|closed|all] [--limit <n>] [--json]' },
+    notifications: { desc: 'List unread notifications', usage: 'pop github notifications [--limit <n>] [--json]' },
+    search: { desc: 'Search PRs and issues', usage: 'pop github search <query> [--limit <n>] [--json]' },
+    digest: { desc: 'Show GitHub digest', usage: 'pop github digest [--json]' },
   },
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
@@ -701,6 +719,381 @@ async function main(): Promise<void> {
     for (const root of roots) {
       const status = root.enabled ? 'enabled' : 'disabled';
       console.info(`  ${root.label.padEnd(20)} ${root.rootPath}  [${root.permission}] [${status}]  files: ${root.lastIndexedCount}  last: ${root.lastIndexedAt ?? 'never'}`);
+    }
+    return;
+  }
+
+  // --- Email commands ---
+
+  if (command === 'email' && subcommand === 'accounts') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listEmailAccounts();
+    if (jsonFlag) {
+      console.info(JSON.stringify(accounts, null, 2));
+    } else {
+      if (accounts.length === 0) {
+        console.info('No email accounts registered.');
+      } else {
+        for (const acct of accounts) {
+          console.info(`  ${acct.id}  ${acct.emailAddress.padEnd(30)} ${acct.displayName}  messages: ${acct.messageCount}  last sync: ${acct.lastSyncAt ?? 'never'}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'threads') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '20', 10) : 20;
+    const unreadOnly = process.argv.includes('--unread');
+    const accounts = await client.listEmailAccounts();
+    if (accounts.length === 0) {
+      console.info('No email accounts registered.');
+      return;
+    }
+    const threads = await client.listEmailThreads(accounts[0]!.id, { limit, unreadOnly });
+    if (jsonFlag) {
+      console.info(JSON.stringify(threads, null, 2));
+    } else {
+      if (threads.length === 0) {
+        console.info('No email threads found.');
+      } else {
+        for (const t of threads) {
+          const flags = [t.isUnread ? 'unread' : '', t.isStarred ? 'starred' : ''].filter(Boolean).join(' ');
+          console.info(`  ${t.lastMessageAt.slice(0, 10)}  ${t.subject.slice(0, 60).padEnd(62)} ${flags}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '20', 10) : 20;
+    const response = await client.searchEmail(arg1, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else {
+      if (response.results.length === 0) {
+        console.info('No matching emails found.');
+      } else {
+        for (const r of response.results) {
+          console.info(`  ${r.lastMessageAt.slice(0, 10)}  ${r.subject.slice(0, 60).padEnd(62)} from: ${r.from}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'digest') {
+    const generateFlag = process.argv.includes('--generate');
+    const client = await requireDaemonClient(config);
+    if (generateFlag) {
+      const digest = await client.generateEmailDigest();
+      if (jsonFlag) {
+        console.info(JSON.stringify(digest, null, 2));
+      } else if (!digest) {
+        console.info('No accounts registered. Connect an email provider first.');
+      } else {
+        console.info('Digest generated:');
+        console.info(digest.summaryMarkdown);
+      }
+    } else {
+      const digest = await client.getEmailDigest();
+      if (jsonFlag) {
+        console.info(JSON.stringify(digest, null, 2));
+      } else if (!digest) {
+        console.info('No email digest available. Run sync first, or use --generate.');
+      } else {
+        console.info(digest.summaryMarkdown);
+      }
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'connect') {
+    const isGmail = process.argv.includes('--gmail');
+    const isProton = process.argv.includes('--proton');
+    if (!isGmail && !isProton) {
+      console.error('Usage: pop email connect --gmail | --proton');
+      process.exit(1);
+    }
+    const client = await requireDaemonClient(config);
+
+    if (isGmail) {
+      // Check gws is available
+      const providers = await client.detectEmailProviders();
+      if (!providers.gws.available) {
+        console.error('gws CLI not found. Install with: npm install -g @googleworkspace/cli');
+        process.exit(1);
+      }
+
+      // Resolve real email address from gws profile
+      let emailAddress: string;
+      try {
+        const profileJson = await new Promise<string>((resolveExec, rejectExec) => {
+          execFile('gws', ['gmail', 'users', 'getProfile'], { timeout: 30_000 }, (error, stdout) => {
+            if (error) {
+              rejectExec(error);
+              return;
+            }
+            resolveExec(stdout);
+          });
+        });
+        const profile = JSON.parse(profileJson) as { emailAddress?: string };
+        if (!profile.emailAddress) {
+          console.error('gws getProfile did not return an email address. Is gws authenticated?');
+          process.exit(1);
+        }
+        emailAddress = profile.emailAddress;
+      } catch (err) {
+        console.error(`Failed to resolve Gmail profile via gws: ${err instanceof Error ? err.message : String(err)}`);
+        console.error('Ensure gws is authenticated: gws auth login');
+        process.exit(1);
+      }
+
+      // Create connection
+      const connection = await client.createConnection({
+        domain: 'email',
+        providerKind: 'gmail',
+        label: `Gmail (${emailAddress})`,
+        mode: 'read_only',
+        secretRefId: null,
+        syncIntervalSeconds: 900,
+        allowedScopes: ['gmail.readonly'],
+        allowedResources: [],
+      });
+      // Register account with the resolved email
+      const account = await client.registerEmailAccount({
+        connectionId: connection.id,
+        emailAddress,
+        displayName: emailAddress.split('@')[0] ?? emailAddress,
+      });
+      console.info(`Connected Gmail via gws CLI.`);
+      console.info(`  Connection: ${connection.id}`);
+      console.info(`  Account:    ${account.id} (${emailAddress})`);
+      console.info('Run "pop email sync" to fetch your inbox.');
+    } else {
+      // Proton — prompt for bridge password
+      const readline = await import('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const ask = (q: string): Promise<string> => new Promise((resolve) => rl.question(q, resolve));
+      const email = await ask('Proton email address: ');
+      const password = await ask('Bridge-generated password: ');
+      rl.close();
+
+      if (!email || !password) {
+        console.error('Both email and bridge password are required.');
+        process.exit(1);
+      }
+
+      // Store the bridge password in the daemon's secret store
+      const secretRef = await client.storeSecret({
+        key: `proton-bridge-password`,
+        value: password,
+        description: `Proton Bridge IMAP password for ${email}`,
+      });
+
+      // Create connection with the secret reference
+      const connection = await client.createConnection({
+        domain: 'email',
+        providerKind: 'proton',
+        label: `Proton (${email})`,
+        mode: 'read_only',
+        secretRefId: secretRef.id,
+        syncIntervalSeconds: 900,
+        allowedScopes: [],
+        allowedResources: [],
+      });
+
+      // Update the secret to link it to the connection
+      await client.updateConnection(connection.id, { secretRefId: secretRef.id });
+
+      // Register account
+      const account = await client.registerEmailAccount({
+        connectionId: connection.id,
+        emailAddress: email,
+        displayName: email.split('@')[0] ?? email,
+      });
+      console.info(`Connected Proton Mail via Bridge.`);
+      console.info(`  Connection: ${connection.id}`);
+      console.info(`  Account:    ${account.id}`);
+      console.info('  Password stored securely in daemon secret store.');
+      console.info('Run "pop email sync" to fetch your inbox.');
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'sync') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listEmailAccounts();
+    if (accounts.length === 0) {
+      console.error('No email accounts registered. Run "pop email connect" first.');
+      process.exit(1);
+    }
+    const targetId = arg1 ?? accounts[0]!.id;
+    console.info(`Syncing account ${targetId}...`);
+    const result = await client.syncEmailAccount(targetId);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info(`  Synced: ${result.synced} new, ${result.updated} updated`);
+      if (result.errors.length > 0) {
+        console.info(`  Errors: ${result.errors.length}`);
+        for (const err of result.errors.slice(0, 5)) console.info(`    - ${err}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'email' && subcommand === 'providers') {
+    const client = await requireDaemonClient(config);
+    const providers = await client.detectEmailProviders();
+    if (jsonFlag) {
+      console.info(JSON.stringify(providers, null, 2));
+    } else {
+      console.info('Email providers:');
+      console.info(`  Gmail (gws CLI):     ${providers.gws.available ? 'available' : 'not found'}`);
+      console.info(`  Proton (Bridge):     ${providers.protonBridge.available ? 'running' : 'not detected'}`);
+    }
+    return;
+  }
+
+  // --- GitHub commands ---
+
+  if (command === 'github' && subcommand === 'accounts') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listGithubAccounts();
+    if (jsonFlag) {
+      console.info(JSON.stringify(accounts, null, 2));
+    } else {
+      if (accounts.length === 0) {
+        console.info('No GitHub accounts registered.');
+      } else {
+        for (const acct of accounts) {
+          console.info(`  ${acct.id}  ${acct.githubUsername.padEnd(25)} ${acct.displayName}  repos: ${acct.repoCount}  last sync: ${acct.lastSyncAt ?? 'never'}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'repos') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '100', 10) : 100;
+    const repos = await client.listGithubRepos(undefined, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(repos, null, 2));
+    } else {
+      if (repos.length === 0) {
+        console.info('No repos synced. Run "pop github sync" first.');
+      } else {
+        for (const r of repos) {
+          const lang = r.language ? ` [${r.language}]` : '';
+          const visibility = r.isPrivate ? 'private' : 'public';
+          console.info(`  ${r.fullName.padEnd(40)} ${visibility.padEnd(8)} ${lang}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'prs') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '50', 10) : 50;
+    const stateIdx = process.argv.indexOf('--state');
+    const state = stateIdx !== -1 ? process.argv[stateIdx + 1] : undefined;
+    const prs = await client.listGithubPullRequests(undefined, { state, limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(prs, null, 2));
+    } else {
+      if (prs.length === 0) {
+        console.info('No pull requests found.');
+      } else {
+        for (const pr of prs) {
+          const draft = pr.isDraft ? ' [draft]' : '';
+          const ci = pr.ciStatus ? ` ci:${pr.ciStatus}` : '';
+          console.info(`  #${String(pr.githubPrNumber).padEnd(5)} ${pr.state.padEnd(7)} ${pr.title.slice(0, 50).padEnd(52)} by ${pr.author}${draft}${ci}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'issues') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '50', 10) : 50;
+    const stateIdx = process.argv.indexOf('--state');
+    const state = stateIdx !== -1 ? process.argv[stateIdx + 1] : undefined;
+    const assigned = process.argv.includes('--assigned');
+    const issues = await client.listGithubIssues(undefined, { state, assigned, limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(issues, null, 2));
+    } else {
+      if (issues.length === 0) {
+        console.info('No issues found.');
+      } else {
+        for (const issue of issues) {
+          const labels = issue.labels.length > 0 ? ` [${issue.labels.join(', ')}]` : '';
+          console.info(`  #${String(issue.githubIssueNumber).padEnd(5)} ${issue.state.padEnd(7)} ${issue.title.slice(0, 50).padEnd(52)} by ${issue.author}${labels}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'notifications') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '50', 10) : 50;
+    const notifications = await client.listGithubNotifications(undefined, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(notifications, null, 2));
+    } else {
+      if (notifications.length === 0) {
+        console.info('No unread notifications.');
+      } else {
+        for (const n of notifications) {
+          console.info(`  [${n.subjectType.padEnd(12)}] ${n.subjectTitle.slice(0, 50).padEnd(52)} ${n.repoFullName}  (${n.reason})`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '20', 10) : 20;
+    const response = await client.searchGithub(arg1, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else {
+      if (response.results.length === 0) {
+        console.info('No matching PRs or issues found.');
+      } else {
+        for (const r of response.results) {
+          console.info(`  [${r.entityType.toUpperCase().padEnd(5)}] #${String(r.number).padEnd(5)} ${r.title.slice(0, 50).padEnd(52)} ${r.repoFullName}  by ${r.author}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'digest') {
+    const client = await requireDaemonClient(config);
+    const digest = await client.getGithubDigest();
+    if (jsonFlag) {
+      console.info(JSON.stringify(digest, null, 2));
+    } else if (!digest) {
+      console.info('No GitHub digest available. Sync first with the daemon running.');
+    } else {
+      console.info(digest.summaryMarkdown);
     }
     return;
   }

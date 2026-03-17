@@ -10,6 +10,7 @@ import {
   ConnectionCreateInputSchema,
   ConnectionUpdateInputSchema,
   ContextReleasePreviewRequestSchema,
+  EmailAccountRegistrationInputSchema,
   DomainKindSchema,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
@@ -910,6 +911,23 @@ export async function createControlApi(
     return dependencies.runtime.previewContextRelease(body);
   });
 
+  // --- Secret store routes ---
+
+  app.post('/v1/secrets', async (request) => {
+    const body = z.object({
+      key: z.string().min(1),
+      value: z.string().min(1),
+      connectionId: z.string().optional(),
+      description: z.string().optional(),
+    }).parse(request.body);
+    return dependencies.runtime.setSecret({
+      key: body.key,
+      value: body.value,
+      ...(body.connectionId !== undefined ? { connectionId: body.connectionId } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
+    });
+  });
+
   // --- File roots routes ---
 
   app.get('/v1/files/roots', async (request) => {
@@ -972,6 +990,182 @@ export async function createControlApi(
     const result = dependencies.runtime.reindexFileRoot(id);
     if (!result) return reply.code(404).send({ error: 'file root not found' });
     return result;
+  });
+
+  // --- Email routes ---
+
+  app.get('/v1/email/accounts', async () => {
+    return dependencies.runtime.listEmailAccounts();
+  });
+
+  app.get('/v1/email/threads', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+      unreadOnly: z.enum(['true', 'false']).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listEmailAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listEmailThreads(accountId, {
+      limit: query.limit ?? 50,
+      unreadOnly: query.unreadOnly === 'true',
+    });
+  });
+
+  app.get('/v1/email/threads/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const thread = dependencies.runtime.getEmailThread(id);
+    if (!thread) return reply.code(404).send({ error: 'thread not found' });
+    return thread;
+  });
+
+  app.get('/v1/email/messages/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const message = dependencies.runtime.getEmailMessage(id);
+    if (!message) return reply.code(404).send({ error: 'message not found' });
+    return message;
+  });
+
+  app.get('/v1/email/digest', async (request) => {
+    const query = z.object({ accountId: z.string().optional() }).parse(request.query);
+    const accounts = dependencies.runtime.listEmailAccounts();
+    if (accounts.length === 0) return null;
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.getEmailDigest(accountId);
+  });
+
+  app.get('/v1/email/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      accountId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchEmail({
+      query: query.query,
+      accountId: query.accountId,
+      limit: query.limit ?? 20,
+    });
+  });
+
+  app.post('/v1/email/accounts', async (request) => {
+    const body = EmailAccountRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerEmailAccount(body);
+  });
+
+  app.post('/v1/email/sync', async (request) => {
+    const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
+    return dependencies.runtime.syncEmailAccount(body.accountId);
+  });
+
+  app.post('/v1/email/digest', async (request) => {
+    const body = z.object({ accountId: z.string().optional() }).default({}).parse(request.body ?? {});
+    return dependencies.runtime.triggerEmailDigest(body.accountId);
+  });
+
+  app.get('/v1/email/providers', async () => {
+    const { detectAvailableProviders } = await import('@popeye/cap-email');
+    return detectAvailableProviders();
+  });
+
+  // --- GitHub routes ---
+
+  app.get('/v1/github/accounts', async () => {
+    return dependencies.runtime.listGithubAccounts();
+  });
+
+  app.get('/v1/github/repos', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listGithubAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listGithubRepos(accountId, { limit: query.limit });
+  });
+
+  app.get('/v1/github/prs', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      state: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listGithubAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listGithubPullRequests(accountId, {
+      state: query.state,
+      limit: query.limit ?? 50,
+    });
+  });
+
+  app.get('/v1/github/prs/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const pr = dependencies.runtime.getGithubPullRequest(id);
+    if (!pr) return reply.code(404).send({ error: 'pull request not found' });
+    return pr;
+  });
+
+  app.get('/v1/github/issues', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      state: z.string().optional(),
+      assigned: z.enum(['true', 'false']).optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listGithubAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listGithubIssues(accountId, {
+      state: query.state,
+      limit: query.limit ?? 50,
+      assignedOnly: query.assigned === 'true',
+    });
+  });
+
+  app.get('/v1/github/issues/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const issue = dependencies.runtime.getGithubIssue(id);
+    if (!issue) return reply.code(404).send({ error: 'issue not found' });
+    return issue;
+  });
+
+  app.get('/v1/github/notifications', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listGithubAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listGithubNotifications(accountId, {
+      unreadOnly: true,
+      limit: query.limit ?? 50,
+    });
+  });
+
+  app.get('/v1/github/digest', async (request) => {
+    const query = z.object({ accountId: z.string().optional() }).parse(request.query);
+    const accounts = dependencies.runtime.listGithubAccounts();
+    if (accounts.length === 0) return null;
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.getGithubDigest(accountId);
+  });
+
+  app.get('/v1/github/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      accountId: z.string().optional(),
+      entityType: z.enum(['pr', 'issue', 'all']).optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchGithub({
+      query: query.query,
+      accountId: query.accountId,
+      entityType: query.entityType,
+      limit: query.limit ?? 20,
+    });
   });
 
   return app;

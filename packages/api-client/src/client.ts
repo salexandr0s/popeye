@@ -94,6 +94,37 @@ import {
   FileSearchResponseSchema,
   type FileIndexResult,
   FileIndexResultSchema,
+  type EmailAccountRecord,
+  EmailAccountRecordSchema,
+  type EmailThreadRecord,
+  EmailThreadRecordSchema,
+  type EmailMessageRecord,
+  EmailMessageRecordSchema,
+  type EmailDigestRecord,
+  EmailDigestRecordSchema,
+  type EmailSearchResult,
+  EmailSearchResultSchema,
+  type EmailAccountRegistrationInput,
+  type EmailSyncResult,
+  EmailSyncResultSchema,
+  type SecretRefRecord,
+  SecretRefRecordSchema,
+  type GithubAccountRecord,
+  GithubAccountRecordSchema,
+  type GithubRepoRecord,
+  GithubRepoRecordSchema,
+  type GithubPullRequestRecord,
+  GithubPullRequestRecordSchema,
+  type GithubIssueRecord,
+  GithubIssueRecordSchema,
+  type GithubNotificationRecord,
+  GithubNotificationRecordSchema,
+  type GithubDigestRecord,
+  GithubDigestRecordSchema,
+  type GithubSearchResult,
+  GithubSearchResultSchema,
+  type GithubSyncResult,
+  GithubSyncResultSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -549,6 +580,10 @@ export class PopeyeApiClient {
     return this.del(`/v1/connections/${encodeURIComponent(id)}`);
   }
 
+  async storeSecret(input: { key: string; value: string; connectionId?: string; description?: string }): Promise<SecretRefRecord> {
+    return this.post('/v1/secrets', input, SecretRefRecordSchema);
+  }
+
   async previewContextRelease(input: { domain: DomainKind; sourceRef: string }): Promise<ContextReleasePreview> {
     return this.post('/v1/context-release/preview', input, ContextReleasePreviewSchema);
   }
@@ -646,6 +681,136 @@ export class PopeyeApiClient {
 
   async reindexFileRoot(id: string): Promise<FileIndexResult> {
     return this.post(`/v1/files/roots/${encodeURIComponent(id)}/reindex`, {}, FileIndexResultSchema);
+  }
+
+  // --- Email ---
+
+  async listEmailAccounts(): Promise<EmailAccountRecord[]> {
+    return this.getArray('/v1/email/accounts', EmailAccountRecordSchema);
+  }
+
+  async listEmailThreads(accountId?: string, options?: { limit?: number | undefined; unreadOnly?: boolean | undefined }): Promise<EmailThreadRecord[]> {
+    const params = this.buildQuery({
+      accountId,
+      limit: options?.limit,
+      unreadOnly: options?.unreadOnly ? 'true' : undefined,
+    });
+    return this.getArray(`/v1/email/threads${params}`, EmailThreadRecordSchema);
+  }
+
+  async getEmailThread(id: string): Promise<EmailThreadRecord> {
+    return this.get(`/v1/email/threads/${encodeURIComponent(id)}`, EmailThreadRecordSchema);
+  }
+
+  async getEmailMessage(id: string): Promise<EmailMessageRecord> {
+    return this.get(`/v1/email/messages/${encodeURIComponent(id)}`, EmailMessageRecordSchema);
+  }
+
+  async getEmailDigest(accountId?: string): Promise<EmailDigestRecord | null> {
+    const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+    try {
+      return await this.get(`/v1/email/digest${query}`, EmailDigestRecordSchema);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 404) return null;
+      // API returns null for no digest — handle JSON null
+      return null;
+    }
+  }
+
+  async searchEmail(query: string, options?: { accountId?: string | undefined; limit?: number | undefined }): Promise<{ query: string; results: EmailSearchResult[] }> {
+    const params = this.buildQuery({ query, accountId: options?.accountId, limit: options?.limit });
+    const responseSchema = z.object({
+      query: z.string(),
+      results: z.array(EmailSearchResultSchema),
+    });
+    return this.get(`/v1/email/search${params}`, responseSchema);
+  }
+
+  async registerEmailAccount(input: EmailAccountRegistrationInput): Promise<EmailAccountRecord> {
+    return this.post('/v1/email/accounts', input, EmailAccountRecordSchema);
+  }
+
+  async syncEmailAccount(accountId: string): Promise<EmailSyncResult> {
+    return this.post('/v1/email/sync', { accountId }, EmailSyncResultSchema);
+  }
+
+  async generateEmailDigest(accountId?: string): Promise<EmailDigestRecord | null> {
+    try {
+      return await this.post('/v1/email/digest', accountId ? { accountId } : {}, EmailDigestRecordSchema);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 404) return null;
+      return null;
+    }
+  }
+
+  async detectEmailProviders(): Promise<{ gws: { available: boolean }; protonBridge: { available: boolean } }> {
+    const schema = z.object({
+      gws: z.object({ available: z.boolean() }).passthrough(),
+      protonBridge: z.object({ available: z.boolean() }).passthrough(),
+    });
+    return this.get('/v1/email/providers', schema);
+  }
+
+  // --- GitHub ---
+
+  async listGithubAccounts(): Promise<GithubAccountRecord[]> {
+    return this.getArray('/v1/github/accounts', GithubAccountRecordSchema);
+  }
+
+  async listGithubRepos(accountId?: string, options?: { limit?: number | undefined }): Promise<GithubRepoRecord[]> {
+    const params = this.buildQuery({ accountId, limit: options?.limit });
+    return this.getArray(`/v1/github/repos${params}`, GithubRepoRecordSchema);
+  }
+
+  async listGithubPullRequests(accountId?: string, options?: { state?: string | undefined; limit?: number | undefined }): Promise<GithubPullRequestRecord[]> {
+    const params = this.buildQuery({ accountId, state: options?.state, limit: options?.limit });
+    return this.getArray(`/v1/github/prs${params}`, GithubPullRequestRecordSchema);
+  }
+
+  async getGithubPullRequest(id: string): Promise<GithubPullRequestRecord> {
+    return this.get(`/v1/github/prs/${encodeURIComponent(id)}`, GithubPullRequestRecordSchema);
+  }
+
+  async listGithubIssues(accountId?: string, options?: { state?: string | undefined; assigned?: boolean | undefined; limit?: number | undefined }): Promise<GithubIssueRecord[]> {
+    const params = this.buildQuery({
+      accountId,
+      state: options?.state,
+      assigned: options?.assigned ? 'true' : undefined,
+      limit: options?.limit,
+    });
+    return this.getArray(`/v1/github/issues${params}`, GithubIssueRecordSchema);
+  }
+
+  async getGithubIssue(id: string): Promise<GithubIssueRecord> {
+    return this.get(`/v1/github/issues/${encodeURIComponent(id)}`, GithubIssueRecordSchema);
+  }
+
+  async listGithubNotifications(accountId?: string, options?: { limit?: number | undefined }): Promise<GithubNotificationRecord[]> {
+    const params = this.buildQuery({ accountId, limit: options?.limit });
+    return this.getArray(`/v1/github/notifications${params}`, GithubNotificationRecordSchema);
+  }
+
+  async getGithubDigest(accountId?: string): Promise<GithubDigestRecord | null> {
+    const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+    try {
+      return await this.get(`/v1/github/digest${query}`, GithubDigestRecordSchema);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 404) return null;
+      return null;
+    }
+  }
+
+  async searchGithub(query: string, options?: { accountId?: string | undefined; entityType?: string | undefined; limit?: number | undefined }): Promise<{ query: string; results: GithubSearchResult[] }> {
+    const params = this.buildQuery({ query, accountId: options?.accountId, entityType: options?.entityType, limit: options?.limit });
+    const responseSchema = z.object({
+      query: z.string(),
+      results: z.array(GithubSearchResultSchema),
+    });
+    return this.get(`/v1/github/search${params}`, responseSchema);
+  }
+
+  async syncGithubAccount(accountId: string): Promise<GithubSyncResult> {
+    return this.post('/v1/github/sync', { accountId }, GithubSyncResultSchema);
   }
 
   subscribeEvents(callback: (event: { event: string; data: string }) => void): () => void {

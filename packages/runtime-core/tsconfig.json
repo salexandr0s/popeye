@@ -36,6 +36,12 @@
     },
     {
       "path": "../cap-files"
+    },
+    {
+      "path": "../cap-email"
+    },
+    {
+      "path": "../cap-github"
     }
   ],
   "exclude": [

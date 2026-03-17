@@ -23,3 +23,5 @@ export * from './connection.js';
 export * from './context-release.js';
 export * from './capability.js';
 export * from './file-roots.js';
+export * from './email.js';
+export * from './github.js';

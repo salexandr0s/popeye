@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DomainKindSchema } from './domain.js';
 
-export const ConnectionProviderKindSchema = z.enum(['gmail', 'google_calendar', 'github', 'todoist', 'local_fs']);
+export const ConnectionProviderKindSchema = z.enum(['gmail', 'proton', 'google_calendar', 'github', 'todoist', 'local_fs']);
 export type ConnectionProviderKind = z.infer<typeof ConnectionProviderKindSchema>;
 
 export const ConnectionModeSchema = z.enum(['read_only', 'read_write']);

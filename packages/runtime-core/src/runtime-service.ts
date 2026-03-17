@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -51,6 +52,7 @@ import type {
   WorkspaceRegistrationInput,
 } from '@popeye/contracts';
 import type {
+  CapabilityContext,
   CapabilityModule,
   CapabilityDescriptor,
   FileRootRecord,
@@ -60,6 +62,23 @@ import type {
   FileSearchQuery,
   FileSearchResponse,
   FileIndexResult,
+  EmailAccountRecord,
+  EmailThreadRecord,
+  EmailMessageRecord,
+  EmailDigestRecord,
+  EmailSearchQuery,
+  EmailSearchResult,
+  EmailAccountRegistrationInput,
+  EmailSyncResult,
+  GithubAccountRecord,
+  GithubRepoRecord,
+  GithubPullRequestRecord,
+  GithubIssueRecord,
+  GithubNotificationRecord,
+  GithubDigestRecord,
+  GithubSearchQuery,
+  GithubSearchResult,
+  GithubSyncResult,
 } from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
@@ -101,6 +120,9 @@ import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
+import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, createAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
+import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GhCliAdapter } from '@popeye/cap-github';
+import BetterSqlite3 from 'better-sqlite3';
 import {
   clearBrowserSessions,
   createBrowserSession as createRuntimeBrowserSession,
@@ -603,11 +625,41 @@ export class PopeyeRuntimeService {
         approvalRequest: (input) => this.requestApproval(input),
         contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
         events: this.events,
+        resolveEmailAdapter: async (connectionId: string) => {
+          const connection = this.getConnection(connectionId);
+          if (!connection || connection.domain !== 'email') return null;
+
+          const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+          const readDb = new BetterSqlite3(dbPath, { readonly: true });
+          try {
+            const svc = new EmailService(readDb as unknown as CapabilityContext['appDb']);
+            const account = svc.getAccountByConnection(connectionId);
+            if (!account) return null;
+
+            let adapter: EmailProviderAdapter;
+            if (connection.providerKind === 'gmail') {
+              adapter = createAdapter('gmail');
+            } else if (connection.providerKind === 'proton') {
+              if (!connection.secretRefId) return null;
+              const password = this.secretStore.getSecretValue(connection.secretRefId);
+              if (!password) return null;
+              adapter = createAdapter('proton', { username: account.emailAddress, password });
+            } else {
+              return null;
+            }
+
+            return { adapter, account: { id: account.id, connectionId, emailAddress: account.emailAddress } };
+          } finally {
+            readDb.close();
+          }
+        },
       }),
     });
 
     // Register built-in capabilities
     this.capabilityRegistry.register(createFilesCapability());
+    this.capabilityRegistry.register(createEmailCapability());
+    this.capabilityRegistry.register(createGithubCapability());
 
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
@@ -651,6 +703,20 @@ export class PopeyeRuntimeService {
       this.approvalExpiryTimer = null;
     }
     this.vaultManager.closeAllVaults();
+    // Close email read-only DB before capability shutdown
+    if (this.emailReadDb) {
+      this.emailReadDb.close();
+      this.emailReadDb = null;
+      this.emailServiceCache = null;
+      this.emailSearchCache = null;
+    }
+    // Close github read-only DB before capability shutdown
+    if (this.githubReadDb) {
+      this.githubReadDb.close();
+      this.githubReadDb = null;
+      this.githubServiceCache = null;
+      this.githubSearchCache = null;
+    }
     if (this.capabilityInitPromise) await this.capabilityInitPromise;
     await this.capabilityRegistry.shutdownAll();
     await this.stopScheduler();
@@ -2529,6 +2595,361 @@ export class PopeyeRuntimeService {
     const svc = this.getFilesRootService();
     if (!svc) return null;
     return svc.getDocument(id);
+  }
+
+  // --- Email facade ---
+  // Uses a cached readonly DB handle opened on first access.
+  // Closed when the runtime shuts down.
+
+  private emailReadDb: BetterSqlite3.Database | null = null;
+  private emailServiceCache: EmailService | null = null;
+  private emailSearchCache: EmailSearchService | null = null;
+
+  private getEmailReadDb(): BetterSqlite3.Database | null {
+    if (this.emailReadDb) return this.emailReadDb;
+    const cap = this.capabilityRegistry.getCapability('email');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    if (!existsSync(dbPath)) return null;
+    this.emailReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.emailReadDb;
+  }
+
+  private getEmailServiceFacade(): EmailService | null {
+    if (this.emailServiceCache) return this.emailServiceCache;
+    const db = this.getEmailReadDb();
+    if (!db) return null;
+    this.emailServiceCache = new EmailService(db as unknown as CapabilityContext['appDb']);
+    return this.emailServiceCache;
+  }
+
+  private getEmailSearchFacade(): EmailSearchService | null {
+    if (this.emailSearchCache) return this.emailSearchCache;
+    const db = this.getEmailReadDb();
+    if (!db) return null;
+    this.emailSearchCache = new EmailSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.emailSearchCache;
+  }
+
+  listEmailAccounts(): EmailAccountRecord[] {
+    return this.getEmailServiceFacade()?.listAccounts() ?? [];
+  }
+
+  listEmailThreads(accountId: string, options?: { limit?: number | undefined; unreadOnly?: boolean | undefined }): EmailThreadRecord[] {
+    return this.getEmailServiceFacade()?.listThreads(accountId, options) ?? [];
+  }
+
+  getEmailThread(id: string): EmailThreadRecord | null {
+    return this.getEmailServiceFacade()?.getThread(id) ?? null;
+  }
+
+  searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
+    return this.getEmailSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+  }
+
+  getEmailDigest(accountId: string): EmailDigestRecord | null {
+    return this.getEmailServiceFacade()?.getLatestDigest(accountId) ?? null;
+  }
+
+  getEmailMessage(id: string): EmailMessageRecord | null {
+    return this.getEmailServiceFacade()?.getMessage(id) ?? null;
+  }
+
+  // --- GitHub facade ---
+  // Uses a cached readonly DB handle opened on first access.
+
+  private githubReadDb: BetterSqlite3.Database | null = null;
+  private githubServiceCache: GithubService | null = null;
+  private githubSearchCache: GithubSearchService | null = null;
+
+  private getGithubReadDb(): BetterSqlite3.Database | null {
+    if (this.githubReadDb) return this.githubReadDb;
+    const cap = this.capabilityRegistry.getCapability('github');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    if (!existsSync(dbPath)) return null;
+    this.githubReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.githubReadDb;
+  }
+
+  private getGithubServiceFacade(): GithubService | null {
+    if (this.githubServiceCache) return this.githubServiceCache;
+    const db = this.getGithubReadDb();
+    if (!db) return null;
+    this.githubServiceCache = new GithubService(db as unknown as CapabilityContext['appDb']);
+    return this.githubServiceCache;
+  }
+
+  private getGithubSearchFacade(): GithubSearchService | null {
+    if (this.githubSearchCache) return this.githubSearchCache;
+    const db = this.getGithubReadDb();
+    if (!db) return null;
+    this.githubSearchCache = new GithubSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.githubSearchCache;
+  }
+
+  listGithubAccounts(): GithubAccountRecord[] {
+    return this.getGithubServiceFacade()?.listAccounts() ?? [];
+  }
+
+  listGithubRepos(accountId: string, options?: { limit?: number | undefined }): GithubRepoRecord[] {
+    return this.getGithubServiceFacade()?.listRepos(accountId, options) ?? [];
+  }
+
+  listGithubPullRequests(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; repoId?: string | undefined }): GithubPullRequestRecord[] {
+    return this.getGithubServiceFacade()?.listPullRequests(accountId, options) ?? [];
+  }
+
+  listGithubIssues(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; assignedOnly?: boolean | undefined }): GithubIssueRecord[] {
+    return this.getGithubServiceFacade()?.listIssues(accountId, options) ?? [];
+  }
+
+  listGithubNotifications(accountId: string, options?: { unreadOnly?: boolean | undefined; limit?: number | undefined }): GithubNotificationRecord[] {
+    return this.getGithubServiceFacade()?.listNotifications(accountId, options) ?? [];
+  }
+
+  getGithubPullRequest(id: string): GithubPullRequestRecord | null {
+    return this.getGithubServiceFacade()?.getPullRequest(id) ?? null;
+  }
+
+  getGithubIssue(id: string): GithubIssueRecord | null {
+    return this.getGithubServiceFacade()?.getIssue(id) ?? null;
+  }
+
+  searchGithub(query: GithubSearchQuery): { query: string; results: GithubSearchResult[] } {
+    return this.getGithubSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+  }
+
+  getGithubDigest(accountId: string): GithubDigestRecord | null {
+    return this.getGithubServiceFacade()?.getLatestDigest(accountId) ?? null;
+  }
+
+  // --- GitHub mutation methods ---
+
+  async syncGithubAccount(accountId: string): Promise<GithubSyncResult> {
+    const githubCap = this.capabilityRegistry.getCapability('github');
+    if (!githubCap) throw new Error('GitHub capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccount(accountId);
+      if (!account) throw new Error(`GitHub account ${accountId} not found`);
+
+      const adapter = new GhCliAdapter();
+      const ctx = this.buildCapabilityContext();
+      const syncService = new GithubSyncService(svc, ctx);
+      const result = await syncService.syncAccount(account, adapter);
+
+      // Invalidate readonly cache
+      if (this.githubReadDb) {
+        this.githubReadDb.close();
+        this.githubReadDb = null;
+        this.githubServiceCache = null;
+        this.githubSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  triggerGithubDigest(accountId?: string): GithubDigestRecord | null {
+    const githubCap = this.capabilityRegistry.getCapability('github');
+    if (!githubCap) return null;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
+      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (accounts.length === 0) return null;
+
+      const ctx = this.buildCapabilityContext();
+      const digestService = new GithubDigestService(svc, ctx);
+
+      let lastDigest: GithubDigestRecord | null = null;
+      for (const account of accounts) {
+        if (!account) continue;
+        lastDigest = digestService.generateDigest(account);
+      }
+
+      // Invalidate readonly cache
+      if (this.githubReadDb) {
+        this.githubReadDb.close();
+        this.githubReadDb = null;
+        this.githubServiceCache = null;
+        this.githubSearchCache = null;
+      }
+
+      return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  // --- Email mutation methods ---
+
+  registerEmailAccount(input: EmailAccountRegistrationInput): EmailAccountRecord {
+    // Verify connection exists and is an email connection
+    const connection = this.getConnection(input.connectionId);
+    if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
+    if (connection.domain !== 'email') throw new Error(`Connection ${input.connectionId} is not an email connection (domain: ${connection.domain})`);
+    if (connection.providerKind !== 'gmail' && connection.providerKind !== 'proton') {
+      throw new Error(`Unsupported email provider: ${connection.providerKind}`);
+    }
+
+    // Use the write-capable email service from the capability
+    const emailCap = this.capabilityRegistry.getCapability('email');
+    if (!emailCap) throw new Error('Email capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      return svc.registerAccount(input);
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async syncEmailAccount(accountId: string): Promise<EmailSyncResult> {
+    const emailCap = this.capabilityRegistry.getCapability('email');
+    if (!emailCap) throw new Error('Email capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccount(accountId);
+      if (!account) throw new Error(`Email account ${accountId} not found`);
+
+      // Get connection to determine provider
+      const connection = this.getConnection(account.connectionId);
+      if (!connection) throw new Error(`Connection ${account.connectionId} not found`);
+
+      // Resolve credentials based on provider
+      let adapter: EmailProviderAdapter;
+      if (connection.providerKind === 'gmail') {
+        // gws manages its own auth
+        adapter = createAdapter('gmail');
+      } else if (connection.providerKind === 'proton') {
+        // Resolve Bridge password from SecretStore
+        if (!connection.secretRefId) {
+          throw new Error('Proton connection has no secretRefId — re-register with bridge password');
+        }
+        const password = this.secretStore.getSecretValue(connection.secretRefId);
+        if (!password) {
+          throw new Error('Failed to retrieve Proton Bridge password from SecretStore');
+        }
+        adapter = createAdapter('proton', {
+          username: account.emailAddress,
+          password,
+        });
+      } else {
+        throw new Error(`Unsupported email provider: ${connection.providerKind}`);
+      }
+
+      const ctx = this.buildCapabilityContext();
+      const syncService = new EmailSyncService(svc, ctx);
+      const result = await syncService.syncAccount(account, adapter);
+
+      // Invalidate readonly cache so facade reflects new data
+      if (this.emailReadDb) {
+        this.emailReadDb.close();
+        this.emailReadDb = null;
+        this.emailServiceCache = null;
+        this.emailSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  triggerEmailDigest(accountId?: string): EmailDigestRecord | null {
+    const emailCap = this.capabilityRegistry.getCapability('email');
+    if (!emailCap) return null;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (accounts.length === 0) return null;
+
+      const ctx = this.buildCapabilityContext();
+      const digestService = new EmailDigestService(svc, ctx);
+
+      let lastDigest: EmailDigestRecord | null = null;
+      for (const account of accounts) {
+        if (!account) continue;
+        lastDigest = digestService.generateDigest(account);
+      }
+
+      // Invalidate readonly cache
+      if (this.emailReadDb) {
+        this.emailReadDb.close();
+        this.emailReadDb = null;
+        this.emailServiceCache = null;
+        this.emailSearchCache = null;
+      }
+
+      return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  private buildCapabilityContext(): CapabilityContext {
+    return {
+      appDb: this.databases.app as unknown as CapabilityContext['appDb'],
+      memoryDb: this.databases.memory as unknown as CapabilityContext['memoryDb'],
+      paths: this.databases.paths,
+      config: this.config as unknown as Record<string, unknown>,
+      log: this.log,
+      auditCallback: (event) => {
+        this.recordSecurityAuditEvent({
+          code: event.eventType,
+          severity: event.severity === 'error' ? 'error' : event.severity === 'warning' ? 'warn' : 'info',
+          message: event.eventType,
+          component: 'cap-email',
+          timestamp: nowIso(),
+          details: Object.fromEntries(
+            Object.entries(event.details).map(([k, v]) => [k, String(v)]),
+          ),
+        });
+      },
+      memoryInsert: (input) => {
+        const insertInput = {
+          description: input.description,
+          classification: input.classification,
+          sourceType: input.sourceType as MemoryInsertInput['sourceType'],
+          content: input.content,
+          confidence: input.confidence,
+          scope: input.scope,
+          ...(input.memoryType ? { memoryType: input.memoryType as MemoryInsertInput['memoryType'] } : {}),
+          ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}),
+          ...(input.sourceRefType ? { sourceRefType: input.sourceRefType } : {}),
+          ...(input.domain ? { domain: input.domain as MemoryInsertInput['domain'] } : {}),
+          ...(input.contextReleasePolicy ? { contextReleasePolicy: input.contextReleasePolicy as MemoryInsertInput['contextReleasePolicy'] } : {}),
+          ...(input.dedupKey ? { dedupKey: input.dedupKey } : {}),
+        } satisfies MemoryInsertInput;
+        const result = this.memoryLifecycle.insertMemory(insertInput);
+        return {
+          memoryId: result.memoryId,
+          embedded: result.embedded,
+          ...(result.rejected !== undefined ? { rejected: result.rejected } : {}),
+          ...(result.rejectionReason !== undefined ? { rejectionReason: result.rejectionReason } : {}),
+        };
+      },
+      approvalRequest: (input) => this.requestApproval(input),
+      contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
+      events: this.events,
+    };
   }
 }
 

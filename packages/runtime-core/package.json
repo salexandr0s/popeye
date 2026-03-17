@@ -16,6 +16,8 @@
     "@popeye/sessions": "workspace:*",
     "@popeye/workspace": "workspace:*",
     "@popeye/cap-files": "workspace:*",
+    "@popeye/cap-email": "workspace:*",
+    "@popeye/cap-github": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "safe-regex2": "^4.0.0"
   },

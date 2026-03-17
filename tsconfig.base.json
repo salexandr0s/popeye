@@ -28,7 +28,9 @@
       "@popeye/telegram": ["packages/telegram/src/index.ts"],
       "@popeye/testkit": ["packages/testkit/src/index.ts"],
       "@popeye/api-client": ["packages/api-client/src/index.ts"],
-      "@popeye/cap-files": ["packages/cap-files/src/index.ts"]
+      "@popeye/cap-files": ["packages/cap-files/src/index.ts"],
+      "@popeye/cap-email": ["packages/cap-email/src/index.ts"],
+      "@popeye/cap-github": ["packages/cap-github/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },

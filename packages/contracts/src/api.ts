@@ -9,6 +9,8 @@ import { ApprovalRecordSchema, ApprovalPolicyRuleSchema } from './approval.js';
 import { ConnectionRecordSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
 import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
+import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema } from './email.js';
+import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema } from './github.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -300,3 +302,80 @@ export const FileReindexResponseSchema = FileIndexResultSchema;
 export type FileReindexResponse = z.infer<typeof FileReindexResponseSchema>;
 
 export { FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema };
+
+// --- Email API schemas ---
+
+export const EmailAccountListResponseSchema = z.array(EmailAccountRecordSchema);
+export type EmailAccountListResponse = z.infer<typeof EmailAccountListResponseSchema>;
+
+export const EmailAccountCreateRequestSchema = EmailAccountRegistrationInputSchema;
+export type EmailAccountCreateRequest = z.infer<typeof EmailAccountCreateRequestSchema>;
+
+export const EmailAccountResponseSchema = EmailAccountRecordSchema;
+export type EmailAccountResponse = z.infer<typeof EmailAccountResponseSchema>;
+
+export const EmailThreadListResponseSchema = z.array(EmailThreadRecordSchema);
+export type EmailThreadListResponse = z.infer<typeof EmailThreadListResponseSchema>;
+
+export const EmailThreadResponseSchema = EmailThreadRecordSchema;
+export type EmailThreadResponse = z.infer<typeof EmailThreadResponseSchema>;
+
+export const EmailMessageResponseSchema = EmailMessageRecordSchema;
+export type EmailMessageResponse = z.infer<typeof EmailMessageResponseSchema>;
+
+export const EmailDigestResponseSchema = EmailDigestRecordSchema;
+export type EmailDigestResponse = z.infer<typeof EmailDigestResponseSchema>;
+
+export const EmailSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(EmailSearchResultSchema),
+});
+export type EmailSearchApiResponse = z.infer<typeof EmailSearchApiResponseSchema>;
+
+export const EmailSyncResponseSchema = EmailSyncResultSchema;
+export type EmailSyncResponse = z.infer<typeof EmailSyncResponseSchema>;
+
+export { EmailAccountRegistrationInputSchema, EmailAccountRecordSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema };
+
+// --- GitHub API schemas ---
+
+export const GithubAccountListResponseSchema = z.array(GithubAccountRecordSchema);
+export type GithubAccountListResponse = z.infer<typeof GithubAccountListResponseSchema>;
+
+export const GithubAccountCreateRequestSchema = GithubAccountRegistrationInputSchema;
+export type GithubAccountCreateRequest = z.infer<typeof GithubAccountCreateRequestSchema>;
+
+export const GithubAccountResponseSchema = GithubAccountRecordSchema;
+export type GithubAccountResponse = z.infer<typeof GithubAccountResponseSchema>;
+
+export const GithubRepoListResponseSchema = z.array(GithubRepoRecordSchema);
+export type GithubRepoListResponse = z.infer<typeof GithubRepoListResponseSchema>;
+
+export const GithubPullRequestListResponseSchema = z.array(GithubPullRequestRecordSchema);
+export type GithubPullRequestListResponse = z.infer<typeof GithubPullRequestListResponseSchema>;
+
+export const GithubPullRequestResponseSchema = GithubPullRequestRecordSchema;
+export type GithubPullRequestResponse = z.infer<typeof GithubPullRequestResponseSchema>;
+
+export const GithubIssueListResponseSchema = z.array(GithubIssueRecordSchema);
+export type GithubIssueListResponse = z.infer<typeof GithubIssueListResponseSchema>;
+
+export const GithubIssueResponseSchema = GithubIssueRecordSchema;
+export type GithubIssueResponse = z.infer<typeof GithubIssueResponseSchema>;
+
+export const GithubNotificationListResponseSchema = z.array(GithubNotificationRecordSchema);
+export type GithubNotificationListResponse = z.infer<typeof GithubNotificationListResponseSchema>;
+
+export const GithubDigestResponseSchema = GithubDigestRecordSchema;
+export type GithubDigestResponse = z.infer<typeof GithubDigestResponseSchema>;
+
+export const GithubSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(GithubSearchResultSchema),
+});
+export type GithubSearchApiResponse = z.infer<typeof GithubSearchApiResponseSchema>;
+
+export const GithubSyncResponseSchema = GithubSyncResultSchema;
+export type GithubSyncResponse = z.infer<typeof GithubSyncResponseSchema>;
+
+export { GithubAccountRegistrationInputSchema, GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema };

@@ -73,6 +73,11 @@ export interface CapabilityContext {
   readonly events: {
     emit: (event: string, payload: unknown) => void;
   };
+  /** Resolve an email adapter for a given connection. Provided by runtime for sync timer. */
+  readonly resolveEmailAdapter?: ((connectionId: string) => Promise<{
+    adapter: unknown;
+    account: { id: string; connectionId: string; emailAddress: string };
+  } | null>) | undefined;
 }
 
 // --- Capability Lifecycle ---

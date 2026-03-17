@@ -1,0 +1,30 @@
+{
+  "name": "@popeye/cap-email",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b --force",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@popeye/contracts": "workspace:*",
+    "@popeye/observability": "workspace:*",
+    "better-sqlite3": "^12.6.2",
+    "imapflow": "^1.2.15",
+    "mailparser": "^3.9.4",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6"
+  }
+}
