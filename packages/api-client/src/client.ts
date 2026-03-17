@@ -84,6 +84,16 @@ import {
   type SecurityPolicyResponse,
   SecurityPolicyResponseSchema,
   type DomainKind,
+  type FileRootRecord,
+  FileRootRecordSchema,
+  type FileRootRegistrationInput,
+  type FileRootUpdateInput,
+  type FileDocumentRecord,
+  FileDocumentRecordSchema,
+  type FileSearchResponse,
+  FileSearchResponseSchema,
+  type FileIndexResult,
+  FileIndexResultSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -600,6 +610,42 @@ export class PopeyeApiClient {
     source?: string;
   }): Promise<TelegramSendAttemptRecord> {
     return this.post('/v1/telegram/send-attempts', input, TelegramSendAttemptRecordSchema);
+  }
+
+  // --- File roots ---
+
+  async listFileRoots(workspaceId?: string): Promise<FileRootRecord[]> {
+    const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+    return this.getArray(`/v1/files/roots${query}`, FileRootRecordSchema);
+  }
+
+  async createFileRoot(input: FileRootRegistrationInput): Promise<FileRootRecord> {
+    return this.post('/v1/files/roots', input, FileRootRecordSchema);
+  }
+
+  async getFileRoot(id: string): Promise<FileRootRecord> {
+    return this.get(`/v1/files/roots/${encodeURIComponent(id)}`, FileRootRecordSchema);
+  }
+
+  async updateFileRoot(id: string, input: FileRootUpdateInput): Promise<FileRootRecord> {
+    return this.patch(`/v1/files/roots/${encodeURIComponent(id)}`, input, FileRootRecordSchema);
+  }
+
+  async deleteFileRoot(id: string): Promise<void> {
+    return this.del(`/v1/files/roots/${encodeURIComponent(id)}`);
+  }
+
+  async searchFiles(query: string, options?: { rootId?: string | undefined; workspaceId?: string | undefined; limit?: number | undefined }): Promise<FileSearchResponse> {
+    const params = this.buildQuery({ query, rootId: options?.rootId, workspaceId: options?.workspaceId, limit: options?.limit });
+    return this.get(`/v1/files/search${params}`, FileSearchResponseSchema);
+  }
+
+  async getFileDocument(id: string): Promise<FileDocumentRecord> {
+    return this.get(`/v1/files/documents/${encodeURIComponent(id)}`, FileDocumentRecordSchema);
+  }
+
+  async reindexFileRoot(id: string): Promise<FileIndexResult> {
+    return this.post(`/v1/files/roots/${encodeURIComponent(id)}/reindex`, {}, FileIndexResultSchema);
   }
 
   subscribeEvents(callback: (event: { event: string; data: string }) => void): () => void {

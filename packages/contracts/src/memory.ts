@@ -14,6 +14,7 @@ export const MemorySourceTypeSchema = z.enum([
   'compaction_flush',
   'capability_sync',
   'context_release',
+  'file_doc',
 ]);
 export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
 

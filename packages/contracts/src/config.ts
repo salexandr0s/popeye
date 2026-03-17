@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { EngineKindSchema } from './engine.js';
 import { ApprovalPolicyConfigSchema } from './approval.js';
 import { VaultConfigSchema } from './vault.js';
+import { FileRootPermissionSchema } from './file-roots.js';
 
 export const DataClassificationSchema = z.enum(['secret', 'sensitive', 'internal', 'embeddable']);
 export type DataClassification = z.infer<typeof DataClassificationSchema>;
@@ -65,6 +66,16 @@ export const ProjectConfigSchema = z.object({
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
+export const FileRootConfigSchema = z.object({
+  label: z.string().min(1),
+  rootPath: z.string().min(1),
+  permission: FileRootPermissionSchema.default('index'),
+  filePatterns: z.array(z.string()).default(['**/*.md', '**/*.txt']),
+  excludePatterns: z.array(z.string()).default([]),
+  maxFileSizeBytes: z.number().int().positive().default(1_048_576),
+});
+export type FileRootConfig = z.infer<typeof FileRootConfigSchema>;
+
 export const WorkspaceConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -72,6 +83,7 @@ export const WorkspaceConfigSchema = z.object({
   projects: z.array(ProjectConfigSchema).default([]),
   heartbeatEnabled: z.boolean().default(true),
   heartbeatIntervalSeconds: z.number().int().positive().default(3600),
+  fileRoots: z.array(FileRootConfigSchema).default([]),
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 

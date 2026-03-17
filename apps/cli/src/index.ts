@@ -103,6 +103,14 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   sessions: {
     list: { desc: 'List session roots', usage: 'pop sessions list' },
   },
+  files: {
+    roots: { desc: 'List file roots', usage: 'pop files roots [--json]' },
+    add: { desc: 'Register a file root', usage: 'pop files add <path> [--label <name>] [--permission <read|index|index_and_derive>]' },
+    remove: { desc: 'Disable a file root', usage: 'pop files remove <id>' },
+    search: { desc: 'Search indexed files', usage: 'pop files search <query> [--root-id <id>] [--limit <n>]' },
+    reindex: { desc: 'Trigger reindex', usage: 'pop files reindex <root-id>' },
+    status: { desc: 'Show indexing stats', usage: 'pop files status' },
+  },
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
     'openclaw-memory': { desc: 'Import OpenClaw memory files', usage: 'pop migrate openclaw-memory <directory>' },
@@ -600,6 +608,100 @@ async function main(): Promise<void> {
   if (command === 'sessions' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.listSessionRoots(), null, 2));
+    return;
+  }
+
+  // --- File roots commands ---
+
+  if (command === 'files' && subcommand === 'roots') {
+    const client = await requireDaemonClient(config);
+    const roots = await client.listFileRoots();
+    if (jsonFlag) {
+      console.info(JSON.stringify(roots, null, 2));
+    } else {
+      if (roots.length === 0) {
+        console.info('No file roots registered.');
+      } else {
+        for (const root of roots) {
+          const status = root.enabled ? 'enabled' : 'disabled';
+          console.info(`  ${root.id}  ${root.label.padEnd(24)} ${root.rootPath}  [${root.permission}] [${status}]  indexed: ${root.lastIndexedCount}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'add' && arg1) {
+    const client = await requireDaemonClient(config);
+    const labelIdx = process.argv.indexOf('--label');
+    const permIdx = process.argv.indexOf('--permission');
+    const label = labelIdx !== -1 ? process.argv[labelIdx + 1] ?? arg1 : arg1;
+    const permission = permIdx !== -1 ? process.argv[permIdx + 1] ?? 'index' : 'index';
+    const root = await client.createFileRoot({
+      workspaceId: 'default',
+      label,
+      rootPath: resolve(arg1),
+      permission: permission as 'read' | 'index' | 'index_and_derive',
+      filePatterns: ['**/*.md', '**/*.txt'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+    console.info(`Registered file root: ${root.id} — ${root.label} (${root.rootPath})`);
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'add') {
+    console.error('Usage: pop files add <path> [--label <name>] [--permission <perm>]');
+    process.exit(1);
+  }
+
+  if (command === 'files' && subcommand === 'remove' && arg1) {
+    const client = await requireDaemonClient(config);
+    await client.deleteFileRoot(arg1);
+    console.info(`Disabled file root: ${arg1}`);
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const rootIdIdx = process.argv.indexOf('--root-id');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '10', 10) : 10;
+    const rootId = rootIdIdx !== -1 ? process.argv[rootIdIdx + 1] : undefined;
+    const response = await client.searchFiles(arg1, { rootId, limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else {
+      if (response.results.length === 0) {
+        console.info('No files found.');
+      } else {
+        for (const r of response.results) {
+          console.info(`  ${r.relativePath}  [root:${r.fileRootId}]${r.memoryId ? ` [memory:${r.memoryId}]` : ''}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'reindex' && arg1) {
+    const client = await requireDaemonClient(config);
+    const result = await client.reindexFileRoot(arg1);
+    console.info(`Reindexed: ${result.indexed} new, ${result.updated} updated, ${result.skipped} skipped, ${result.stale} stale`);
+    if (result.errors.length > 0) {
+      console.info(`Errors: ${result.errors.join(', ')}`);
+    }
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'status') {
+    const client = await requireDaemonClient(config);
+    const roots = await client.listFileRoots();
+    const totalDocs = roots.reduce((sum, r) => sum + r.lastIndexedCount, 0);
+    console.info(`File roots: ${roots.length}  Total indexed files: ${totalDocs}`);
+    for (const root of roots) {
+      const status = root.enabled ? 'enabled' : 'disabled';
+      console.info(`  ${root.label.padEnd(20)} ${root.rootPath}  [${root.permission}] [${status}]  files: ${root.lastIndexedCount}  last: ${root.lastIndexedAt ?? 'never'}`);
+    }
     return;
   }
 

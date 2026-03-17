@@ -12,7 +12,7 @@ export interface RuntimeDatabases {
   paths: RuntimePaths;
 }
 
-interface Migration {
+export interface Migration {
   id: string;
   statements: string[];
 }
@@ -542,7 +542,7 @@ function configure(db: Database.Database): void {
   db.pragma('busy_timeout = 5000');
 }
 
-function applyMigrations(db: Database.Database, migrations: Migration[]): void {
+export function applyMigrations(db: Database.Database, migrations: Migration[]): void {
   db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);');
   const getMigration = db.prepare('SELECT id FROM schema_migrations WHERE id = ?');
   const addMigration = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');

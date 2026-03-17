@@ -8,6 +8,7 @@ import { DomainKindSchema, DomainPolicySchema } from './domain.js';
 import { ApprovalRecordSchema, ApprovalPolicyRuleSchema } from './approval.js';
 import { ConnectionRecordSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
+import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -266,3 +267,36 @@ export const InstructionResolutionContextSchema = z.object({
   runtimeNotes: z.string().optional(),
 });
 export type InstructionResolutionContext = z.infer<typeof InstructionResolutionContextSchema>;
+
+// --- File roots API schemas ---
+
+export const FileRootListResponseSchema = z.array(FileRootRecordSchema);
+export type FileRootListResponse = z.infer<typeof FileRootListResponseSchema>;
+
+export const FileRootCreateRequestSchema = FileRootRegistrationInputSchema;
+export type FileRootCreateRequest = z.infer<typeof FileRootCreateRequestSchema>;
+
+export const FileRootUpdateRequestSchema = FileRootUpdateInputSchema;
+export type FileRootUpdateRequest = z.infer<typeof FileRootUpdateRequestSchema>;
+
+export const FileRootResponseSchema = FileRootRecordSchema;
+export type FileRootResponse = z.infer<typeof FileRootResponseSchema>;
+
+export const FileDocumentResponseSchema = FileDocumentRecordSchema;
+export type FileDocumentResponse = z.infer<typeof FileDocumentResponseSchema>;
+
+export const FileSearchRequestSchema = z.object({
+  query: z.string().min(1).max(1000),
+  rootId: z.string().optional(),
+  workspaceId: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+});
+export type FileSearchRequest = z.infer<typeof FileSearchRequestSchema>;
+
+export const FileSearchApiResponseSchema = FileSearchResponseSchema;
+export type FileSearchApiResponse = z.infer<typeof FileSearchApiResponseSchema>;
+
+export const FileReindexResponseSchema = FileIndexResultSchema;
+export type FileReindexResponse = z.infer<typeof FileReindexResponseSchema>;
+
+export { FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema };

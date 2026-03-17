@@ -1,0 +1,25 @@
+{
+  "name": "@popeye/cap-files",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b --force",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@popeye/contracts": "workspace:*",
+    "@popeye/observability": "workspace:*",
+    "better-sqlite3": "^12.6.2",
+    "minimatch": "^10.0.1"
+  }
+}

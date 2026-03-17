@@ -176,6 +176,21 @@ importers:
         specifier: workspace:*
         version: link:../runtime-core
 
+  packages/cap-files:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+      minimatch:
+        specifier: ^10.0.1
+        version: 10.2.4
+
   packages/contracts:
     dependencies:
       zod:
@@ -259,6 +274,9 @@ importers:
 
   packages/runtime-core:
     dependencies:
+      '@popeye/cap-files':
+        specifier: workspace:*
+        version: link:../cap-files
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts

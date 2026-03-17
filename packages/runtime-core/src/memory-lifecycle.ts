@@ -193,9 +193,12 @@ export interface MemoryInsertInput {
   content: string;
   confidence: number;
   scope: string;
-  memoryType?: MemoryType;
-  sourceRef?: string;
-  sourceRefType?: string;
+  memoryType?: MemoryType | undefined;
+  sourceRef?: string | undefined;
+  sourceRefType?: string | undefined;
+  domain?: MemoryRecord['domain'] | undefined;
+  contextReleasePolicy?: MemoryRecord['contextReleasePolicy'] | undefined;
+  dedupKey?: string | undefined;
 }
 
 export interface MemoryMaintenanceResult {
@@ -229,7 +232,7 @@ export class MemoryLifecycleService {
 
   insertMemory(input: MemoryInsertInput): StoreMemoryResult {
     const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
-    return this.searchService.storeMemory({
+    const result = this.searchService.storeMemory({
       description: input.description,
       classification: input.classification,
       sourceType: input.sourceType,
@@ -240,6 +243,24 @@ export class MemoryLifecycleService {
       sourceRef: input.sourceRef,
       sourceRefType: input.sourceRefType,
     });
+
+    // Apply caller-provided domain, contextReleasePolicy, and dedupKey
+    // These fields are not part of the storeMemory interface, so we set them directly.
+    if (!result.rejected) {
+      const updates: string[] = [];
+      const params: unknown[] = [];
+      if (input.domain) { updates.push('domain = ?'); params.push(input.domain); }
+      if (input.contextReleasePolicy) { updates.push('context_release_policy = ?'); params.push(input.contextReleasePolicy); }
+      if (input.dedupKey) { updates.push('dedup_key = ?'); params.push(input.dedupKey); }
+      if (updates.length > 0) {
+        params.push(result.memoryId);
+        this.databases.memory
+          .prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`)
+          .run(...params);
+      }
+    }
+
+    return result;
   }
 
   reinforceMemory(memoryId: string, additionalContent?: string): void {

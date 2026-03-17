@@ -11,6 +11,8 @@ import {
   ConnectionUpdateInputSchema,
   ContextReleasePreviewRequestSchema,
   DomainKindSchema,
+  FileRootRegistrationInputSchema,
+  FileRootUpdateInputSchema,
   MemoryImportInputSchema,
   AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
@@ -906,6 +908,70 @@ export async function createControlApi(
   app.post('/v1/context-release/preview', async (request) => {
     const body = ContextReleasePreviewRequestSchema.parse(request.body);
     return dependencies.runtime.previewContextRelease(body);
+  });
+
+  // --- File roots routes ---
+
+  app.get('/v1/files/roots', async (request) => {
+    const query = z.object({ workspaceId: z.string().optional() }).parse(request.query);
+    return dependencies.runtime.listFileRoots(query.workspaceId);
+  });
+
+  app.post('/v1/files/roots', async (request) => {
+    const body = FileRootRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerFileRoot(body);
+  });
+
+  app.get('/v1/files/roots/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const root = dependencies.runtime.getFileRoot(id);
+    if (!root) return reply.code(404).send({ error: 'file root not found' });
+    return root;
+  });
+
+  app.patch('/v1/files/roots/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = FileRootUpdateInputSchema.parse(request.body);
+    const result = dependencies.runtime.updateFileRoot(id, body);
+    if (!result) return reply.code(404).send({ error: 'file root not found' });
+    return result;
+  });
+
+  app.delete('/v1/files/roots/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const disabled = dependencies.runtime.disableFileRoot(id);
+    if (!disabled) return reply.code(404).send({ error: 'file root not found' });
+    return { ok: true };
+  });
+
+  app.get('/v1/files/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      rootId: z.string().optional(),
+      workspaceId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchFiles({
+      query: query.query,
+      limit: query.limit ?? 10,
+      includeContent: false,
+      ...(query.rootId ? { rootId: query.rootId } : {}),
+      ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+    });
+  });
+
+  app.get('/v1/files/documents/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const doc = dependencies.runtime.getFileDocument(id);
+    if (!doc) return reply.code(404).send({ error: 'document not found' });
+    return doc;
+  });
+
+  app.post('/v1/files/roots/:id/reindex', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const result = dependencies.runtime.reindexFileRoot(id);
+    if (!result) return reply.code(404).send({ error: 'file root not found' });
+    return result;
   });
 
   return app;

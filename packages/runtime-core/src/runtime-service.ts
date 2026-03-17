@@ -50,6 +50,17 @@ import type {
   WorkspaceRecord,
   WorkspaceRegistrationInput,
 } from '@popeye/contracts';
+import type {
+  CapabilityModule,
+  CapabilityDescriptor,
+  FileRootRecord,
+  FileRootRegistrationInput,
+  FileRootUpdateInput,
+  FileDocumentRecord,
+  FileSearchQuery,
+  FileSearchResponse,
+  FileIndexResult,
+} from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
   MemoryRecordSchema,
@@ -88,6 +99,8 @@ import { SecretStore } from './secret-store.js';
 import { ApprovalService } from './approval-service.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
+import { CapabilityRegistry } from './capability-registry.js';
+import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import {
   clearBrowserSessions,
   createBrowserSession as createRuntimeBrowserSession,
@@ -431,6 +444,8 @@ export class PopeyeRuntimeService {
   private readonly approvalService: ApprovalService;
   private readonly vaultManager: VaultManager;
   private readonly contextReleaseService: ContextReleaseService;
+  private readonly capabilityRegistry: CapabilityRegistry;
+  private capabilityInitPromise: Promise<void> | null = null;
   private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
   private static validateRegexPatterns(config: AppConfig): void {
@@ -550,6 +565,55 @@ export class PopeyeRuntimeService {
       });
     }
 
+    // Initialize capability registry
+    this.capabilityRegistry = new CapabilityRegistry({
+      appDb: this.databases.app,
+      memoryDb: this.databases.memory,
+      log: this.log,
+      buildContext: () => ({
+        appDb: this.databases.app,
+        memoryDb: this.databases.memory,
+        paths: this.databases.paths,
+        config: config as unknown as Record<string, unknown>,
+        log: this.log,
+        auditCallback,
+        memoryInsert: (input) => {
+          const insertInput = {
+            description: input.description,
+            classification: input.classification,
+            sourceType: input.sourceType as MemoryInsertInput['sourceType'],
+            content: input.content,
+            confidence: input.confidence,
+            scope: input.scope,
+            ...(input.memoryType ? { memoryType: input.memoryType as MemoryInsertInput['memoryType'] } : {}),
+            ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}),
+            ...(input.sourceRefType ? { sourceRefType: input.sourceRefType } : {}),
+            ...(input.domain ? { domain: input.domain as MemoryInsertInput['domain'] } : {}),
+            ...(input.contextReleasePolicy ? { contextReleasePolicy: input.contextReleasePolicy as MemoryInsertInput['contextReleasePolicy'] } : {}),
+            ...(input.dedupKey ? { dedupKey: input.dedupKey } : {}),
+          } satisfies MemoryInsertInput;
+          const result = this.memoryLifecycle.insertMemory(insertInput);
+          return {
+            memoryId: result.memoryId,
+            embedded: result.embedded,
+            ...(result.rejected !== undefined ? { rejected: result.rejected } : {}),
+            ...(result.rejectionReason !== undefined ? { rejectionReason: result.rejectionReason } : {}),
+          };
+        },
+        approvalRequest: (input) => this.requestApproval(input),
+        contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
+        events: this.events,
+      }),
+    });
+
+    // Register built-in capabilities
+    this.capabilityRegistry.register(createFilesCapability());
+
+    // Defer async initialization (similar to vecInitPromise pattern)
+    this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
+      this.log.error('capability initialization failed', { error: err instanceof Error ? err.message : String(err) });
+    });
+
     this.seedReferenceData();
     this.reconcileStartupState();
     const reconcileMs = Math.round(performance.now() - startupStart);
@@ -587,6 +651,8 @@ export class PopeyeRuntimeService {
       this.approvalExpiryTimer = null;
     }
     this.vaultManager.closeAllVaults();
+    if (this.capabilityInitPromise) await this.capabilityInitPromise;
+    await this.capabilityRegistry.shutdownAll();
     await this.stopScheduler();
     await this.vecInitPromise;
     this.databases.app.prepare('UPDATE daemon_state SET last_shutdown_at = ? WHERE id = 1').run(nowIso());
@@ -1683,6 +1749,17 @@ export class PopeyeRuntimeService {
           return { content: [{ type: 'text', text: `${header}${expanded.content}` }], details: expanded };
         },
       },
+      // Append tools from registered capabilities
+      ...this.capabilityRegistry.getRuntimeTools({ workspaceId: task.workspaceId }).map((t) => ({
+        ...t,
+        execute: async (params: unknown) => {
+          const result = await t.execute(params);
+          return {
+            ...result,
+            content: result.content.map((c) => ({ ...c, type: c.type as 'text' })),
+          };
+        },
+      })),
     ];
   }
 
@@ -2315,7 +2392,14 @@ export class PopeyeRuntimeService {
 
   private startDocIndexing(): void {
     if (!this.config.memory.docIndexEnabled) return;
-    this.log.debug('doc indexing started', { workspaces: this.config.workspaces.length });
+
+    // If cap-files is registered, skip legacy doc indexing — cap-files handles it
+    if (this.capabilityRegistry.getCapability('files')) {
+      this.log.debug('doc indexing delegated to cap-files capability');
+      return;
+    }
+
+    this.log.debug('doc indexing started (legacy)', { workspaces: this.config.workspaces.length });
 
     const runIndex = () => {
       if (this.closed) return;
@@ -2348,6 +2432,103 @@ export class PopeyeRuntimeService {
         this.memoryLifecycle.runConsolidation();
       }
     }, 3600_000); // 1 hour
+  }
+
+  // --- Capability registry ---
+
+  registerCapability(cap: CapabilityModule): void {
+    this.capabilityRegistry.register(cap);
+  }
+
+  listCapabilities(): CapabilityDescriptor[] {
+    return this.capabilityRegistry.listCapabilities();
+  }
+
+  getCapabilityHealth(): Record<string, { healthy: boolean; details?: Record<string, unknown> }> {
+    return this.capabilityRegistry.healthCheck();
+  }
+
+  getCapabilityRegistry(): CapabilityRegistry {
+    return this.capabilityRegistry;
+  }
+
+  async initializeCapabilities(): Promise<void> {
+    if (!this.capabilityInitPromise) {
+      this.capabilityInitPromise = this.capabilityRegistry.initializeAll();
+    }
+    await this.capabilityInitPromise;
+  }
+
+  // --- File roots facade ---
+
+  private getFilesRootService(): FileRootService | null {
+    const cap = this.capabilityRegistry.getCapability('files');
+    if (!cap) return null;
+    // Access the internal service via a fresh context — actually, the capability
+    // stores its own state. Use the DB directly.
+    return new FileRootService(this.databases.app);
+  }
+
+  private getFilesIndexer(): FileIndexer | null {
+    const cap = this.capabilityRegistry.getCapability('files');
+    if (!cap) return null;
+    const ctx = this.capabilityRegistry['deps'].buildContext();
+    return new FileIndexer(this.databases.app, ctx);
+  }
+
+  private getFilesSearchService(): FileSearchService | null {
+    const cap = this.capabilityRegistry.getCapability('files');
+    if (!cap) return null;
+    return new FileSearchService(this.databases.app);
+  }
+
+  registerFileRoot(input: FileRootRegistrationInput): FileRootRecord {
+    const svc = this.getFilesRootService();
+    if (!svc) throw new Error('Files capability not available');
+    return svc.registerRoot(input);
+  }
+
+  listFileRoots(workspaceId?: string): FileRootRecord[] {
+    const svc = this.getFilesRootService();
+    if (!svc) return [];
+    return svc.listRoots(workspaceId);
+  }
+
+  getFileRoot(id: string): FileRootRecord | null {
+    const svc = this.getFilesRootService();
+    if (!svc) return null;
+    return svc.getRoot(id);
+  }
+
+  updateFileRoot(id: string, input: FileRootUpdateInput): FileRootRecord | null {
+    const svc = this.getFilesRootService();
+    if (!svc) return null;
+    return svc.updateRoot(id, input);
+  }
+
+  disableFileRoot(id: string): boolean {
+    const svc = this.getFilesRootService();
+    if (!svc) return false;
+    return svc.removeRoot(id);
+  }
+
+  searchFiles(query: FileSearchQuery): FileSearchResponse {
+    const svc = this.getFilesSearchService();
+    if (!svc) return { query: query.query, results: [], totalCandidates: 0 };
+    return svc.search(query);
+  }
+
+  reindexFileRoot(rootId: string): FileIndexResult | null {
+    const indexer = this.getFilesIndexer();
+    const rootService = this.getFilesRootService();
+    if (!indexer || !rootService) return null;
+    return indexer.reindexRoot(rootId, rootService);
+  }
+
+  getFileDocument(id: string): FileDocumentRecord | null {
+    const svc = this.getFilesRootService();
+    if (!svc) return null;
+    return svc.getDocument(id);
   }
 }
 
