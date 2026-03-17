@@ -38,6 +38,16 @@
     "docIndexEnabled": true,
     "docIndexIntervalHours": 6
   },
+  "approvalPolicy": {
+    "rules": [],
+    "defaultRiskClass": "ask",
+    "pendingExpiryMinutes": 60
+  },
+  "vaults": {
+    "restrictedVaultDir": "vaults",
+    "capabilityStoreDir": "capabilities",
+    "backupEncryptedVaults": true
+  },
   "workspaces": [
     {
       "id": "default",

@@ -344,6 +344,81 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_tsa_workspace_created ON telegram_send_attempts(workspace_id, created_at);',
     ],
   },
+  {
+    id: '013-policy-substrate',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS secret_refs (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        key TEXT NOT NULL,
+        connection_id TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        rotated_at TEXT,
+        expires_at TEXT
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_secret_refs_provider ON secret_refs(provider);',
+      'CREATE INDEX IF NOT EXISTS idx_secret_refs_connection ON secret_refs(connection_id);',
+
+      `CREATE TABLE IF NOT EXISTS approvals (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        risk_class TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        intervention_id TEXT REFERENCES interventions(id),
+        payload_preview TEXT NOT NULL DEFAULT '',
+        idempotency_key TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        resolved_by TEXT,
+        decision_reason TEXT,
+        expires_at TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);',
+      'CREATE INDEX IF NOT EXISTS idx_approvals_domain_scope ON approvals(domain, scope);',
+      'CREATE INDEX IF NOT EXISTS idx_approvals_idempotency ON approvals(idempotency_key);',
+      'CREATE INDEX IF NOT EXISTS idx_approvals_intervention ON approvals(intervention_id);',
+
+      `CREATE TABLE IF NOT EXISTS connections (
+        id TEXT PRIMARY KEY,
+        domain TEXT NOT NULL,
+        provider_kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'read_only',
+        secret_ref_id TEXT REFERENCES secret_refs(id),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sync_interval_seconds INTEGER NOT NULL DEFAULT 900,
+        allowed_scopes TEXT NOT NULL DEFAULT '[]',
+        allowed_resources TEXT NOT NULL DEFAULT '[]',
+        last_sync_at TEXT,
+        last_sync_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_connections_domain ON connections(domain);',
+      'CREATE INDEX IF NOT EXISTS idx_connections_provider ON connections(provider_kind);',
+
+      `CREATE TABLE IF NOT EXISTS context_releases (
+        id TEXT PRIMARY KEY,
+        domain TEXT NOT NULL,
+        vault_id TEXT,
+        source_ref TEXT NOT NULL,
+        release_level TEXT NOT NULL,
+        approval_id TEXT REFERENCES approvals(id),
+        run_id TEXT REFERENCES runs(id),
+        token_estimate INTEGER NOT NULL DEFAULT 0,
+        redacted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_context_releases_domain ON context_releases(domain);',
+      'CREATE INDEX IF NOT EXISTS idx_context_releases_run ON context_releases(run_id);',
+      'CREATE INDEX IF NOT EXISTS idx_context_releases_approval ON context_releases(approval_id);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [
@@ -449,6 +524,14 @@ const MEMORY_MIGRATIONS: Migration[] = [
         created_at TEXT NOT NULL
       );`,
       'CREATE INDEX idx_memory_summary_sources_summary ON memory_summary_sources(summary_id);',
+    ],
+  },
+  {
+    id: '009-domain-fields',
+    statements: [
+      "ALTER TABLE memories ADD COLUMN domain TEXT DEFAULT 'general';",
+      "ALTER TABLE memories ADD COLUMN context_release_policy TEXT DEFAULT 'full';",
+      'CREATE INDEX IF NOT EXISTS idx_memory_sources_source_ref ON memory_sources(source_type, source_ref);',
     ],
   },
 ];

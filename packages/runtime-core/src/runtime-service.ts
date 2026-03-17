@@ -4,9 +4,17 @@ import { randomUUID } from 'node:crypto';
 import type {
   AgentProfileRecord,
   AppConfig,
+  ApprovalRecord,
+  ApprovalResolveInput,
   CompiledInstructionBundle,
+  ConnectionCreateInput,
+  ConnectionRecord,
+  ConnectionUpdateInput,
+  ContextReleaseDecision,
+  ContextReleasePreview,
   DaemonStateRecord,
   DaemonStatusResponse,
+  DomainKind,
   IntegrityReport,
   InterventionRecord,
   JobLeaseRecord,
@@ -25,7 +33,9 @@ import type {
   RunReply,
   RunRecord,
   SchedulerStatusResponse,
+  SecretRefRecord,
   SecurityAuditEvent,
+  SecurityPolicyResponse,
   TaskCreateInput,
   TaskRecord,
   TelegramDeliveryState,
@@ -36,6 +46,7 @@ import type {
   TelegramRelayCheckpointCommitRequest,
   TelegramSendAttemptRecord,
   UsageSummary,
+  VaultRecord,
   WorkspaceRecord,
   WorkspaceRegistrationInput,
 } from '@popeye/contracts';
@@ -73,6 +84,10 @@ import { openRuntimeDatabases, type RuntimeDatabases } from './database.js';
 import { MemoryLifecycleService, type MemoryInsertInput } from './memory-lifecycle.js';
 import { MessageIngestionService, MessageIngressError } from './message-ingestion.js';
 import { QueryService } from './query-service.js';
+import { SecretStore } from './secret-store.js';
+import { ApprovalService } from './approval-service.js';
+import { type VaultHandle, VaultManager } from './vault-manager.js';
+import { ContextReleaseService } from './context-release-service.js';
 import {
   clearBrowserSessions,
   createBrowserSession as createRuntimeBrowserSession,
@@ -80,7 +95,7 @@ import {
   validateBrowserSession as validateRuntimeBrowserSession,
 } from './browser-sessions.js';
 
-import { nowIso } from '@popeye/contracts';
+import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
 import { z } from 'zod';
 import safe from 'safe-regex2';
 import { readAuthStore, rotateAuthStore } from './auth.js';
@@ -191,7 +206,7 @@ const MemoryListRowSchema = z.object({
   id: z.string(),
   description: z.string(),
   classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']),
-  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush']),
+  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release']),
   content: z.string(),
   confidence: z.number(),
   scope: z.string(),
@@ -354,6 +369,25 @@ function buildReceiptFallbackReplyText(receipt: ReceiptRecord): string {
   return parts.join('\n');
 }
 
+function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
+  return {
+    id: row['id'] as string,
+    domain: row['domain'] as ConnectionRecord['domain'],
+    providerKind: row['provider_kind'] as ConnectionRecord['providerKind'],
+    label: row['label'] as string,
+    mode: (row['mode'] as ConnectionRecord['mode']) ?? 'read_only',
+    secretRefId: (row['secret_ref_id'] as string) ?? null,
+    enabled: !!(row['enabled'] as number),
+    syncIntervalSeconds: (row['sync_interval_seconds'] as number) ?? 900,
+    allowedScopes: JSON.parse((row['allowed_scopes'] as string) ?? '[]') as string[],
+    allowedResources: JSON.parse((row['allowed_resources'] as string) ?? '[]') as string[],
+    lastSyncAt: (row['last_sync_at'] as string) ?? null,
+    lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
+    createdAt: row['created_at'] as string,
+    updatedAt: row['updated_at'] as string,
+  };
+}
+
 export class PopeyeRuntimeService {
   readonly events = new EventEmitter();
   readonly databases: RuntimeDatabases;
@@ -393,6 +427,11 @@ export class PopeyeRuntimeService {
   private readonly messageIngestion: MessageIngestionService;
   private readonly taskManager: TaskManager;
   private readonly queryService: QueryService;
+  private readonly secretStore: SecretStore;
+  private readonly approvalService: ApprovalService;
+  private readonly vaultManager: VaultManager;
+  private readonly contextReleaseService: ContextReleaseService;
+  private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
   private static validateRegexPatterns(config: AppConfig): void {
     const fields: Array<{ name: string; patterns: string[] }> = [
@@ -453,6 +492,30 @@ export class PopeyeRuntimeService {
     // Initialize delegate modules
     this.workspaceRegistry = new WorkspaceRegistry({ app: this.databases.app, paths: this.databases.paths });
     this.sessionService = new SessionService({ app: this.databases.app });
+
+    // Initialize policy substrate services
+    const sevMap: Record<string, 'info' | 'warn' | 'error'> = { info: 'info', warning: 'warn', warn: 'warn', error: 'error' };
+    const auditCallback = (event: { eventType: string; details: Record<string, unknown>; severity: string }) => {
+      this.recordSecurityAudit({
+        code: event.eventType,
+        severity: sevMap[event.severity] ?? 'info',
+        message: event.eventType,
+        component: 'policy-substrate',
+        timestamp: nowIso(),
+        details: Object.fromEntries(Object.entries(event.details).map(([k, v]) => [k, String(v)])),
+      });
+    };
+    this.secretStore = new SecretStore(this.databases.app, this.log, this.databases.paths, auditCallback);
+    this.approvalService = new ApprovalService(
+      this.databases.app,
+      this.log,
+      auditCallback,
+      (event, data) => this.emit(event, data),
+      { pendingExpiryMinutes: config.approvalPolicy?.pendingExpiryMinutes ?? 60 },
+    );
+    this.vaultManager = new VaultManager(this.databases.app, this.log, this.databases.paths, auditCallback);
+    this.contextReleaseService = new ContextReleaseService(this.databases.app, this.log, auditCallback);
+
     this.receiptManager = new ReceiptManager(this.databases, config, {
       captureMemory: (input) => this.memoryLifecycle.insertMemory(input),
     });
@@ -495,6 +558,9 @@ export class PopeyeRuntimeService {
     this.startMemoryMaintenance();
     this.startDocIndexing();
     this.startTokenRotationCheck();
+    this.approvalExpiryTimer = setInterval(() => {
+      this.approvalService.expireStaleApprovals();
+    }, 5 * 60_000);
     const schedulerReadyMs = Math.round(performance.now() - startupStart);
     this.startupProfile = { dbReadyMs, reconcileMs, schedulerReadyMs };
     this.log.info('runtime started', { dbReadyMs, reconcileMs, schedulerReadyMs });
@@ -516,6 +582,11 @@ export class PopeyeRuntimeService {
       clearInterval(this.tokenRotationTimer);
       this.tokenRotationTimer = null;
     }
+    if (this.approvalExpiryTimer) {
+      clearInterval(this.approvalExpiryTimer);
+      this.approvalExpiryTimer = null;
+    }
+    this.vaultManager.closeAllVaults();
     await this.stopScheduler();
     await this.vecInitPromise;
     this.databases.app.prepare('UPDATE daemon_state SET last_shutdown_at = ? WHERE id = 1').run(nowIso());
@@ -1352,6 +1423,162 @@ export class PopeyeRuntimeService {
 
   executeMemoryPromotion(request: { memoryId: string; targetPath: string; diff: string; approved: boolean; promoted: boolean }) {
     return this.memoryLifecycle.executePromotion(request);
+  }
+
+  // --- Delegated: SecretStore ---
+
+  setSecret(input: Parameters<SecretStore['setSecret']>[0]): SecretRefRecord {
+    return this.secretStore.setSecret(input);
+  }
+
+  getSecretValue(id: string): string | null {
+    return this.secretStore.getSecretValue(id);
+  }
+
+  hasSecret(id: string): boolean {
+    return this.secretStore.hasSecret(id);
+  }
+
+  listSecrets(connectionId?: string): SecretRefRecord[] {
+    return this.secretStore.listSecrets(connectionId);
+  }
+
+  deleteSecret(id: string): boolean {
+    return this.secretStore.deleteSecret(id);
+  }
+
+  rotateSecret(id: string, newValue: string): SecretRefRecord | null {
+    return this.secretStore.rotateSecret(id, newValue);
+  }
+
+  // --- Delegated: ApprovalService ---
+
+  requestApproval(input: Parameters<ApprovalService['requestApproval']>[0]): ApprovalRecord {
+    return this.approvalService.requestApproval(input);
+  }
+
+  resolveApproval(id: string, input: ApprovalResolveInput): ApprovalRecord {
+    return this.approvalService.resolveApproval(id, input);
+  }
+
+  getApproval(id: string): ApprovalRecord | null {
+    return this.approvalService.getApproval(id);
+  }
+
+  listApprovals(filter?: { scope?: string; status?: string; domain?: string }): ApprovalRecord[] {
+    return this.approvalService.listApprovals(filter);
+  }
+
+  // --- Delegated: VaultManager ---
+
+  createVault(input: { domain: DomainKind; name: string; kind?: 'capability' | 'restricted' }): VaultRecord {
+    return this.vaultManager.createVault(input);
+  }
+
+  openVault(vaultId: string, approvalId: string): VaultHandle | null {
+    const approval = this.approvalService.getApproval(approvalId);
+    if (!approval || approval.status !== 'approved') {
+      this.log.warn('vault open denied: approval not found or not approved', { vaultId, approvalId });
+      return null;
+    }
+    return this.vaultManager.openVault(vaultId, approvalId);
+  }
+
+  closeVault(vaultId: string): boolean {
+    return this.vaultManager.closeVault(vaultId);
+  }
+
+  sealVault(vaultId: string): boolean {
+    return this.vaultManager.sealVault(vaultId);
+  }
+
+  listVaults(domain?: DomainKind): VaultRecord[] {
+    return this.vaultManager.listVaults(domain);
+  }
+
+  getVault(vaultId: string): VaultRecord | null {
+    return this.vaultManager.getVault(vaultId);
+  }
+
+  // --- Delegated: ContextReleaseService ---
+
+  recordContextRelease(input: Parameters<ContextReleaseService['recordRelease']>[0]): ContextReleaseDecision {
+    return this.contextReleaseService.recordRelease(input);
+  }
+
+  listContextReleases(runId: string): ContextReleaseDecision[] {
+    return this.contextReleaseService.listReleasesForRun(runId);
+  }
+
+  summarizeRunReleases(runId: string): {
+    totalReleases: number;
+    totalTokenEstimate: number;
+    byDomain: Record<string, { count: number; tokens: number }>;
+  } {
+    return this.contextReleaseService.summarizeRunReleases(runId);
+  }
+
+  previewContextRelease(input: { domain: DomainKind; sourceRef: string }): ContextReleasePreview {
+    return this.contextReleaseService.previewRelease(input);
+  }
+
+  // --- Policy: domain policy + connections ---
+
+  getSecurityPolicy(): SecurityPolicyResponse {
+    const domainPolicies = Object.values(DOMAIN_POLICY_DEFAULTS);
+    const approvalRules = this.config.approvalPolicy?.rules ?? [];
+    return { domainPolicies, approvalRules };
+  }
+
+  listConnections(domain?: string): ConnectionRecord[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (domain) { conditions.push('domain = ?'); params.push(domain); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.databases.app.prepare(`SELECT * FROM connections ${where} ORDER BY created_at DESC`).all(...params) as Record<string, unknown>[];
+    return rows.map(mapConnectionRow);
+  }
+
+  createConnection(input: ConnectionCreateInput): ConnectionRecord {
+    const id = randomUUID();
+    const now = nowIso();
+    this.databases.app
+      .prepare(
+        `INSERT INTO connections (id, domain, provider_kind, label, mode, secret_ref_id, enabled, sync_interval_seconds, allowed_scopes, allowed_resources, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, input.domain, input.providerKind, input.label, input.mode, input.secretRefId ?? null, input.syncIntervalSeconds, JSON.stringify(input.allowedScopes), JSON.stringify(input.allowedResources), now, now);
+    return this.getConnection(id)!;
+  }
+
+  updateConnection(id: string, input: ConnectionUpdateInput): ConnectionRecord | null {
+    const existing = this.getConnection(id);
+    if (!existing) return null;
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (input.label !== undefined) { sets.push('label = ?'); params.push(input.label); }
+    if (input.mode !== undefined) { sets.push('mode = ?'); params.push(input.mode); }
+    if (input.secretRefId !== undefined) { sets.push('secret_ref_id = ?'); params.push(input.secretRefId); }
+    if (input.enabled !== undefined) { sets.push('enabled = ?'); params.push(input.enabled ? 1 : 0); }
+    if (input.syncIntervalSeconds !== undefined) { sets.push('sync_interval_seconds = ?'); params.push(input.syncIntervalSeconds); }
+    if (input.allowedScopes !== undefined) { sets.push('allowed_scopes = ?'); params.push(JSON.stringify(input.allowedScopes)); }
+    if (input.allowedResources !== undefined) { sets.push('allowed_resources = ?'); params.push(JSON.stringify(input.allowedResources)); }
+    if (sets.length === 0) return existing;
+    sets.push('updated_at = ?');
+    params.push(nowIso());
+    params.push(id);
+    this.databases.app.prepare(`UPDATE connections SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    return this.getConnection(id);
+  }
+
+  deleteConnection(id: string): boolean {
+    const result = this.databases.app.prepare('DELETE FROM connections WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  private getConnection(id: string): ConnectionRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? mapConnectionRow(row) : null;
   }
 
   // --- Internal: event emission ---

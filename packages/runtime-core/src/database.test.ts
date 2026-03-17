@@ -527,6 +527,7 @@ describe('openRuntimeDatabases', () => {
           '010-telegram-reply-delivery-observability',
           '011-telegram-operator-resolution',
           '012-telegram-send-attempts',
+          '013-policy-substrate',
         ]);
 
         const memMigrations = databases.memory
@@ -542,6 +543,7 @@ describe('openRuntimeDatabases', () => {
           '006-memory-fts-stable-id',
           '007-memory-enhancements',
           '008-memory-summary-dag',
+          '009-domain-fields',
         ]);
       } finally {
         databases.app.close();

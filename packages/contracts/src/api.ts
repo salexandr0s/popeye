@@ -4,6 +4,10 @@ import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema
 import { MemorySourceTypeSchema, MemoryTypeSchema } from './memory.js';
 import { SecurityAuditFindingSchema } from './security.js';
 import { WorkspaceRecordSchema, DataClassificationSchema } from './config.js';
+import { DomainKindSchema, DomainPolicySchema } from './domain.js';
+import { ApprovalRecordSchema, ApprovalPolicyRuleSchema } from './approval.js';
+import { ConnectionRecordSchema } from './connection.js';
+import { ContextReleasePreviewSchema } from './context-release.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -231,6 +235,27 @@ export const MemoryImportResponseSchema = z.object({
   embedded: z.boolean(),
 });
 export type MemoryImportResponse = z.infer<typeof MemoryImportResponseSchema>;
+
+export const ApprovalListResponseSchema = z.array(ApprovalRecordSchema);
+export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
+
+export const ConnectionListResponseSchema = z.array(ConnectionRecordSchema);
+export type ConnectionListResponse = z.infer<typeof ConnectionListResponseSchema>;
+
+export const SecurityPolicyResponseSchema = z.object({
+  domainPolicies: z.array(DomainPolicySchema),
+  approvalRules: z.array(ApprovalPolicyRuleSchema),
+});
+export type SecurityPolicyResponse = z.infer<typeof SecurityPolicyResponseSchema>;
+
+export const ContextReleasePreviewRequestSchema = z.object({
+  domain: DomainKindSchema,
+  sourceRef: z.string().min(1),
+});
+export type ContextReleasePreviewRequest = z.infer<typeof ContextReleasePreviewRequestSchema>;
+
+export const ContextReleasePreviewResponseSchema = ContextReleasePreviewSchema;
+export type ContextReleasePreviewResponse = z.infer<typeof ContextReleasePreviewResponseSchema>;
 
 export const InstructionResolutionContextSchema = z.object({
   workspaceId: z.string().min(1),

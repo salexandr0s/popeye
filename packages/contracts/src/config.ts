@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { EngineKindSchema } from './engine.js';
+import { ApprovalPolicyConfigSchema } from './approval.js';
+import { VaultConfigSchema } from './vault.js';
 
 export const DataClassificationSchema = z.enum(['secret', 'sensitive', 'internal', 'embeddable']);
 export type DataClassification = z.infer<typeof DataClassificationSchema>;
@@ -115,6 +117,8 @@ export const AppConfigSchema = z.object({
       heartbeatIntervalSeconds: 3600,
     },
   ]),
+  approvalPolicy: ApprovalPolicyConfigSchema.default({}),
+  vaults: VaultConfigSchema.default({}),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
@@ -139,5 +143,7 @@ export const RuntimePathsSchema = z.object({
   receiptsByDayDir: z.string(),
   backupsDir: z.string(),
   memoryDailyDir: z.string(),
+  capabilityStoresDir: z.string(),
+  vaultsDir: z.string(),
 });
 export type RuntimePaths = z.infer<typeof RuntimePathsSchema>;

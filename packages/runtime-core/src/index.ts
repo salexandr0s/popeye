@@ -10,6 +10,10 @@ export * from './launchd.js';
 export * from './instruction-query.js';
 export * from './runtime-service.js';
 export * from './memory-lifecycle.js';
+export * from './secret-store.js';
+export * from './approval-service.js';
+export * from './vault-manager.js';
+export * from './context-release-service.js';
 
 // Backward-compat re-exports from domain packages
 export { evaluateCriticalFileMutation } from '@popeye/workspace';

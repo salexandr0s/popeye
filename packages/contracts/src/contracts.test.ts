@@ -960,6 +960,8 @@ describe('Additional schema smoke tests', () => {
       receiptsByDayDir: '/tmp/popeye/receipts/by-day',
       backupsDir: '/tmp/popeye/backups',
       memoryDailyDir: '/tmp/popeye/memory/daily',
+      capabilityStoresDir: '/tmp/popeye/capabilities',
+      vaultsDir: '/tmp/popeye/vaults',
     });
     expect(result.appDbPath).toBe('/tmp/popeye/state/app.db');
   });

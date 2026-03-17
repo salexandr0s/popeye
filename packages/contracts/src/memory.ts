@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DataClassificationSchema } from './config.js';
+import { DomainKindSchema, ContextReleasePolicySchema } from './domain.js';
 
 export const MemoryTypeSchema = z.enum(['episodic', 'semantic', 'procedural']);
 export type MemoryType = z.infer<typeof MemoryTypeSchema>;
@@ -11,6 +12,8 @@ export const MemorySourceTypeSchema = z.enum([
   'curated_memory',
   'workspace_doc',
   'compaction_flush',
+  'capability_sync',
+  'context_release',
 ]);
 export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
 
@@ -30,6 +33,8 @@ export const MemoryRecordSchema = z.object({
   archivedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   durable: z.boolean().default(false),
+  domain: DomainKindSchema.default('general'),
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
 });
 export type MemoryRecord = z.infer<typeof MemoryRecordSchema>;
 

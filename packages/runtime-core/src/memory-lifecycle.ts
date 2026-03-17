@@ -543,6 +543,8 @@ export class MemoryLifecycleService {
             archivedAt: null,
             createdAt: now,
             durable: false,
+            domain: 'general',
+            contextReleasePolicy: 'full',
           }];
         }
       }
@@ -596,6 +598,8 @@ export class MemoryLifecycleService {
         archivedAt: null,
         createdAt: now,
         durable: false,
+        domain: 'general',
+        contextReleasePolicy: 'full',
       });
     }
 

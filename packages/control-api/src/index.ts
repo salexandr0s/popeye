@@ -6,6 +6,11 @@ import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 
 import {
+  ApprovalResolveInputSchema,
+  ConnectionCreateInputSchema,
+  ConnectionUpdateInputSchema,
+  ContextReleasePreviewRequestSchema,
+  DomainKindSchema,
   MemoryImportInputSchema,
   AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
@@ -827,6 +832,80 @@ export async function createControlApi(
     }
     reply.header('set-cookie', serializeCsrfCookie(token, dependencies.useSecureCookies));
     return { token };
+  });
+
+  // --- Policy substrate routes ---
+
+  app.get('/v1/approvals', async (request) => {
+    const query = z.object({ scope: z.string().optional(), status: z.string().optional(), domain: z.string().optional() }).parse(request.query);
+    return dependencies.runtime.listApprovals(stripUndefined(query));
+  });
+
+  app.post('/v1/approvals', async (request) => {
+    const body = z.object({
+      scope: z.string(),
+      domain: DomainKindSchema,
+      riskClass: z.string(),
+      resourceType: z.string(),
+      resourceId: z.string(),
+      requestedBy: z.string(),
+      payloadPreview: z.string().optional(),
+      idempotencyKey: z.string().optional(),
+      expiresAt: z.string().optional(),
+    }).parse(request.body);
+    return dependencies.runtime.requestApproval(stripUndefined(body));
+  });
+
+  app.get('/v1/approvals/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const approval = dependencies.runtime.getApproval(id);
+    if (!approval) return reply.code(404).send({ error: 'approval not found' });
+    return approval;
+  });
+
+  app.post('/v1/approvals/:id/resolve', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = ApprovalResolveInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.resolveApproval(id, body);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not found')) return reply.code(404).send({ error: msg });
+      if (msg.includes('already resolved')) return reply.code(409).send({ error: msg });
+      throw err;
+    }
+  });
+
+  app.get('/v1/security/policy', async () => dependencies.runtime.getSecurityPolicy());
+
+  app.get('/v1/connections', async (request) => {
+    const query = z.object({ domain: z.string().optional() }).parse(request.query);
+    return dependencies.runtime.listConnections(query.domain);
+  });
+
+  app.post('/v1/connections', async (request) => {
+    const body = ConnectionCreateInputSchema.parse(request.body);
+    return dependencies.runtime.createConnection(body);
+  });
+
+  app.patch('/v1/connections/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = ConnectionUpdateInputSchema.parse(request.body);
+    const result = dependencies.runtime.updateConnection(id, body);
+    if (!result) return reply.code(404).send({ error: 'connection not found' });
+    return result;
+  });
+
+  app.delete('/v1/connections/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const deleted = dependencies.runtime.deleteConnection(id);
+    if (!deleted) return reply.code(404).send({ error: 'connection not found' });
+    return { ok: true };
+  });
+
+  app.post('/v1/context-release/preview', async (request) => {
+    const body = ContextReleasePreviewRequestSchema.parse(request.body);
+    return dependencies.runtime.previewContextRelease(body);
   });
 
   return app;

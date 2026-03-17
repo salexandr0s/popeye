@@ -72,6 +72,18 @@ import {
   type WorkspaceListItem,
   WorkspaceListItemSchema,
   type IngestMessageInput,
+  type ApprovalRecord,
+  ApprovalRecordSchema,
+  type ApprovalResolveInput,
+  type ConnectionRecord,
+  ConnectionRecordSchema,
+  type ConnectionCreateInput,
+  type ConnectionUpdateInput,
+  type ContextReleasePreview,
+  ContextReleasePreviewSchema,
+  type SecurityPolicyResponse,
+  SecurityPolicyResponseSchema,
+  type DomainKind,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -171,6 +183,31 @@ export class PopeyeApiClient {
       headers: this.mutationHeaders(),
       body: body ? JSON.stringify(body) : undefined,
     });
+  }
+
+  private async patch<T>(path: string, body: unknown, schema: { parse: (data: unknown) => T }): Promise<T> {
+    await this.ensureCsrfToken();
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'PATCH',
+      headers: this.mutationHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+    const data: unknown = await response.json();
+    return schema.parse(data);
+  }
+
+  private async del(path: string): Promise<void> {
+    await this.ensureCsrfToken();
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: 'DELETE',
+      headers: this.mutationHeaders(),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
   }
 
   private async ensureCsrfToken(): Promise<void> {
@@ -462,6 +499,48 @@ export class PopeyeApiClient {
 
   async securityAudit(): Promise<SecurityAuditResponse> {
     return this.get('/v1/security/audit', SecurityAuditResponseSchema);
+  }
+
+  // --- Policy substrate client methods ---
+
+  async listApprovals(filter?: { scope?: string; status?: string; domain?: string }): Promise<ApprovalRecord[]> {
+    return this.getArray(`/v1/approvals${this.buildQuery(filter ?? {})}`, ApprovalRecordSchema);
+  }
+
+  async getApproval(id: string): Promise<ApprovalRecord> {
+    return this.get(`/v1/approvals/${encodeURIComponent(id)}`, ApprovalRecordSchema);
+  }
+
+  async requestApproval(input: { scope: string; domain: DomainKind; riskClass: string; resourceType: string; resourceId: string; requestedBy: string; payloadPreview?: string; idempotencyKey?: string }): Promise<ApprovalRecord> {
+    return this.post('/v1/approvals', input, ApprovalRecordSchema);
+  }
+
+  async resolveApproval(id: string, input: ApprovalResolveInput): Promise<ApprovalRecord> {
+    return this.post(`/v1/approvals/${encodeURIComponent(id)}/resolve`, input, ApprovalRecordSchema);
+  }
+
+  async getSecurityPolicy(): Promise<SecurityPolicyResponse> {
+    return this.get('/v1/security/policy', SecurityPolicyResponseSchema);
+  }
+
+  async listConnections(domain?: string): Promise<ConnectionRecord[]> {
+    return this.getArray(`/v1/connections${this.buildQuery({ domain })}`, ConnectionRecordSchema);
+  }
+
+  async createConnection(input: ConnectionCreateInput): Promise<ConnectionRecord> {
+    return this.post('/v1/connections', input, ConnectionRecordSchema);
+  }
+
+  async updateConnection(id: string, input: ConnectionUpdateInput): Promise<ConnectionRecord> {
+    return this.patch(`/v1/connections/${encodeURIComponent(id)}`, input, ConnectionRecordSchema);
+  }
+
+  async deleteConnection(id: string): Promise<void> {
+    return this.del(`/v1/connections/${encodeURIComponent(id)}`);
+  }
+
+  async previewContextRelease(input: { domain: DomainKind; sourceRef: string }): Promise<ContextReleasePreview> {
+    return this.post('/v1/context-release/preview', input, ContextReleasePreviewSchema);
   }
 
   // --- Telegram delivery resolution & send-attempt client methods ---
