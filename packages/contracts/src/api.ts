@@ -11,6 +11,8 @@ import { ContextReleasePreviewSchema } from './context-release.js';
 import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
 import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema } from './email.js';
 import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema } from './github.js';
+import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema } from './calendar.js';
+import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema } from './todos.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -379,3 +381,74 @@ export const GithubSyncResponseSchema = GithubSyncResultSchema;
 export type GithubSyncResponse = z.infer<typeof GithubSyncResponseSchema>;
 
 export { GithubAccountRegistrationInputSchema, GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema };
+
+// --- Calendar API schemas ---
+
+export const CalendarAccountListResponseSchema = z.array(CalendarAccountRecordSchema);
+export type CalendarAccountListResponse = z.infer<typeof CalendarAccountListResponseSchema>;
+
+export const CalendarAccountCreateRequestSchema = CalendarAccountRegistrationInputSchema;
+export type CalendarAccountCreateRequest = z.infer<typeof CalendarAccountCreateRequestSchema>;
+
+export const CalendarAccountResponseSchema = CalendarAccountRecordSchema;
+export type CalendarAccountResponse = z.infer<typeof CalendarAccountResponseSchema>;
+
+export const CalendarEventListResponseSchema = z.array(CalendarEventRecordSchema);
+export type CalendarEventListResponse = z.infer<typeof CalendarEventListResponseSchema>;
+
+export const CalendarEventResponseSchema = CalendarEventRecordSchema;
+export type CalendarEventResponse = z.infer<typeof CalendarEventResponseSchema>;
+
+export const CalendarDigestResponseSchema = CalendarDigestRecordSchema;
+export type CalendarDigestResponse = z.infer<typeof CalendarDigestResponseSchema>;
+
+export const CalendarSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(CalendarSearchResultSchema),
+});
+export type CalendarSearchApiResponse = z.infer<typeof CalendarSearchApiResponseSchema>;
+
+export const CalendarSyncResponseSchema = CalendarSyncResultSchema;
+export type CalendarSyncResponse = z.infer<typeof CalendarSyncResponseSchema>;
+
+export const CalendarAvailabilityResponseSchema = z.array(CalendarAvailabilitySlotSchema);
+export type CalendarAvailabilityResponse = z.infer<typeof CalendarAvailabilityResponseSchema>;
+
+export { CalendarAccountRegistrationInputSchema, CalendarAccountRecordSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema };
+
+// --- Todos API schemas ---
+
+export const TodoAccountListResponseSchema = z.array(TodoAccountRecordSchema);
+export type TodoAccountListResponse = z.infer<typeof TodoAccountListResponseSchema>;
+
+export const TodoAccountCreateRequestSchema = TodoAccountRegistrationInputSchema;
+export type TodoAccountCreateRequest = z.infer<typeof TodoAccountCreateRequestSchema>;
+
+export const TodoAccountResponseSchema = TodoAccountRecordSchema;
+export type TodoAccountResponse = z.infer<typeof TodoAccountResponseSchema>;
+
+export const TodoItemListResponseSchema = z.array(TodoItemRecordSchema);
+export type TodoItemListResponse = z.infer<typeof TodoItemListResponseSchema>;
+
+export const TodoItemResponseSchema = TodoItemRecordSchema;
+export type TodoItemResponse = z.infer<typeof TodoItemResponseSchema>;
+
+export const TodoProjectListResponseSchema = z.array(TodoProjectRecordSchema);
+export type TodoProjectListResponse = z.infer<typeof TodoProjectListResponseSchema>;
+
+export const TodoDigestResponseSchema = TodoDigestRecordSchema;
+export type TodoDigestResponse = z.infer<typeof TodoDigestResponseSchema>;
+
+export const TodoSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(TodoSearchResultSchema),
+});
+export type TodoSearchApiResponse = z.infer<typeof TodoSearchApiResponseSchema>;
+
+export const TodoSyncResponseSchema = TodoSyncResultSchema;
+export type TodoSyncResponse = z.infer<typeof TodoSyncResponseSchema>;
+
+export const TodoCreateRequestSchema = TodoCreateInputSchema;
+export type TodoCreateRequest = z.infer<typeof TodoCreateRequestSchema>;
+
+export { TodoAccountRegistrationInputSchema, TodoAccountRecordSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema };

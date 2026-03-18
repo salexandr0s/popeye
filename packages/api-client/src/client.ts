@@ -125,6 +125,32 @@ import {
   GithubSearchResultSchema,
   type GithubSyncResult,
   GithubSyncResultSchema,
+  type CalendarAccountRecord,
+  CalendarAccountRecordSchema,
+  type CalendarAccountRegistrationInput,
+  type CalendarEventRecord,
+  CalendarEventRecordSchema,
+  type CalendarDigestRecord,
+  CalendarDigestRecordSchema,
+  CalendarSearchResultSchema,
+  type CalendarSearchResult,
+  CalendarAvailabilitySlotSchema,
+  type CalendarAvailabilitySlot,
+  type CalendarSyncResult,
+  CalendarSyncResultSchema,
+  type TodoAccountRecord,
+  TodoAccountRecordSchema,
+  type TodoAccountRegistrationInput,
+  type TodoItemRecord,
+  TodoItemRecordSchema,
+  type TodoDigestRecord,
+  TodoDigestRecordSchema,
+  TodoSearchResultSchema,
+  type TodoSearchResult,
+  type TodoSyncResult,
+  TodoSyncResultSchema,
+  type TodoCreateInput,
+  TodoCreateInputSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -811,6 +837,107 @@ export class PopeyeApiClient {
 
   async syncGithubAccount(accountId: string): Promise<GithubSyncResult> {
     return this.post('/v1/github/sync', { accountId }, GithubSyncResultSchema);
+  }
+
+  // --- Calendar ---
+
+  async listCalendarAccounts(): Promise<CalendarAccountRecord[]> {
+    return this.getArray('/v1/calendar/accounts', CalendarAccountRecordSchema);
+  }
+
+  async listCalendarEvents(accountId?: string, options?: { dateFrom?: string; dateTo?: string; limit?: number }): Promise<CalendarEventRecord[]> {
+    const params = this.buildQuery({ accountId, dateFrom: options?.dateFrom, dateTo: options?.dateTo, limit: options?.limit });
+    return this.getArray(`/v1/calendar/events${params}`, CalendarEventRecordSchema);
+  }
+
+  async getCalendarEvent(id: string): Promise<CalendarEventRecord> {
+    return this.get(`/v1/calendar/events/${encodeURIComponent(id)}`, CalendarEventRecordSchema);
+  }
+
+  async searchCalendar(query: string, options?: { accountId?: string; dateFrom?: string; dateTo?: string; limit?: number }): Promise<{ query: string; results: CalendarSearchResult[] }> {
+    const params = this.buildQuery({ query, accountId: options?.accountId, dateFrom: options?.dateFrom, dateTo: options?.dateTo, limit: options?.limit });
+    const responseSchema = z.object({
+      query: z.string(),
+      results: z.array(CalendarSearchResultSchema),
+    });
+    return this.get(`/v1/calendar/search${params}`, responseSchema);
+  }
+
+  async getCalendarDigest(accountId?: string): Promise<CalendarDigestRecord | null> {
+    const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+    try {
+      return await this.get(`/v1/calendar/digest${query}`, CalendarDigestRecordSchema);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 404) return null;
+      return null;
+    }
+  }
+
+  async getCalendarAvailability(options: { accountId?: string; date: string; startHour?: number; endHour?: number; slotMinutes?: number }): Promise<CalendarAvailabilitySlot[]> {
+    const params = this.buildQuery({
+      accountId: options.accountId,
+      date: options.date,
+      startHour: options.startHour,
+      endHour: options.endHour,
+      slotMinutes: options.slotMinutes,
+    });
+    return this.getArray(`/v1/calendar/availability${params}`, CalendarAvailabilitySlotSchema);
+  }
+
+  async registerCalendarAccount(input: CalendarAccountRegistrationInput): Promise<CalendarAccountRecord> {
+    return this.post('/v1/calendar/accounts', input, CalendarAccountRecordSchema);
+  }
+
+  // --- Todos ---
+
+  async listTodoAccounts(): Promise<TodoAccountRecord[]> {
+    return this.getArray('/v1/todos/accounts', TodoAccountRecordSchema);
+  }
+
+  async listTodos(accountId?: string, options?: { status?: string; priority?: number; project?: string; limit?: number }): Promise<TodoItemRecord[]> {
+    const params = this.buildQuery({
+      accountId,
+      status: options?.status,
+      priority: options?.priority,
+      project: options?.project,
+      limit: options?.limit,
+    });
+    return this.getArray(`/v1/todos/items${params}`, TodoItemRecordSchema);
+  }
+
+  async getTodo(id: string): Promise<TodoItemRecord> {
+    return this.get(`/v1/todos/items/${encodeURIComponent(id)}`, TodoItemRecordSchema);
+  }
+
+  async searchTodos(query: string, options?: { accountId?: string; status?: string; limit?: number }): Promise<{ query: string; results: TodoSearchResult[] }> {
+    const params = this.buildQuery({ query, accountId: options?.accountId, status: options?.status, limit: options?.limit });
+    const responseSchema = z.object({
+      query: z.string(),
+      results: z.array(TodoSearchResultSchema),
+    });
+    return this.get(`/v1/todos/search${params}`, responseSchema);
+  }
+
+  async getTodoDigest(accountId?: string): Promise<TodoDigestRecord | null> {
+    const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+    try {
+      return await this.get(`/v1/todos/digest${query}`, TodoDigestRecordSchema);
+    } catch (err) {
+      if (err instanceof ApiError && err.statusCode === 404) return null;
+      return null;
+    }
+  }
+
+  async registerTodoAccount(input: TodoAccountRegistrationInput): Promise<TodoAccountRecord> {
+    return this.post('/v1/todos/accounts', input, TodoAccountRecordSchema);
+  }
+
+  async createTodo(input: TodoCreateInput): Promise<TodoItemRecord> {
+    return this.post('/v1/todos/items', input, TodoItemRecordSchema);
+  }
+
+  async completeTodo(id: string): Promise<TodoItemRecord> {
+    return this.post(`/v1/todos/items/${encodeURIComponent(id)}/complete`, {}, TodoItemRecordSchema);
   }
 
   subscribeEvents(callback: (event: { event: string; data: string }) => void): () => void {

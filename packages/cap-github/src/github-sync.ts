@@ -1,17 +1,8 @@
 import type { CapabilityContext, GithubAccountRecord, GithubSyncResult } from '@popeye/contracts';
-import { redactText } from '@popeye/observability';
+import { extractRedactionPatterns, redactText } from '@popeye/observability';
 
 import type { GithubProviderAdapter } from './providers/adapter-interface.js';
 import type { GithubService } from './github-service.js';
-
-function extractRedactionPatterns(config: Record<string, unknown>): string[] {
-  if (typeof config !== 'object' || config === null) return [];
-  const security = config['security'];
-  if (typeof security !== 'object' || security === null) return [];
-  const patterns = (security as Record<string, unknown>)['redactionPatterns'];
-  if (!Array.isArray(patterns)) return [];
-  return patterns.filter((p): p is string => typeof p === 'string');
-}
 
 export class GithubSyncService {
   private readonly redactionPatterns: string[];

@@ -42,6 +42,12 @@
     },
     {
       "path": "../cap-github"
+    },
+    {
+      "path": "../cap-calendar"
+    },
+    {
+      "path": "../cap-todos"
     }
   ],
   "exclude": [

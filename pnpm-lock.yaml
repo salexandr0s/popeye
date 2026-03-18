@@ -176,6 +176,21 @@ importers:
         specifier: workspace:*
         version: link:../runtime-core
 
+  packages/cap-calendar:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+
   packages/cap-email:
     dependencies:
       '@popeye/contracts':
@@ -217,6 +232,21 @@ importers:
         version: 10.2.4
 
   packages/cap-github:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+
+  packages/cap-todos:
     dependencies:
       '@popeye/contracts':
         specifier: workspace:*
@@ -314,6 +344,9 @@ importers:
 
   packages/runtime-core:
     dependencies:
+      '@popeye/cap-calendar':
+        specifier: workspace:*
+        version: link:../cap-calendar
       '@popeye/cap-email':
         specifier: workspace:*
         version: link:../cap-email
@@ -323,6 +356,9 @@ importers:
       '@popeye/cap-github':
         specifier: workspace:*
         version: link:../cap-github
+      '@popeye/cap-todos':
+        specifier: workspace:*
+        version: link:../cap-todos
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts

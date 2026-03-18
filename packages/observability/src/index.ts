@@ -91,6 +91,15 @@ export function redactText(input: string, customPatterns: string[] = []): Redact
   return { text, events };
 }
 
+export function extractRedactionPatterns(config: Record<string, unknown>): string[] {
+  if (typeof config !== 'object' || config === null) return [];
+  const security = config['security'];
+  if (typeof security !== 'object' || security === null) return [];
+  const patterns = (security as Record<string, unknown>)['redactionPatterns'];
+  if (!Array.isArray(patterns)) return [];
+  return patterns.filter((p): p is string => typeof p === 'string');
+}
+
 export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }

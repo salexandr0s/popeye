@@ -1,19 +1,10 @@
 import type { CapabilityContext, CapabilityToolDescriptor } from '@popeye/contracts';
-import { redactText } from '@popeye/observability';
+import { extractRedactionPatterns, redactText } from '@popeye/observability';
 import { z } from 'zod';
 
 import type { GithubService } from './github-service.js';
 import type { GithubSearchService } from './github-search.js';
 import type { GithubDigestService } from './github-digest.js';
-
-function extractRedactionPatterns(config: Record<string, unknown>): string[] {
-  if (typeof config !== 'object' || config === null) return [];
-  const security = config['security'];
-  if (typeof security !== 'object' || security === null) return [];
-  const patterns = (security as Record<string, unknown>)['redactionPatterns'];
-  if (!Array.isArray(patterns)) return [];
-  return patterns.filter((p): p is string => typeof p === 'string');
-}
 
 export function createGithubTools(
   githubService: GithubService,

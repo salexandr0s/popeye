@@ -79,6 +79,22 @@ import type {
   GithubSearchQuery,
   GithubSearchResult,
   GithubSyncResult,
+  CalendarAccountRecord,
+  CalendarEventRecord,
+  CalendarDigestRecord,
+  CalendarSearchQuery,
+  CalendarSearchResult,
+  CalendarAccountRegistrationInput,
+  CalendarSyncResult,
+  CalendarAvailabilitySlot,
+  TodoAccountRecord,
+  TodoAccountRegistrationInput,
+  TodoItemRecord,
+  TodoDigestRecord,
+  TodoSearchQuery,
+  TodoSearchResult,
+  TodoSyncResult,
+  TodoCreateInput,
 } from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
@@ -122,6 +138,8 @@ import { CapabilityRegistry } from './capability-registry.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, createAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
 import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GhCliAdapter } from '@popeye/cap-github';
+import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GcalcliAdapter } from '@popeye/cap-calendar';
+import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   clearBrowserSessions,
@@ -660,6 +678,8 @@ export class PopeyeRuntimeService {
     this.capabilityRegistry.register(createFilesCapability());
     this.capabilityRegistry.register(createEmailCapability());
     this.capabilityRegistry.register(createGithubCapability());
+    this.capabilityRegistry.register(createCalendarCapability());
+    this.capabilityRegistry.register(createTodosCapability());
 
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
@@ -716,6 +736,20 @@ export class PopeyeRuntimeService {
       this.githubReadDb = null;
       this.githubServiceCache = null;
       this.githubSearchCache = null;
+    }
+    // Close calendar read-only DB before capability shutdown
+    if (this.calendarReadDb) {
+      this.calendarReadDb.close();
+      this.calendarReadDb = null;
+      this.calendarServiceCache = null;
+      this.calendarSearchCache = null;
+    }
+    // Close todos read-only DB before capability shutdown
+    if (this.todosReadDb) {
+      this.todosReadDb.close();
+      this.todosReadDb = null;
+      this.todosServiceCache = null;
+      this.todosSearchCache = null;
     }
     if (this.capabilityInitPromise) await this.capabilityInitPromise;
     await this.capabilityRegistry.shutdownAll();
@@ -2896,6 +2930,353 @@ export class PopeyeRuntimeService {
         this.emailReadDb = null;
         this.emailServiceCache = null;
         this.emailSearchCache = null;
+      }
+
+      return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  // --- Calendar facade ---
+
+  private calendarReadDb: BetterSqlite3.Database | null = null;
+  private calendarServiceCache: CalendarService | null = null;
+  private calendarSearchCache: CalendarSearchService | null = null;
+
+  private getCalendarReadDb(): BetterSqlite3.Database | null {
+    if (this.calendarReadDb) return this.calendarReadDb;
+    const cap = this.capabilityRegistry.getCapability('calendar');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    if (!existsSync(dbPath)) return null;
+    this.calendarReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.calendarReadDb;
+  }
+
+  private getCalendarServiceFacade(): CalendarService | null {
+    if (this.calendarServiceCache) return this.calendarServiceCache;
+    const db = this.getCalendarReadDb();
+    if (!db) return null;
+    this.calendarServiceCache = new CalendarService(db as unknown as CapabilityContext['appDb']);
+    return this.calendarServiceCache;
+  }
+
+  private getCalendarSearchFacade(): CalendarSearchService | null {
+    if (this.calendarSearchCache) return this.calendarSearchCache;
+    const db = this.getCalendarReadDb();
+    if (!db) return null;
+    this.calendarSearchCache = new CalendarSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.calendarSearchCache;
+  }
+
+  listCalendarAccounts(): CalendarAccountRecord[] {
+    return this.getCalendarServiceFacade()?.listAccounts() ?? [];
+  }
+
+  listCalendarEvents(accountId: string, options?: { limit?: number | undefined; dateFrom?: string | undefined; dateTo?: string | undefined }): CalendarEventRecord[] {
+    return this.getCalendarServiceFacade()?.listEvents(accountId, options) ?? [];
+  }
+
+  getCalendarEvent(id: string): CalendarEventRecord | null {
+    return this.getCalendarServiceFacade()?.getEvent(id) ?? null;
+  }
+
+  searchCalendar(query: CalendarSearchQuery): { query: string; results: CalendarSearchResult[] } {
+    return this.getCalendarSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+  }
+
+  getCalendarDigest(accountId: string): CalendarDigestRecord | null {
+    return this.getCalendarServiceFacade()?.getLatestDigest(accountId) ?? null;
+  }
+
+  getCalendarAvailability(accountId: string, date: string, startHour = 9, endHour = 17, slotMinutes = 30): CalendarAvailabilitySlot[] {
+    return this.getCalendarServiceFacade()?.computeAvailability(accountId, date, startHour, endHour, slotMinutes) ?? [];
+  }
+
+  registerCalendarAccount(input: CalendarAccountRegistrationInput): CalendarAccountRecord {
+    const connection = this.getConnection(input.connectionId);
+    if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
+    if (connection.domain !== 'calendar') throw new Error(`Connection ${input.connectionId} is not a calendar connection`);
+
+    const calCap = this.capabilityRegistry.getCapability('calendar');
+    if (!calCap) throw new Error('Calendar capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      return svc.registerAccount(input);
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async syncCalendarAccount(accountId: string): Promise<CalendarSyncResult> {
+    const calCap = this.capabilityRegistry.getCapability('calendar');
+    if (!calCap) throw new Error('Calendar capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccount(accountId);
+      if (!account) throw new Error(`Calendar account ${accountId} not found`);
+
+      const adapter = new GcalcliAdapter();
+      const ctx = this.buildCapabilityContext();
+      const syncService = new CalendarSyncService(svc, ctx);
+      const result = await syncService.syncAccount(account, adapter);
+
+      if (this.calendarReadDb) {
+        this.calendarReadDb.close();
+        this.calendarReadDb = null;
+        this.calendarServiceCache = null;
+        this.calendarSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  triggerCalendarDigest(accountId?: string): CalendarDigestRecord | null {
+    const calCap = this.capabilityRegistry.getCapability('calendar');
+    if (!calCap) return null;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (accounts.length === 0) return null;
+
+      const ctx = this.buildCapabilityContext();
+      const digestService = new CalendarDigestService(svc, ctx);
+
+      let lastDigest: CalendarDigestRecord | null = null;
+      for (const account of accounts) {
+        if (!account) continue;
+        lastDigest = digestService.generateDigest(account);
+      }
+
+      if (this.calendarReadDb) {
+        this.calendarReadDb.close();
+        this.calendarReadDb = null;
+        this.calendarServiceCache = null;
+        this.calendarSearchCache = null;
+      }
+
+      return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  // --- Todos facade ---
+
+  private todosReadDb: BetterSqlite3.Database | null = null;
+  private todosServiceCache: TodoService | null = null;
+  private todosSearchCache: TodoSearchService | null = null;
+
+  private getTodosReadDb(): BetterSqlite3.Database | null {
+    if (this.todosReadDb) return this.todosReadDb;
+    const cap = this.capabilityRegistry.getCapability('todos');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    if (!existsSync(dbPath)) return null;
+    this.todosReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.todosReadDb;
+  }
+
+  private getTodosServiceFacade(): TodoService | null {
+    if (this.todosServiceCache) return this.todosServiceCache;
+    const db = this.getTodosReadDb();
+    if (!db) return null;
+    this.todosServiceCache = new TodoService(db as unknown as CapabilityContext['appDb']);
+    return this.todosServiceCache;
+  }
+
+  private getTodosSearchFacade(): TodoSearchService | null {
+    if (this.todosSearchCache) return this.todosSearchCache;
+    const db = this.getTodosReadDb();
+    if (!db) return null;
+    this.todosSearchCache = new TodoSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.todosSearchCache;
+  }
+
+  listTodoAccounts(): TodoAccountRecord[] {
+    return this.getTodosServiceFacade()?.listAccounts() ?? [];
+  }
+
+  listTodos(accountId: string, options?: { status?: string | undefined; priority?: number | undefined; projectName?: string | undefined; limit?: number | undefined }): TodoItemRecord[] {
+    return this.getTodosServiceFacade()?.listItems(accountId, options) ?? [];
+  }
+
+  getTodo(id: string): TodoItemRecord | null {
+    return this.getTodosServiceFacade()?.getItem(id) ?? null;
+  }
+
+  searchTodos(query: TodoSearchQuery): { query: string; results: TodoSearchResult[] } {
+    return this.getTodosSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+  }
+
+  getTodoDigest(accountId: string): TodoDigestRecord | null {
+    return this.getTodosServiceFacade()?.getLatestDigest(accountId) ?? null;
+  }
+
+  registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
+    // Local accounts don't need a connection
+    if (input.connectionId) {
+      const connection = this.getConnection(input.connectionId);
+      if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
+      if (connection.domain !== 'todos') throw new Error(`Connection ${input.connectionId} is not a todos connection`);
+    }
+
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      return svc.registerAccount(input);
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  createTodo(input: TodoCreateInput): TodoItemRecord {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const data: { title: string; description?: string; priority?: number; dueDate?: string; dueTime?: string; labels?: string[]; projectName?: string } = { title: input.title };
+      if (input.description !== undefined) data.description = input.description;
+      if (input.priority !== undefined) data.priority = input.priority;
+      if (input.dueDate !== undefined) data.dueDate = input.dueDate;
+      if (input.dueTime !== undefined) data.dueTime = input.dueTime;
+      if (input.labels !== undefined) data.labels = input.labels;
+      if (input.projectName !== undefined) data.projectName = input.projectName;
+      const result = svc.createItem(input.accountId, data);
+
+      if (this.todosReadDb) {
+        this.todosReadDb.close();
+        this.todosReadDb = null;
+        this.todosServiceCache = null;
+        this.todosSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  completeTodo(id: string): TodoItemRecord | null {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      svc.completeItem(id);
+      const result = svc.getItem(id);
+
+      if (this.todosReadDb) {
+        this.todosReadDb.close();
+        this.todosReadDb = null;
+        this.todosServiceCache = null;
+        this.todosSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async syncTodoAccount(accountId: string): Promise<TodoSyncResult> {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccount(accountId);
+      if (!account) throw new Error(`Todo account ${accountId} not found`);
+
+      const ctx = this.buildCapabilityContext();
+      const syncService = new TodoSyncService(svc, ctx);
+
+      // Resolve adapter based on provider kind
+      let adapter;
+      if (account.providerKind === 'local') {
+        adapter = new LocalTodoAdapter();
+      } else if (account.providerKind === 'todoist') {
+        if (!account.connectionId) {
+          throw new Error('Todoist account has no connectionId — re-register with a connection');
+        }
+        const connection = this.getConnection(account.connectionId);
+        if (!connection) throw new Error(`Connection ${account.connectionId} not found`);
+        if (!connection.secretRefId) {
+          throw new Error('Todoist connection has no secretRefId — re-register with API token');
+        }
+        const apiToken = this.secretStore.getSecretValue(connection.secretRefId);
+        if (!apiToken) {
+          throw new Error('Failed to retrieve Todoist API token from SecretStore');
+        }
+        adapter = new TodoistAdapter({ apiToken });
+      } else {
+        throw new Error(`Unsupported todo provider: ${account.providerKind}`);
+      }
+
+      const result = await syncService.syncAccount(account, adapter);
+
+      if (this.todosReadDb) {
+        this.todosReadDb.close();
+        this.todosReadDb = null;
+        this.todosServiceCache = null;
+        this.todosSearchCache = null;
+      }
+
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  triggerTodoDigest(accountId?: string): TodoDigestRecord | null {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) return null;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (accounts.length === 0) return null;
+
+      const ctx = this.buildCapabilityContext();
+      const digestService = new TodoDigestService(svc, ctx);
+
+      let lastDigest: TodoDigestRecord | null = null;
+      for (const account of accounts) {
+        if (!account) continue;
+        lastDigest = digestService.generateDigest(account);
+      }
+
+      if (this.todosReadDb) {
+        this.todosReadDb.close();
+        this.todosReadDb = null;
+        this.todosServiceCache = null;
+        this.todosSearchCache = null;
       }
 
       return lastDigest;

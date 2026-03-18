@@ -11,6 +11,8 @@ import {
   ConnectionUpdateInputSchema,
   ContextReleasePreviewRequestSchema,
   EmailAccountRegistrationInputSchema,
+  CalendarAccountRegistrationInputSchema,
+  TodoAccountRegistrationInputSchema,
   DomainKindSchema,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
@@ -25,6 +27,7 @@ import {
   RunReplySchema,
   RunStateSchema,
   TaskCreateInputSchema,
+  TodoCreateInputSchema,
   TelegramDeliveryRecordSchema,
   TelegramDeliveryResolutionRecordSchema,
   TelegramDeliveryResolutionRequestSchema,
@@ -1166,6 +1169,168 @@ export async function createControlApi(
       entityType: query.entityType,
       limit: query.limit ?? 20,
     });
+  });
+
+  // --- Calendar routes ---
+
+  app.get('/v1/calendar/accounts', async () => {
+    return dependencies.runtime.listCalendarAccounts();
+  });
+
+  app.get('/v1/calendar/events', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      dateFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listCalendarAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listCalendarEvents(accountId, {
+      limit: query.limit,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+    });
+  });
+
+  app.get('/v1/calendar/events/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const event = dependencies.runtime.getCalendarEvent(id);
+    if (!event) return reply.code(404).send({ error: 'calendar event not found' });
+    return event;
+  });
+
+  app.get('/v1/calendar/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      accountId: z.string().optional(),
+      dateFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchCalendar({
+      query: query.query,
+      accountId: query.accountId,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      limit: query.limit ?? 20,
+    });
+  });
+
+  app.get('/v1/calendar/digest', async (request) => {
+    const query = z.object({ accountId: z.string().optional() }).parse(request.query);
+    const accounts = dependencies.runtime.listCalendarAccounts();
+    if (accounts.length === 0) return null;
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.getCalendarDigest(accountId);
+  });
+
+  app.get('/v1/calendar/availability', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      date: z.string().min(1),
+      startHour: z.coerce.number().int().min(0).max(23).optional(),
+      endHour: z.coerce.number().int().min(1).max(24).optional(),
+      slotMinutes: z.coerce.number().int().positive().optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listCalendarAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.getCalendarAvailability(
+      accountId,
+      query.date,
+      query.startHour ?? 9,
+      query.endHour ?? 17,
+      query.slotMinutes ?? 30,
+    );
+  });
+
+  app.post('/v1/calendar/accounts', async (request) => {
+    const body = CalendarAccountRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerCalendarAccount(body);
+  });
+
+  app.post('/v1/calendar/sync', async (request) => {
+    const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
+    return dependencies.runtime.syncCalendarAccount(body.accountId);
+  });
+
+  // --- Todos routes ---
+
+  app.get('/v1/todos/accounts', async () => {
+    return dependencies.runtime.listTodoAccounts();
+  });
+
+  app.get('/v1/todos/items', async (request) => {
+    const query = z.object({
+      accountId: z.string().optional(),
+      status: z.string().optional(),
+      priority: z.coerce.number().int().min(1).max(4).optional(),
+      project: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    }).parse(request.query);
+    const accounts = dependencies.runtime.listTodoAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.listTodos(accountId, {
+      status: query.status,
+      priority: query.priority,
+      projectName: query.project,
+      limit: query.limit ?? 50,
+    });
+  });
+
+  app.get('/v1/todos/items/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const todo = dependencies.runtime.getTodo(id);
+    if (!todo) return reply.code(404).send({ error: 'todo not found' });
+    return todo;
+  });
+
+  app.get('/v1/todos/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      accountId: z.string().optional(),
+      status: z.enum(['pending', 'completed', 'all']).optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchTodos({
+      query: query.query,
+      accountId: query.accountId,
+      status: query.status,
+      limit: query.limit ?? 20,
+    });
+  });
+
+  app.get('/v1/todos/digest', async (request) => {
+    const query = z.object({ accountId: z.string().optional() }).parse(request.query);
+    const accounts = dependencies.runtime.listTodoAccounts();
+    if (accounts.length === 0) return null;
+    const accountId = query.accountId ?? accounts[0]!.id;
+    return dependencies.runtime.getTodoDigest(accountId);
+  });
+
+  app.post('/v1/todos/items', async (request) => {
+    const body = TodoCreateInputSchema.parse(request.body);
+    return dependencies.runtime.createTodo(body);
+  });
+
+  app.post('/v1/todos/items/:id/complete', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const result = dependencies.runtime.completeTodo(id);
+    if (!result) return reply.code(404).send({ error: 'todo not found' });
+    return result;
+  });
+
+  app.post('/v1/todos/accounts', async (request) => {
+    const body = TodoAccountRegistrationInputSchema.parse(request.body);
+    return dependencies.runtime.registerTodoAccount(body);
+  });
+
+  app.post('/v1/todos/sync', async (request) => {
+    const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
+    return dependencies.runtime.syncTodoAccount(body.accountId);
   });
 
   return app;

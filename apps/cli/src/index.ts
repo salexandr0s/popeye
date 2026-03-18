@@ -129,6 +129,21 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     search: { desc: 'Search PRs and issues', usage: 'pop github search <query> [--limit <n>] [--json]' },
     digest: { desc: 'Show GitHub digest', usage: 'pop github digest [--json]' },
   },
+  calendar: {
+    accounts: { desc: 'List calendar accounts', usage: 'pop calendar accounts [--json]' },
+    events: { desc: 'List calendar events', usage: 'pop calendar events [--today] [--upcoming] [--limit <n>] [--json]' },
+    search: { desc: 'Search calendar events', usage: 'pop calendar search <query> [--limit <n>] [--json]' },
+    availability: { desc: 'Show free slots', usage: 'pop calendar availability [--date YYYY-MM-DD] [--json]' },
+    digest: { desc: 'Show calendar digest', usage: 'pop calendar digest [--json]' },
+  },
+  todo: {
+    accounts: { desc: 'List todo accounts', usage: 'pop todo accounts [--json]' },
+    list: { desc: 'List todos', usage: 'pop todo list [--overdue] [--priority 1-4] [--project <name>] [--limit <n>] [--json]' },
+    add: { desc: 'Add a todo', usage: 'pop todo add <title> [--priority 1-4] [--due YYYY-MM-DD] [--project <name>]' },
+    complete: { desc: 'Complete a todo', usage: 'pop todo complete <id>' },
+    search: { desc: 'Search todos', usage: 'pop todo search <query> [--limit <n>] [--json]' },
+    digest: { desc: 'Show todo digest', usage: 'pop todo digest [--json]' },
+  },
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
     'openclaw-memory': { desc: 'Import OpenClaw memory files', usage: 'pop migrate openclaw-memory <directory>' },
@@ -1092,6 +1107,229 @@ async function main(): Promise<void> {
       console.info(JSON.stringify(digest, null, 2));
     } else if (!digest) {
       console.info('No GitHub digest available. Sync first with the daemon running.');
+    } else {
+      console.info(digest.summaryMarkdown);
+    }
+    return;
+  }
+
+  // --- Calendar commands ---
+
+  if (command === 'calendar' && subcommand === 'accounts') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listCalendarAccounts();
+    if (jsonFlag) {
+      console.info(JSON.stringify(accounts, null, 2));
+    } else {
+      if (accounts.length === 0) {
+        console.info('No calendar accounts registered.');
+      } else {
+        for (const acct of accounts) {
+          console.info(`  ${acct.id}  ${acct.calendarEmail.padEnd(30)} ${acct.displayName}  tz: ${acct.timeZone}  events: ${acct.eventCount}  last sync: ${acct.lastSyncAt ?? 'never'}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'calendar' && subcommand === 'events') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '50', 10) : 50;
+    const today = process.argv.includes('--today');
+    const upcoming = process.argv.includes('--upcoming');
+    const now = new Date();
+    const dateFrom = today ? now.toISOString().slice(0, 10) : upcoming ? now.toISOString().slice(0, 10) : undefined;
+    const dateTo = today ? now.toISOString().slice(0, 10) + 'T23:59:59' : upcoming ? new Date(now.getTime() + 7 * 24 * 3600_000).toISOString().slice(0, 10) : undefined;
+    const events = await client.listCalendarEvents(undefined, { ...(dateFrom !== undefined ? { dateFrom } : {}), ...(dateTo !== undefined ? { dateTo } : {}), limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(events, null, 2));
+    } else {
+      if (events.length === 0) {
+        console.info('No calendar events found.');
+      } else {
+        for (const ev of events) {
+          const time = ev.isAllDay ? 'all-day' : `${ev.startTime.slice(11, 16)}-${ev.endTime.slice(11, 16)}`;
+          const loc = ev.location ? ` @ ${ev.location}` : '';
+          console.info(`  ${ev.startTime.slice(0, 10)} ${time.padEnd(12)} ${ev.title.slice(0, 50)}${loc}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'calendar' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '20', 10) : 20;
+    const response = await client.searchCalendar(arg1, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else {
+      if (response.results.length === 0) {
+        console.info('No matching calendar events found.');
+      } else {
+        for (const r of response.results) {
+          const loc = r.location ? ` @ ${r.location}` : '';
+          console.info(`  ${r.startTime.slice(0, 10)} ${r.startTime.slice(11, 16)}-${r.endTime.slice(11, 16)}  ${r.title.slice(0, 50)}${loc}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'calendar' && subcommand === 'availability') {
+    const client = await requireDaemonClient(config);
+    const dateIdx = process.argv.indexOf('--date');
+    const date = dateIdx !== -1 ? (process.argv[dateIdx + 1] ?? new Date().toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
+    const slots = await client.getCalendarAvailability({ date });
+    if (jsonFlag) {
+      console.info(JSON.stringify(slots, null, 2));
+    } else {
+      if (slots.length === 0) {
+        console.info('No free slots available.');
+      } else {
+        console.info(`Free slots for ${date}:`);
+        for (const slot of slots) {
+          console.info(`  ${slot.startTime.slice(11, 16)} - ${slot.endTime.slice(11, 16)}  (${slot.durationMinutes}min)`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'calendar' && subcommand === 'digest') {
+    const client = await requireDaemonClient(config);
+    const digest = await client.getCalendarDigest();
+    if (jsonFlag) {
+      console.info(JSON.stringify(digest, null, 2));
+    } else if (!digest) {
+      console.info('No calendar digest available. Sync first with the daemon running.');
+    } else {
+      console.info(digest.summaryMarkdown);
+    }
+    return;
+  }
+
+  // --- Todo commands ---
+
+  if (command === 'todo' && subcommand === 'accounts') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listTodoAccounts();
+    if (jsonFlag) {
+      console.info(JSON.stringify(accounts, null, 2));
+    } else {
+      if (accounts.length === 0) {
+        console.info('No todo accounts registered.');
+      } else {
+        for (const acct of accounts) {
+          console.info(`  ${acct.id}  ${acct.displayName.padEnd(25)} ${acct.providerKind.padEnd(10)} todos: ${acct.todoCount}  last sync: ${acct.lastSyncAt ?? 'never'}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '50', 10) : 50;
+    const priorityIdx = process.argv.indexOf('--priority');
+    const priority = priorityIdx !== -1 ? parseInt(process.argv[priorityIdx + 1] ?? '0', 10) : undefined;
+    const projectIdx = process.argv.indexOf('--project');
+    const project = projectIdx !== -1 ? process.argv[projectIdx + 1] : undefined;
+    const overdue = process.argv.includes('--overdue');
+    const status = overdue ? 'pending' : undefined;
+    const todos = await client.listTodos(undefined, { ...(status !== undefined ? { status } : {}), ...(priority !== undefined ? { priority } : {}), ...(project !== undefined ? { project } : {}), limit });
+    let filteredTodos = todos;
+    if (overdue) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      filteredTodos = todos.filter((t) => t.dueDate !== null && t.dueDate < todayStr);
+    }
+    if (jsonFlag) {
+      console.info(JSON.stringify(filteredTodos, null, 2));
+    } else {
+      if (filteredTodos.length === 0) {
+        console.info('No todos found.');
+      } else {
+        for (const t of filteredTodos) {
+          const due = t.dueDate ? ` due:${t.dueDate}` : '';
+          const proj = t.projectName ? ` [${t.projectName}]` : '';
+          const pri = t.priority <= 2 ? ` !!!` : t.priority === 3 ? ' !!' : '';
+          console.info(`  ${t.id.slice(0, 8)}  ${t.status.padEnd(10)} P${t.priority} ${t.title.slice(0, 50)}${due}${proj}${pri}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'add' && arg1) {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listTodoAccounts();
+    if (accounts.length === 0) {
+      console.error('No todo accounts registered. Create one first.');
+      process.exit(1);
+    }
+    const priorityIdx = process.argv.indexOf('--priority');
+    const priority = priorityIdx !== -1 ? parseInt(process.argv[priorityIdx + 1] ?? '4', 10) : undefined;
+    const dueIdx = process.argv.indexOf('--due');
+    const dueDate = dueIdx !== -1 ? process.argv[dueIdx + 1] : undefined;
+    const projectIdx = process.argv.indexOf('--project');
+    const projectName = projectIdx !== -1 ? process.argv[projectIdx + 1] : undefined;
+    const todo = await client.createTodo({
+      accountId: accounts[0]!.id,
+      title: arg1,
+      priority,
+      dueDate,
+      projectName,
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(todo, null, 2));
+    } else {
+      console.info(`Created todo: ${todo.id.slice(0, 8)} — ${todo.title}`);
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'complete' && arg1) {
+    const client = await requireDaemonClient(config);
+    const todo = await client.completeTodo(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(todo, null, 2));
+    } else {
+      console.info(`Completed: ${todo.title}`);
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limitIdx = process.argv.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(process.argv[limitIdx + 1] ?? '20', 10) : 20;
+    const response = await client.searchTodos(arg1, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else {
+      if (response.results.length === 0) {
+        console.info('No matching todos found.');
+      } else {
+        for (const r of response.results) {
+          const due = r.dueDate ? ` due:${r.dueDate}` : '';
+          const proj = r.projectName ? ` [${r.projectName}]` : '';
+          console.info(`  P${r.priority} ${r.status.padEnd(10)} ${r.title.slice(0, 50)}${due}${proj}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'digest') {
+    const client = await requireDaemonClient(config);
+    const digest = await client.getTodoDigest();
+    if (jsonFlag) {
+      console.info(JSON.stringify(digest, null, 2));
+    } else if (!digest) {
+      console.info('No todo digest available. Sync first with the daemon running.');
     } else {
       console.info(digest.summaryMarkdown);
     }

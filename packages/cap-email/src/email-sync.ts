@@ -1,20 +1,11 @@
 import type { CapabilityContext, EmailAccountRecord, EmailSyncResult } from '@popeye/contracts';
-import { redactText } from '@popeye/observability';
+import { extractRedactionPatterns, redactText } from '@popeye/observability';
 
 import type { EmailProviderAdapter, NormalizedThread } from './providers/adapter-interface.js';
 import type { EmailService } from './email-service.js';
 
 const DEFAULT_MAX_THREADS_PER_SYNC = 500;
 const DEFAULT_THREADS_PER_PAGE = 50;
-
-function extractRedactionPatterns(config: Record<string, unknown>): string[] {
-  if (typeof config !== 'object' || config === null) return [];
-  const security = config['security'];
-  if (typeof security !== 'object' || security === null) return [];
-  const patterns = (security as Record<string, unknown>)['redactionPatterns'];
-  if (!Array.isArray(patterns)) return [];
-  return patterns.filter((p): p is string => typeof p === 'string');
-}
 
 export class EmailSyncService {
   private readonly redactionPatterns: string[];
