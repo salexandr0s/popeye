@@ -22,6 +22,11 @@ interface RegisteredCapability {
   timers: Array<ReturnType<typeof setInterval>>;
 }
 
+export interface ResolvedCapabilityTool {
+  capabilityId: string;
+  tool: CapabilityToolDescriptor;
+}
+
 export class CapabilityRegistry {
   private readonly capabilities = new Map<string, RegisteredCapability>();
   private readonly deps: CapabilityRegistryDeps;
@@ -102,12 +107,12 @@ export class CapabilityRegistry {
     }
   }
 
-  getRuntimeTools(taskContext: { workspaceId: string; runId?: string }): CapabilityToolDescriptor[] {
-    const tools: CapabilityToolDescriptor[] = [];
-    for (const entry of this.capabilities.values()) {
+  getRuntimeTools(taskContext: { workspaceId: string; runId?: string }): ResolvedCapabilityTool[] {
+    const tools: ResolvedCapabilityTool[] = [];
+    for (const [capabilityId, entry] of this.capabilities) {
       if (!entry.initialized) continue;
       const capTools = entry.module.getRuntimeTools?.(taskContext) ?? [];
-      tools.push(...capTools);
+      tools.push(...capTools.map((tool) => ({ capabilityId, tool })));
     }
     return tools;
   }

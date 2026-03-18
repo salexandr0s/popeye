@@ -28,7 +28,7 @@ describe('tryConnectDaemon', () => {
       authFile,
       JSON.stringify({
         current: {
-          token: 'test-token-abc',
+          token: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           createdAt: new Date().toISOString(),
         },
       }),

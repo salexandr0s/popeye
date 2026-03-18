@@ -5,7 +5,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { ApiError, type PopeyeApiClient } from '@popeye/api-client';
-import type { AppConfig, RunRecord } from '@popeye/contracts';
+import type {
+  AgentProfileRecord,
+  AppConfig,
+  EngineCapabilitiesResponse,
+  ExecutionEnvelopeResponse,
+  RunRecord,
+} from '@popeye/contracts';
 import { z } from 'zod';
 import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
 import { renderReceipt } from '@popeye/receipts';
@@ -37,12 +43,12 @@ const positionalArgs = process.argv.filter(
   (a) => a !== '--json' && a !== '--help' && a !== '-h' && a !== '--version' && a !== '-v',
 );
 const helpFlag = process.argv.includes('--help') || process.argv.includes('-h');
-const [, , command, subcommand, arg1, arg2] = positionalArgs;
+const [, , command, subcommand, arg1, _arg2] = positionalArgs;
 
 const COMMANDS: Record<string, Record<string, { desc: string; usage: string; args?: string; examples?: string[] }>> = {
   auth: {
-    init: { desc: 'Initialize auth store', usage: 'pop auth init' },
-    rotate: { desc: 'Rotate auth token', usage: 'pop auth rotate' },
+    init: { desc: 'Initialize auth store', usage: 'pop auth init [--role <operator|service|readonly>]' },
+    rotate: { desc: 'Rotate auth token', usage: 'pop auth rotate [--role <operator|service|readonly>]' },
   },
   security: {
     audit: { desc: 'Run local security audit', usage: 'pop security audit' },
@@ -53,6 +59,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   daemon: {
     install: { desc: 'Install LaunchAgent', usage: 'pop daemon install' },
     start: { desc: 'Start daemon in foreground', usage: 'pop daemon start' },
+    health: { desc: 'Show daemon API + engine health', usage: 'pop daemon health' },
     status: { desc: 'Show daemon status', usage: 'pop daemon status' },
     load: { desc: 'Load LaunchAgent', usage: 'pop daemon load' },
     stop: { desc: 'Stop (unload) daemon', usage: 'pop daemon stop' },
@@ -66,9 +73,10 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     restore: { desc: 'Restore from backup', usage: 'pop backup restore <path>' },
   },
   task: {
-    run: { desc: 'Create and enqueue a task', usage: 'pop task run [title] [prompt]' },
+    run: { desc: 'Create and enqueue a task', usage: 'pop task run [title] [prompt] [--profile <id>]' },
   },
   run: {
+    envelope: { desc: 'Show run execution envelope', usage: 'pop run envelope <runId>' },
     show: { desc: 'Show run details', usage: 'pop run show <runId>' },
   },
   runs: {
@@ -102,6 +110,10 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   sessions: {
     list: { desc: 'List session roots', usage: 'pop sessions list' },
+  },
+  profile: {
+    list: { desc: 'List execution profiles', usage: 'pop profile list' },
+    show: { desc: 'Show execution profile details', usage: 'pop profile show <id>' },
   },
   files: {
     roots: { desc: 'List file roots', usage: 'pop files roots [--json]' },
@@ -223,18 +235,96 @@ function requireArg(value: string | undefined, label: string): asserts value is 
   }
 }
 
-function formatRun(run: RunRecord): string {
+function formatRun(run: RunRecord, envelope?: ExecutionEnvelopeResponse | null): string {
   const lines = [
     `Run ${run.id}`,
     `  State:      ${run.state}`,
     `  Job:        ${run.jobId}`,
     `  Task:       ${run.taskId}`,
     `  Workspace:  ${run.workspaceId}`,
+    `  Profile:    ${run.profileId}`,
     `  Session:    ${run.sessionRootId}`,
     `  Started:    ${run.startedAt}`,
   ];
   if (run.finishedAt) lines.push(`  Finished:   ${run.finishedAt}`);
   if (run.error) lines.push(`  Error:      ${run.error}`);
+  if (envelope) {
+    lines.push('  Envelope:   persisted');
+    lines.push(`  Recall:     ${envelope.memoryScope} memory / ${envelope.recallScope} recall`);
+    lines.push(`  Filesystem: ${envelope.filesystemPolicyClass}`);
+    lines.push(`  Release:    ${envelope.contextReleasePolicy}`);
+    lines.push(`  Roots:      ${envelope.readRoots.length} read / ${envelope.writeRoots.length} write / ${envelope.protectedPaths.length} protected`);
+    if (envelope.provenance.warnings.length > 0) {
+      lines.push(`  Warnings:   ${envelope.provenance.warnings.join(' | ')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function formatEnvelope(envelope: ExecutionEnvelopeResponse): string {
+  const lines = [
+    `Execution Envelope ${envelope.runId}`,
+    `  Task:                 ${envelope.taskId}`,
+    `  Profile:              ${envelope.profileId}`,
+    `  Workspace:            ${envelope.workspaceId}`,
+    `  Project:              ${envelope.projectId ?? '(none)'}`,
+    `  Mode:                 ${envelope.mode}`,
+    `  Model policy:         ${envelope.modelPolicy}`,
+    `  Memory scope:         ${envelope.memoryScope}`,
+    `  Recall scope:         ${envelope.recallScope}`,
+    `  Filesystem policy:    ${envelope.filesystemPolicyClass}`,
+    `  Context release:      ${envelope.contextReleasePolicy}`,
+    `  CWD:                  ${envelope.cwd ?? '(none)'}`,
+    `  Scratch root:         ${envelope.scratchRoot}`,
+    `  Runtime tools:        ${envelope.allowedRuntimeTools.length > 0 ? envelope.allowedRuntimeTools.join(', ') : '(none)'}`,
+    `  Capabilities:         ${envelope.allowedCapabilityIds.length > 0 ? envelope.allowedCapabilityIds.join(', ') : '(none)'}`,
+    `  Read roots:           ${envelope.readRoots.length > 0 ? envelope.readRoots.join(', ') : '(none)'}`,
+    `  Write roots:          ${envelope.writeRoots.length > 0 ? envelope.writeRoots.join(', ') : '(none)'}`,
+    `  Protected paths:      ${envelope.protectedPaths.length > 0 ? envelope.protectedPaths.join(', ') : '(none)'}`,
+    `  Derived at:           ${envelope.provenance.derivedAt}`,
+    `  Engine kind:          ${envelope.provenance.engineKind}`,
+    `  Session policy:       ${envelope.provenance.sessionPolicy}`,
+  ];
+  if (envelope.provenance.warnings.length > 0) {
+    lines.push(`  Warnings:             ${envelope.provenance.warnings.join(' | ')}`);
+  }
+  return lines.join('\n');
+}
+
+function formatEngineCapabilities(capabilities: EngineCapabilitiesResponse): string {
+  const lines = [
+    `Engine:              ${capabilities.engineKind}`,
+    `  Host tools:        ${capabilities.hostToolMode}`,
+    `  Sessions:          ${capabilities.persistentSessionSupport ? 'persistent' : 'ephemeral'}`,
+    `  Resume by ref:     ${capabilities.resumeBySessionRefSupport ? 'yes' : 'no'}`,
+    `  Compaction events: ${capabilities.compactionEventSupport ? 'yes' : 'no'}`,
+    `  Cancellation:      ${capabilities.cancellationMode}`,
+  ];
+  if (capabilities.acceptedRequestMetadata.length > 0) {
+    lines.push(`  Metadata:          ${capabilities.acceptedRequestMetadata.join(', ')}`);
+  }
+  if (capabilities.warnings.length > 0) {
+    lines.push(`  Warnings:          ${capabilities.warnings.join(' | ')}`);
+  }
+  return lines.join('\n');
+}
+
+function formatProfile(profile: AgentProfileRecord): string {
+  const lines = [
+    `Profile ${profile.id}`,
+    `  Name:                 ${profile.name}`,
+    `  Mode:                 ${profile.mode}`,
+    `  Model policy:         ${profile.modelPolicy}`,
+    `  Memory scope:         ${profile.memoryScope}`,
+    `  Recall scope:         ${profile.recallScope}`,
+    `  Filesystem policy:    ${profile.filesystemPolicyClass}`,
+    `  Context release:      ${profile.contextReleasePolicy}`,
+    `  Runtime tools:        ${profile.allowedRuntimeTools.length > 0 ? profile.allowedRuntimeTools.join(', ') : 'all/default'}`,
+    `  Capabilities:         ${profile.allowedCapabilityIds.length > 0 ? profile.allowedCapabilityIds.join(', ') : 'all/default'}`,
+    `  Created:              ${profile.createdAt}`,
+  ];
+  if (profile.description) lines.splice(2, 0, `  Description:          ${profile.description}`);
+  if (profile.updatedAt) lines.push(`  Updated:              ${profile.updatedAt}`);
   return lines.join('\n');
 }
 
@@ -295,13 +385,20 @@ const config = loadAppConfig(configPath);
 mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
 const paths = deriveRuntimePaths(config.runtimeDataDir);
 
+function readRoleFlag(): 'operator' | 'service' | 'readonly' {
+  const roleIdx = process.argv.indexOf('--role');
+  return z.enum(['operator', 'service', 'readonly']).parse(
+    roleIdx !== -1 ? (process.argv[roleIdx + 1] ?? 'operator') : 'operator',
+  );
+}
+
 async function main(): Promise<void> {
   if (command === 'auth' && subcommand === 'init') {
-    console.info(JSON.stringify(initAuthStore(config.authFile), null, 2));
+    console.info(JSON.stringify(initAuthStore(config.authFile, readRoleFlag()), null, 2));
     return;
   }
   if (command === 'auth' && subcommand === 'rotate') {
-    console.info(JSON.stringify(rotateAuthStore(config.authFile), null, 2));
+    console.info(JSON.stringify(rotateAuthStore(config.authFile, 24, readRoleFlag()), null, 2));
     return;
   }
   if (command === 'security' && subcommand === 'audit') {
@@ -391,6 +488,27 @@ async function main(): Promise<void> {
     console.info(JSON.stringify(daemonStatus(), null, 2));
     return;
   }
+  if (command === 'daemon' && subcommand === 'health') {
+    const client = await requireDaemonClient(config);
+    const [health, status, capabilities] = await Promise.all([
+      client.health(),
+      client.status(),
+      client.engineCapabilities(),
+    ]);
+    if (jsonFlag) {
+      console.info(JSON.stringify({ health, status, engine: capabilities }, null, 2));
+    } else {
+      console.info([
+        `Daemon:              ${health.ok ? 'healthy' : 'unhealthy'}`,
+        `  Started:           ${health.startedAt}`,
+        `  Scheduler:         ${status.schedulerRunning ? 'running' : 'stopped'}`,
+        `  Jobs:              ${status.runningJobs} running / ${status.queuedJobs} queued`,
+        `  Interventions:     ${status.openInterventions}`,
+        formatEngineCapabilities(capabilities),
+      ].join('\n'));
+    }
+    return;
+  }
   if (command === 'daemon' && subcommand === 'load') {
     console.info(JSON.stringify(loadLaunchAgent(), null, 2));
     return;
@@ -457,11 +575,18 @@ async function main(): Promise<void> {
   }
   if (command === 'task' && subcommand === 'run') {
     const client = await requireDaemonClient(config);
+    const profileIdx = process.argv.indexOf('--profile');
+    const profileId = profileIdx !== -1 ? process.argv[profileIdx + 1] ?? 'default' : 'default';
+    const taskArgs = positionalArgs.slice(4);
+    const nonFlagTaskArgs = taskArgs.filter((value, index) => value !== '--profile' && taskArgs[index - 1] !== '--profile');
+    const title = nonFlagTaskArgs[0] ?? 'cli-task';
+    const prompt = nonFlagTaskArgs[1] ?? nonFlagTaskArgs[0] ?? 'hello from pop';
     const result = await client.createTask({
       workspaceId: 'default',
       projectId: null,
-      title: arg1 ?? 'cli-task',
-      prompt: arg2 ?? arg1 ?? 'hello from pop',
+      profileId,
+      title,
+      prompt,
       source: 'manual',
       autoEnqueue: true,
     });
@@ -471,6 +596,7 @@ async function main(): Promise<void> {
       const lines = [
         `Task: ${result.task.title} (${result.task.id})`,
         `  Status: ${result.task.status}`,
+        `  Profile: ${result.task.profileId}`,
       ];
       if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
       if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);
@@ -485,14 +611,41 @@ async function main(): Promise<void> {
     try {
       const client = await requireDaemonClient(config);
       const run = await client.getRun(arg1);
+      const envelope = await client.getRunEnvelope(arg1).catch((error: unknown) => {
+        if (error instanceof ApiError && error.statusCode === 404) {
+          return null;
+        }
+        throw error;
+      });
       if (jsonFlag) {
         console.info(JSON.stringify(run, null, 2));
       } else {
-        console.info(formatRun(run));
+        console.info(formatRun(run, envelope));
       }
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 404) {
         console.info(`Run not found: ${arg1}`);
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+  if (command === 'run' && subcommand === 'envelope') {
+    requireArg(arg1, 'runId');
+  }
+  if (command === 'run' && subcommand === 'envelope' && arg1) {
+    try {
+      const client = await requireDaemonClient(config);
+      const envelope = await client.getRunEnvelope(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(envelope, null, 2));
+      } else {
+        console.info(formatEnvelope(envelope));
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
+        console.info(`Execution envelope not found for run: ${arg1}`);
         return;
       }
       throw error;
@@ -641,6 +794,41 @@ async function main(): Promise<void> {
   if (command === 'sessions' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.listSessionRoots(), null, 2));
+    return;
+  }
+  if (command === 'profile' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const profiles = await client.listProfiles();
+    if (jsonFlag) {
+      console.info(JSON.stringify(profiles, null, 2));
+    } else if (profiles.length === 0) {
+      console.info('No execution profiles found.');
+    } else {
+      for (const profile of profiles) {
+        console.info(`  ${profile.id.padEnd(18)} ${profile.mode.padEnd(12)} ${profile.name}`);
+      }
+    }
+    return;
+  }
+  if (command === 'profile' && subcommand === 'show') {
+    requireArg(arg1, 'id');
+  }
+  if (command === 'profile' && subcommand === 'show' && arg1) {
+    try {
+      const client = await requireDaemonClient(config);
+      const profile = await client.getProfile(arg1);
+      if (jsonFlag) {
+        console.info(JSON.stringify(profile, null, 2));
+      } else {
+        console.info(formatProfile(profile));
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 404) {
+        console.info(`Profile not found: ${arg1}`);
+        return;
+      }
+      throw error;
+    }
     return;
   }
 

@@ -22,6 +22,7 @@ Task 1──* Job 1──* Run 1──1 Receipt
 | id | string (UUID) | |
 | workspaceId | string | |
 | projectId | string \| null | |
+| profileId | string | Execution profile used to resolve runtime posture |
 | title | string | |
 | prompt | string | |
 | source | enum | `manual` \| `heartbeat` \| `schedule` \| `telegram` \| `api` |
@@ -90,6 +91,7 @@ All other source states return `null` (no-op).
 | jobId | string | FK to Job |
 | taskId | string | FK to Task |
 | workspaceId | string | |
+| profileId | string | Copied from the task profile at run start |
 | sessionRootId | string | FK to SessionRoot |
 | engineSessionRef | string \| null | Pi session reference |
 | state | RunState | See below |
@@ -110,6 +112,66 @@ All other source states return `null` (no-op).
 | abandoned | yes | Orphaned run found on startup |
 
 **cancelRun guard:** If run is already terminal, returns the existing run unchanged.
+
+## AgentProfile / Execution Profile
+
+| Field | Type | Notes |
+|---|---|---|
+| id | string | Stable profile identifier |
+| name | string | Operator-facing label |
+| description | string | Optional summary of intended posture |
+| mode | enum | `restricted` \| `interactive` \| `elevated` |
+| modelPolicy | string | Named model-selection policy |
+| allowedRuntimeTools | string[] | Allowlist or empty for default/all |
+| allowedCapabilityIds | string[] | Allowlist or empty for default/all |
+| memoryScope | string | Intended memory access scope |
+| recallScope | string | Intended recall/search scope |
+| filesystemPolicyClass | string | Named filesystem policy class |
+| contextReleasePolicy | string | Named context-release posture |
+| createdAt | string (ISO 8601) | |
+| updatedAt | string \| null | |
+
+Profiles are now enforced at run start. The runtime resolves each run to an
+effective execution envelope, filters runtime tools/capabilities, constrains
+agent-facing memory access, and applies the profile's context-release posture.
+
+## ExecutionEnvelope
+
+| Field | Type | Notes |
+|---|---|---|
+| runId | string | PK, FK to Run |
+| taskId | string | FK to Task |
+| profileId | string | FK to AgentProfile |
+| workspaceId | string | |
+| projectId | string \| null | |
+| mode | enum | `restricted` \| `interactive` \| `elevated` |
+| modelPolicy | string | Copied from resolved profile |
+| allowedRuntimeTools | string[] | Final runtime-tool allowlist for this run |
+| allowedCapabilityIds | string[] | Final capability allowlist for this run |
+| memoryScope | enum | `workspace` \| `project` \| `global` |
+| recallScope | enum | `workspace` \| `project` \| `global` |
+| filesystemPolicyClass | enum | `workspace` \| `project` \| `read_only_workspace` \| `memory_only` |
+| contextReleasePolicy | enum | `none` \| `summary_only` \| `excerpt` \| `full` |
+| readRoots | string[] | Approved filesystem read roots |
+| writeRoots | string[] | Approved filesystem write roots |
+| protectedPaths | string[] | Operator-owned / promotion-managed paths |
+| scratchRoot | string | Runtime-owned scratch path outside the workspace |
+| cwd | string | Working directory passed to the engine |
+| provenance.derivedAt | string (ISO 8601) | |
+| provenance.engineKind | string | Engine kind used for the run |
+| provenance.sessionPolicy | string | Session policy snapshot |
+| provenance.warnings | string[] | Resolution warnings persisted with the run |
+
+Execution envelopes are persisted per run and never retroactively rewritten.
+Historical runs keep their original envelope even if the source profile changes.
+
+Agent-facing memory and recall enforcement now uses explicit memory location
+fields on stored records (`workspaceId`, `projectId`) rather than relying only
+on a flat `scope` string. Project-scoped runs can access project-local records
+plus workspace-shared records in the same workspace; they cannot cross into
+other projects or workspaces. The legacy `scope` field remains in public
+contracts as a compatibility/display field, but durable authorization and
+retrieval decisions treat explicit location as authoritative.
 
 ## SessionRoot
 

@@ -1,9 +1,12 @@
 import type { MemoryType } from './types.js';
 
-import { computeConfidenceDecay, computeJaccardRelevance, computeRecencyScore, computeScopeMatchScore, normalizeRelevanceScore } from './pure-functions.js';
+import { computeConfidenceDecay, computeJaccardRelevance, computeRecencyScore, normalizeRelevanceScore } from './pure-functions.js';
+import { computeLocationScopeMatchScore, type MemoryLocationFilter } from './location.js';
 import type { FtsCandidate } from './fts5-search.js';
 import type { VecCandidate } from './vec-search.js';
 import type { ScoringWeights } from './strategy.js';
+import type { TemporalConstraint } from './types.js';
+import { chooseTemporalReference, computeTemporalFit } from './temporal.js';
 
 export interface ScoredCandidate {
   memoryId: string;
@@ -13,17 +16,27 @@ export interface ScoredCandidate {
   confidence: number;
   effectiveConfidence: number;
   scope: string;
+  workspaceId: string | null;
+  projectId: string | null;
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
   durable: boolean;
   score: number;
+  layer?: 'artifact' | 'fact' | 'synthesis' | 'curated' | undefined;
+  namespaceId?: string | undefined;
+  occurredAt?: string | null | undefined;
+  validFrom?: string | null | undefined;
+  validTo?: string | null | undefined;
+  evidenceCount?: number | undefined;
+  revisionStatus?: 'active' | 'superseded' | undefined;
   scoreBreakdown: {
     relevance: number;
     recency: number;
     confidence: number;
     scopeMatch: number;
     entityBoost?: number;
+    temporalFit?: number;
   };
 }
 
@@ -35,10 +48,19 @@ export interface VecOnlyMetadata {
   memoryType: MemoryType;
   confidence: number;
   scope: string;
+  workspaceId: string | null;
+  projectId: string | null;
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
   durable: boolean;
+  layer?: 'artifact' | 'fact' | 'synthesis' | 'curated' | undefined;
+  namespaceId?: string | undefined;
+  occurredAt?: string | null | undefined;
+  validFrom?: string | null | undefined;
+  validTo?: string | null | undefined;
+  evidenceCount?: number | undefined;
+  revisionStatus?: 'active' | 'superseded' | undefined;
 }
 
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -52,11 +74,13 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
 export interface RerankParams {
   halfLifeDays: number;
   queryScope?: string | undefined;
+  queryLocation?: MemoryLocationFilter | undefined;
   now?: Date | undefined;
   vecOnlyMetadata?: Map<string, VecOnlyMetadata> | undefined;
   weights?: ScoringWeights | undefined;
   queryText?: string | undefined;
   entityMatches?: Map<string, number> | undefined;
+  temporalConstraint?: TemporalConstraint | null | undefined;
 }
 
 export function rerankAndMerge(
@@ -103,26 +127,39 @@ export function rerankAndMerge(
       relevance = Math.max(ftsRelevance, jaccardRelevance);
     }
 
-    const recency = computeRecencyScore(meta.createdAt, now);
+    const temporalReference = chooseTemporalReference({
+      occurredAt: meta.occurredAt,
+      validFrom: meta.validFrom,
+      createdAt: meta.createdAt,
+    });
+    const recency = computeRecencyScore(temporalReference, now);
+    const temporalFit = computeTemporalFit(temporalReference, params.temporalConstraint);
+    const recencySignal = temporalFit > 0 ? Math.max(recency, temporalFit) : recency;
 
     const referenceDate = meta.lastReinforcedAt ?? meta.createdAt;
     const daysSinceReinforcement = (now.getTime() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
     const effectiveHalfLife = meta.durable ? params.halfLifeDays * 10 : params.halfLifeDays;
     const effectiveConfidence = computeConfidenceDecay(meta.confidence, daysSinceReinforcement, effectiveHalfLife);
 
-    const scopeMatch = computeScopeMatchScore(meta.scope, params.queryScope);
+    const scopeMatch = computeLocationScopeMatchScore(
+      { workspaceId: meta.workspaceId, projectId: meta.projectId },
+      params.queryLocation,
+    );
 
     const entityMatchCount = params.entityMatches?.get(id) ?? 0;
     const entityBoostScore = Math.min(1, entityMatchCount / 3);
 
-    const score = (w.relevance * relevance) + (w.recency * recency) + (w.confidence * effectiveConfidence) + (w.scopeMatch * scopeMatch) + (w.entityBoost * entityBoostScore);
+    const score = (w.relevance * relevance) + (w.recency * recencySignal) + (w.confidence * effectiveConfidence) + (w.scopeMatch * scopeMatch) + (w.entityBoost * entityBoostScore);
 
     const scoreBreakdown: ScoredCandidate['scoreBreakdown'] = {
       relevance,
-      recency,
+      recency: recencySignal,
       confidence: effectiveConfidence,
       scopeMatch,
     };
+    if (temporalFit > 0) {
+      scoreBreakdown.temporalFit = temporalFit;
+    }
     if (entityBoostScore > 0) {
       scoreBreakdown.entityBoost = entityBoostScore;
     }
@@ -135,10 +172,19 @@ export function rerankAndMerge(
       confidence: meta.confidence,
       effectiveConfidence,
       scope: meta.scope,
+      workspaceId: meta.workspaceId,
+      projectId: meta.projectId,
       sourceType: meta.sourceType,
       createdAt: meta.createdAt,
       lastReinforcedAt: meta.lastReinforcedAt,
       durable: meta.durable,
+      layer: meta.layer,
+      namespaceId: meta.namespaceId,
+      occurredAt: meta.occurredAt,
+      validFrom: meta.validFrom,
+      validTo: meta.validTo,
+      evidenceCount: meta.evidenceCount,
+      revisionStatus: meta.revisionStatus,
       score,
       scoreBreakdown,
     });

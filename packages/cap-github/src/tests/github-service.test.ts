@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import type { CapabilityContext } from '@popeye/contracts';
 
 import { GithubService } from '../github-service.js';
 import { getGithubMigrations } from '../migrations.js';
@@ -38,7 +39,7 @@ describe('GithubService', () => {
     const setup = setupDb();
     db = setup.db;
     cleanup = setup.cleanup;
-    svc = new GithubService(db as unknown as import('@popeye/contracts').CapabilityContext['appDb']);
+    svc = new GithubService(db as unknown as CapabilityContext['appDb']);
   });
 
   afterEach(() => {

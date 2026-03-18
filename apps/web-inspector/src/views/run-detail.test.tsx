@@ -6,6 +6,7 @@ import { RunDetail } from './run-detail';
 
 const hooks = vi.hoisted(() => ({
   useRun: vi.fn(),
+  useRunEnvelope: vi.fn(),
   useRunEvents: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ function makeRun(overrides: Record<string, unknown> = {}) {
     jobId: 'job-1',
     taskId: 'task-1',
     workspaceId: 'alpha',
+    profileId: 'default',
     sessionRootId: 'session-1',
     engineSessionRef: null,
     state: 'running',
@@ -56,6 +58,47 @@ function makeEventResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeEnvelope(overrides: Record<string, unknown> = {}) {
+  return {
+    runId: 'run-1',
+    taskId: 'task-1',
+    profileId: 'default',
+    workspaceId: 'alpha',
+    projectId: null,
+    mode: 'interactive',
+    modelPolicy: 'inherit',
+    allowedRuntimeTools: ['popeye_memory_search', 'popeye_file_read'],
+    allowedCapabilityIds: ['files'],
+    memoryScope: 'workspace',
+    recallScope: 'workspace',
+    filesystemPolicyClass: 'workspace',
+    contextReleasePolicy: 'summary_only',
+    readRoots: ['/tmp/workspace'],
+    writeRoots: ['/tmp/workspace'],
+    protectedPaths: ['/tmp/workspace/WORKSPACE.md', '/tmp/workspace/MEMORY.md'],
+    scratchRoot: '/tmp/popeye/scratch/run-1',
+    cwd: '/tmp/workspace',
+    provenance: {
+      derivedAt: '2026-03-18T10:00:00.000Z',
+      engineKind: 'fake',
+      sessionPolicy: 'dedicated',
+      warnings: [],
+    },
+    ...overrides,
+  };
+}
+
+function makeEnvelopeResult(overrides: Record<string, unknown> = {}) {
+  return {
+    data: makeEnvelope(),
+    error: null,
+    loading: false,
+    updatedAt: '2026-03-18T10:00:00.000Z',
+    refetch: vi.fn(),
+    ...overrides,
+  };
+}
+
 function renderRunDetail() {
   return render(
     <MemoryRouter initialEntries={['/runs/run-1']}>
@@ -81,6 +124,7 @@ describe('RunDetail', () => {
     api.post.mockReset();
     api.post.mockResolvedValue({});
     hooks.useRun.mockReturnValue(makeRunResult());
+    hooks.useRunEnvelope.mockReturnValue(makeEnvelopeResult());
     hooks.useRunEvents.mockReturnValue(makeEventResult());
   });
 
@@ -122,6 +166,44 @@ describe('RunDetail', () => {
       expect(screen.getByRole('link', { name: 'View Receipts' })).toBeTruthy();
     },
   );
+
+  it('renders the run profile identifier', () => {
+    hooks.useRun.mockReturnValue(makeRunResult({
+      data: makeRun({ profileId: 'interactive-default' }),
+    }));
+
+    renderRunDetail();
+
+    expect(screen.getByText('Profile')).toBeTruthy();
+    expect(screen.getByText('interactive-default')).toBeTruthy();
+  });
+
+  it('renders execution envelope details and warnings', () => {
+    hooks.useRunEnvelope.mockReturnValue(makeEnvelopeResult({
+      data: makeEnvelope({
+        memoryScope: 'workspace',
+        recallScope: 'project',
+        filesystemPolicyClass: 'read_only_workspace',
+        contextReleasePolicy: 'excerpt',
+        protectedPaths: ['/tmp/workspace/WORKSPACE.md'],
+        provenance: {
+          derivedAt: '2026-03-18T10:00:00.000Z',
+          engineKind: 'fake',
+          sessionPolicy: 'dedicated',
+          warnings: ['Project-scoped memory recall is not yet supported by stored memory records.'],
+        },
+      }),
+    }));
+
+    renderRunDetail();
+
+    expect(screen.getByText('Execution Envelope')).toBeTruthy();
+    expect(screen.getByText('workspace / project')).toBeTruthy();
+    expect(screen.getByText('read only workspace')).toBeTruthy();
+    expect(screen.getByText('excerpt')).toBeTruthy();
+    expect(screen.getByText('Protected Paths')).toBeTruthy();
+    expect(screen.getByText(/Project-scoped memory recall is not yet supported/)).toBeTruthy();
+  });
 
   it('posts cancel and refetches on success', async () => {
     const refetch = vi.fn();

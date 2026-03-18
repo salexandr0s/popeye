@@ -48,14 +48,15 @@ import {
   MessageIngressError,
   RuntimeConflictError,
   RuntimeNotFoundError,
+  RuntimeValidationError,
   issueCsrfToken,
+  resolveBearerPrincipal,
   serializeAuthCookie,
   serializeCsrfCookie,
-  validateBearerToken,
   validateCsrfToken,
   type PopeyeRuntimeService,
 } from '@popeye/runtime-core';
-import { nowIso, stripUndefined, type SecurityAuditEvent } from '@popeye/contracts';
+import { nowIso, stripUndefined, type AuthRole, type AuthRotationRecord, type SecurityAuditEvent } from '@popeye/contracts';
 import type { PopeyeLogger } from '@popeye/observability';
 
 export interface ControlApiDependencies {
@@ -75,8 +76,8 @@ export interface ControlApiDependencies {
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 type RequestAuthContext =
-  | { kind: 'bearer'; csrfToken: string }
-  | { kind: 'browser_session'; sessionId: string; csrfToken: string };
+  | { kind: 'bearer'; role: AuthRole; csrfToken: string; record: AuthRotationRecord }
+  | { kind: 'browser_session'; role: 'operator'; sessionId: string; csrfToken: string };
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -95,6 +96,9 @@ const MemorySearchQueryParamsSchema = z.object({
   q: z.string().max(1000).optional(),
   query: z.string().max(1000).optional(),
   scope: z.string().optional(),
+  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
+  includeGlobal: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
   types: z.string().optional(),
   full: z.string().optional(),
@@ -103,6 +107,9 @@ const MemorySearchQueryParamsSchema = z.object({
 const MemoryListQueryParamsSchema = z.object({
   type: z.string().optional(),
   scope: z.string().optional(),
+  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
+  includeGlobal: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
@@ -140,6 +147,85 @@ function readCookieValue(cookieHeader: string | undefined, name: string): string
     }
   }
   return undefined;
+}
+
+const ROLE_RANK: Record<AuthRole, number> = {
+  readonly: 0,
+  service: 1,
+  operator: 2,
+};
+
+function hasRequiredRole(actual: AuthRole, required: AuthRole): boolean {
+  return ROLE_RANK[actual] >= ROLE_RANK[required];
+}
+
+function requiredRoleForRoute(path: string, method: string): AuthRole {
+  if (path === '/v1/auth/exchange') {
+    return 'operator';
+  }
+
+  const readonlyPaths = new Set([
+    '/v1/health',
+    '/v1/status',
+    '/v1/engine/capabilities',
+    '/v1/daemon/state',
+    '/v1/daemon/scheduler',
+    '/v1/sessions',
+    '/v1/receipts',
+    '/v1/interventions',
+    '/v1/events/stream',
+    '/v1/usage/summary',
+    '/v1/security/csrf-token',
+  ]);
+  if (readonlyPaths.has(path)) {
+    return 'readonly';
+  }
+
+  if (
+    path.startsWith('/v1/tasks/')
+    || path === '/v1/tasks'
+    || path.startsWith('/v1/jobs/')
+    || path === '/v1/jobs'
+    || path.startsWith('/v1/runs/')
+    || path === '/v1/runs'
+    || path.startsWith('/v1/receipts/')
+    || path.startsWith('/v1/instruction-previews/')
+    || path.startsWith('/v1/interventions/')
+    || path.startsWith('/v1/messages/')
+    || path.startsWith('/v1/telegram/relay/checkpoint')
+    || path.startsWith('/v1/telegram/deliveries/')
+    || path === '/v1/telegram/deliveries/uncertain'
+  ) {
+    if (method === 'GET' || method === 'HEAD') {
+      return 'readonly';
+    }
+  }
+
+  if (path === '/v1/memory' || path.startsWith('/v1/memory/')) {
+    return 'operator';
+  }
+
+  const serviceMutations: Array<[string, RegExp]> = [
+    ['POST', /^\/v1\/tasks$/],
+    ['POST', /^\/v1\/jobs\/[^/]+\/pause$/],
+    ['POST', /^\/v1\/jobs\/[^/]+\/resume$/],
+    ['POST', /^\/v1\/jobs\/[^/]+\/enqueue$/],
+    ['POST', /^\/v1\/runs\/[^/]+\/retry$/],
+    ['POST', /^\/v1\/runs\/[^/]+\/cancel$/],
+    ['POST', /^\/v1\/messages\/ingest$/],
+    ['POST', /^\/v1\/telegram\/relay\/checkpoint$/],
+    ['POST', /^\/v1\/telegram\/replies\/[^/]+\/[^/]+\/mark-sent$/],
+    ['POST', /^\/v1\/telegram\/replies\/[^/]+\/[^/]+\/mark-sending$/],
+    ['POST', /^\/v1\/telegram\/replies\/[^/]+\/[^/]+\/mark-pending$/],
+    ['POST', /^\/v1\/telegram\/replies\/[^/]+\/[^/]+\/mark-uncertain$/],
+    ['POST', /^\/v1\/telegram\/deliveries\/[^/]+\/resolve$/],
+    ['POST', /^\/v1\/telegram\/send-attempts$/],
+  ];
+  if (serviceMutations.some(([candidateMethod, pattern]) => candidateMethod === method && pattern.test(path))) {
+    return 'service';
+  }
+
+  return 'operator';
 }
 
 function recordAuthExchangeAudit(
@@ -219,7 +305,8 @@ function recordBrowserSessionAudit(
 function recordAuthFailureAudit(
   runtime: PopeyeRuntimeService,
   request: { headers: Record<string, unknown>; ip: string | undefined },
-  outcome: 'bearer_invalid' | 'cookie_missing',
+  outcome: 'bearer_invalid' | 'cookie_missing' | 'role_forbidden',
+  details?: Record<string, string>,
 ): void {
   const eventByOutcome: Record<typeof outcome, SecurityAuditEvent> = {
     bearer_invalid: {
@@ -242,6 +329,18 @@ function recordAuthFailureAudit(
       details: {
         remoteAddress: request.ip ?? '',
         userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+      },
+    },
+    role_forbidden: {
+      code: 'auth_role_forbidden',
+      severity: 'warn',
+      message: 'Authenticated principal lacked the required role for the requested route',
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        remoteAddress: request.ip ?? '',
+        userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+        ...(details ?? {}),
       },
     },
   };
@@ -317,15 +416,18 @@ export async function createControlApi(
     const cookieHeader = readCookieHeader(request.headers.cookie);
     const authHeader = request.headers.authorization;
     if (authHeader !== undefined) {
-      const authStore = dependencies.runtime.loadAuthStore();
-      if (!validateBearerToken(authHeader, authStore)) {
+      const authStore = dependencies.runtime.loadRoleAuthStore();
+      const principal = resolveBearerPrincipal(authHeader, authStore);
+      if (!principal) {
         log?.warn('bearer auth failed', { path, method: request.method });
         recordAuthFailureAudit(dependencies.runtime, request, 'bearer_invalid');
         return reply.code(401).send({ error: 'unauthorized' });
       }
       request.popeyeAuthContext = {
         kind: 'bearer',
-        csrfToken: issueCsrfToken(authStore),
+        role: principal.role,
+        record: principal.record,
+        csrfToken: issueCsrfToken(principal.record),
       };
     } else {
       const sessionId = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
@@ -342,9 +444,23 @@ export async function createControlApi(
       }
       request.popeyeAuthContext = {
         kind: 'browser_session',
+        role: 'operator',
         sessionId: sessionResult.session.id,
         csrfToken: sessionResult.session.csrfToken,
       };
+    }
+
+    const requiredRole = requiredRoleForRoute(path, request.method);
+    const actualRole = request.popeyeAuthContext.role;
+    if (!hasRequiredRole(actualRole, requiredRole)) {
+      log?.warn('role authorization failed', { path, method: request.method, actualRole, requiredRole });
+      recordAuthFailureAudit(dependencies.runtime, request, 'role_forbidden', {
+        path,
+        method: request.method,
+        actualRole,
+        requiredRole,
+      });
+      return reply.code(403).send({ error: 'forbidden' });
     }
 
     if (MUTATING_METHODS.has(request.method)) {
@@ -352,7 +468,7 @@ export async function createControlApi(
       const csrf = Array.isArray(csrfHeader) ? csrfHeader[0] : csrfHeader;
       const authContext = request.popeyeAuthContext;
       const csrfValid = authContext?.kind === 'bearer'
-        ? validateCsrfToken(csrf, dependencies.runtime.loadAuthStore())
+        ? validateCsrfToken(csrf, authContext.record)
         : csrf === authContext?.csrfToken;
       if (!csrfValid) {
         log?.warn('csrf validation failed', { path, method: request.method });
@@ -404,6 +520,7 @@ export async function createControlApi(
     startedAt: dependencies.runtime.startedAt,
   }));
   app.get('/v1/status', async () => dependencies.runtime.getStatus());
+  app.get('/v1/engine/capabilities', async () => dependencies.runtime.getEngineCapabilities());
   app.get('/v1/daemon/state', async () => dependencies.runtime.getDaemonState());
   app.get('/v1/daemon/scheduler', async () => dependencies.runtime.getSchedulerStatus());
   app.get('/v1/workspaces', async () =>
@@ -435,6 +552,15 @@ export async function createControlApi(
   app.get('/v1/agent-profiles', async () =>
     z.array(AgentProfileRecordSchema).parse(dependencies.runtime.listAgentProfiles()),
   );
+  app.get('/v1/profiles', async () =>
+    z.array(AgentProfileRecordSchema).parse(dependencies.runtime.listAgentProfiles()),
+  );
+  app.get('/v1/profiles/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const profile = dependencies.runtime.getAgentProfile(id);
+    if (!profile) return reply.code(404).send({ error: 'not_found' });
+    return AgentProfileRecordSchema.parse(profile);
+  });
 
   app.get('/v1/tasks', async () => dependencies.runtime.listTasks());
   app.get('/v1/tasks/:id', async (request, reply) => {
@@ -443,9 +569,16 @@ export async function createControlApi(
     if (!task) return reply.code(404).send({ error: 'not_found' });
     return task;
   });
-  app.post('/v1/tasks', async (request) => {
+  app.post('/v1/tasks', async (request, reply) => {
     const input = TaskCreateInputSchema.parse(request.body);
-    return dependencies.runtime.createTask(input);
+    try {
+      return dependencies.runtime.createTask(input);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_profile', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/jobs', async () => dependencies.runtime.listJobs());
@@ -489,6 +622,12 @@ export async function createControlApi(
     const run = dependencies.runtime.getRun(id);
     if (!run) return reply.code(404).send({ error: 'not_found' });
     return run;
+  });
+  app.get('/v1/runs/:id/envelope', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const envelope = dependencies.runtime.getExecutionEnvelope(id);
+    if (!envelope) return reply.code(404).send({ error: 'not_found' });
+    return envelope;
   });
   app.get('/v1/runs/:id/receipt', async (request, reply) => {
     const id = parseIdParam(request.params);
@@ -550,6 +689,9 @@ export async function createControlApi(
     return dependencies.runtime.searchMemory({
       query: queryText,
       scope: params.scope,
+      workspaceId: params.workspaceId,
+      projectId: params.projectId,
+      ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
       memoryTypes: params.types ? (params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>) : undefined,
       limit: params.limit ?? 20,
       includeContent: params.full === 'true',
@@ -567,6 +709,9 @@ export async function createControlApi(
     const params = z.object({
       q: z.string().max(1000),
       scope: z.string().optional(),
+      workspaceId: z.string().optional(),
+      projectId: z.string().optional(),
+      includeGlobal: z.enum(['true', 'false']).optional(),
       maxTokens: z.coerce.number().int().positive().default(8000),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
@@ -574,6 +719,9 @@ export async function createControlApi(
       query: params.q,
       maxTokens: params.maxTokens,
       scope: params.scope,
+      workspaceId: params.workspaceId,
+      projectId: params.projectId,
+      ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
       limit: params.limit,
     }));
   });
@@ -605,6 +753,9 @@ export async function createControlApi(
     return dependencies.runtime.listMemories(stripUndefined({
       type: params.type,
       scope: params.scope,
+      workspaceId: params.workspaceId,
+      projectId: params.projectId,
+      ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
       limit: params.limit ?? 50,
     }));
   });

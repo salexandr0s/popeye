@@ -4,6 +4,7 @@ import type {
   CompiledInstructionBundle,
   DaemonStateRecord,
   DaemonStatusResponse,
+  EngineCapabilities,
   SecurityAuditFinding,
   SchedulerStatusResponse,
 } from '@popeye/contracts';
@@ -27,6 +28,7 @@ export interface QueryServiceState {
   startedAt: string;
   lastSchedulerTickAt: string | null;
   lastLeaseSweepAt: string | null;
+  getEngineCapabilities(): EngineCapabilities;
   computeNextHeartbeatDueAt(): string | null;
 }
 
@@ -38,6 +40,22 @@ const DaemonStateRowSchema = z.object({
   last_shutdown_at: z.string().nullable(),
 });
 
+const AgentProfileRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().default(''),
+  mode: z.string().default('interactive'),
+  model_policy: z.string().default('inherit'),
+  allowed_runtime_tools_json: z.string().default('[]'),
+  allowed_capability_ids_json: z.string().default('[]'),
+  memory_scope: z.string().default('workspace'),
+  recall_scope: z.string().default('workspace'),
+  filesystem_policy_class: z.string().default('workspace'),
+  context_release_policy: z.string().default('summary_only'),
+  created_at: z.string(),
+  updated_at: z.string().nullable().default(null),
+});
+
 function parseCountRow(row: unknown): number {
   return CountRowSchema.parse(row).count;
 }
@@ -45,6 +63,25 @@ function parseCountRow(row: unknown): number {
 function parseLastShutdownAt(row: unknown): string | null {
   const parsed = DaemonStateRowSchema.safeParse(row);
   return parsed.success ? parsed.data.last_shutdown_at : null;
+}
+
+function parseAgentProfileRow(row: unknown): AgentProfileRecord {
+  const parsed = AgentProfileRowSchema.parse(row);
+  return AgentProfileRecordSchema.parse({
+    id: parsed.id,
+    name: parsed.name,
+    description: parsed.description,
+    mode: parsed.mode,
+    modelPolicy: parsed.model_policy,
+    allowedRuntimeTools: JSON.parse(parsed.allowed_runtime_tools_json),
+    allowedCapabilityIds: JSON.parse(parsed.allowed_capability_ids_json),
+    memoryScope: parsed.memory_scope,
+    recallScope: parsed.recall_scope,
+    filesystemPolicyClass: parsed.filesystem_policy_class,
+    contextReleasePolicy: parsed.context_release_policy,
+    createdAt: parsed.created_at,
+    updatedAt: parsed.updated_at,
+  });
 }
 
 export class QueryService {
@@ -96,13 +133,19 @@ export class QueryService {
     });
   }
 
+  getEngineCapabilities(): EngineCapabilities {
+    return this.state.getEngineCapabilities();
+  }
+
   listAgentProfiles(): AgentProfileRecord[] {
-    const rows = z.array(z.object({
-      id: z.string(),
-      name: z.string(),
-      created_at: z.string(),
-    })).parse(this.databases.app.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all());
-    return rows.map((row) => AgentProfileRecordSchema.parse({ id: row.id, name: row.name, createdAt: row.created_at }));
+    const rows = this.databases.app.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all();
+    return rows.map((row) => parseAgentProfileRow(row));
+  }
+
+  getAgentProfile(profileId: string): AgentProfileRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM agent_profiles WHERE id = ?').get(profileId);
+    if (!row) return null;
+    return parseAgentProfileRow(row);
   }
 
   getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {

@@ -11,6 +11,8 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/workspaces` | `Array<{ id, name, createdAt }>` |
 | GET | `/v1/projects` | `Array<{ id, workspaceId, name, createdAt }>` |
 | GET | `/v1/agent-profiles` | `Array<{ id, name, createdAt }>` |
+| GET | `/v1/profiles` | `ExecutionProfileSchema[]` |
+| GET | `/v1/profiles/:id` | `ExecutionProfileSchema` |
 | GET | `/v1/tasks` | `TaskRecordSchema[]` |
 | POST | `/v1/tasks` | `TaskCreateResponseSchema` (req: `TaskCreateInputSchema`) |
 | GET | `/v1/jobs` | `JobRecordSchema[]` |
@@ -22,7 +24,9 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/sessions` | `SessionRootRecord[]` |
 | GET | `/v1/runs` | `RunRecordSchema[]` |
 | GET | `/v1/runs/:id` | `RunRecordSchema` |
+| GET | `/v1/runs/:id/envelope` | `ExecutionEnvelopeSchema` |
 | GET | `/v1/runs/:id/receipt` | `ReceiptRecordSchema` |
+| GET | `/v1/runs/:id/reply` | `RunReplySchema` |
 | GET | `/v1/runs/:id/events` | `RunEventRecordSchema[]` |
 | POST | `/v1/runs/:id/retry` | `JobRecordSchema` |
 | POST | `/v1/runs/:id/cancel` | `RunRecordSchema` |
@@ -52,8 +56,14 @@ Behavior notes:
 - execution ownership lives with the daemon scheduler loop, not the API caller.
 - `GET /v1/jobs/:id/lease` exposes the active lease record when present.
 - `GET /v1/daemon/state` and `GET /v1/daemon/scheduler` expose runtime-owned scheduler state only.
+- `GET /v1/runs/:id/envelope` exposes the persisted per-run execution envelope snapshot.
 - `POST /v1/memory/:id/promote/propose` returns a review payload with `diff`, `approved: false`, and `promoted: false`.
 - `POST /v1/memory/:id/promote/execute` requires an approved proposal payload and writes the promoted markdown file inside the runtime memory directory.
+- Memory list/search/read responses include explicit `workspaceId` and `projectId`
+  fields; the legacy `scope` string remains for compatibility/display.
+- Recall explanations also include the effective location filters
+  (`workspaceId`, `projectId`, `includeGlobal`) so operator tooling can inspect
+  the exact recall gate that was applied.
 - `POST /v1/messages/ingest` enforces Telegram policy in the runtime:
   - private-DM-only
   - allowlist-only
@@ -79,7 +89,10 @@ Behavior notes:
   - `429`: rate limited
 
 Security:
-- bearer auth required for CLI/API routes; browser clients use the bootstrap nonce + `popeye_auth` browser-session cookie
+- bearer auth required for CLI/API routes; bearer principals are role-scoped
+  (`operator`, `service`, `readonly`)
+- browser clients use the bootstrap nonce + `popeye_auth` browser-session cookie
+  and always authenticate as `operator`
 - mutating routes also require `X-Popeye-CSRF`
 - browser mutations must satisfy `Sec-Fetch-Site` validation
 

@@ -1,5 +1,5 @@
 import { type SpawnSyncReturns } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import type * as NodeFsModule from 'node:fs';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -8,20 +8,18 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal<typeof NodeFsModule>();
   return {
     ...actual,
     mkdtempSync: actual.mkdtempSync,
     writeFileSync: vi.fn(),
     unlinkSync: vi.fn(),
     chmodSync: vi.fn(),
-    existsSync: actual.existsSync,
-    statSync: actual.statSync,
   };
 });
 
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, chmodSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
 import {
   KEYCHAIN_ACCOUNT,
@@ -35,7 +33,6 @@ import {
 
 const mockSpawnSync = vi.mocked(spawnSync);
 const mockWriteFileSync = vi.mocked(writeFileSync);
-const mockChmodSync = vi.mocked(chmodSync);
 
 function fakeResult(overrides: Partial<SpawnSyncReturns<string>>): SpawnSyncReturns<string> {
   return {

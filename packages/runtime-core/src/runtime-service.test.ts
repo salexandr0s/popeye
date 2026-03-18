@@ -10,7 +10,7 @@ import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../eng
 import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
 import { initAuthStore } from './auth.ts';
 import type { InstructionPreviewContextError } from './instruction-query.ts';
-import { classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
+import { RuntimeValidationError, classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -42,6 +42,29 @@ describe('PopeyeRuntimeService', () => {
     expect(profiles.length).toBeGreaterThan(0);
     expect(profiles[0]?.id).toBeTruthy();
     expect(profiles[0]?.name).toBeTruthy();
+    expect(profiles[0]).toMatchObject({
+      id: 'default',
+      mode: 'interactive',
+      modelPolicy: 'inherit',
+      memoryScope: 'workspace',
+      recallScope: 'workspace',
+      filesystemPolicyClass: 'workspace',
+      contextReleasePolicy: 'summary_only',
+    });
+
+    const profile = runtime.getAgentProfile('default');
+    expect(profile).toMatchObject({
+      id: 'default',
+      name: 'Default agent profile',
+      mode: 'interactive',
+    });
+
+    expect(runtime.getEngineCapabilities()).toMatchObject({
+      engineKind: 'fake',
+      hostToolMode: 'none',
+      persistentSessionSupport: false,
+      compactionEventSupport: false,
+    });
 
     runtime.databases.app
       .prepare('INSERT INTO security_audit (id, code, severity, message, component, timestamp, details_json) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -79,10 +102,30 @@ describe('PopeyeRuntimeService', () => {
 
     const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 't', prompt: 'hello', source: 'manual', autoEnqueue: true });
     expect(created.task.id).toBeTruthy();
+    expect(created.task.profileId).toBe('default');
     expect(created.job?.id).toBeTruthy();
     const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
     expect(terminal?.run?.id).toBeTruthy();
+    expect(terminal?.run?.profileId).toBe('default');
     expect(terminal?.receipt?.status).toBe('succeeded');
+    await runtime.close();
+  });
+
+  it('rejects tasks with unknown execution profiles', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-invalid-profile-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    expect(() => runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      profileId: 'missing-profile',
+      title: 'bad profile',
+      prompt: 'hello',
+      source: 'manual',
+      autoEnqueue: false,
+    })).toThrow(RuntimeValidationError);
+
     await runtime.close();
   });
 
@@ -106,6 +149,18 @@ describe('PopeyeRuntimeService', () => {
 
     let capturedRequest: EngineRunRequest | null = null;
     const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId'],
+          warnings: [],
+        };
+      },
       async startRun(input, options) {
         capturedRequest = typeof input === 'string' ? { prompt: input } : input;
         const handle: EngineRunHandle = {
@@ -172,6 +227,146 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('persists execution envelopes, filters runtime tools, and preserves historical snapshots', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-envelope-policy-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    mkdirSync(projectRoot, { recursive: true });
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    const now = new Date().toISOString();
+    runtime.databases.app.prepare(`
+      INSERT INTO agent_profiles (
+        id, name, description, mode, model_policy, allowed_runtime_tools_json,
+        allowed_capability_ids_json, memory_scope, recall_scope,
+        filesystem_policy_class, context_release_policy, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'project-limited',
+      'Project limited',
+      'Project profile for envelope enforcement tests',
+      'restricted',
+      'inherit',
+      JSON.stringify(['popeye_memory_search']),
+      JSON.stringify(['missing-capability']),
+      'project',
+      'project',
+      'project',
+      'summary_only',
+      now,
+      now,
+    );
+
+    let capturedRequest: EngineRunRequest | null = null;
+    let envelopeCountAtEngineStart = 0;
+    const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId'],
+          warnings: [],
+        };
+      },
+      async startRun(input, options) {
+        capturedRequest = typeof input === 'string' ? { prompt: input } : input;
+        envelopeCountAtEngineStart = (
+          runtime.databases.app.prepare('SELECT COUNT(*) AS count FROM execution_envelopes').get() as { count: number }
+        ).count;
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return {
+              engineSessionRef: 'fake:envelope',
+              usage: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+              failureClassification: null,
+            };
+          },
+          isAlive: () => false,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input: capturedRequest?.prompt ?? '' } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:envelope' } });
+        options?.onEvent?.({ type: 'completed', payload: { output: 'ok' } });
+        options?.onEvent?.({
+          type: 'usage',
+          payload: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+        });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    Object.defineProperty(runtime, 'engine', { value: capturingAdapter, writable: false });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      profileId: 'project-limited',
+      title: 'envelope task',
+      prompt: 'hello project envelope',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
+    expect(envelopeCountAtEngineStart).toBe(1);
+    expect(capturedRequest?.cwd).toBe(projectRoot);
+    expect(capturedRequest?.runtimeTools?.map((tool) => tool.name)).toEqual(['popeye_memory_search']);
+
+    const envelope = runtime.getExecutionEnvelope(terminal!.run!.id);
+    expect(envelope).toMatchObject({
+      runId: terminal!.run!.id,
+      profileId: 'project-limited',
+      projectId: 'proj-1',
+      memoryScope: 'project',
+      recallScope: 'project',
+      filesystemPolicyClass: 'project',
+      contextReleasePolicy: 'summary_only',
+      readRoots: [projectRoot],
+      writeRoots: [projectRoot],
+      cwd: projectRoot,
+    });
+    expect(envelope?.scratchRoot).toContain('/state/scratch/');
+    expect(envelope?.provenance.warnings).toEqual([]);
+
+    runtime.importMemory({
+      description: 'Project status',
+      content: 'The project envelope is healthy.',
+      workspaceId: 'default',
+      projectId: 'proj-1',
+    });
+
+    const memorySearchTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_memory_search');
+    expect(memorySearchTool).toBeTruthy();
+    const searchResult = await memorySearchTool!.execute({ query: 'status' });
+    expect(searchResult.content[0]?.text).toContain('Project status');
+
+    runtime.databases.app
+      .prepare('UPDATE agent_profiles SET context_release_policy = ?, updated_at = ? WHERE id = ?')
+      .run('full', new Date().toISOString(), 'project-limited');
+    expect(runtime.getExecutionEnvelope(terminal!.run!.id)?.contextReleasePolicy).toBe('summary_only');
+
+    await runtime.close();
+  });
+
   it('falls back to workspace root as cwd when project path is unavailable', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-engine-workspace-cwd-'));
     chmodSync(dir, 0o700);
@@ -191,6 +386,18 @@ describe('PopeyeRuntimeService', () => {
 
     let capturedRequest: EngineRunRequest | null = null;
     const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId'],
+          warnings: [],
+        };
+      },
       async startRun(input, options) {
         capturedRequest = typeof input === 'string' ? { prompt: input } : input;
         const handle: EngineRunHandle = {
@@ -232,6 +439,177 @@ describe('PopeyeRuntimeService', () => {
     const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
     expect(terminal?.receipt?.status).toBe('succeeded');
     expect(capturedRequest?.cwd).toBe(workspaceRoot);
+
+    await runtime.close();
+  });
+
+  it('applies the same project-scoped location gate across search, describe, expand, and explain for structured memory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-memory-gate-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    mkdirSync(projectRoot, { recursive: true });
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    const now = new Date().toISOString();
+    runtime.databases.app.prepare(`
+      INSERT INTO agent_profiles (
+        id, name, description, mode, model_policy, allowed_runtime_tools_json,
+        allowed_capability_ids_json, memory_scope, recall_scope,
+        filesystem_policy_class, context_release_policy, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'project-memory-tools',
+      'Project memory tools',
+      'Project profile with memory tools',
+      'restricted',
+      'inherit',
+      JSON.stringify(['popeye_memory_search', 'popeye_memory_describe', 'popeye_memory_expand', 'popeye_memory_explain']),
+      JSON.stringify([]),
+      'project',
+      'project',
+      'project',
+      'summary_only',
+      now,
+      now,
+    );
+
+    let capturedRequest: EngineRunRequest | null = null;
+    const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId'],
+          warnings: [],
+        };
+      },
+      async startRun(input, options) {
+        capturedRequest = typeof input === 'string' ? { prompt: input } : input;
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return {
+              engineSessionRef: 'fake:memory-gate',
+              usage: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+              failureClassification: null,
+            };
+          },
+          isAlive: () => false,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input: capturedRequest?.prompt ?? '' } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:memory-gate' } });
+        options?.onEvent?.({ type: 'completed', payload: { output: 'ok' } });
+        options?.onEvent?.({
+          type: 'usage',
+          payload: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+        });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    Object.defineProperty(runtime, 'engine', { value: capturingAdapter, writable: false });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      profileId: 'project-memory-tools',
+      title: 'memory-gate',
+      prompt: 'hello project gate',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
+
+    runtime.databases.memory.prepare('INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-default', 'workspace', 'default', 'Workspace default', now, now);
+    runtime.databases.memory.prepare('INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-project', 'project', 'default/proj-1', 'Project default/proj-1', now, now);
+    runtime.databases.memory.prepare('INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-project-2', 'project', 'default/proj-2', 'Project default/proj-2', now, now);
+
+    const selectNamespaceId = runtime.databases.memory.prepare(
+      'SELECT id FROM memory_namespaces WHERE kind = ? AND external_ref = ?',
+    );
+    const defaultNamespaceId = (selectNamespaceId.get('workspace', 'default') as { id: string }).id;
+    const projectNamespaceId = (selectNamespaceId.get('project', 'default/proj-1') as { id: string }).id;
+    const siblingProjectNamespaceId = (selectNamespaceId.get('project', 'default/proj-2') as { id: string }).id;
+
+    const insertArtifact = runtime.databases.memory.prepare(
+      'INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    const insertFact = runtime.databases.memory.prepare(
+      'INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    const insertSource = runtime.databases.memory.prepare(
+      'INSERT INTO memory_fact_sources (id, fact_id, artifact_id, excerpt, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    const insertFts = runtime.databases.memory.prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)');
+
+    insertArtifact.run('artifact-proj1', 'workspace_doc', 'embeddable', 'default/proj-1', 'default', 'proj-1', projectNamespaceId, null, '/tmp/proj1.md', 'file', now, now, 'Project one credentials are missing.', 'hash-proj1', '{}');
+    insertFact.run('fact-proj1', projectNamespaceId, 'default/proj-1', 'default', 'proj-1', 'embeddable', 'workspace_doc', 'semantic', 'state', 'Project one credentials are missing.', 0.9, 0.9, 0.9, 0, now, null, null, null, now, 'dedup-proj1', now, null, now, 0, 'active');
+    insertSource.run('fact-source-proj1', 'fact-proj1', 'artifact-proj1', 'credentials are missing', now);
+    insertFts.run('fact-proj1', 'Project one credentials are missing.');
+
+    insertArtifact.run('artifact-shared', 'workspace_doc', 'embeddable', 'default', 'default', null, defaultNamespaceId, null, '/tmp/shared.md', 'file', now, now, 'Shared workspace credentials guide.', 'hash-shared', '{}');
+    insertFact.run('fact-shared', defaultNamespaceId, 'default', 'default', null, 'embeddable', 'workspace_doc', 'semantic', 'procedure', 'Shared workspace credentials guide.', 0.9, 0.9, 0.9, 0, now, null, null, null, now, 'dedup-shared', now, null, now, 0, 'active');
+    insertSource.run('fact-source-shared', 'fact-shared', 'artifact-shared', 'workspace credentials guide', now);
+    insertFts.run('fact-shared', 'Shared workspace credentials guide.');
+
+    insertArtifact.run('artifact-proj2', 'workspace_doc', 'embeddable', 'default/proj-2', 'default', 'proj-2', siblingProjectNamespaceId, null, '/tmp/proj2.md', 'file', now, now, 'Sibling project credentials must stay hidden.', 'hash-proj2', '{}');
+    insertFact.run('fact-proj2', siblingProjectNamespaceId, 'default/proj-2', 'default', 'proj-2', 'embeddable', 'workspace_doc', 'semantic', 'state', 'Sibling project credentials must stay hidden.', 0.9, 0.9, 0.9, 0, now, null, null, null, now, 'dedup-proj2', now, null, now, 0, 'active');
+    insertSource.run('fact-source-proj2', 'fact-proj2', 'artifact-proj2', 'must stay hidden', now);
+    insertFts.run('fact-proj2', 'Sibling project credentials must stay hidden.');
+
+    const memorySearchTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_memory_search');
+    const memoryDescribeTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_memory_describe');
+    const memoryExpandTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_memory_expand');
+    const memoryExplainTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_memory_explain');
+    expect(memorySearchTool && memoryDescribeTool && memoryExpandTool && memoryExplainTool).toBeTruthy();
+
+    const searchResult = await memorySearchTool!.execute({ query: 'credentials', includeContent: false });
+    expect(searchResult.details?.results.map((result: { id: string }) => result.id)).toEqual(
+      expect.arrayContaining(['fact-proj1', 'fact-shared']),
+    );
+    expect(searchResult.details?.results.map((result: { id: string }) => result.id)).not.toContain('fact-proj2');
+
+    const describeDenied = await memoryDescribeTool!.execute({ memoryId: 'fact-proj2' });
+    expect(describeDenied.content[0]?.text).toContain('outside the allowed recall scope');
+
+    const expandDenied = await memoryExpandTool!.execute({ memoryId: 'fact-proj2' });
+    expect(expandDenied.content[0]?.text).toContain('outside the allowed recall scope');
+
+    const explainDenied = await memoryExplainTool!.execute({ query: 'credentials', memoryId: 'fact-proj2' });
+    expect(explainDenied.content[0]?.text).toContain('outside the allowed recall scope');
+
+    const explainAllowed = await memoryExplainTool!.execute({ query: 'credentials', memoryId: 'fact-shared' });
+    expect(explainAllowed.details).toMatchObject({
+      memoryId: 'fact-shared',
+      filters: {
+        workspaceId: 'default',
+        projectId: 'proj-1',
+        includeGlobal: false,
+      },
+    });
 
     await runtime.close();
   });

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -16,6 +16,8 @@ import type {
   DaemonStateRecord,
   DaemonStatusResponse,
   DomainKind,
+  EngineCapabilities,
+  ExecutionEnvelope,
   IntegrityReport,
   InterventionRecord,
   JobLeaseRecord,
@@ -24,6 +26,7 @@ import type {
   MemoryRecord,
   MemorySearchQuery,
   MemorySearchResponse,
+  MemoryType,
   MessageIngressResponse,
   MessageRecord,
   NormalizedEngineEvent,
@@ -102,6 +105,7 @@ import {
   RunEventRecordSchema,
   RunRecordSchema,
   RunReplySchema,
+  TaskCreateInputSchema,
   TelegramDeliveryRecordSchema,
   TelegramDeliveryResolutionRecordSchema,
   TelegramDeliveryStateSchema,
@@ -117,7 +121,17 @@ import {
   type EngineRunRequest,
   type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
-import { MemorySearchService, createDisabledEmbeddingClient, createOpenAIEmbeddingClient, createOpenAISummarizationClient, createDisabledSummarizationClient, loadSqliteVec } from '@popeye/memory';
+import {
+  buildLocationCondition,
+  formatMemoryScope,
+  MemorySearchService,
+  resolveMemoryLocationFilter,
+  createDisabledEmbeddingClient,
+  createOpenAIEmbeddingClient,
+  createOpenAISummarizationClient,
+  createDisabledSummarizationClient,
+  loadSqliteVec,
+} from '@popeye/memory';
 import { createLogger, redactText, type PopeyeLogger } from '@popeye/observability';
 import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
 import { selectSessionRoot, SessionService } from '@popeye/sessions';
@@ -147,11 +161,18 @@ import {
   type BrowserSessionValidationResult,
   validateBrowserSession as validateRuntimeBrowserSession,
 } from './browser-sessions.js';
+import {
+  buildExecutionEnvelope,
+  computeEffectiveContextReleaseLevel,
+  isRequestedContextReleaseAllowed,
+  resolveAgentMemoryScopeFilter,
+  validateProfileTaskContext,
+} from './execution-envelopes.js';
 
 import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
 import { z } from 'zod';
 import safe from 'safe-regex2';
-import { readAuthStore, rotateAuthStore } from './auth.js';
+import { readAuthStore, readRoleAuthStore, rotateAuthStore } from './auth.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -197,6 +218,15 @@ export class RuntimeConflictError extends Error {
   }
 }
 
+export class RuntimeValidationError extends Error {
+  readonly errorCode = 'invalid_input';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RuntimeValidationError';
+  }
+}
+
 export interface RuntimeEvent {
   event: string;
   data: string;
@@ -239,6 +269,7 @@ const RunRowSchema = z.object({
   job_id: z.string(),
   task_id: z.string(),
   workspace_id: z.string(),
+  profile_id: z.string().nullable().default('default'),
   session_root_id: z.string(),
   engine_session_ref: z.string().nullable(),
   state: z.string(),
@@ -255,14 +286,39 @@ const RunEventRowSchema = z.object({
   created_at: z.string(),
 });
 
+const ExecutionEnvelopeRowSchema = z.object({
+  run_id: z.string(),
+  task_id: z.string(),
+  profile_id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable(),
+  mode: z.string(),
+  model_policy: z.string(),
+  allowed_runtime_tools_json: z.string(),
+  allowed_capability_ids_json: z.string(),
+  memory_scope: z.string(),
+  recall_scope: z.string(),
+  filesystem_policy_class: z.string(),
+  context_release_policy: z.string(),
+  read_roots_json: z.string(),
+  write_roots_json: z.string(),
+  protected_paths_json: z.string(),
+  scratch_root: z.string(),
+  cwd: z.string().nullable(),
+  provenance_json: z.string(),
+  created_at: z.string(),
+});
+
 const MemoryListRowSchema = z.object({
   id: z.string(),
   description: z.string(),
   classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']),
-  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release']),
+  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release', 'file_doc']),
   content: z.string(),
   confidence: z.number(),
   scope: z.string(),
+  workspace_id: z.string().nullable().default(null),
+  project_id: z.string().nullable().default(null),
   memory_type: z.enum(['episodic', 'semantic', 'procedural']).nullable(),
   dedup_key: z.string().nullable(),
   last_reinforced_at: z.string().nullable(),
@@ -370,6 +426,7 @@ function mapRunRow(row: unknown): RunRecord {
     jobId: parsed.job_id,
     taskId: parsed.task_id,
     workspaceId: parsed.workspace_id,
+    profileId: parsed.profile_id ?? 'default',
     sessionRootId: parsed.session_root_id,
     engineSessionRef: parsed.engine_session_ref,
     state: parsed.state,
@@ -388,6 +445,31 @@ function mapRunEventRow(row: unknown): RunEventRecord {
     payload: parsed.payload,
     createdAt: parsed.created_at,
   });
+}
+
+function mapExecutionEnvelopeRow(row: unknown): ExecutionEnvelope {
+  const parsed = ExecutionEnvelopeRowSchema.parse(row);
+  return {
+    runId: parsed.run_id,
+    taskId: parsed.task_id,
+    profileId: parsed.profile_id,
+    workspaceId: parsed.workspace_id,
+    projectId: parsed.project_id,
+    mode: parsed.mode as ExecutionEnvelope['mode'],
+    modelPolicy: parsed.model_policy,
+    allowedRuntimeTools: JSON.parse(parsed.allowed_runtime_tools_json) as string[],
+    allowedCapabilityIds: JSON.parse(parsed.allowed_capability_ids_json) as string[],
+    memoryScope: parsed.memory_scope as ExecutionEnvelope['memoryScope'],
+    recallScope: parsed.recall_scope as ExecutionEnvelope['recallScope'],
+    filesystemPolicyClass: parsed.filesystem_policy_class as ExecutionEnvelope['filesystemPolicyClass'],
+    contextReleasePolicy: parsed.context_release_policy as ExecutionEnvelope['contextReleasePolicy'],
+    readRoots: JSON.parse(parsed.read_roots_json) as string[],
+    writeRoots: JSON.parse(parsed.write_roots_json) as string[],
+    protectedPaths: JSON.parse(parsed.protected_paths_json) as string[],
+    scratchRoot: parsed.scratch_root,
+    cwd: parsed.cwd,
+    provenance: JSON.parse(parsed.provenance_json) as ExecutionEnvelope['provenance'],
+  };
 }
 
 function mapTelegramDeliveryRow(row: unknown): TelegramDeliveryState {
@@ -533,6 +615,7 @@ export class PopeyeRuntimeService {
       vecAvailable: () => this.vecAvailable,
       halfLifeDays: config.memory.confidenceHalfLifeDays,
       budgetConfig: config.memory.budgetAllocation,
+      redactionPatterns: config.security.redactionPatterns,
     });
     const summarizationClient = config.embeddings.provider === 'openai'
       ? createOpenAISummarizationClient({})
@@ -580,7 +663,7 @@ export class PopeyeRuntimeService {
     });
     this.messageIngestion = new MessageIngestionService(this.databases, config, {
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
-      createTask: (input) => this.createTask(input),
+      createTask: (input) => this.createTask({ ...input, profileId: 'default' }),
       createIntervention: (code, runId, reason) => this.createIntervention(code, runId, reason),
     });
     const self = this;
@@ -590,6 +673,7 @@ export class PopeyeRuntimeService {
       get startedAt() { return self.startedAt; },
       get lastSchedulerTickAt() { return self.scheduler.lastSchedulerTickAt; },
       get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
+      getEngineCapabilities: () => this.engine.getCapabilities(),
       computeNextHeartbeatDueAt: () => this.computeNextHeartbeatDueAt(),
     }, this.workspaceRegistry);
 
@@ -767,7 +851,32 @@ export class PopeyeRuntimeService {
   // --- Delegated: TaskManager ---
 
   createTask(input: TaskCreateInput): { task: TaskRecord; job: JobRecord | null; run: RunRecord | null } {
-    return this.taskManager.createTask(input);
+    const parsed = TaskCreateInputSchema.parse(input);
+    const profile = this.getAgentProfile(parsed.profileId);
+    if (!profile) {
+      throw new RuntimeValidationError(`Execution profile not found: ${parsed.profileId}`);
+    }
+    const workspace = this.getWorkspace(parsed.workspaceId);
+    if (!workspace) {
+      throw new RuntimeValidationError(`Workspace not found: ${parsed.workspaceId}`);
+    }
+    if (parsed.projectId) {
+      const project = this.getProject(parsed.projectId);
+      if (!project) {
+        throw new RuntimeValidationError(`Project not found: ${parsed.projectId}`);
+      }
+      if (project.workspaceId !== parsed.workspaceId) {
+        throw new RuntimeValidationError(`Project ${parsed.projectId} does not belong to workspace ${parsed.workspaceId}`);
+      }
+    }
+    const contextError = validateProfileTaskContext(profile, {
+      workspaceId: parsed.workspaceId,
+      projectId: parsed.projectId,
+    });
+    if (contextError) {
+      throw new RuntimeValidationError(contextError);
+    }
+    return this.taskManager.createTask(parsed);
   }
 
   enqueueTask(taskId: string, options?: { availableAt?: string; retryCount?: number }): JobRecord | null {
@@ -838,6 +947,10 @@ export class PopeyeRuntimeService {
     return this.queryService.getStatus();
   }
 
+  getEngineCapabilities(): EngineCapabilities {
+    return this.queryService.getEngineCapabilities();
+  }
+
   getDaemonState(): DaemonStateRecord {
     return this.queryService.getDaemonState();
   }
@@ -894,6 +1007,135 @@ export class PopeyeRuntimeService {
     return this.queryService.listAgentProfiles();
   }
 
+  getAgentProfile(profileId: string): AgentProfileRecord | null {
+    return this.queryService.getAgentProfile(profileId);
+  }
+
+  getExecutionEnvelope(runId: string): ExecutionEnvelope | null {
+    const row = this.databases.app.prepare('SELECT * FROM execution_envelopes WHERE run_id = ?').get(runId);
+    return row ? mapExecutionEnvelopeRow(row) : null;
+  }
+
+  private persistExecutionEnvelope(envelope: ExecutionEnvelope): void {
+    this.databases.app.prepare(`
+      INSERT OR REPLACE INTO execution_envelopes (
+        run_id, task_id, profile_id, workspace_id, project_id, mode, model_policy,
+        allowed_runtime_tools_json, allowed_capability_ids_json, memory_scope, recall_scope,
+        filesystem_policy_class, context_release_policy, read_roots_json, write_roots_json,
+        protected_paths_json, scratch_root, cwd, provenance_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      envelope.runId,
+      envelope.taskId,
+      envelope.profileId,
+      envelope.workspaceId,
+      envelope.projectId,
+      envelope.mode,
+      envelope.modelPolicy,
+      JSON.stringify(envelope.allowedRuntimeTools),
+      JSON.stringify(envelope.allowedCapabilityIds),
+      envelope.memoryScope,
+      envelope.recallScope,
+      envelope.filesystemPolicyClass,
+      envelope.contextReleasePolicy,
+      JSON.stringify(envelope.readRoots),
+      JSON.stringify(envelope.writeRoots),
+      JSON.stringify(envelope.protectedPaths),
+      envelope.scratchRoot,
+      envelope.cwd,
+      JSON.stringify(envelope.provenance),
+      envelope.provenance.derivedAt,
+    );
+  }
+
+  authorizeContextRelease(input: {
+    runId: string;
+    domain: ContextReleasePreview['domain'];
+    sourceRef: string;
+    requestedLevel: ContextReleasePreview['releaseLevel'];
+    tokenEstimate?: number;
+    resourceType?: string;
+    resourceId?: string;
+    requestedBy?: string;
+    payloadPreview?: string;
+  }): {
+    outcome: 'allow' | 'deny' | 'approval_required';
+    approvedLevel: ContextReleasePreview['releaseLevel'] | null;
+    approvalId: string | null;
+    reason: string;
+    redactionApplied: boolean;
+  } {
+    const envelope = this.getExecutionEnvelope(input.runId);
+    if (!envelope) {
+      return {
+        outcome: 'deny',
+        approvedLevel: null,
+        approvalId: null,
+        reason: 'Execution envelope not found for this run.',
+        redactionApplied: false,
+      };
+    }
+
+    const domainPolicy = DOMAIN_POLICY_DEFAULTS[input.domain];
+    const effectiveLevel = computeEffectiveContextReleaseLevel(
+      envelope.contextReleasePolicy,
+      domainPolicy.contextReleasePolicy,
+    );
+
+    if (effectiveLevel === 'none') {
+      return {
+        outcome: 'deny',
+        approvedLevel: null,
+        approvalId: null,
+        reason: 'Context release is disabled by the execution profile.',
+        redactionApplied: false,
+      };
+    }
+
+    const overProfileLimit = !isRequestedContextReleaseAllowed(
+      envelope.contextReleasePolicy,
+      input.requestedLevel,
+    );
+    const requiresApproval = domainPolicy.sensitivity === 'restricted' || overProfileLimit;
+    if (!requiresApproval) {
+      return {
+        outcome: 'allow',
+        approvedLevel: input.requestedLevel,
+        approvalId: null,
+        reason: 'Context release allowed by profile policy.',
+        redactionApplied: false,
+      };
+    }
+
+    const approval = this.requestApproval({
+      scope: 'context_release',
+      domain: input.domain,
+      riskClass: 'ask',
+      resourceType: input.resourceType ?? 'context_release',
+      resourceId: input.resourceId ?? input.sourceRef,
+      requestedBy: input.requestedBy ?? 'context_release_gate',
+      payloadPreview: input.payloadPreview ?? input.sourceRef,
+    });
+
+    if (approval.status === 'approved') {
+      return {
+        outcome: 'allow',
+        approvedLevel: input.requestedLevel,
+        approvalId: approval.id,
+        reason: 'Context release approved.',
+        redactionApplied: false,
+      };
+    }
+
+    return {
+      outcome: 'approval_required',
+      approvedLevel: effectiveLevel,
+      approvalId: approval.id,
+      reason: 'Context release requires approval.',
+      redactionApplied: false,
+    };
+  }
+
   listSessionRoots(): Array<{ id: string; kind: string; scope: string; createdAt: string }> {
     return this.sessionService.listSessionRoots();
   }
@@ -920,6 +1162,10 @@ export class PopeyeRuntimeService {
 
   loadAuthStore() {
     return readAuthStore(this.config.authFile);
+  }
+
+  loadRoleAuthStore() {
+    return readRoleAuthStore(this.config.authFile);
   }
 
   issueCsrfToken(): string {
@@ -1472,11 +1718,36 @@ export class PopeyeRuntimeService {
     return this.memorySearch.search({
       query: query.query,
       ...(query.scope !== undefined && { scope: query.scope }),
+      ...(query.workspaceId !== undefined && { workspaceId: query.workspaceId }),
+      ...(query.projectId !== undefined && { projectId: query.projectId }),
+      ...(query.includeGlobal !== undefined && { includeGlobal: query.includeGlobal }),
       ...(query.memoryTypes !== undefined && { memoryTypes: query.memoryTypes }),
+      ...(query.layers !== undefined && { layers: query.layers }),
+      ...(query.namespaceIds !== undefined && { namespaceIds: query.namespaceIds }),
+      ...(query.tags !== undefined && { tags: query.tags }),
       ...(query.minConfidence !== undefined && { minConfidence: query.minConfidence }),
       ...(query.limit !== undefined && { limit: query.limit }),
       ...(query.includeContent !== undefined && { includeContent: query.includeContent }),
+      ...(query.includeSuperseded !== undefined && { includeSuperseded: query.includeSuperseded }),
+      ...(query.occurredAfter !== undefined && { occurredAfter: query.occurredAfter }),
+      ...(query.occurredBefore !== undefined && { occurredBefore: query.occurredBefore }),
     });
+  }
+
+  async explainMemoryRecall(input: {
+    query: string;
+    memoryId: string;
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
+    memoryTypes?: MemoryType[];
+    layers?: Array<'artifact' | 'fact' | 'synthesis' | 'curated'>;
+    namespaceIds?: string[];
+    tags?: string[];
+    includeSuperseded?: boolean;
+  }, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
+    return this.memorySearch.explainRecall(input, locationFilter);
   }
 
   getMemoryContent(memoryId: string): MemoryRecord | null {
@@ -1501,14 +1772,41 @@ export class PopeyeRuntimeService {
     return memory;
   }
 
-  listMemories(options?: { type?: string; scope?: string; limit?: number }): MemoryRecord[] {
+  listMemories(options?: {
+    type?: string;
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
+    limit?: number;
+  }): MemoryRecord[] {
     const conditions: string[] = ['archived_at IS NULL'];
     const params: unknown[] = [];
+    const locationFilter = resolveMemoryLocationFilter({
+      scope: options?.scope,
+      workspaceId: options?.workspaceId,
+      projectId: options?.projectId,
+      includeGlobal: options?.includeGlobal,
+    });
+    const scopeAliasOnly = options?.scope !== undefined && options?.workspaceId === undefined && options?.projectId === undefined;
     if (options?.type) { conditions.push('memory_type = ?'); params.push(options.type); }
-    if (options?.scope) { conditions.push('scope = ?'); params.push(options.scope); }
+    if (scopeAliasOnly && options?.scope) {
+      conditions.push('scope = ?');
+      params.push(options.scope);
+    } else if (locationFilter) {
+      const location = buildLocationCondition('', {
+        workspaceId: locationFilter.workspaceId,
+        projectId: locationFilter.projectId,
+        includeGlobal: locationFilter.includeGlobal,
+      });
+      if (location.sql) {
+        conditions.push(location.sql);
+        params.push(...location.params);
+      }
+    }
     const limit = options?.limit ?? 50;
     params.push(limit);
-    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
+    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
     return z.array(MemoryListRowSchema)
       .parse(this.databases.memory.prepare(sql).all(...params))
       .map((row) =>
@@ -1520,6 +1818,8 @@ export class PopeyeRuntimeService {
           content: row.content,
           confidence: row.confidence,
           scope: row.scope,
+          workspaceId: row.workspace_id,
+          projectId: row.project_id,
           sourceRunId: row.source_run_id,
           sourceTimestamp: row.source_timestamp,
           memoryType: row.memory_type ?? 'episodic',
@@ -1538,6 +1838,9 @@ export class PopeyeRuntimeService {
   async budgetFitMemory(query: {
     query: string;
     scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
     memoryTypes?: Array<'episodic' | 'semantic' | 'procedural'>;
     minConfidence?: number;
     maxTokens: number;
@@ -1546,13 +1849,13 @@ export class PopeyeRuntimeService {
     return this.memorySearch.budgetFit(query);
   }
 
-  describeMemory(memoryId: string) {
-    return this.memorySearch.describeMemory(memoryId);
+  describeMemory(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
+    return this.memorySearch.describeMemory(memoryId, locationFilter);
   }
 
-  expandMemory(memoryId: string, maxTokens?: number) {
+  expandMemory(memoryId: string, maxTokens?: number, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
     const cap = maxTokens ?? this.config.memory.expandTokenCap;
-    return this.memorySearch.expandMemory(memoryId, cap);
+    return this.memorySearch.expandMemory(memoryId, cap, locationFilter);
   }
 
   triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
@@ -1567,17 +1870,28 @@ export class PopeyeRuntimeService {
     sourceType?: MemoryInsertInput['sourceType'];
     memoryType?: 'episodic' | 'semantic' | 'procedural';
     scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
     confidence?: number;
     classification?: 'secret' | 'sensitive' | 'internal' | 'embeddable';
   }): { memoryId: string; embedded: boolean } {
     const redactedContent = redactText(input.content, this.config.security.redactionPatterns).text;
     const redactedDesc = redactText(input.description, this.config.security.redactionPatterns).text;
+    const scope = input.scope
+      ?? (input.workspaceId !== undefined || input.projectId !== undefined
+        ? formatMemoryScope({
+            workspaceId: input.workspaceId ?? null,
+            projectId: input.projectId ?? null,
+          })
+        : 'workspace');
     return this.memoryLifecycle.insertMemory({
       description: redactedDesc,
       content: redactedContent,
       sourceType: input.sourceType ?? 'curated_memory',
       ...(input.memoryType !== undefined && { memoryType: input.memoryType }),
-      scope: input.scope ?? 'workspace',
+      scope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
       confidence: input.confidence ?? 0.8,
       classification: input.classification ?? 'embeddable',
     });
@@ -1753,7 +2067,33 @@ export class PopeyeRuntimeService {
     this.events.emit('event', { event, data: JSON.stringify(payload) } satisfies RuntimeEvent);
   }
 
-  private createRuntimeTools(task: TaskRecord): RuntimeToolDescriptor[] {
+  private createRuntimeTools(task: TaskRecord, runId: string, envelope: ExecutionEnvelope): RuntimeToolDescriptor[] {
+    const capabilityTools = this.capabilityRegistry
+      .getRuntimeTools({ workspaceId: task.workspaceId, runId })
+      .filter((entry) =>
+        envelope.allowedCapabilityIds.includes(entry.capabilityId)
+        && envelope.allowedRuntimeTools.includes(entry.tool.name),
+      )
+      .map((entry) => ({
+        ...entry.tool,
+        execute: async (params: unknown) => {
+          const result = await entry.tool.execute(params);
+          return {
+            ...result,
+            content: result.content.map((c) => ({ ...c, type: c.type as 'text' })),
+          };
+        },
+      }));
+
+    return [
+      ...this.createCoreRuntimeTools(task, runId).filter((tool) => envelope.allowedRuntimeTools.includes(tool.name)),
+      ...capabilityTools,
+    ];
+  }
+
+  private createCoreRuntimeTools(_task: TaskRecord, runId: string): RuntimeToolDescriptor[] {
+    const requireEnvelope = (): ExecutionEnvelope | null => this.getExecutionEnvelope(runId);
+
     return [
       {
         name: 'popeye_memory_search',
@@ -1772,9 +2112,17 @@ export class PopeyeRuntimeService {
         },
         execute: async (params) => {
           const parsed = RuntimeMemorySearchToolInputSchema.parse(params ?? {});
+          const envelope = requireEnvelope();
+          if (!envelope) {
+            return { content: [{ type: 'text', text: 'Execution envelope not found for this run.' }] };
+          }
+          const scopeResolution = resolveAgentMemoryScopeFilter(envelope);
           const response = await this.searchMemory({
             query: parsed.query,
-            scope: parsed.scope ?? task.workspaceId,
+            ...(parsed.scope !== undefined && envelope.recallScope === 'global' ? { scope: parsed.scope } : {}),
+            workspaceId: scopeResolution.workspaceId,
+            projectId: scopeResolution.projectId,
+            includeGlobal: scopeResolution.includeGlobal,
             limit: parsed.limit ?? 5,
             includeContent: parsed.includeContent ?? false,
           });
@@ -1782,7 +2130,8 @@ export class PopeyeRuntimeService {
             ? ['No matching Popeye memories found.']
             : response.results.map((result, index) => {
                 const snippet = result.content ? ` — ${result.content.slice(0, 100)}` : '';
-                return `${index + 1}. [id:${result.id}] ${result.description} [${result.scope}/${result.sourceType}] score:${result.score.toFixed(2)}${snippet}`;
+                const layer = result.layer ? `/${result.layer}` : '';
+                return `${index + 1}. [id:${result.id}] ${result.description} [${result.scope}/${result.sourceType}${layer}] score:${result.score.toFixed(2)}${snippet}`;
               });
           return {
             content: [{ type: 'text', text: lines.join('\n') }],
@@ -1810,20 +2159,82 @@ export class PopeyeRuntimeService {
         },
         execute: async (params) => {
           const parsed = z.object({ memoryId: z.string().min(1) }).parse(params ?? {});
-          const desc = this.describeMemory(parsed.memoryId);
+          const envelope = requireEnvelope();
+          if (!envelope) {
+            return { content: [{ type: 'text', text: 'Execution envelope not found for this run.' }] };
+          }
+          const scopeResolution = resolveAgentMemoryScopeFilter(envelope);
+          const desc = this.describeMemory(parsed.memoryId, scopeResolution);
           if (!desc) {
+            if (this.describeMemory(parsed.memoryId)) {
+              return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} is outside the allowed recall scope.` }] };
+            }
             return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
           }
           const lines = [
             `ID: ${desc.id}`,
             `Description: ${desc.description}`,
-            `Type: ${desc.type} | Source: ${desc.sourceType} | Scope: ${desc.scope}`,
+            `Type: ${desc.type} | Source: ${desc.sourceType}${desc.layer ? ` | Layer: ${desc.layer}` : ''} | Scope: ${desc.scope}`,
             `Confidence: ${desc.confidence.toFixed(2)} | Durable: ${desc.durable}`,
             `Content length: ${desc.contentLength} chars (~${Math.ceil(desc.contentLength / 4)} tokens)`,
             `Entities: ${desc.entityCount} | Sources: ${desc.sourceCount} | Events: ${desc.eventCount}`,
             `Created: ${desc.createdAt}${desc.lastReinforcedAt ? ` | Last reinforced: ${desc.lastReinforcedAt}` : ''}`,
           ];
           return { content: [{ type: 'text', text: lines.join('\n') }], details: desc };
+        },
+      },
+      {
+        name: 'popeye_memory_explain',
+        label: 'Popeye Memory Explain',
+        description: 'Explain why a specific memory matched a query, including score breakdown and evidence links when available.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Original search query' },
+            memoryId: { type: 'string', description: 'Memory ID returned from popeye_memory_search' },
+          },
+          required: ['query', 'memoryId'],
+          additionalProperties: false,
+        },
+        execute: async (params) => {
+          const parsed = z.object({ query: z.string().min(1), memoryId: z.string().min(1) }).parse(params ?? {});
+          const envelope = requireEnvelope();
+          if (!envelope) {
+            return { content: [{ type: 'text', text: 'Execution envelope not found for this run.' }] };
+          }
+          const scopeResolution = resolveAgentMemoryScopeFilter(envelope);
+          const desc = this.describeMemory(parsed.memoryId, scopeResolution);
+          if (!desc) {
+            if (this.describeMemory(parsed.memoryId)) {
+              return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} is outside the allowed recall scope.` }] };
+            }
+            return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
+          }
+          const explanation = await this.explainMemoryRecall({
+            query: parsed.query,
+            memoryId: parsed.memoryId,
+            workspaceId: scopeResolution.workspaceId,
+            projectId: scopeResolution.projectId,
+            includeGlobal: scopeResolution.includeGlobal,
+          }, scopeResolution);
+
+          if (!explanation) {
+            return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} was not recalled for that query.` }] };
+          }
+
+          const evidenceLine = explanation.evidence.length > 0
+            ? `Evidence: ${explanation.evidence.map((link) => `${link.targetKind}:${link.targetId}`).join(', ')}`
+            : 'Evidence: none';
+          const lines = [
+            `ID: ${explanation.memoryId}`,
+            `Strategy: ${explanation.strategy} | Search mode: ${explanation.searchMode}${explanation.layer ? ` | Layer: ${explanation.layer}` : ''}`,
+            `Score: ${explanation.score.toFixed(3)}`,
+            `Breakdown: relevance=${explanation.scoreBreakdown.relevance.toFixed(3)}, recency=${explanation.scoreBreakdown.recency.toFixed(3)}, confidence=${explanation.scoreBreakdown.confidence.toFixed(3)}, scope=${explanation.scoreBreakdown.scopeMatch.toFixed(3)}`,
+            explanation.scoreBreakdown.temporalFit !== undefined ? `Temporal fit: ${explanation.scoreBreakdown.temporalFit.toFixed(3)}` : null,
+            evidenceLine,
+          ].filter((line): line is string => line !== null);
+
+          return { content: [{ type: 'text', text: lines.join('\n') }], details: explanation };
         },
       },
       {
@@ -1841,7 +2252,19 @@ export class PopeyeRuntimeService {
         },
         execute: async (params) => {
           const parsed = z.object({ memoryId: z.string().min(1), maxTokens: z.number().int().positive().optional() }).parse(params ?? {});
-          const expanded = this.expandMemory(parsed.memoryId, parsed.maxTokens);
+          const envelope = requireEnvelope();
+          if (!envelope) {
+            return { content: [{ type: 'text', text: 'Execution envelope not found for this run.' }] };
+          }
+          const scopeResolution = resolveAgentMemoryScopeFilter(envelope);
+          const desc = this.describeMemory(parsed.memoryId, scopeResolution);
+          if (!desc) {
+            if (this.describeMemory(parsed.memoryId)) {
+              return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} is outside the allowed recall scope.` }] };
+            }
+            return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
+          }
+          const expanded = this.expandMemory(parsed.memoryId, parsed.maxTokens, scopeResolution);
           if (!expanded) {
             return { content: [{ type: 'text', text: `Memory ${parsed.memoryId} not found.` }] };
           }
@@ -1849,29 +2272,7 @@ export class PopeyeRuntimeService {
           return { content: [{ type: 'text', text: `${header}${expanded.content}` }], details: expanded };
         },
       },
-      // Append tools from registered capabilities
-      ...this.capabilityRegistry.getRuntimeTools({ workspaceId: task.workspaceId }).map((t) => ({
-        ...t,
-        execute: async (params: unknown) => {
-          const result = await t.execute(params);
-          return {
-            ...result,
-            content: result.content.map((c) => ({ ...c, type: c.type as 'text' })),
-          };
-        },
-      })),
     ];
-  }
-
-  private resolveTaskCwd(task: TaskRecord): string | undefined {
-    if (task.projectId) {
-      const project = this.workspaceRegistry.getProject(task.projectId);
-      if (project?.workspaceId === task.workspaceId && project.path) {
-        return project.path;
-      }
-    }
-    const workspace = this.workspaceRegistry.getWorkspace(task.workspaceId);
-    return workspace?.rootPath ?? undefined;
   }
 
   // --- Internal: startup & seeding ---
@@ -1887,7 +2288,27 @@ export class PopeyeRuntimeService {
   }
 
   private seedReferenceData(): void {
-    this.databases.app.prepare('INSERT OR IGNORE INTO agent_profiles (id, name, created_at) VALUES (?, ?, ?)').run('default', 'Default agent profile', this.startedAt);
+    this.databases.app.prepare(
+      `INSERT OR IGNORE INTO agent_profiles (
+        id, name, description, mode, model_policy, allowed_runtime_tools_json,
+        allowed_capability_ids_json, memory_scope, recall_scope,
+        filesystem_policy_class, context_release_policy, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'default',
+      'Default agent profile',
+      'Default interactive profile',
+      'interactive',
+      'inherit',
+      '[]',
+      '[]',
+      'workspace',
+      'workspace',
+      'workspace',
+      'summary_only',
+      this.startedAt,
+      this.startedAt,
+    );
     for (const workspace of this.config.workspaces) {
       this.databases.app.prepare('INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES (?, ?, ?)').run(workspace.id, workspace.name, this.startedAt);
       if (workspace.rootPath) {
@@ -1910,11 +2331,12 @@ export class PopeyeRuntimeService {
       const retryPolicy = JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 });
 
       this.databases.app
-        .prepare('INSERT OR IGNORE INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .prepare('INSERT OR IGNORE INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(
           heartbeatTaskId,
           workspace.id,
           null,
+          'default',
           heartbeatTitle,
           heartbeatPrompt,
           'heartbeat',
@@ -1924,8 +2346,8 @@ export class PopeyeRuntimeService {
           this.startedAt,
         );
       this.databases.app
-        .prepare('UPDATE tasks SET title = ?, prompt = ?, status = ?, retry_policy_json = ?, side_effect_profile = ? WHERE id = ?')
-        .run(heartbeatTitle, heartbeatPrompt, heartbeatStatus, retryPolicy, 'read_only', heartbeatTaskId);
+        .prepare('UPDATE tasks SET title = ?, prompt = ?, profile_id = ?, status = ?, retry_policy_json = ?, side_effect_profile = ? WHERE id = ?')
+        .run(heartbeatTitle, heartbeatPrompt, 'default', heartbeatStatus, retryPolicy, 'read_only', heartbeatTaskId);
 
       if (workspace.heartbeatEnabled) {
         this.databases.app
@@ -2114,6 +2536,7 @@ export class PopeyeRuntimeService {
       jobId: job.id,
       taskId: task.id,
       workspaceId: job.workspaceId,
+      profileId: task.profileId,
       sessionRootId: sessionRoot.id,
       engineSessionRef: null,
       state: 'starting',
@@ -2123,11 +2546,12 @@ export class PopeyeRuntimeService {
     };
 
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ?, last_run_id = ? WHERE id = ?').run('running', nowIso(), run.id, job.id);
-    this.databases.app.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    this.databases.app.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       run.id,
       run.jobId,
       run.taskId,
       run.workspaceId,
+      run.profileId,
       run.sessionRootId,
       run.engineSessionRef,
       run.state,
@@ -2156,19 +2580,71 @@ export class PopeyeRuntimeService {
     });
 
     try {
-      const taskCwd = this.resolveTaskCwd(task);
+      const profile = this.getAgentProfile(task.profileId);
+      if (!profile) {
+        throw new RuntimeValidationError(`Execution profile not found: ${task.profileId}`);
+      }
+      const workspace = this.getWorkspace(task.workspaceId);
+      if (!workspace) {
+        throw new RuntimeValidationError(`Workspace not found: ${task.workspaceId}`);
+      }
+      const project = task.projectId ? this.getProject(task.projectId) : null;
+      if (task.projectId && !project) {
+        throw new RuntimeValidationError(`Project not found: ${task.projectId}`);
+      }
+      if (project && project.workspaceId !== task.workspaceId) {
+        throw new RuntimeValidationError(`Project ${task.projectId} does not belong to workspace ${task.workspaceId}`);
+      }
+      const profileContextError = validateProfileTaskContext(profile, task);
+      if (profileContextError) {
+        throw new RuntimeValidationError(profileContextError);
+      }
+
+      const capabilityToolEntries = this.capabilityRegistry.getRuntimeTools({
+        workspaceId: task.workspaceId,
+        runId: run.id,
+      });
+      const invalidCapabilityToolEntry = capabilityToolEntries.find((entry) => entry == null || typeof entry !== 'object' || !('tool' in entry) || !entry.tool);
+      if (invalidCapabilityToolEntry) {
+        runLog.error('invalid capability tool entry', {
+          entry: invalidCapabilityToolEntry as unknown as Record<string, unknown>,
+        });
+      }
+      const coreToolNames = this.createCoreRuntimeTools(task, run.id).map((tool) => tool.name);
+      const capabilityToolNames = capabilityToolEntries.map((entry) => entry.tool.name);
+      const allRuntimeToolNames = Array.from(new Set([...coreToolNames, ...capabilityToolNames])).sort();
+      const allCapabilityIds = this.capabilityRegistry.listCapabilities().map((capability) => capability.id).sort();
+      const allowedCapabilityIds = profile.allowedCapabilityIds.length > 0 ? profile.allowedCapabilityIds : allCapabilityIds;
+      const allowedRuntimeTools = profile.allowedRuntimeTools.length > 0 ? profile.allowedRuntimeTools : allRuntimeToolNames;
+      const warnings: string[] = [];
+      const envelope = buildExecutionEnvelope({
+        runId: run.id,
+        task,
+        profile,
+        engineKind: this.config.engine.kind,
+        allowedRuntimeTools,
+        allowedCapabilityIds,
+        workspaceRootPath: workspace.rootPath,
+        projectPath: project?.path ?? null,
+        sessionPolicy: 'dedicated',
+        warnings,
+        scratchRoot: `${this.databases.paths.stateDir}/scratch/${run.id}`,
+      });
+      mkdirSync(envelope.scratchRoot, { recursive: true });
+      this.persistExecutionEnvelope(envelope);
+
       const engineRequest: EngineRunRequest = {
         prompt: fullPrompt,
         workspaceId: task.workspaceId,
         projectId: task.projectId,
         instructionSnapshotId: instructionBundle.id,
-        ...(taskCwd !== undefined && { cwd: taskCwd }),
+        ...(envelope.cwd ? { cwd: envelope.cwd } : {}),
         sessionPolicy: { type: 'dedicated', rootId: sessionRoot.id },
         trigger: {
           source: task.source,
           timestamp: run.startedAt,
         },
-        runtimeTools: this.createRuntimeTools(task),
+        runtimeTools: this.createRuntimeTools(task, run.id, envelope),
       };
       const handle = await this.engine.startRun(engineRequest, {
         onEvent: (event) => this.persistEngineEvent(run.id, event),
@@ -2190,7 +2666,10 @@ export class PopeyeRuntimeService {
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
       const safeMessage = this.redactError(rawMessage) ?? rawMessage;
-      runLog.error('run startup failed', { error: safeMessage });
+      runLog.error('run startup failed', {
+        error: safeMessage,
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+      });
       this.releaseWorkspaceLock(job.workspaceId);
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), safeMessage, run.id);
@@ -3329,6 +3808,8 @@ export class PopeyeRuntimeService {
       },
       approvalRequest: (input) => this.requestApproval(input),
       contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
+      getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
+      authorizeContextRelease: (input) => this.authorizeContextRelease(input),
       events: this.events,
     };
   }

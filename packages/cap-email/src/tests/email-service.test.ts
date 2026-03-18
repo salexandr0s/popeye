@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import type { CapabilityContext } from '@popeye/contracts';
 
 import { EmailService } from '../email-service.js';
 import { getEmailMigrations } from '../migrations.js';
@@ -39,7 +40,7 @@ describe('EmailService', () => {
     const setup = setupDb();
     db = setup.db;
     cleanup = setup.cleanup;
-    svc = new EmailService(db as unknown as import('@popeye/contracts').CapabilityContext['appDb']);
+    svc = new EmailService(db as unknown as CapabilityContext['appDb']);
   });
 
   afterEach(() => {

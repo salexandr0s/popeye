@@ -8,7 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean --concurrency=1 && rm -rf coverage .vitest-coverage",
-    "dev-verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
+    "dev-verify": "pnpm lint && pnpm typecheck && pnpm verify:src-build-artifacts && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
     "lint": "eslint . --max-warnings=0",
     "security:deps": "pnpm audit --audit-level=high",
     "security:sast": "eslint . --max-warnings=0",
@@ -18,6 +18,7 @@
     "test:pi-smoke": "vitest run packages/engine-pi/src/pi.smoke.test.ts",
     "verify:pi-boundary": "node scripts/check-pi-boundary.mjs",
     "verify:pi-checkout": "node scripts/check-pi-checkout.mjs",
+    "verify:src-build-artifacts": "node scripts/check-src-build-artifacts.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:swift": "tsx scripts/generate-swift-models.ts",
     "pack:cli": "pnpm --filter @popeye/cli exec tsup",

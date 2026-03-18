@@ -11,6 +11,7 @@ function createDeps(): SchedulerDeps & { app: Database.Database } {
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
       project_id TEXT,
+      profile_id TEXT NOT NULL DEFAULT 'default',
       title TEXT NOT NULL,
       prompt TEXT NOT NULL,
       source TEXT NOT NULL,
@@ -101,9 +102,9 @@ describe('TaskManager', () => {
 
     deps.app
       .prepare(
-        'INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run('task-bad', 'ws-1', null, 'Broken task', 'Prompt', 'manual', 'active', JSON.stringify({ maxAttempts: 'bad' }), 'read_only', null, '2026-03-14T00:00:00.000Z');
+      .run('task-bad', 'ws-1', null, 'default', 'Broken task', 'Prompt', 'manual', 'active', JSON.stringify({ maxAttempts: 'bad' }), 'read_only', null, '2026-03-14T00:00:00.000Z');
 
     expect(() => manager.getTask('task-bad')).toThrow();
   });

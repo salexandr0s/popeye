@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { TodoistAdapter } from '../providers/todoist-adapter.js';
 
+type RequestInit = globalThis.RequestInit;
+
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 

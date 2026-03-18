@@ -40,7 +40,10 @@ The control API binds to `127.0.0.1` only. No remote access, no TLS termination,
 
 ### Multi-tenant auth
 
-There is one operator, one auth token (with rotation support). No user management, no roles, no OAuth.
+There is no multi-user identity system, no OAuth, and no tenant management.
+Popeye may use local role-scoped tokens (`operator`, `service`, `readonly`) for
+least-privilege access on the same machine, but that is not a multi-tenant auth
+system.
 
 ### Open registration
 

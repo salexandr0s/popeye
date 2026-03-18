@@ -139,6 +139,10 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 6. Symlinks `pop` → `<prefix>/pop`
 7. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
 
+Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
+`src/*.d.ts`, and sourcemap artifacts are intentionally rejected by
+`pnpm verify:src-build-artifacts`.
+
 ### Where things end up
 
 | Artifact | Location |

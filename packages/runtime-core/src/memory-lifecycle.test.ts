@@ -27,6 +27,8 @@ function createMemoryDb(): Database.Database {
       content TEXT NOT NULL,
       confidence REAL NOT NULL,
       scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
       memory_type TEXT NOT NULL DEFAULT 'episodic',
       dedup_key TEXT,
       last_reinforced_at TEXT,
@@ -60,6 +62,106 @@ function createMemoryDb(): Database.Database {
       source_ref TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE memory_namespaces (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      external_ref TEXT,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_tags (
+      id TEXT PRIMARY KEY,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_artifacts (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      classification TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      namespace_id TEXT NOT NULL,
+      source_run_id TEXT,
+      source_ref TEXT,
+      source_ref_type TEXT,
+      captured_at TEXT NOT NULL,
+      occurred_at TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE memory_facts (
+      id TEXT PRIMARY KEY,
+      namespace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      classification TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      memory_type TEXT NOT NULL,
+      fact_kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source_reliability REAL NOT NULL,
+      extraction_confidence REAL NOT NULL,
+      human_confirmed INTEGER NOT NULL DEFAULT 0,
+      occurred_at TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      source_run_id TEXT,
+      source_timestamp TEXT,
+      dedup_key TEXT,
+      last_reinforced_at TEXT,
+      archived_at TEXT,
+      created_at TEXT NOT NULL,
+      durable INTEGER NOT NULL DEFAULT 0,
+      revision_status TEXT NOT NULL DEFAULT 'active'
+    );
+    CREATE UNIQUE INDEX idx_memory_facts_dedup_key ON memory_facts(dedup_key) WHERE dedup_key IS NOT NULL;
+    CREATE TABLE memory_fact_sources (
+      id TEXT PRIMARY KEY,
+      fact_id TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      excerpt TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_memory_fact_sources_pair ON memory_fact_sources(fact_id, artifact_id);
+    CREATE TABLE memory_revisions (
+      id TEXT PRIMARY KEY,
+      relation_type TEXT NOT NULL,
+      source_fact_id TEXT NOT NULL,
+      target_fact_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_syntheses (
+      id TEXT PRIMARY KEY,
+      namespace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      classification TEXT NOT NULL,
+      synthesis_kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      text TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      refresh_policy TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
+    );
+    CREATE TABLE memory_synthesis_sources (
+      id TEXT PRIMARY KEY,
+      synthesis_id TEXT NOT NULL,
+      fact_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE memory_facts_fts USING fts5(fact_id UNINDEXED, text);
+    CREATE VIRTUAL TABLE memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);
     CREATE TABLE memory_events (
       id TEXT PRIMARY KEY,
       memory_id TEXT NOT NULL,
@@ -554,6 +656,21 @@ describe('MemoryLifecycleService', () => {
       expect(row!.source_type).toBe('daily_summary');
       expect(row!.scope).toBe('default');
     });
+
+    it('creates a structured daily synthesis with evidence links', () => {
+      appDb.prepare(
+        'INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run('r1', 'run-1', 'job-1', 'task-1', 'default', 'succeeded', 'ok', '{}', '{}', '2026-03-13T10:00:00.000Z');
+
+      service.generateDailySummary('2026-03-13', 'default');
+
+      const synthesis = memoryDb.prepare("SELECT id, synthesis_kind, title FROM memory_syntheses WHERE synthesis_kind = 'daily'").get() as { id: string; synthesis_kind: string; title: string } | undefined;
+      expect(synthesis).toBeTruthy();
+      expect(synthesis?.title).toContain('Daily summary for 2026-03-13');
+
+      const evidence = memoryDb.prepare('SELECT COUNT(*) as c FROM memory_synthesis_sources WHERE synthesis_id = ?').get(synthesis?.id) as { c: number };
+      expect(evidence.c).toBeGreaterThan(0);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -878,6 +995,32 @@ describe('MemoryLifecycleService', () => {
       expect(source).toBeTruthy();
       expect(source!.source_ref).toBe('run-123');
       expect(source!.source_type).toBe('run');
+    });
+
+    it('dual-writes structured artifacts and facts for receipt memories', () => {
+      service.insertMemory({
+        description: 'Run failed due to missing credentials',
+        classification: 'sensitive',
+        sourceType: 'receipt',
+        content: 'The deployment failed because the API credentials were missing from the environment.',
+        confidence: 1,
+        scope: 'default',
+        memoryType: 'episodic',
+        sourceRef: 'receipt-123',
+        sourceRefType: 'receipt',
+        sourceRunId: 'run-123',
+        sourceTimestamp: '2026-03-18T12:00:00.000Z',
+        tags: ['receipt', 'failure'],
+      });
+
+      const artifact = memoryDb.prepare('SELECT source_ref, scope FROM memory_artifacts WHERE source_ref = ?').get('receipt-123') as { source_ref: string; scope: string } | undefined;
+      expect(artifact).toEqual({ source_ref: 'receipt-123', scope: 'default' });
+
+      const factCount = memoryDb.prepare("SELECT COUNT(*) as c FROM memory_facts WHERE source_type = 'receipt'").get() as { c: number };
+      expect(factCount.c).toBeGreaterThan(0);
+
+      const linkedCount = memoryDb.prepare('SELECT COUNT(*) as c FROM memory_fact_sources').get() as { c: number };
+      expect(linkedCount.c).toBeGreaterThan(0);
     });
   });
 

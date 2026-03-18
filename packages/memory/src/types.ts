@@ -1,12 +1,29 @@
 /**
  * Type definitions for the memory package.
  *
- * MemorySearchResult and MemorySearchResponse are the single source of truth
- * from @popeye/contracts. MemoryRecord remains local because the internal
- * field shapes (loose classification union) diverge from the contract schema.
+ * Contract schemas remain the source of truth for public shapes. The local
+ * MemoryRecord shape is broader because the compatibility layer still serves
+ * legacy `memories` rows while newer recall records can expose optional layered
+ * metadata.
  */
 
-export type { MemoryType, MemorySearchResult, MemorySearchResponse } from '@popeye/contracts';
+export type {
+  MemoryType,
+  MemoryLayer,
+  MemoryFactKind,
+  MemorySynthesisKind,
+  MemoryNamespaceRecord,
+  MemoryArtifactRecord,
+  MemoryFactRecord,
+  MemorySynthesisRecord,
+  MemoryRevisionRecord,
+  MemorySearchResult,
+  MemorySearchResponse,
+  RecallExplanation,
+  RecallPlan,
+  TemporalConstraint,
+  RevisionStatus,
+} from '@popeye/contracts';
 
 export interface MemoryRecord {
   id: string;
@@ -16,6 +33,8 @@ export interface MemoryRecord {
   content: string;
   confidence: number;
   scope: string;
+  workspaceId: string | null;
+  projectId: string | null;
   sourceRunId: string | null;
   sourceTimestamp: string | null;
   memoryType: 'episodic' | 'semantic' | 'procedural';
@@ -24,6 +43,13 @@ export interface MemoryRecord {
   archivedAt: string | null;
   createdAt: string;
   durable: boolean;
+  layer?: 'artifact' | 'fact' | 'synthesis' | 'curated' | undefined;
+  namespaceId?: string | undefined;
+  occurredAt?: string | null | undefined;
+  validFrom?: string | null | undefined;
+  validTo?: string | null | undefined;
+  revisionStatus?: 'active' | 'superseded' | undefined;
+  evidenceCount?: number | undefined;
 }
 
 export interface StoreMemoryResult {

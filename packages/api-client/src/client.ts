@@ -13,6 +13,10 @@ import {
   DaemonStateRecordSchema,
   type DaemonStatusResponse,
   DaemonStatusResponseSchema,
+  type EngineCapabilitiesResponse,
+  EngineCapabilitiesResponseSchema,
+  type ExecutionEnvelopeResponse,
+  ExecutionEnvelopeResponseSchema,
   type HealthResponse,
   HealthResponseSchema,
   type InterventionRecord,
@@ -136,8 +140,6 @@ import {
   type CalendarSearchResult,
   CalendarAvailabilitySlotSchema,
   type CalendarAvailabilitySlot,
-  type CalendarSyncResult,
-  CalendarSyncResultSchema,
   type TodoAccountRecord,
   TodoAccountRecordSchema,
   type TodoAccountRegistrationInput,
@@ -147,10 +149,7 @@ import {
   TodoDigestRecordSchema,
   TodoSearchResultSchema,
   type TodoSearchResult,
-  type TodoSyncResult,
-  TodoSyncResultSchema,
   type TodoCreateInput,
-  TodoCreateInputSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -161,6 +160,9 @@ export interface PopeyeApiClientOptions {
 export interface MemorySearchOptions {
   query: string;
   scope?: string;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  includeGlobal?: boolean;
   memoryTypes?: MemoryType[];
   limit?: number;
   includeContent?: boolean;
@@ -169,6 +171,9 @@ export interface MemorySearchOptions {
 export interface MemoryListOptions {
   type?: string;
   scope?: string;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  includeGlobal?: boolean;
   limit?: number;
 }
 
@@ -302,6 +307,10 @@ export class PopeyeApiClient {
     return this.get('/v1/status', DaemonStatusResponseSchema);
   }
 
+  async engineCapabilities(): Promise<EngineCapabilitiesResponse> {
+    return this.get('/v1/engine/capabilities', EngineCapabilitiesResponseSchema);
+  }
+
   async daemonState(): Promise<DaemonStateRecord> {
     return this.get('/v1/daemon/state', DaemonStateRecordSchema);
   }
@@ -320,6 +329,18 @@ export class PopeyeApiClient {
 
   async listAgentProfiles(): Promise<AgentProfileListItem[]> {
     return this.getArray('/v1/agent-profiles', AgentProfileListItemSchema);
+  }
+
+  async listProfiles(): Promise<AgentProfileListItem[]> {
+    return this.getArray('/v1/profiles', AgentProfileListItemSchema);
+  }
+
+  async getProfile(id: string): Promise<AgentProfileListItem> {
+    return this.get(`/v1/profiles/${encodeURIComponent(id)}`, AgentProfileListItemSchema);
+  }
+
+  async getRunEnvelope(runId: string): Promise<ExecutionEnvelopeResponse> {
+    return this.get(`/v1/runs/${encodeURIComponent(runId)}/envelope`, ExecutionEnvelopeResponseSchema);
   }
 
   async listTasks(): Promise<TaskRecord[]> {
@@ -518,6 +539,9 @@ export class PopeyeApiClient {
       `/v1/memory/search${this.buildQuery({
         q: options.query,
         scope: options.scope,
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        includeGlobal: options.includeGlobal,
         types: options.memoryTypes?.join(','),
         limit: options.limit,
         full: options.includeContent,
@@ -532,7 +556,14 @@ export class PopeyeApiClient {
 
   async listMemories(options: MemoryListOptions = {}): Promise<MemoryRecord[]> {
     return this.getArray(
-      `/v1/memory${this.buildQuery({ type: options.type, scope: options.scope, limit: options.limit })}`,
+      `/v1/memory${this.buildQuery({
+        type: options.type,
+        scope: options.scope,
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        includeGlobal: options.includeGlobal,
+        limit: options.limit,
+      })}`,
       MemoryRecordSchema,
     );
   }

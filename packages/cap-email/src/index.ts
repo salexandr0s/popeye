@@ -10,6 +10,7 @@ import { EmailDigestService } from './email-digest.js';
 import { EmailSearchService } from './email-search.js';
 import { createEmailTools } from './tools.js';
 import { getEmailMigrations } from './migrations.js';
+import type { EmailProviderAdapter } from './providers/adapter-interface.js';
 
 export { EmailService } from './email-service.js';
 export { EmailSyncService } from './email-sync.js';
@@ -97,9 +98,9 @@ export function createEmailCapability(): CapabilityModule {
       return { healthy: emailService !== null && emailDb !== null };
     },
 
-    getRuntimeTools(_taskContext) {
+    getRuntimeTools(taskContext) {
       if (!emailService || !searchService || !digestService || !ctx) return [];
-      return createEmailTools(emailService, searchService, digestService, ctx);
+      return createEmailTools(emailService, searchService, digestService, ctx, taskContext);
     },
 
     getTimers() {
@@ -123,7 +124,7 @@ export function createEmailCapability(): CapabilityModule {
                   ctx.log.debug('Email sync timer — no adapter for account', { accountId: account.id });
                   continue;
                 }
-                const adapter = resolved.adapter as import('./providers/adapter-interface.js').EmailProviderAdapter;
+                const adapter = resolved.adapter as EmailProviderAdapter;
                 await syncService.syncAccount(account, adapter);
                 ctx.log.info('Email sync timer completed', { accountId: account.id });
               } catch (err) {

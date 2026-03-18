@@ -10,7 +10,40 @@ export function createCalendarTools(
   searchService: CalendarSearchService,
   digestService: CalendarDigestService,
   ctx: CapabilityContext,
+  taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
+  function authorizeRelease(input: {
+    sourceRef: string;
+    releaseLevel: 'summary';
+    tokenEstimate: number;
+    payloadPreview?: string;
+  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
+    if (!taskContext.runId || !ctx.authorizeContextRelease) {
+      return { ok: true };
+    }
+    const authorization = ctx.authorizeContextRelease({
+      runId: taskContext.runId,
+      domain: 'calendar',
+      sourceRef: input.sourceRef,
+      requestedLevel: input.releaseLevel,
+      tokenEstimate: input.tokenEstimate,
+      resourceType: 'calendar_context',
+      resourceId: input.sourceRef,
+      requestedBy: 'cap-calendar',
+      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
+    });
+    if (authorization.outcome === 'deny') {
+      return { ok: false, text: authorization.reason };
+    }
+    if (authorization.outcome === 'approval_required') {
+      return {
+        ok: false,
+        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
+      };
+    }
+    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
+  }
+
   return [
     {
       name: 'popeye_calendar_today',
@@ -54,10 +87,22 @@ export function createCalendarTools(
         });
         const text = lines.join('\n');
 
+        const release = authorizeRelease({
+          sourceRef: `calendar:today:${account.id}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(text.length / 4),
+          payloadPreview: `calendar today ${account.id}`,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'calendar',
           sourceRef: `calendar:today:${account.id}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(text.length / 4),
         });
 
@@ -101,10 +146,22 @@ export function createCalendarTools(
         });
         const text = lines.join('\n');
 
+        const release = authorizeRelease({
+          sourceRef: `calendar:search:${parsed.query}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(text.length / 4),
+          payloadPreview: parsed.query,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'calendar',
           sourceRef: `calendar:search:${parsed.query}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(text.length / 4),
         });
 
@@ -165,10 +222,22 @@ export function createCalendarTools(
           `${i + 1}. ${s.startTime.slice(11, 16)} - ${s.endTime.slice(11, 16)} (${s.durationMinutes}min)`,
         );
 
+        const release = authorizeRelease({
+          sourceRef: `calendar:availability:${parsed.date}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          payloadPreview: parsed.date,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'calendar',
           sourceRef: `calendar:availability:${parsed.date}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
           redacted: false,
         });
@@ -211,10 +280,22 @@ export function createCalendarTools(
         if (!parsed.date) {
           const latest = calendarService.getLatestDigest(account.id);
           if (latest && latest.date === new Date().toISOString().slice(0, 10)) {
+            const release = authorizeRelease({
+              sourceRef: `calendar:digest:${account.id}`,
+              releaseLevel: 'summary',
+              tokenEstimate: Math.ceil(latest.summaryMarkdown.length / 4),
+              payloadPreview: `calendar digest ${account.id}`,
+            });
+            if (!release.ok) {
+              return { content: [{ type: 'text', text: release.text }] };
+            }
+
             ctx.contextReleaseRecord({
               domain: 'calendar',
               sourceRef: `calendar:digest:${account.id}`,
               releaseLevel: 'summary',
+              ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+              ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
               tokenEstimate: Math.ceil(latest.summaryMarkdown.length / 4),
             });
             return { content: [{ type: 'text', text: latest.summaryMarkdown }], details: latest };
@@ -223,10 +304,22 @@ export function createCalendarTools(
 
         const digest = digestService.generateDigest(account, parsed.date);
 
+        const release = authorizeRelease({
+          sourceRef: `calendar:digest:${account.id}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(digest.summaryMarkdown.length / 4),
+          payloadPreview: `calendar digest ${account.id}`,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'calendar',
           sourceRef: `calendar:digest:${account.id}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(digest.summaryMarkdown.length / 4),
         });
 

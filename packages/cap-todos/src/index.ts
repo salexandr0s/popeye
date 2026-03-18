@@ -92,9 +92,9 @@ export function createTodosCapability(): CapabilityModule {
       return { healthy: todoService !== null && todosDb !== null };
     },
 
-    getRuntimeTools(_taskContext) {
+    getRuntimeTools(taskContext) {
       if (!todoService || !searchService || !digestService || !ctx) return [];
-      return createTodoTools(todoService, searchService, digestService, ctx);
+      return createTodoTools(todoService, searchService, digestService, ctx, taskContext);
     },
 
     getTimers() {

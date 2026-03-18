@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import type { CapabilityContext } from '@popeye/contracts';
 
 import { TodoService } from '../todo-service.js';
 import { getTodoMigrations } from '../migrations.js';
@@ -38,7 +39,7 @@ describe('TodoService', () => {
     const setup = setupDb();
     db = setup.db;
     cleanup = setup.cleanup;
-    svc = new TodoService(db as unknown as import('@popeye/contracts').CapabilityContext['appDb']);
+    svc = new TodoService(db as unknown as CapabilityContext['appDb']);
   });
 
   afterEach(() => {

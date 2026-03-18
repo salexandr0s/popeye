@@ -14,6 +14,8 @@ function createTestDb(): Database.Database {
       content TEXT NOT NULL,
       confidence REAL NOT NULL,
       scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
       memory_type TEXT NOT NULL DEFAULT 'episodic',
       dedup_key TEXT,
       last_reinforced_at TEXT,
@@ -136,7 +138,7 @@ describe('fts5-search', () => {
     db.close();
     const brokenDb = new Database(':memory:');
     // No FTS table exists — query will throw
-    brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT, durable INTEGER NOT NULL DEFAULT 0)');
+    brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, workspace_id TEXT, project_id TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT, durable INTEGER NOT NULL DEFAULT 0)');
     brokenDb.exec('CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content)');
     // Insert with invalid MATCH expression won't reach our try/catch since buildFts5MatchExpression sanitizes.
     // Drop the FTS virtual table to force a runtime error on the FTS path;
@@ -187,6 +189,8 @@ describe('stable memory_id FTS linkage', () => {
           content TEXT NOT NULL,
           confidence REAL NOT NULL,
           scope TEXT NOT NULL,
+          workspace_id TEXT,
+          project_id TEXT,
           memory_type TEXT NOT NULL DEFAULT 'episodic',
           dedup_key TEXT,
           last_reinforced_at TEXT,

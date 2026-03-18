@@ -20,14 +20,6 @@ function runGcalcli(args: string[]): Promise<string> {
   });
 }
 
-function parseJson<T>(raw: string, fallback: T): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 /** Deterministic event ID from start+end times. Stable across title edits. */
 function stableEventId(startTime: string, endTime: string): string {
   const hash = createHash('sha256')

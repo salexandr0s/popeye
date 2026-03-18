@@ -49,9 +49,9 @@ export function createFilesCapability(): CapabilityModule {
       return { healthy: rootService !== null };
     },
 
-    getRuntimeTools(_taskContext) {
+    getRuntimeTools(taskContext) {
       if (!rootService || !searchService || !ctx) return [];
-      return createFileTools(rootService, searchService, ctx);
+      return createFileTools(rootService, searchService, ctx, taskContext);
     },
 
     getTimers() {

@@ -10,6 +10,8 @@ import {
   AuthExchangeResponseSchema,
   CsrfTokenResponseSchema,
   DaemonStatusResponseSchema,
+  EngineCapabilitiesResponseSchema,
+  ExecutionEnvelopeResponseSchema,
   JobRecordSchema,
   MemoryPromotionResponseSchema,
   ProjectRecordSchema,
@@ -20,7 +22,7 @@ import {
   UsageSummarySchema,
   WorkspaceRecordSchema,
 } from '@popeye/contracts';
-import { createRuntimeService, initAuthStore } from '@popeye/runtime-core';
+import { createRuntimeService, initAuthStore, issueCsrfToken } from '@popeye/runtime-core';
 
 import { createControlApi } from './index.js';
 
@@ -172,6 +174,24 @@ describe('API contract tests', () => {
     await app.close();
   });
 
+  it('GET /v1/engine/capabilities conforms to EngineCapabilitiesResponseSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/engine/capabilities',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = EngineCapabilitiesResponseSchema.parse(response.json());
+    expect(parsed.engineKind).toBe('fake');
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('GET /v1/tasks conforms to TaskRecord array', async () => {
     const { store, runtime } = createTestEnv();
     const app = await createControlApi({ runtime });
@@ -237,6 +257,70 @@ describe('API contract tests', () => {
 
     expect(response.statusCode).toBe(200);
     z.array(RunRecordSchema).parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/runs/:id/envelope conforms to ExecutionEnvelopeResponseSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    runtime.startScheduler();
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'envelope-contract',
+      prompt: 'hello',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal!.run!.id}/envelope`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = ExecutionEnvelopeResponseSchema.parse(response.json());
+    expect(parsed.runId).toBe(terminal!.run!.id);
+    expect(parsed.profileId).toBe('default');
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/tasks returns invalid_profile for unknown profiles', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-popeye-csrf': issueCsrfToken(store),
+      },
+      payload: {
+        workspaceId: 'default',
+        projectId: null,
+        profileId: 'missing-profile',
+        title: 'bad task',
+        prompt: 'hello',
+        source: 'manual',
+        autoEnqueue: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        error: 'invalid_profile',
+      }),
+    );
 
     await runtime.close();
     await app.close();
@@ -370,6 +454,45 @@ describe('API contract tests', () => {
     expect(response.statusCode).toBe(200);
     const parsed = z.array(AgentProfileRecordSchema).parse(response.json());
     expect(Array.isArray(parsed)).toBe(true);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/profiles conforms to AgentProfileRecord array', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/profiles',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = z.array(AgentProfileRecordSchema).parse(response.json());
+    expect(parsed[0]).toMatchObject({
+      id: 'default',
+      mode: 'interactive',
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/profiles/:id conforms to AgentProfileRecordSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/profiles/default',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = AgentProfileRecordSchema.parse(response.json());
+    expect(parsed.id).toBe('default');
 
     await runtime.close();
     await app.close();

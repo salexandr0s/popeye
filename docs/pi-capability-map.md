@@ -16,6 +16,7 @@ These capabilities are delegated to Pi through `@popeye/engine-pi`:
 | RPC contract | JSONL command/response protocol in `--mode rpc` (`get_state`, `prompt`, `abort`, etc.) |
 | Event streaming | Producing `AgentSessionEvent` objects on stdout during RPC execution |
 | Coding agent capability | Generic coding-agent features (file editing, search, etc.) |
+| Capability self-report | Reporting adapter-level `EngineCapabilities` to the runtime |
 
 ## Popeye wraps (via @popeye/engine-pi)
 
@@ -61,6 +62,7 @@ The `EngineAdapter` interface abstracts the engine:
 
 ```typescript
 interface EngineAdapter {
+  getCapabilities(): EngineCapabilities;
   startRun(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunHandle>;
   run(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunResult>;
 }
@@ -74,9 +76,32 @@ interface EngineAdapter {
   semantics: `workspaceId`, `projectId`, `sessionPolicy`,
   `instructionSnapshotId`, `trigger`
 
+At run start, Popeye resolves an `ExecutionEnvelope` first and then passes the
+envelope-derived `cwd` plus the filtered runtime tool set into the engine
+request. The adapter remains engine-focused; envelope enforcement lives in the
+runtime layer.
+
 Two implementations exist:
 
 - **FakeEngineAdapter** -- returns deterministic echo responses. Used in tests and when `config.engine.kind === "fake"`.
 - **PiEngineAdapter** -- spawns a real Pi child process in RPC mode. Used when `config.engine.kind === "pi"` and a valid Pi checkout is available at `config.engine.piPath`.
 
 The `createEngineAdapter()` factory selects the implementation based on config.
+
+## Runtime-visible engine capabilities
+
+`EngineCapabilities` is now exposed end-to-end through:
+
+- runtime: `PopeyeRuntimeService.getEngineCapabilities()`
+- control API: `GET /v1/engine/capabilities`
+- CLI: `pop daemon health`
+- web inspector: dashboard engine capability cards
+
+The current adapter contract makes degraded engine posture explicit, especially:
+
+- host tool mode (`none`, `native`, `bridge`, `native_with_fallback`)
+- persistent session support
+- resume-by-session-ref support
+- compaction event support
+- cancellation semantics
+- accepted request metadata and adapter warnings

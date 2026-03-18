@@ -11,8 +11,42 @@ export function createEmailTools(
   searchService: EmailSearchService,
   digestService: EmailDigestService,
   ctx: CapabilityContext,
+  taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
   const redactionPatterns = extractRedactionPatterns(ctx.config);
+
+  function authorizeRelease(input: {
+    sourceRef: string;
+    releaseLevel: 'summary' | 'excerpt';
+    tokenEstimate: number;
+    payloadPreview?: string;
+    redacted?: boolean;
+  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
+    if (!taskContext.runId || !ctx.authorizeContextRelease) {
+      return { ok: true };
+    }
+    const authorization = ctx.authorizeContextRelease({
+      runId: taskContext.runId,
+      domain: 'email',
+      sourceRef: input.sourceRef,
+      requestedLevel: input.releaseLevel,
+      tokenEstimate: input.tokenEstimate,
+      resourceType: 'email',
+      resourceId: input.sourceRef,
+      requestedBy: 'cap-email',
+      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
+    });
+    if (authorization.outcome === 'deny') {
+      return { ok: false, text: authorization.reason };
+    }
+    if (authorization.outcome === 'approval_required') {
+      return {
+        ok: false,
+        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
+      };
+    }
+    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
+  }
 
   return [
     {
@@ -133,11 +167,22 @@ export function createEmailTools(
           lines.push(`**Snippet:** ${msg.snippet}`);
         }
 
-        // Record context release — thread summary level
+        const release = authorizeRelease({
+          sourceRef: `email:thread:${thread.id}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          payloadPreview: thread.subject,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'email',
           sourceRef: `email:thread:${thread.id}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
         });
 
@@ -181,11 +226,23 @@ export function createEmailTools(
         lines.push('');
         lines.push(redactedPreview.length > 0 ? redactedPreview : redactText(message.snippet, redactionPatterns).text);
 
-        // Record context release — full message content
+        const release = authorizeRelease({
+          sourceRef: `email:message:${message.id}`,
+          releaseLevel: 'excerpt',
+          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          payloadPreview: message.subject,
+          redacted: true,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'email',
           sourceRef: `email:message:${message.id}`,
           releaseLevel: 'excerpt',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
           redacted: true,
         });

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -850,6 +850,159 @@ describe('control api', () => {
     expect(executed.statusCode).toBe(200);
     expect(executed.json()).toMatchObject({ memoryId, targetPath, approved: true, promoted: true });
     expect(readFileSync(targetPath, 'utf8')).toBe('Promoted memory body');
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('keeps memory routes operator-only for readonly/service tokens and records forbidden audits', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-memory-roles-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const operatorStore = initAuthStore(authFile);
+    initAuthStore(authFile, 'service');
+    initAuthStore(authFile, 'readonly');
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const readonlyToken = readAuthStore(authFile, 'readonly').current.token;
+    const serviceToken = readAuthStore(authFile, 'service').current.token;
+    const operatorCsrf = issueCsrfToken(readAuthStore(authFile));
+    const serviceCsrf = issueCsrfToken(readAuthStore(authFile, 'service'));
+
+    const readonlySearch = await app.inject({
+      method: 'GET',
+      url: '/v1/memory/search?q=test',
+      headers: { authorization: `Bearer ${readonlyToken}` },
+    });
+    expect(readonlySearch.statusCode).toBe(403);
+
+    const serviceSearch = await app.inject({
+      method: 'GET',
+      url: '/v1/memory/search?q=test',
+      headers: { authorization: `Bearer ${serviceToken}` },
+    });
+    expect(serviceSearch.statusCode).toBe(403);
+
+    const serviceMaintenance = await app.inject({
+      method: 'POST',
+      url: '/v1/memory/maintenance',
+      headers: {
+        authorization: `Bearer ${serviceToken}`,
+        'x-popeye-csrf': serviceCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(serviceMaintenance.statusCode).toBe(403);
+
+    const operatorSearch = await app.inject({
+      method: 'GET',
+      url: '/v1/memory/search?q=test',
+      headers: { authorization: `Bearer ${operatorStore.current.token}` },
+    });
+    expect(operatorSearch.statusCode).toBe(200);
+
+    const operatorMaintenance = await app.inject({
+      method: 'POST',
+      url: '/v1/memory/maintenance',
+      headers: {
+        authorization: `Bearer ${operatorStore.current.token}`,
+        'x-popeye-csrf': operatorCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(operatorMaintenance.statusCode).toBe(200);
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'auth_role_forbidden', severity: 'warn' })]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('allows browser-session operator auth on explicit operator-only memory routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-memory-browser-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({
+      runtime,
+      authExemptPaths: new Set(['/v1/auth/exchange']),
+      validateAuthExchangeNonce: (nonce) => nonce === 'accepted-nonce' ? 'accepted' : 'invalid',
+    });
+
+    const exchange = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'accepted-nonce' },
+    });
+    expect(exchange.statusCode).toBe(200);
+    const authCookie = Array.isArray(exchange.headers['set-cookie'])
+      ? exchange.headers['set-cookie'][0]
+      : exchange.headers['set-cookie'];
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/memory/search?q=test',
+      headers: { cookie: authCookie ?? '' },
+    });
+    expect(response.statusCode).toBe(200);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('accepts legacy single-token auth files on operator-only memory routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-legacy-auth-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const now = new Date().toISOString();
+    const legacyToken = 'a'.repeat(64);
+    writeFileSync(authFile, JSON.stringify({
+      current: {
+        token: legacyToken,
+        createdAt: now,
+      },
+    }, null, 2), { mode: 0o600 });
+
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/memory/search?q=test',
+      headers: { authorization: `Bearer ${legacyToken}` },
+    });
+    expect(response.statusCode).toBe(200);
 
     await runtime.close();
     await app.close();

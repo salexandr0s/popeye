@@ -3,7 +3,10 @@ import { useApi } from './provider';
 import { readBootstrapNonce } from './bootstrap';
 
 import type {
+  AgentProfileRecord,
   DaemonStatusResponse,
+  EngineCapabilitiesResponse,
+  ExecutionEnvelopeResponse,
   RunRecord,
   RunEventRecord,
   JobRecord,
@@ -23,6 +26,7 @@ import type {
 // Re-export contract types for view convenience
 export type { RunRecord, RunEventRecord, JobRecord, TaskRecord, ReceiptRecord, InterventionRecord, SecurityAuditFinding };
 export type { MemorySearchResult, MemorySearchResponse };
+export type { AgentProfileRecord, EngineCapabilitiesResponse, ExecutionEnvelopeResponse };
 export type InstructionBundle = CompiledInstructionBundle;
 
 interface PollingResult<T> {
@@ -227,12 +231,20 @@ export function useDaemonStatus() {
   return usePolling<DaemonStatusResponse>('/v1/status', 5000);
 }
 
+export function useEngineCapabilities() {
+  return usePolling<EngineCapabilitiesResponse>('/v1/engine/capabilities', 10000);
+}
+
 export function useRuns() {
   return usePolling<RunRecord[]>('/v1/runs', 3000);
 }
 
 export function useRun(id: string | undefined) {
   return useFetch<RunRecord>(id ? `/v1/runs/${id}` : null);
+}
+
+export function useRunEnvelope(runId: string | undefined) {
+  return useFetch<ExecutionEnvelopeResponse>(runId ? `/v1/runs/${runId}/envelope` : null);
 }
 
 export function useRunEvents(runId: string | undefined) {
@@ -257,6 +269,14 @@ export function useInterventions() {
 
 export function useTasks() {
   return useFetch<TaskRecord[]>('/v1/tasks');
+}
+
+export function useProfiles() {
+  return useFetch<AgentProfileRecord[]>('/v1/profiles');
+}
+
+export function useProfile(id: string | undefined) {
+  return useFetch<AgentProfileRecord>(id ? `/v1/profiles/${id}` : null);
 }
 
 export function useSchedulerStatus() {

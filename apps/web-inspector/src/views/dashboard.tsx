@@ -2,7 +2,7 @@ import { Card } from '../components/card';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
 import { PageHeader } from '../components/page-header';
-import { useDaemonStatus, useSchedulerStatus, useUsageSummary } from '../api/hooks';
+import { useDaemonStatus, useEngineCapabilities, useSchedulerStatus, useUsageSummary } from '../api/hooks';
 
 function formatUptime(startedAt: string): string {
   const start = new Date(startedAt).getTime();
@@ -24,6 +24,7 @@ function formatUptime(startedAt: string): string {
 
 export function Dashboard() {
   const { data: status, error: statusError, loading: statusLoading } = useDaemonStatus();
+  const { data: engine } = useEngineCapabilities();
   const { data: scheduler } = useSchedulerStatus();
   const { data: usage } = useUsageSummary();
 
@@ -92,6 +93,29 @@ export function Dashboard() {
             <Card label="Estimated Cost" value="--" />
           </>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[16px] mt-[16px]">
+        <Card
+          label="Host Tools"
+          value={engine?.hostToolMode ?? '--'}
+          description={engine ? `Cancellation: ${engine.cancellationMode}` : undefined}
+        />
+        <Card
+          label="Sessions"
+          value={engine?.persistentSessionSupport ? 'Persistent' : engine ? 'Ephemeral' : '--'}
+          description={engine ? `Resume by ref: ${engine.resumeBySessionRefSupport ? 'Yes' : 'No'}` : undefined}
+        />
+        <Card
+          label="Compaction"
+          value={engine?.compactionEventSupport ? 'Supported' : engine ? 'Unavailable' : '--'}
+          description={engine ? engine.warnings[0] : undefined}
+        />
+        <Card
+          label="Accepted Metadata"
+          value={engine?.acceptedRequestMetadata.length ?? '--'}
+          description={engine ? engine.acceptedRequestMetadata.slice(0, 2).join(', ') || undefined : undefined}
+        />
       </div>
     </div>
   );

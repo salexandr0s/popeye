@@ -31,7 +31,7 @@ These were evaluated and explicitly excluded. Each omission is documented with r
 | Donor UI stack | Interfaces are built independently against the control API. |
 | Donor config schemas | Popeye uses its own Zod-validated config. |
 | Open registration flows | Allowlist-only. No self-service. |
-| Multi-tenant identity | One operator, one auth token. |
+| Multi-tenant identity | Local single-operator platform; role-scoped local tokens only, no tenant/user system. |
 
 ## When adapting from OpenClaw
 

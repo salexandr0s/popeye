@@ -11,6 +11,8 @@ function makeFtsCandidate(overrides: Partial<FtsCandidate> & { memoryId: string 
     memoryType: 'semantic',
     confidence: 0.8,
     scope: 'workspace',
+    workspaceId: 'workspace',
+    projectId: null,
     sourceType: 'curated_memory',
     createdAt: new Date().toISOString(),
     lastReinforcedAt: null,
@@ -69,11 +71,14 @@ describe('rerankAndMerge', () => {
 
   it('applies scope match scoring', () => {
     const ftsCandidates: FtsCandidate[] = [
-      makeFtsCandidate({ memoryId: 'match', scope: 'ws-1', ftsRank: -1 }),
-      makeFtsCandidate({ memoryId: 'no-match', scope: 'ws-2', ftsRank: -1 }),
+      makeFtsCandidate({ memoryId: 'match', scope: 'ws-1', workspaceId: 'ws-1', ftsRank: -1 }),
+      makeFtsCandidate({ memoryId: 'no-match', scope: 'ws-2', workspaceId: 'ws-2', ftsRank: -1 }),
     ];
 
-    const results = rerankAndMerge(ftsCandidates, [], { halfLifeDays: 30, queryScope: 'ws-1' });
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      queryLocation: { workspaceId: 'ws-1', projectId: null },
+    });
 
     const matchResult = results.find((r) => r.memoryId === 'match')!;
     const noMatchResult = results.find((r) => r.memoryId === 'no-match')!;

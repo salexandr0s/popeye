@@ -1,50 +1,120 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { AuthRotationRecordSchema, type AuthRotationRecord } from '@popeye/contracts';
+import {
+  AuthRoleStoreSchema,
+  AuthRotationRecordSchema,
+  AuthStoreFileSchema,
+  type AuthRole,
+  type AuthRoleStore,
+  type AuthRotationRecord,
+  type AuthStoreFile,
+} from '@popeye/contracts';
 
 export const AUTH_COOKIE_NAME = 'popeye_auth';
 export const CSRF_COOKIE_NAME = 'popeye_csrf';
+
+const AUTH_ROLES: AuthRole[] = ['operator', 'service', 'readonly'];
+
+export interface ResolvedBearerPrincipal {
+  role: AuthRole;
+  record: AuthRotationRecord;
+}
 
 export function generateToken(): string {
   return randomBytes(32).toString('hex');
 }
 
-export function initAuthStore(path: string): AuthRotationRecord {
-  const now = new Date().toISOString();
-  const record: AuthRotationRecord = {
+function createRotationRecord(now = new Date().toISOString()): AuthRotationRecord {
+  return {
     current: {
       token: generateToken(),
       createdAt: now,
     },
   };
-  persistAuthStore(path, record);
+}
+
+export function normalizeAuthStore(input: AuthStoreFile): AuthRoleStore {
+  if ('roles' in input) {
+    return AuthRoleStoreSchema.parse(input);
+  }
+  return AuthRoleStoreSchema.parse({
+    version: 2,
+    roles: {
+      operator: AuthRotationRecordSchema.parse(input),
+    },
+  });
+}
+
+export function readRoleAuthStore(path: string): AuthRoleStore {
+  const raw = AuthStoreFileSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  return normalizeAuthStore(raw);
+}
+
+export function persistRoleAuthStore(path: string, record: AuthRoleStore): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify(AuthRoleStoreSchema.parse(record), null, 2), { mode: 0o600 });
+}
+
+export function initAuthStore(path: string, role: AuthRole = 'operator'): AuthRotationRecord {
+  const now = new Date().toISOString();
+  const store = existsSync(path)
+    ? readRoleAuthStore(path)
+    : AuthRoleStoreSchema.parse({
+        version: 2,
+        roles: {
+          operator: createRotationRecord(now),
+        },
+      });
+
+  if (!store.roles.operator) {
+    store.roles.operator = createRotationRecord(now);
+  }
+  if (!store.roles[role]) {
+    store.roles[role] = role === 'operator' ? store.roles.operator : createRotationRecord(now);
+  }
+
+  persistRoleAuthStore(path, store);
+  return store.roles[role]!;
+}
+
+export function readAuthStore(path: string, role: AuthRole = 'operator'): AuthRotationRecord {
+  const store = readRoleAuthStore(path);
+  const record = store.roles[role];
+  if (!record) {
+    throw new Error(`Auth token for role ${role} not found`);
+  }
   return record;
 }
 
-export function readAuthStore(path: string): AuthRotationRecord {
-  return AuthRotationRecordSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+export function persistAuthStore(path: string, record: AuthRotationRecord, role: AuthRole = 'operator'): void {
+  const store = existsSync(path)
+    ? readRoleAuthStore(path)
+    : AuthRoleStoreSchema.parse({
+        version: 2,
+        roles: {
+          operator: createRotationRecord(),
+        },
+      });
+
+  if (!store.roles.operator) {
+    store.roles.operator = createRotationRecord();
+  }
+  store.roles[role] = AuthRotationRecordSchema.parse(record);
+  if (role === 'operator') {
+    store.roles.operator = AuthRotationRecordSchema.parse(record);
+  }
+  persistRoleAuthStore(path, store);
 }
 
-export function persistAuthStore(path: string, record: AuthRotationRecord): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 });
-}
-
-// Security trade-off: default 24h overlap window balances operational continuity
-// against token exposure. Callers can pass a shorter overlapHours for tighter rotation.
-export function rotateAuthStore(path: string, overlapHours = 24): AuthRotationRecord {
-  const existing = readAuthStore(path);
-  const now = new Date();
+function rotateRecord(record: AuthRotationRecord, overlapHours: number, now = new Date()): AuthRotationRecord {
   const overlapEndsAt = new Date(now.getTime() + overlapHours * 60 * 60 * 1000).toISOString();
+  const promoted = record.next && record.overlapEndsAt && now >= new Date(record.overlapEndsAt)
+    ? record.next
+    : record.current;
 
-  // If a previous rotation's overlap has expired, promote next → current
-  const promoted = existing.next && existing.overlapEndsAt && now >= new Date(existing.overlapEndsAt)
-    ? existing.next
-    : existing.current;
-
-  const updated: AuthRotationRecord = {
+  return {
     current: promoted,
     next: {
       token: generateToken(),
@@ -52,7 +122,38 @@ export function rotateAuthStore(path: string, overlapHours = 24): AuthRotationRe
     },
     overlapEndsAt,
   };
-  persistAuthStore(path, updated);
+}
+
+// Security trade-off: default 24h overlap window balances operational continuity
+// against token exposure. Callers can pass a shorter overlapHours for tighter rotation.
+export function rotateAuthStore(path: string, overlapHours = 24, role: AuthRole = 'operator'): AuthRotationRecord {
+  const store = existsSync(path)
+    ? readRoleAuthStore(path)
+    : AuthRoleStoreSchema.parse({
+        version: 2,
+        roles: {
+          operator: createRotationRecord(),
+        },
+      });
+
+  if (!store.roles.operator) {
+    store.roles.operator = createRotationRecord();
+  }
+
+  const existing = store.roles[role];
+  if (!existing) {
+    const created = createRotationRecord();
+    store.roles[role] = created;
+    persistRoleAuthStore(path, store);
+    return created;
+  }
+
+  const updated = rotateRecord(existing, overlapHours);
+  store.roles[role] = updated;
+  if (role === 'operator') {
+    store.roles.operator = updated;
+  }
+  persistRoleAuthStore(path, store);
   return updated;
 }
 
@@ -66,12 +167,12 @@ function constantTimeEquals(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
-export function validateBearerToken(header: string | undefined, record: AuthRotationRecord, now = new Date()): boolean {
+function extractBearerToken(header: string | undefined): string | null {
   if (!header?.startsWith('Bearer ')) {
-    return false;
+    return null;
   }
   const token = header.replace('Bearer ', '').trim();
-  return validateToken(token, record, now);
+  return token.length > 0 ? token : null;
 }
 
 function validateToken(token: string, record: AuthRotationRecord, now = new Date()): boolean {
@@ -82,6 +183,39 @@ function validateToken(token: string, record: AuthRotationRecord, now = new Date
     return true;
   }
   return false;
+}
+
+export function resolveBearerPrincipal(
+  header: string | undefined,
+  record: AuthRotationRecord | AuthRoleStore,
+  now = new Date(),
+): ResolvedBearerPrincipal | null {
+  const token = extractBearerToken(header);
+  if (!token) {
+    return null;
+  }
+
+  if ('roles' in record) {
+    for (const role of AUTH_ROLES) {
+      const candidate = record.roles[role];
+      if (candidate && validateToken(token, candidate, now)) {
+        return { role, record: candidate };
+      }
+    }
+    return null;
+  }
+
+  return validateToken(token, record, now)
+    ? { role: 'operator', record }
+    : null;
+}
+
+export function validateBearerToken(
+  header: string | undefined,
+  record: AuthRotationRecord | AuthRoleStore,
+  now = new Date(),
+): boolean {
+  return resolveBearerPrincipal(header, record, now) !== null;
 }
 
 export function readCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {

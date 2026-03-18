@@ -26,6 +26,7 @@ export { rerankAndMerge } from './scoring.js';
 export type { ScoredCandidate, RerankParams } from './scoring.js';
 export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
 export type { FtsCandidate } from './fts5-search.js';
+export { searchFactsFts5, searchSynthesesFts5 } from './fts5-search.js';
 export { searchLikeFallback, splitQueryTokens, buildLikeQuery } from './like-fallback.js';
 export { searchVec, insertVecEmbedding, deleteVecEmbedding } from './vec-search.js';
 export type { VecCandidate } from './vec-search.js';
@@ -55,6 +56,24 @@ export type { TokenRiskLevel, ExpansionRoute, ExpansionPolicyResult } from './ex
 export { classifyQueryStrategy, getStrategyWeights } from './strategy.js';
 export type { QueryStrategy, ScoringWeights } from './strategy.js';
 
+// Structured memory foundation
+export { ensureMemoryNamespace, replaceOwnerTags } from './namespace.js';
+export type { EnsureNamespaceInput } from './namespace.js';
+export { captureArtifact } from './artifact-store.js';
+export type { CaptureArtifactInput } from './artifact-store.js';
+export { extractFacts } from './fact-extractor.js';
+export type { ExtractFactsInput, ExtractedFact } from './fact-extractor.js';
+export { upsertFacts, getEvidenceLinks } from './fact-store.js';
+export type { UpsertFactsInput, UpsertFactsResult } from './fact-store.js';
+export { createSynthesis } from './synthesis.js';
+export type { CreateSynthesisInput } from './synthesis.js';
+export { recordRevision } from './revision.js';
+export { parseTemporalConstraint, chooseTemporalReference, computeTemporalFit } from './temporal.js';
+export { buildRecallPlan } from './recall-planner.js';
+export type { BuildRecallPlanInput } from './recall-planner.js';
+export { buildRecallExplanation } from './recall-explainer.js';
+export type { BuildRecallExplanationInput } from './recall-explainer.js';
+
 // Entity extraction
 export { extractEntities, canonicalizeEntityName } from './entity-extraction.js';
 export type { EntityType, ExtractedEntity } from './entity-extraction.js';
@@ -78,5 +97,36 @@ export type { CompactionConfig, CompactionResult, PromptBuilder } from './compac
 // Extension loader
 export { loadSqliteVec } from './extension-loader.js';
 
+// Location helpers
+export {
+  buildLocationCondition,
+  canonicalizeMemoryLocation,
+  computeLocationScopeMatchScore,
+  formatMemoryScope,
+  hasExplicitMemoryLocation,
+  matchesMemoryLocation,
+  normalizeMemoryLocation,
+  resolveMemoryLocationFilter,
+} from './location.js';
+export type { CanonicalMemoryLocation, MemoryLocation, MemoryLocationFilter } from './location.js';
+
 // Types
-export type { MemoryType, MemoryRecord, MemorySearchResult, MemorySearchResponse, StoreMemoryResult } from './types.js';
+export type {
+  MemoryType,
+  MemoryLayer,
+  MemoryFactKind,
+  MemorySynthesisKind,
+  MemoryNamespaceRecord,
+  MemoryArtifactRecord,
+  MemoryFactRecord,
+  MemorySynthesisRecord,
+  MemoryRevisionRecord,
+  RecallPlan,
+  RecallExplanation,
+  TemporalConstraint,
+  RevisionStatus,
+  MemoryRecord,
+  MemorySearchResult,
+  MemorySearchResponse,
+  StoreMemoryResult,
+} from './types.js';

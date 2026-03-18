@@ -15,6 +15,11 @@ export interface MemoryInsertInput {
   memoryType?: MemoryType;
   sourceRef?: string;
   sourceRefType?: string;
+  sourceRunId?: string;
+  sourceTimestamp?: string;
+  occurredAt?: string;
+  tags?: string[];
+  sourceMetadata?: Record<string, unknown>;
 }
 
 export interface ReceiptCallbacks {

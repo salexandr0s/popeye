@@ -6,10 +6,37 @@ The Popeye control API is a Fastify HTTP server bound to `127.0.0.1` only. All e
 
 Popeye supports two authenticated client modes:
 
-1. **Bearer auth** for CLI/API clients. The token is validated against the auth store file specified by `config.authFile`. Token rotation is supported: during the overlap window, both the current and next tokens are accepted.
-2. **Browser session auth** for the web inspector. A one-time bootstrap nonce is exchanged at `POST /v1/auth/exchange` for an HttpOnly `popeye_auth` browser-session cookie. This cookie is **not** the long-lived bearer token.
+1. **Bearer auth** for CLI/API clients. The token is validated against the auth
+   store file specified by `config.authFile`. The store is role-scoped:
+   `operator`, `service`, and `readonly`. Token rotation is supported per role:
+   during the overlap window, both the current and next tokens are accepted.
+   Legacy single-token auth files still load as `operator`.
+2. **Browser session auth** for the web inspector. A one-time bootstrap nonce
+   is exchanged at `POST /v1/auth/exchange` for an HttpOnly `popeye_auth`
+   browser-session cookie. This cookie is **not** the long-lived bearer token
+   and always carries `operator` authority.
 
 Unauthenticated requests receive `401 { error: "unauthorized" }`.
+
+## Route authorization
+
+Routes are role-gated in addition to authentication:
+
+- `readonly` — health, status, scheduler/daemon state, event stream, usage,
+  receipt/run/job/task reads, session reads, instruction previews, and other
+  non-mutating observability reads
+- `service` — everything `readonly` can do, plus local automation mutations
+  such as task creation, job enqueue/pause/resume, run retry/cancel, message
+  ingest, and Telegram relay state updates
+- `operator` — everything, including browser bootstrap, profiles, security
+  audit, memory maintenance/promotion, and other operator-only control surfaces
+
+Routes default to `operator` unless explicitly downgraded.
+
+Memory routes are explicitly operator-only in this phase, including
+search/read/maintenance/promotion surfaces. Browser sessions remain
+operator-authority only, and legacy single-token auth files still normalize to
+`operator`.
 
 ## CSRF Protection
 
@@ -38,6 +65,8 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | GET | `/v1/workspaces` | List all workspaces |
 | GET | `/v1/projects` | List all projects |
 | GET | `/v1/agent-profiles` | List agent profiles |
+| GET | `/v1/profiles` | List execution profiles |
+| GET | `/v1/profiles/:id` | Get one execution profile |
 
 ### Tasks
 
@@ -63,6 +92,7 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 |--------|------|-------------|
 | GET | `/v1/runs` | List all runs |
 | GET | `/v1/runs/:id` | Get a single run. Returns 404 if not found. |
+| GET | `/v1/runs/:id/envelope` | Get the persisted execution envelope for a run. Returns 404 if not found. |
 | GET | `/v1/runs/:id/receipt` | Get the latest receipt for a run. Returns 404 if none exists yet. |
 | GET | `/v1/runs/:id/reply` | Get the packaged terminal reply for a run. Returns 404 if the run does not exist and `409 { error: "run_not_terminal" }` if no terminal receipt exists yet. |
 | GET | `/v1/runs/:id/events` | List engine events for a run |
@@ -116,13 +146,13 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/memory/search` | Hybrid memory search. Query params: `q` or `query`, optional `scope`, `types`, `limit`, `full=true`. |
-| GET | `/v1/memory/audit` | Memory subsystem audit summary. |
-| GET | `/v1/memory/:id` | Get a single memory record. Returns 404 if not found. |
-| GET | `/v1/memory` | List memories. Query params: `type`, `scope`, `limit`. |
-| POST | `/v1/memory/maintenance` | Trigger confidence decay + consolidation maintenance. |
-| POST | `/v1/memory/:id/promote/propose` | Propose promotion of a memory into a curated markdown file. Body: `{ targetPath }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. |
-| POST | `/v1/memory/:id/promote/execute` | Execute a previously reviewed promotion. Body: `{ targetPath, diff, approved, promoted }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. |
+| GET | `/v1/memory/search` | Hybrid memory search. Query params: `q` or `query`, optional `scope`, `workspaceId`, `projectId`, `includeGlobal`, `types`, `limit`, `full=true`. Operator-only. Explicit `workspaceId` / `projectId` are authoritative; `scope` remains a compatibility alias. |
+| GET | `/v1/memory/audit` | Memory subsystem audit summary. Operator-only. |
+| GET | `/v1/memory/:id` | Get a single memory record. Returns 404 if not found. Operator-only. |
+| GET | `/v1/memory` | List memories. Query params: `type`, `scope`, `workspaceId`, `projectId`, `includeGlobal`, `limit`. Operator-only. |
+| POST | `/v1/memory/maintenance` | Trigger confidence decay + consolidation maintenance. Operator-only. |
+| POST | `/v1/memory/:id/promote/propose` | Propose promotion of a memory into a curated markdown file. Body: `{ targetPath }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. |
+| POST | `/v1/memory/:id/promote/execute` | Execute a previously reviewed promotion. Body: `{ targetPath, diff, approved, promoted }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. |
 
 ### Events (SSE)
 
@@ -195,6 +225,7 @@ If approved, the runtime writes the memory content to the target file, records a
 | Status | Code | Trigger |
 |--------|------|---------|
 | 401 | `unauthorized` | Missing or invalid Bearer token |
+| 403 | `forbidden` | Valid auth principal lacks the required role for the route |
 | 403 | `csrf_invalid` | Missing or wrong CSRF token on mutation |
 | 403 | `csrf_cross_site_blocked` | `Sec-Fetch-Site` is `cross-site` or `same-site` |
 | 404 | `not_found` | Resource does not exist |

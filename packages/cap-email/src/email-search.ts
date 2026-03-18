@@ -1,7 +1,7 @@
 import type { EmailSearchQuery, EmailSearchResult } from '@popeye/contracts';
 
 import type { EmailCapabilityDb } from './types.js';
-import { prepareAll, prepareGet } from './types.js';
+import { prepareAll } from './types.js';
 
 interface FtsRow {
   id: string;

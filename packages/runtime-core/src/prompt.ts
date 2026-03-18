@@ -13,7 +13,7 @@ const QUARANTINE_RULES: Array<{ name: string; pattern: RegExp }> = [
   { name: 'base64-command', pattern: /(?:execute|run|eval)\s+(?:atob|base64|btoa)/i },
   { name: 'url-exfiltration', pattern: /(?:fetch|curl|wget|xmlhttprequest)\s*\(?\s*['"]https?:\/\//i },
   { name: 'unicode-bidi-override', pattern: /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/ },
-  { name: 'zero-width-chars', pattern: /[\u200B\u200C\u200D\uFEFF]/ },
+  { name: 'zero-width-chars', pattern: /(?:\u200B|\u200C|\u200D|\uFEFF)/u },
   { name: 'mixed-script-attack', pattern: /(?:[a-zA-Z]+[\u0400-\u04FF]|[\u0400-\u04FF]+[a-zA-Z])/ },
 ];
 

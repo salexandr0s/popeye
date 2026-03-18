@@ -13,6 +13,9 @@ import { MemoryAuditResponseSchema } from '@popeye/contracts';
 import {
   assessMemoryQuality,
   classifyMemoryType,
+  createSynthesis,
+  captureArtifact,
+  extractFacts,
   type StoreMemoryResult,
   computeConfidenceDecay,
   computeReinforcedConfidence,
@@ -23,6 +26,7 @@ import {
   runIntegrityChecks,
   CompactionEngine,
   type SummarizationClient,
+  upsertFacts,
 } from '@popeye/memory';
 import { buildSummarizePrompt, buildRetryPrompt } from './summarize-prompts.js';
 import { redactText, sha256 } from '@popeye/observability';
@@ -193,12 +197,19 @@ export interface MemoryInsertInput {
   content: string;
   confidence: number;
   scope: string;
+  workspaceId?: string | null;
+  projectId?: string | null;
   memoryType?: MemoryType | undefined;
   sourceRef?: string | undefined;
   sourceRefType?: string | undefined;
   domain?: MemoryRecord['domain'] | undefined;
   contextReleasePolicy?: MemoryRecord['contextReleasePolicy'] | undefined;
   dedupKey?: string | undefined;
+  sourceRunId?: string | undefined;
+  sourceTimestamp?: string | undefined;
+  occurredAt?: string | undefined;
+  tags?: string[] | undefined;
+  sourceMetadata?: Record<string, unknown> | undefined;
 }
 
 export interface MemoryMaintenanceResult {
@@ -230,6 +241,92 @@ export class MemoryLifecycleService {
     this.summarizationClient = summarizationClient ?? null;
   }
 
+  private captureStructuredMemory(input: MemoryInsertInput, memoryType: MemoryType): void {
+    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary']);
+    if (!structuredSources.has(input.sourceType)) return;
+
+    const { text: redactedContent } = redactText(input.content, this.config.security.redactionPatterns);
+    const artifact = captureArtifact(this.databases.memory, {
+      sourceType: input.sourceType,
+      classification: input.classification,
+      scope: input.scope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      content: redactedContent,
+      sourceRunId: input.sourceRunId ?? null,
+      sourceRef: input.sourceRef ?? null,
+      sourceRefType: input.sourceRefType ?? null,
+      occurredAt: input.occurredAt ?? input.sourceTimestamp ?? null,
+      metadata: {
+        description: input.description,
+        ...(input.sourceMetadata ?? {}),
+      },
+      tags: input.tags,
+    });
+
+    const extracted = extractFacts({
+      description: input.description,
+      content: redactedContent,
+      classification: input.classification,
+      sourceType: input.sourceType,
+      scope: input.scope,
+      memoryType,
+      sourceRunId: input.sourceRunId ?? null,
+      sourceTimestamp: input.sourceTimestamp ?? null,
+      occurredAt: input.occurredAt ?? input.sourceTimestamp ?? null,
+    });
+
+    if (extracted.length === 0) return;
+
+    const upserted = upsertFacts(this.databases.memory, {
+      artifact,
+      sourceType: input.sourceType,
+      scope: input.scope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      classification: input.classification,
+      memoryType,
+      sourceRunId: input.sourceRunId ?? null,
+      sourceTimestamp: input.sourceTimestamp ?? null,
+      facts: extracted,
+      tags: input.tags,
+    });
+
+    if (input.sourceType === 'daily_summary' && upserted.records.length > 0) {
+      createSynthesis(this.databases.memory, {
+        namespaceId: artifact.namespaceId,
+        scope: input.scope,
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        classification: input.classification,
+        synthesisKind: 'daily',
+        title: input.description,
+        text: redactedContent,
+        confidence: input.confidence,
+        refreshPolicy: 'automatic_daily',
+        sourceFacts: upserted.records.map((record) => ({ id: record.id })),
+        tags: ['daily-summary', ...(input.tags ?? [])],
+      });
+    }
+
+    if (input.sourceType === 'compaction_flush' && input.description.toLowerCase().includes('summary') && upserted.records.length > 0) {
+      createSynthesis(this.databases.memory, {
+        namespaceId: artifact.namespaceId,
+        scope: input.scope,
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        classification: input.classification,
+        synthesisKind: 'project_state',
+        title: input.description,
+        text: redactedContent,
+        confidence: input.confidence,
+        refreshPolicy: 'automatic_compaction',
+        sourceFacts: upserted.records.map((record) => ({ id: record.id })),
+        tags: ['compaction-summary', ...(input.tags ?? [])],
+      });
+    }
+  }
+
   insertMemory(input: MemoryInsertInput): StoreMemoryResult {
     const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
     const result = this.searchService.storeMemory({
@@ -239,6 +336,8 @@ export class MemoryLifecycleService {
       content: input.content,
       confidence: input.confidence,
       scope: input.scope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
       memoryType,
       sourceRef: input.sourceRef,
       sourceRefType: input.sourceRefType,
@@ -252,12 +351,18 @@ export class MemoryLifecycleService {
       if (input.domain) { updates.push('domain = ?'); params.push(input.domain); }
       if (input.contextReleasePolicy) { updates.push('context_release_policy = ?'); params.push(input.contextReleasePolicy); }
       if (input.dedupKey) { updates.push('dedup_key = ?'); params.push(input.dedupKey); }
+      if (input.sourceRunId) { updates.push('source_run_id = ?'); params.push(input.sourceRunId); }
+      if (input.sourceTimestamp) { updates.push('source_timestamp = ?'); params.push(input.sourceTimestamp); }
       if (updates.length > 0) {
         params.push(result.memoryId);
         this.databases.memory
           .prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`)
           .run(...params);
       }
+    }
+
+    if (!result.rejected) {
+      this.captureStructuredMemory(input, memoryType);
     }
 
     return result;
@@ -485,6 +590,12 @@ export class MemoryLifecycleService {
       confidence: 1,
       scope: workspaceId,
       memoryType: 'episodic',
+      sourceRef: markdownPath,
+      sourceRefType: 'file',
+      sourceTimestamp: `${date}T23:59:59.999Z`,
+      occurredAt: `${date}T12:00:00.000Z`,
+      tags: ['daily-summary', `date:${date}`],
+      sourceMetadata: { date, workspaceId, markdownPath },
     });
 
     if (result.rejected) return null;
@@ -540,6 +651,23 @@ export class MemoryLifecycleService {
         });
 
         if (!memResult.rejected) {
+          this.captureStructuredMemory({
+            description: `Compaction summary from run ${runId}`,
+            classification: 'embeddable',
+            sourceType: 'compaction_flush',
+            content: rootRow.content,
+            confidence: this.config.memory.compactionFlushConfidence,
+            scope: workspaceId,
+            memoryType: classifyMemoryType('compaction_flush', rootRow.content),
+            sourceRef: runId,
+            sourceRefType: 'run',
+            sourceRunId: runId,
+            sourceTimestamp: now,
+            occurredAt: now,
+            tags: ['compaction-summary'],
+            sourceMetadata: { runId, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels },
+          }, classifyMemoryType('compaction_flush', rootRow.content));
+
           this.databases.memory
             .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
             .run(runId, now, memResult.memoryId);
@@ -594,6 +722,23 @@ export class MemoryLifecycleService {
       });
 
       if (result.rejected) continue;
+
+      this.captureStructuredMemory({
+        description: `Compaction flush from run ${runId}`,
+        classification: 'embeddable',
+        sourceType: 'compaction_flush',
+        content: chunk,
+        confidence: this.config.memory.compactionFlushConfidence,
+        scope: workspaceId,
+        memoryType,
+        sourceRef: runId,
+        sourceRefType: 'run',
+        sourceRunId: runId,
+        sourceTimestamp: now,
+        occurredAt: now,
+        tags: ['compaction-flush'],
+        sourceMetadata: { runId },
+      }, memoryType);
 
       this.databases.memory
         .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
@@ -669,6 +814,11 @@ export class MemoryLifecycleService {
         confidence: 0.9,
         scope: workspaceId,
         memoryType: 'semantic',
+        sourceRef: filePath,
+        sourceRefType: 'file',
+        sourceTimestamp: nowIso(),
+        tags: ['workspace-doc', `path:${relPath.toLowerCase()}`],
+        sourceMetadata: { relativePath: relPath, contentHash },
       });
 
       // Skip if quality gate rejected

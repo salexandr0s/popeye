@@ -11,6 +11,18 @@ export type RetryPolicy = z.infer<typeof RetryPolicySchema>;
 export const TaskSideEffectProfileSchema = z.enum(['read_only', 'external_side_effect']);
 export type TaskSideEffectProfile = z.infer<typeof TaskSideEffectProfileSchema>;
 
+export const ExecutionProfileModeSchema = z.enum(['restricted', 'interactive', 'elevated']);
+export type ExecutionProfileMode = z.infer<typeof ExecutionProfileModeSchema>;
+
+export const ExecutionScopeSchema = z.enum(['workspace', 'project', 'global']);
+export type ExecutionScope = z.infer<typeof ExecutionScopeSchema>;
+
+export const FilesystemPolicyClassSchema = z.enum(['workspace', 'project', 'read_only_workspace', 'memory_only']);
+export type FilesystemPolicyClass = z.infer<typeof FilesystemPolicyClassSchema>;
+
+export const ProfileContextReleasePolicySchema = z.enum(['none', 'summary_only', 'excerpt', 'full']);
+export type ProfileContextReleasePolicy = z.infer<typeof ProfileContextReleasePolicySchema>;
+
 export const InterventionCodeSchema = z.enum([
   'needs_credentials',
   'needs_policy_decision',
@@ -52,6 +64,7 @@ export const TaskRecordSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   projectId: z.string().nullable(),
+  profileId: z.string().default('default'),
   title: z.string(),
   prompt: z.string(),
   source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']),
@@ -81,6 +94,7 @@ export const RunRecordSchema = z.object({
   jobId: z.string(),
   taskId: z.string(),
   workspaceId: z.string(),
+  profileId: z.string().default('default'),
   sessionRootId: z.string(),
   engineSessionRef: z.string().nullable(),
   state: RunStateSchema,
@@ -132,6 +146,47 @@ export type ProjectRecord = z.infer<typeof ProjectRecordSchema>;
 export const AgentProfileRecordSchema = z.object({
   id: z.string(),
   name: z.string(),
+  description: z.string().default(''),
+  mode: ExecutionProfileModeSchema.default('interactive'),
+  modelPolicy: z.string().default('inherit'),
+  allowedRuntimeTools: z.array(z.string()).default([]),
+  allowedCapabilityIds: z.array(z.string()).default([]),
+  memoryScope: ExecutionScopeSchema.default('workspace'),
+  recallScope: ExecutionScopeSchema.default('workspace'),
+  filesystemPolicyClass: FilesystemPolicyClassSchema.default('workspace'),
+  contextReleasePolicy: ProfileContextReleasePolicySchema.default('summary_only'),
   createdAt: z.string(),
+  updatedAt: z.string().nullable().default(null),
 });
 export type AgentProfileRecord = z.infer<typeof AgentProfileRecordSchema>;
+
+export const ExecutionEnvelopeProvenanceSchema = z.object({
+  derivedAt: z.string(),
+  engineKind: z.string(),
+  sessionPolicy: z.enum(['dedicated', 'ephemeral', 'per_task']),
+  warnings: z.array(z.string()).default([]),
+});
+export type ExecutionEnvelopeProvenance = z.infer<typeof ExecutionEnvelopeProvenanceSchema>;
+
+export const ExecutionEnvelopeSchema = z.object({
+  runId: z.string(),
+  taskId: z.string(),
+  profileId: z.string(),
+  workspaceId: z.string(),
+  projectId: z.string().nullable().default(null),
+  mode: ExecutionProfileModeSchema,
+  modelPolicy: z.string(),
+  allowedRuntimeTools: z.array(z.string()).default([]),
+  allowedCapabilityIds: z.array(z.string()).default([]),
+  memoryScope: ExecutionScopeSchema,
+  recallScope: ExecutionScopeSchema,
+  filesystemPolicyClass: FilesystemPolicyClassSchema,
+  contextReleasePolicy: ProfileContextReleasePolicySchema,
+  readRoots: z.array(z.string()).default([]),
+  writeRoots: z.array(z.string()).default([]),
+  protectedPaths: z.array(z.string()).default([]),
+  scratchRoot: z.string(),
+  cwd: z.string().nullable().default(null),
+  provenance: ExecutionEnvelopeProvenanceSchema,
+});
+export type ExecutionEnvelope = z.infer<typeof ExecutionEnvelopeSchema>;

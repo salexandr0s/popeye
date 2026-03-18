@@ -17,6 +17,8 @@ function createTestDb(): Database.Database {
       content TEXT NOT NULL,
       confidence REAL NOT NULL,
       scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
       memory_type TEXT NOT NULL DEFAULT 'episodic',
       dedup_key TEXT,
       last_reinforced_at TEXT,
@@ -35,6 +37,96 @@ function createTestDb(): Database.Database {
       source_ref TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE memory_namespaces (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      external_ref TEXT,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_tags (
+      id TEXT PRIMARY KEY,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_artifacts (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      classification TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      namespace_id TEXT NOT NULL,
+      source_run_id TEXT,
+      source_ref TEXT,
+      source_ref_type TEXT,
+      captured_at TEXT NOT NULL,
+      occurred_at TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE memory_facts (
+      id TEXT PRIMARY KEY,
+      namespace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      classification TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      memory_type TEXT NOT NULL,
+      fact_kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source_reliability REAL NOT NULL,
+      extraction_confidence REAL NOT NULL,
+      human_confirmed INTEGER NOT NULL DEFAULT 0,
+      occurred_at TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      source_run_id TEXT,
+      source_timestamp TEXT,
+      dedup_key TEXT,
+      last_reinforced_at TEXT,
+      archived_at TEXT,
+      created_at TEXT NOT NULL,
+      durable INTEGER NOT NULL DEFAULT 0,
+      revision_status TEXT NOT NULL DEFAULT 'active'
+    );
+    CREATE TABLE memory_fact_sources (
+      id TEXT PRIMARY KEY,
+      fact_id TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      excerpt TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_syntheses (
+      id TEXT PRIMARY KEY,
+      namespace_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      classification TEXT NOT NULL,
+      synthesis_kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      text TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      refresh_policy TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT
+    );
+    CREATE TABLE memory_synthesis_sources (
+      id TEXT PRIMARY KEY,
+      synthesis_id TEXT NOT NULL,
+      fact_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE memory_facts_fts USING fts5(fact_id UNINDEXED, text);
+    CREATE VIRTUAL TABLE memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);
     CREATE TABLE memory_events (
       id TEXT PRIMARY KEY,
       memory_id TEXT NOT NULL,
@@ -97,6 +189,24 @@ describe('MemorySearchService', () => {
       expect(record!.description).toBe('Test memory');
       expect(record!.content).toBe('This is test content');
       expect(record!.memoryType).toBe('semantic'); // curated_memory -> semantic
+    });
+
+    it('canonicalizes scope from explicit location fields', () => {
+      const result = service.storeMemory({
+        description: 'Canonical location',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'Stored using explicit location.',
+        confidence: 0.8,
+        scope: 'legacy-mismatch',
+        workspaceId: 'ws-1',
+        projectId: 'proj-1',
+      });
+
+      const record = service.getMemoryContent(result.memoryId);
+      expect(record?.scope).toBe('ws-1/proj-1');
+      expect(record?.workspaceId).toBe('ws-1');
+      expect(record?.projectId).toBe('proj-1');
     });
 
     it('reinforces existing memory with same dedup key', () => {
@@ -292,6 +402,34 @@ describe('MemorySearchService', () => {
 
       expect(response.results).toHaveLength(1);
       expect(response.results[0]!.scope).toBe('workspace-a');
+    });
+
+    it('uses explicit location filters as the authority when scope disagrees', async () => {
+      service.storeMemory({
+        description: 'Workspace A explicit',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'alpha result stored for workspace A',
+        confidence: 0.8,
+        scope: 'workspace-a',
+      });
+      service.storeMemory({
+        description: 'Workspace B scope alias',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'alpha result stored for workspace B',
+        confidence: 0.8,
+        scope: 'workspace-b',
+      });
+
+      const response = await service.search({
+        query: 'alpha',
+        scope: 'workspace-b',
+        workspaceId: 'workspace-a',
+      });
+
+      expect(response.results).toHaveLength(1);
+      expect(response.results[0]?.scope).toBe('workspace-a');
     });
 
     it('returns score breakdown', async () => {
@@ -730,6 +868,113 @@ describe('budgetFit', () => {
 });
 
 // ---------------------------------------------------------------------------
+// structured recall tests
+// ---------------------------------------------------------------------------
+
+describe('structured recall', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('searches fact records and exposes their layer', async () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-1', 'workspace', 'workspace', 'Workspace workspace', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-1', 'receipt', 'internal', 'workspace', 'workspace', null, 'ns-1', 'run-1', 'receipt-1', 'receipt', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', 'The deployment failed because credentials were missing.', 'hash-1', '{}');
+    db.prepare('INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('fact-1', 'ns-1', 'workspace', 'workspace', null, 'internal', 'receipt', 'episodic', 'state', 'Deployment failed because credentials were missing from the environment.', 0.9, 0.9, 0.9, 0, '2026-03-18T10:00:00.000Z', null, null, 'run-1', '2026-03-18T10:00:00.000Z', 'dedup-1', '2026-03-18T10:00:00.000Z', null, '2026-03-18T10:00:00.000Z', 0, 'active');
+    db.prepare('INSERT INTO memory_fact_sources (id, fact_id, artifact_id, excerpt, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('fact-source-1', 'fact-1', 'artifact-1', 'credentials were missing', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)').run('fact-1', 'Deployment failed because credentials were missing from the environment.');
+
+    const response = await service.search({ query: 'missing credentials', includeContent: true });
+
+    expect(response.results[0]?.id).toBe('fact-1');
+    expect(response.results[0]?.layer).toBe('fact');
+    expect(response.results[0]?.evidenceCount).toBe(1);
+  });
+
+  it('explains recall with evidence links for structured facts', async () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-1', 'workspace', 'workspace', 'Workspace workspace', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-1', 'receipt', 'internal', 'workspace', 'workspace', null, 'ns-1', 'run-1', 'receipt-1', 'receipt', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', 'The deployment failed because credentials were missing.', 'hash-1', '{}');
+    db.prepare('INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('fact-1', 'ns-1', 'workspace', 'workspace', null, 'internal', 'receipt', 'episodic', 'state', 'Deployment failed because credentials were missing from the environment.', 0.9, 0.9, 0.9, 0, '2026-03-18T10:00:00.000Z', null, null, 'run-1', '2026-03-18T10:00:00.000Z', 'dedup-1', '2026-03-18T10:00:00.000Z', null, '2026-03-18T10:00:00.000Z', 0, 'active');
+    db.prepare('INSERT INTO memory_fact_sources (id, fact_id, artifact_id, excerpt, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('fact-source-1', 'fact-1', 'artifact-1', 'credentials were missing', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)').run('fact-1', 'Deployment failed because credentials were missing from the environment.');
+
+    const explanation = await service.explainRecall({ query: 'missing credentials', memoryId: 'fact-1' });
+
+    expect(explanation).not.toBeNull();
+    expect(explanation?.memoryId).toBe('fact-1');
+    expect(explanation?.layer).toBe('fact');
+    expect(explanation?.evidence).toHaveLength(1);
+    expect(explanation?.evidence[0]?.targetKind).toBe('artifact');
+  });
+
+  it('filters syntheses by explicit project/workspace/global location rules', async () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-workspace', 'workspace', 'default', 'Workspace default', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-project', 'project', 'default/proj-1', 'Project default/proj-1', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-global', 'global', null, 'Global', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+
+    db.prepare('INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('syn-project', 'ns-project', 'default/proj-1', 'default', 'proj-1', 'embeddable', 'project_state', 'Project guide', 'Project guide for credentials in proj-1.', 0.9, 'manual', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', null);
+    db.prepare('INSERT INTO memory_syntheses_fts (synthesis_id, title, text) VALUES (?, ?, ?)')
+      .run('syn-project', 'Project guide', 'Project guide for credentials in proj-1.');
+
+    db.prepare('INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('syn-workspace', 'ns-workspace', 'default', 'default', null, 'embeddable', 'workspace_summary', 'Workspace guide', 'Workspace guide for shared credentials.', 0.9, 'manual', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', null);
+    db.prepare('INSERT INTO memory_syntheses_fts (synthesis_id, title, text) VALUES (?, ?, ?)')
+      .run('syn-workspace', 'Workspace guide', 'Workspace guide for shared credentials.');
+
+    db.prepare('INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('syn-global', 'ns-global', 'global', null, null, 'embeddable', 'workspace_summary', 'Global guide', 'Global guide for shared credentials everywhere.', 0.9, 'manual', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', null);
+    db.prepare('INSERT INTO memory_syntheses_fts (synthesis_id, title, text) VALUES (?, ?, ?)')
+      .run('syn-global', 'Global guide', 'Global guide for shared credentials everywhere.');
+
+    const projectScoped = await service.search({
+      query: 'guide credentials',
+      layers: ['synthesis'],
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      includeGlobal: false,
+    });
+    expect(projectScoped.results.map((result) => result.id)).toEqual(
+      expect.arrayContaining(['syn-project', 'syn-workspace']),
+    );
+    expect(projectScoped.results.map((result) => result.id)).not.toContain('syn-global');
+
+    const withGlobal = await service.search({
+      query: 'guide credentials',
+      layers: ['synthesis'],
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      includeGlobal: true,
+    });
+    expect(withGlobal.results.map((result) => result.id)).toEqual(
+      expect.arrayContaining(['syn-project', 'syn-workspace', 'syn-global']),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // describeMemory tests
 // ---------------------------------------------------------------------------
 
@@ -775,6 +1020,37 @@ describe('describeMemory', () => {
     expect(desc!.sourceCount).toBe(0);
     // No 'content' field in the result
     expect(desc).not.toHaveProperty('content');
+  });
+
+  it('describes artifacts by id', () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-artifact', 'workspace', 'default', 'Workspace default', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-1', 'workspace_doc', 'embeddable', 'default/proj-1', 'default', 'proj-1', 'ns-artifact', null, '/tmp/doc.md', 'file', '2026-03-18T10:00:00.000Z', null, 'Artifact body', 'hash-artifact', '{}');
+
+    const desc = service.describeMemory('artifact-1');
+
+    expect(desc).toMatchObject({
+      id: 'artifact-1',
+      layer: 'artifact',
+      scope: 'default/proj-1',
+      workspaceId: 'default',
+      projectId: 'proj-1',
+    });
+  });
+
+  it('denies artifact descriptions outside the supplied location filter', () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-artifact', 'project', 'default/proj-2', 'Project default/proj-2', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-2', 'workspace_doc', 'embeddable', 'default/proj-2', 'default', 'proj-2', 'ns-artifact', null, '/tmp/doc.md', 'file', '2026-03-18T10:00:00.000Z', null, 'Artifact body', 'hash-artifact', '{}');
+
+    const desc = service.describeMemory('artifact-2', {
+      workspaceId: 'default',
+      projectId: 'proj-1',
+    });
+
+    expect(desc).toBeNull();
   });
 });
 
@@ -835,5 +1111,19 @@ describe('expandMemory', () => {
     expect(expanded!.truncated).toBe(true);
     expect(expanded!.content.length).toBeLessThan(longContent.length);
     expect(expanded!.content).toContain('...');
+  });
+
+  it('denies artifact expansion outside the supplied location filter', () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-artifact', 'project', 'default/proj-2', 'Project default/proj-2', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-2', 'workspace_doc', 'embeddable', 'default/proj-2', 'default', 'proj-2', 'ns-artifact', null, '/tmp/doc.md', 'file', '2026-03-18T10:00:00.000Z', null, 'Artifact body that should stay hidden.', 'hash-artifact', '{}');
+
+    const expanded = service.expandMemory('artifact-2', 8000, {
+      workspaceId: 'default',
+      projectId: 'proj-1',
+    });
+
+    expect(expanded).toBeNull();
   });
 });

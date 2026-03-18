@@ -28,5 +28,5 @@ const STRATEGY_WEIGHTS: Record<QueryStrategy, ScoringWeights> = {
 };
 
 export function getStrategyWeights(strategy: QueryStrategy): ScoringWeights {
-  return STRATEGY_WEIGHTS[strategy];
+  return STRATEGY_WEIGHTS[strategy] ?? STRATEGY_WEIGHTS.exploratory;
 }

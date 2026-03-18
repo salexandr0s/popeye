@@ -8,10 +8,13 @@ interact with the runtime.
 
 Mounts versioned REST endpoints on a Fastify server, enforcing bearer token
 authentication on API requests and CSRF protection (token + Sec-Fetch-Site
-validation) on all state-changing mutations. Browser clients can bootstrap a
-same-origin HttpOnly browser-session cookie through a one-time `/v1/auth/exchange` nonce
-exchange. Provides SSE streaming for real-time event delivery. Contains no
-business logic -- all operations delegate to `PopeyeRuntimeService`.
+validation) on all state-changing mutations. Bearer auth is role-scoped
+(`operator`, `service`, `readonly`), and routes default to operator-only unless
+explicitly downgraded. Browser clients can bootstrap a same-origin HttpOnly
+browser-session cookie through a one-time `/v1/auth/exchange` nonce exchange;
+browser sessions are operator-only. Provides SSE streaming for real-time event
+delivery. Contains no business logic -- all operations delegate to
+`PopeyeRuntimeService`.
 
 ## Layer
 
@@ -28,17 +31,17 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~31 routes)
+## Endpoints (~35 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
 | Auth           | `POST /v1/auth/exchange`                                     |
 | Health         | `GET /v1/health`, `GET /v1/status`                           |
-| Daemon         | `GET /v1/daemon/state`, `GET /v1/daemon/scheduler`           |
-| Resources      | `GET /v1/workspaces`, `GET /v1/projects`, `GET /v1/agent-profiles` |
+| Daemon         | `GET /v1/engine/capabilities`, `GET /v1/daemon/state`, `GET /v1/daemon/scheduler` |
+| Resources      | `GET /v1/workspaces`, `GET /v1/projects`, `GET /v1/agent-profiles`, `GET /v1/profiles`, `GET /v1/profiles/:id` |
 | Tasks          | `GET /v1/tasks`, `GET /v1/tasks/:id`, `POST /v1/tasks`      |
 | Jobs           | `GET /v1/jobs`, `POST /v1/jobs/:id/pause|resume|enqueue`     |
-| Runs           | `GET /v1/runs`, `GET /v1/runs/:id`, `POST /v1/runs/:id/retry|cancel` |
+| Runs           | `GET /v1/runs`, `GET /v1/runs/:id`, `GET /v1/runs/:id/envelope`, `POST /v1/runs/:id/retry|cancel` |
 | Receipts       | `GET /v1/receipts`, `GET /v1/receipts/:id`                   |
 | Instructions   | `GET /v1/instruction-previews/:scope`                        |
 | Interventions  | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve`|
@@ -77,6 +80,16 @@ The web inspector does not receive the long-lived bearer token in HTML. Instead:
 3. the control API sets an HttpOnly `popeye_auth` browser-session cookie
 4. subsequent same-origin requests rely on the cookie plus CSRF token
 
+### Role model
+
+- `readonly`: non-mutating observability routes and SSE
+- `service`: readonly + local automation mutations (task/job/run/message relay)
+- `operator`: full access, including browser bootstrap, profiles, memory
+  maintenance, and security surfaces
+
+Legacy auth files with a single rotating token are still accepted and treated
+as `operator`.
+
 ### Memory promotion
 
 The memory API includes a two-step promotion flow:
@@ -93,3 +106,16 @@ Promotion routes are covered by contract and behavior tests in
 `GET /v1/instruction-previews/:scope?projectId=...` validates that the project
 belongs to the requested workspace. Unknown workspace/project IDs return `404`,
 while a cross-workspace mismatch returns `400 { error: "invalid_context" }`.
+
+### Profile-aware task creation
+
+`POST /v1/tasks` validates profile/workspace/project compatibility before the
+task is accepted. Unknown profiles and invalid profile/context combinations
+return `400` errors rather than creating partially runnable tasks.
+
+### Memory location filters
+
+`GET /v1/memory/search` and `GET /v1/memory` accept explicit `workspaceId`,
+`projectId`, and `includeGlobal` filters in addition to the legacy `scope`
+string. Responses include `workspaceId` and `projectId` so callers can enforce
+project-aware retrieval without inferring location solely from `scope`.

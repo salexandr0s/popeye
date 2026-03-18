@@ -91,9 +91,9 @@ export function createGithubCapability(): CapabilityModule {
       return { healthy: githubService !== null && githubDb !== null };
     },
 
-    getRuntimeTools(_taskContext) {
+    getRuntimeTools(taskContext) {
       if (!githubService || !searchService || !digestService || !ctx) return [];
-      return createGithubTools(githubService, searchService, digestService, ctx);
+      return createGithubTools(githubService, searchService, digestService, ctx, taskContext);
     },
 
     getTimers() {

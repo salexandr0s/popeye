@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdtempSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '@popeye/contracts';
 import { initAuthStore, createRuntimeService } from '@popeye/runtime-core';
 import { renderReceipt } from '@popeye/receipts';
+import { createControlApi } from '../../../packages/control-api/src/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -20,13 +21,20 @@ interface CliResult {
 
 /** Spawn the CLI via tsx (no config needed for help/version/error paths). */
 async function runPop(...args: string[]): Promise<CliResult> {
+  return runPopWithEnv(args);
+}
+
+async function runPopWithEnv(args: string[], extraEnv: Record<string, string | undefined> = {}): Promise<CliResult> {
   const tsx = resolve('node_modules', '.bin', 'tsx');
   const entry = resolve('apps', 'cli', 'src', 'index.ts');
   try {
     const { stdout, stderr } = await execFileAsync(
       tsx,
       ['--tsconfig', 'tsconfig.base.json', entry, ...args],
-      { env: { PATH: process.env.PATH, HOME: process.env.HOME }, timeout: 15_000 },
+      {
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, ...extraEnv },
+        timeout: 15_000,
+      },
     );
     return { stdout, stderr, code: 0 };
   } catch (err: unknown) {
@@ -115,6 +123,55 @@ describe('CLI command workflows (service-level)', () => {
     expect(run!.finishedAt).toBeTruthy();
     expect(run!.sessionRootId).toBeTruthy();
 
+    await runtime.close();
+  });
+
+  it('run envelope: prints the persisted execution envelope for a completed run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-run-envelope-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'run-envelope-task',
+      prompt: 'test run envelope',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.run?.id).toBeTruthy();
+
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const configPath = join(dir, 'config.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...config,
+        security: {
+          ...config.security,
+          bindPort: address.port,
+        },
+      }),
+      'utf8',
+    );
+
+    const result = await runPopWithEnv(
+      ['run', 'envelope', terminal!.run!.id],
+      { POPEYE_CONFIG_PATH: configPath },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Execution Envelope');
+    expect(result.stdout).toContain(`Profile:              ${terminal!.run!.profileId}`);
+    expect(result.stdout).toContain('Scratch root:');
+
+    await app.close();
     await runtime.close();
   });
 
@@ -231,10 +288,31 @@ describe('CLI help and discoverability', () => {
     expect(r.stdout).toContain('rotate');
   });
 
+  it('pop daemon --help prints daemon health subcommand', async () => {
+    const r = await runPop('daemon', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('health');
+  });
+
+  it('pop profile --help prints profile subcommands', async () => {
+    const r = await runPop('profile', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('list');
+    expect(r.stdout).toContain('show');
+  });
+
+  it('pop run --help prints run envelope subcommand', async () => {
+    const r = await runPop('run', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('show');
+    expect(r.stdout).toContain('envelope');
+  });
+
   it('pop task run --help prints task run usage', async () => {
     const r = await runPop('task', 'run', '--help');
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('pop task run');
+    expect(r.stdout).toContain('--profile <id>');
   });
 
   it('unknown command exits 1 with error', async () => {

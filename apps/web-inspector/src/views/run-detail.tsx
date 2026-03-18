@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useRun, useRunEvents } from '../api/hooks';
+import { useRun, useRunEnvelope, useRunEvents } from '../api/hooks';
 import { useApi } from '../api/provider';
 import { Badge } from '../components/badge';
 import { Loading } from '../components/loading';
@@ -11,6 +11,11 @@ import { formatTime } from '../utils/format';
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: run, error, loading, refetch } = useRun(id);
+  const {
+    data: envelope,
+    error: envelopeError,
+    loading: envelopeLoading,
+  } = useRunEnvelope(id);
   const {
     data: events,
     error: eventsError,
@@ -90,6 +95,12 @@ export function RunDetail() {
             </div>
             <div>
               <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                Profile
+              </p>
+              <p className="mt-[4px] text-[14px] font-mono">{run.profileId}</p>
+            </div>
+            <div>
+              <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
                 Session Root
               </p>
               <p className="mt-[4px] text-[14px] font-mono">
@@ -135,6 +146,97 @@ export function RunDetail() {
           >
             View Receipts
           </Link>
+        </div>
+
+        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
+          <div className="flex items-center justify-between gap-[12px]">
+            <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">
+              Execution Envelope
+            </h2>
+            {envelope ? (
+              <Badge state={envelope.filesystemPolicyClass} />
+            ) : null}
+          </div>
+          {envelopeLoading ? (
+            <div className="mt-[12px]">
+              <Loading />
+            </div>
+          ) : envelopeError ? (
+            <p className="mt-[12px] text-[14px] text-[var(--color-fg-muted)]">
+              Execution envelope unavailable: {envelopeError}
+            </p>
+          ) : envelope ? (
+            <div className="mt-[16px] grid grid-cols-2 gap-[16px]">
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Effective Profile
+                </p>
+                <p className="mt-[4px] text-[14px] font-mono">{envelope.profileId}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Context Release
+                </p>
+                <p className="mt-[4px] text-[14px]">{envelope.contextReleasePolicy}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Memory / Recall Scope
+                </p>
+                <p className="mt-[4px] text-[14px]">
+                  {envelope.memoryScope} / {envelope.recallScope}
+                </p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Model Policy
+                </p>
+                <p className="mt-[4px] text-[14px]">{envelope.modelPolicy}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Read / Write Roots
+                </p>
+                <p className="mt-[4px] text-[14px]">
+                  {envelope.readRoots.length} / {envelope.writeRoots.length}
+                </p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Protected Paths
+                </p>
+                <p className="mt-[4px] text-[14px]">{envelope.protectedPaths.length}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Runtime Tools
+                </p>
+                <p className="mt-[4px] text-[14px]">{envelope.allowedRuntimeTools.length}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide">
+                  Capabilities
+                </p>
+                <p className="mt-[4px] text-[14px]">{envelope.allowedCapabilityIds.length}</p>
+              </div>
+              {envelope.provenance.warnings.length > 0 ? (
+                <div className="col-span-2 rounded-[var(--radius-sm)] bg-[var(--color-warning)]/5 p-[12px]">
+                  <p className="text-[12px] text-[var(--color-fg-muted)] uppercase tracking-wide mb-[4px]">
+                    Derivation Warnings
+                  </p>
+                  <ul className="space-y-[4px] text-[14px] text-[var(--color-fg)]">
+                    {envelope.provenance.warnings.map((warning) => (
+                      <li key={warning}>• {warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-[12px] text-[14px] text-[var(--color-fg-muted)]">
+              No execution envelope recorded.
+            </p>
+          )}
         </div>
 
         {/* Event timeline */}

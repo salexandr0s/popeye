@@ -54,6 +54,17 @@ export class ReceiptManager {
       memoryType: 'episodic',
       sourceRef: receipt.id,
       sourceRefType: 'receipt',
+      sourceRunId: receipt.runId,
+      sourceTimestamp: receipt.createdAt,
+      occurredAt: receipt.createdAt,
+      tags: ['receipt', `receipt-status:${receipt.status}`],
+      sourceMetadata: {
+        receiptId: receipt.id,
+        status: receipt.status,
+        taskId: receipt.taskId,
+        jobId: receipt.jobId,
+        usage: receipt.usage,
+      },
     });
   }
 

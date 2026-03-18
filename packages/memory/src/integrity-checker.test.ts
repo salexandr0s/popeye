@@ -15,6 +15,8 @@ function createTestDb(): Database.Database {
       content TEXT NOT NULL,
       confidence REAL NOT NULL,
       scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
       memory_type TEXT NOT NULL DEFAULT 'episodic',
       dedup_key TEXT,
       last_reinforced_at TEXT,

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { EngineKindSchema } from './engine.js';
-import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema, AgentProfileRecordSchema } from './execution.js';
+import { EngineCapabilitiesSchema, EngineKindSchema } from './engine.js';
+import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema, AgentProfileRecordSchema, ExecutionEnvelopeSchema } from './execution.js';
 import { MemorySourceTypeSchema, MemoryTypeSchema } from './memory.js';
 import { SecurityAuditFindingSchema } from './security.js';
 import { WorkspaceRecordSchema, DataClassificationSchema } from './config.js';
@@ -17,6 +17,7 @@ import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRe
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
   projectId: z.string().nullable().default(null),
+  profileId: z.string().default('default'),
   title: z.string(),
   prompt: z.string(),
   source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']).default('manual'),
@@ -89,6 +90,12 @@ export const HealthResponseSchema = z.object({
   startedAt: z.string(),
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+
+export const EngineCapabilitiesResponseSchema = EngineCapabilitiesSchema;
+export type EngineCapabilitiesResponse = z.infer<typeof EngineCapabilitiesResponseSchema>;
+
+export const ExecutionEnvelopeResponseSchema = ExecutionEnvelopeSchema;
+export type ExecutionEnvelopeResponse = z.infer<typeof ExecutionEnvelopeResponseSchema>;
 
 export const TaskCreateResponseSchema = z.object({
   task: TaskRecordSchema,
@@ -230,6 +237,8 @@ export const MemoryImportInputSchema = z.object({
   sourceType: MemorySourceTypeSchema.default('curated_memory'),
   memoryType: MemoryTypeSchema.optional(),
   scope: z.string().default('workspace'),
+  workspaceId: z.string().nullable().optional(),
+  projectId: z.string().nullable().optional(),
   confidence: z.number().min(0).max(1).default(0.8),
   classification: DataClassificationSchema.default('embeddable'),
 });

@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { DomainKind } from './domain.js';
 import type { RuntimePaths } from './config.js';
+import type { ContextReleasePolicy } from './domain.js';
+import type { ContextReleaseAuthorization } from './context-release.js';
+import type { ExecutionEnvelope } from './execution.js';
 
 // --- Capability Descriptor ---
 
@@ -66,10 +69,23 @@ export interface CapabilityContext {
     domain: DomainKind;
     sourceRef: string;
     releaseLevel: string;
+    approvalId?: string;
     runId?: string;
     tokenEstimate?: number;
     redacted?: boolean;
   }) => { id: string };
+  readonly getExecutionEnvelope?: ((runId: string) => ExecutionEnvelope | null) | undefined;
+  readonly authorizeContextRelease?: ((input: {
+    runId: string;
+    domain: DomainKind;
+    sourceRef: string;
+    requestedLevel: ContextReleasePolicy;
+    tokenEstimate?: number;
+    resourceType?: string;
+    resourceId?: string;
+    requestedBy?: string;
+    payloadPreview?: string;
+  }) => ContextReleaseAuthorization) | undefined;
   readonly events: {
     emit: (event: string, payload: unknown) => void;
   };

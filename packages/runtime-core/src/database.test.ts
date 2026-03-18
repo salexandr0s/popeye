@@ -64,6 +64,7 @@ function seedLegacyAppDatabase(dir: string): void {
       CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
       CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE instruction_snapshots (id TEXT PRIMARY KEY, scope TEXT NOT NULL, bundle_json TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT, title TEXT NOT NULL, prompt TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL, retry_policy_json TEXT NOT NULL, side_effect_profile TEXT NOT NULL, created_at TEXT NOT NULL, coalesce_key TEXT);
       CREATE TABLE jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, status TEXT NOT NULL, retry_count INTEGER NOT NULL, available_at TEXT NOT NULL, last_run_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -187,6 +188,187 @@ function seedLegacyMemoryDatabase(dir: string): void {
   }
 }
 
+function seedStructuredMemoryDatabaseBeforeLocationMigration(dir: string): void {
+  const stateDir = join(dir, 'state');
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const db = new Database(join(stateDir, 'memory.db'));
+  try {
+    db.exec(`
+      CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        scope TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        memory_type TEXT DEFAULT 'episodic',
+        dedup_key TEXT,
+        last_reinforced_at TEXT,
+        archived_at TEXT,
+        source_run_id TEXT,
+        source_timestamp TEXT,
+        workspace_id TEXT,
+        project_id TEXT,
+        durable INTEGER NOT NULL DEFAULT 0,
+        domain TEXT DEFAULT 'general',
+        context_release_policy TEXT DEFAULT 'full'
+      );
+      CREATE TABLE memory_events (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE memory_sources (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_ref TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_consolidations (
+        id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        merged_into_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        reason TEXT DEFAULT ''
+      );
+      CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
+      CREATE TABLE memory_namespaces (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        external_ref TEXT,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_tags (
+        id TEXT PRIMARY KEY,
+        owner_kind TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_artifacts (
+        id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        namespace_id TEXT NOT NULL,
+        source_run_id TEXT,
+        source_ref TEXT,
+        source_ref_type TEXT,
+        captured_at TEXT NOT NULL,
+        occurred_at TEXT,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE memory_facts (
+        id TEXT PRIMARY KEY,
+        namespace_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        memory_type TEXT NOT NULL,
+        fact_kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        source_reliability REAL NOT NULL,
+        extraction_confidence REAL NOT NULL,
+        human_confirmed INTEGER NOT NULL DEFAULT 0,
+        occurred_at TEXT,
+        valid_from TEXT,
+        valid_to TEXT,
+        source_run_id TEXT,
+        source_timestamp TEXT,
+        dedup_key TEXT,
+        last_reinforced_at TEXT,
+        archived_at TEXT,
+        created_at TEXT NOT NULL,
+        durable INTEGER NOT NULL DEFAULT 0,
+        revision_status TEXT NOT NULL DEFAULT 'active'
+      );
+      CREATE TABLE memory_fact_sources (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        excerpt TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_revisions (
+        id TEXT PRIMARY KEY,
+        relation_type TEXT NOT NULL,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_syntheses (
+        id TEXT PRIMARY KEY,
+        namespace_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        synthesis_kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        text TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        refresh_policy TEXT NOT NULL DEFAULT 'manual',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+      );
+      CREATE TABLE memory_synthesis_sources (
+        id TEXT PRIMARY KEY,
+        synthesis_id TEXT NOT NULL,
+        fact_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE memory_facts_fts USING fts5(fact_id UNINDEXED, text);
+      CREATE VIRTUAL TABLE memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);
+    `);
+    const appliedAt = '2026-03-13T00:00:00.000Z';
+    for (const migrationId of [
+      '001-memory-schema',
+      '002-memory-lifecycle',
+      '003-memory-schema-enrichment',
+      '004-memory-consolidation-reason',
+      '005-memory-cleanup',
+      '006-memory-fts-stable-id',
+      '007-memory-enhancements',
+      '008-memory-summary-dag',
+      '009-domain-fields',
+      '010-structured-memory',
+      '011-memory-locations',
+    ]) {
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(migrationId, appliedAt);
+    }
+
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-workspace', 'workspace', 'ws-1', 'Workspace ws-1', appliedAt, appliedAt);
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-project', 'project', 'ws-1/proj-1', 'Project ws-1/proj-1', appliedAt, appliedAt);
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-global', 'global', null, 'Global', appliedAt, appliedAt);
+
+    db.prepare(
+      'INSERT INTO memory_artifacts (id, source_type, classification, scope, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('artifact-1', 'receipt', 'internal', 'ws-1/proj-1', 'ns-project', 'run-1', 'receipt-1', 'receipt', appliedAt, appliedAt, 'artifact content', 'artifact-hash', '{}');
+    db.prepare(
+      'INSERT INTO memory_facts (id, namespace_id, scope, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('fact-1', 'ns-workspace', 'ws-1', 'internal', 'receipt', 'semantic', 'state', 'workspace fact', 0.8, 0.9, 0.9, 0, appliedAt, null, null, 'run-1', appliedAt, 'dedup-fact', appliedAt, null, appliedAt, 0, 'active');
+    db.prepare(
+      'INSERT INTO memory_syntheses (id, namespace_id, scope, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('synth-1', 'ns-global', 'global', 'internal', 'daily', 'Daily global', 'global synthesis', 0.75, 'manual', appliedAt, appliedAt, null);
+  } finally {
+    db.close();
+  }
+}
+
 describe('openRuntimeDatabases', () => {
   describe('Test 1: All tables created', () => {
     it('creates all expected app DB tables', () => {
@@ -212,6 +394,7 @@ describe('openRuntimeDatabases', () => {
           'session_roots',
           'runs',
           'run_events',
+          'execution_envelopes',
           'receipts',
           'instruction_snapshots',
           'interventions',
@@ -275,7 +458,17 @@ describe('openRuntimeDatabases', () => {
           'memory_events',
           'memory_sources',
           'memory_consolidations',
+          'memory_namespaces',
+          'memory_tags',
+          'memory_artifacts',
+          'memory_facts',
+          'memory_fact_sources',
+          'memory_revisions',
+          'memory_syntheses',
+          'memory_synthesis_sources',
           'memories_fts',
+          'memory_facts_fts',
+          'memory_syntheses_fts',
         ];
 
         for (const table of expectedMemoryTables) {
@@ -331,7 +524,7 @@ describe('openRuntimeDatabases', () => {
   });
 
   describe('Test 3: Indexes exist', () => {
-    it('has all 11 performance indexes from the hardening migration', () => {
+    it('has core scheduler and execution-profile indexes', () => {
       const { databases } = openFresh();
       try {
         const rows = databases.app
@@ -344,9 +537,13 @@ describe('openRuntimeDatabases', () => {
           'idx_jobs_status_created',
           'idx_jobs_workspace_status',
           'idx_jobs_task_status',
+          'idx_tasks_profile_id',
           'idx_runs_state_finished',
           'idx_runs_job_id',
+          'idx_runs_profile_id',
           'idx_runs_started_at',
+          'idx_execution_envelopes_profile_id',
+          'idx_execution_envelopes_workspace_id',
           'idx_run_events_run_id',
           'idx_receipts_run_status',
           'idx_job_leases_expires',
@@ -356,6 +553,31 @@ describe('openRuntimeDatabases', () => {
 
         for (const idx of expectedIndexes) {
           expect(indexNames, `missing index: ${idx}`).toContain(idx);
+        }
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('has memory retrieval indexes', () => {
+      const { databases } = openFresh();
+      try {
+        const rows = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='index' ORDER BY name")
+          .all() as { name: string }[];
+        const indexNames = rows.map((r) => r.name);
+
+        for (const idx of [
+          'idx_memories_location_created',
+          'idx_memories_dedup_key',
+          'idx_memory_artifacts_location_captured',
+          'idx_memory_facts_scope',
+          'idx_memory_facts_location_created',
+          'idx_memory_syntheses_scope',
+          'idx_memory_syntheses_location_updated',
+        ]) {
+          expect(indexNames, `missing memory index: ${idx}`).toContain(idx);
         }
       } finally {
         databases.app.close();
@@ -392,6 +614,19 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
+    it('has memory location index', () => {
+      const { databases } = openFresh();
+      try {
+        const rows = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_location_created'")
+          .all() as { name: string }[];
+        expect(rows).toHaveLength(1);
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
     it('has tasks coalesce_key index', () => {
       const { databases } = openFresh();
       try {
@@ -406,8 +641,35 @@ describe('openRuntimeDatabases', () => {
     });
   });
 
-  describe('Test 4: Memory enrichment columns', () => {
-    it('memories table has source_run_id and source_timestamp columns', () => {
+  describe('Test 4: Schema enrichment columns', () => {
+    it('agent_profiles, tasks, and runs have execution-profile columns', () => {
+      const { databases } = openFresh();
+      try {
+        const agentProfileColumns = databases.app.pragma('table_info(agent_profiles)') as Array<{ name: string }>;
+        const taskColumns = databases.app.pragma('table_info(tasks)') as Array<{ name: string }>;
+        const runColumns = databases.app.pragma('table_info(runs)') as Array<{ name: string }>;
+
+        expect(agentProfileColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+          'description',
+          'mode',
+          'model_policy',
+          'allowed_runtime_tools_json',
+          'allowed_capability_ids_json',
+          'memory_scope',
+          'recall_scope',
+          'filesystem_policy_class',
+          'context_release_policy',
+          'updated_at',
+        ]));
+        expect(taskColumns.map((column) => column.name)).toContain('profile_id');
+        expect(runColumns.map((column) => column.name)).toContain('profile_id');
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('memories table has source_run_id, source_timestamp, and location columns', () => {
       const { databases } = openFresh();
       try {
         const columns = databases.memory.pragma('table_info(memories)') as {
@@ -421,6 +683,24 @@ describe('openRuntimeDatabases', () => {
 
         expect(columnNames, 'missing memories.source_run_id').toContain('source_run_id');
         expect(columnNames, 'missing memories.source_timestamp').toContain('source_timestamp');
+        expect(columnNames, 'missing memories.workspace_id').toContain('workspace_id');
+        expect(columnNames, 'missing memories.project_id').toContain('project_id');
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('structured memory tables have explicit location columns', () => {
+      const { databases } = openFresh();
+      try {
+        const artifactColumns = databases.memory.pragma('table_info(memory_artifacts)') as Array<{ name: string }>;
+        const factColumns = databases.memory.pragma('table_info(memory_facts)') as Array<{ name: string }>;
+        const synthesisColumns = databases.memory.pragma('table_info(memory_syntheses)') as Array<{ name: string }>;
+
+        expect(artifactColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
+        expect(factColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
+        expect(synthesisColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -528,6 +808,8 @@ describe('openRuntimeDatabases', () => {
           '011-telegram-operator-resolution',
           '012-telegram-send-attempts',
           '013-policy-substrate',
+          '014-execution-profiles',
+          '015-execution-envelopes',
         ]);
 
         const memMigrations = databases.memory
@@ -544,6 +826,9 @@ describe('openRuntimeDatabases', () => {
           '007-memory-enhancements',
           '008-memory-summary-dag',
           '009-domain-fields',
+          '010-structured-memory',
+          '011-memory-locations',
+          '012-structured-memory-locations',
         ]);
       } finally {
         databases.app.close();
@@ -566,6 +851,8 @@ describe('openRuntimeDatabases', () => {
         expect(migrationIds.map((row) => row.id)).toContain('008-telegram-relay-state');
         expect(migrationIds.map((row) => row.id)).toContain('009-telegram-relay-workspace-scope');
         expect(migrationIds.map((row) => row.id)).toContain('010-telegram-reply-delivery-observability');
+        expect(migrationIds.map((row) => row.id)).toContain('014-execution-profiles');
+        expect(migrationIds.map((row) => row.id)).toContain('015-execution-envelopes');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');
@@ -578,6 +865,47 @@ describe('openRuntimeDatabases', () => {
 
         const telegramDeliveryColumns = databases.app.pragma('table_info(telegram_reply_deliveries)') as Array<{ name: string }>;
         expect(telegramDeliveryColumns.map((column) => column.name)).toContain('sent_telegram_message_id');
+
+        const agentProfileColumns = databases.app.pragma('table_info(agent_profiles)') as Array<{ name: string }>;
+        expect(agentProfileColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+          'description',
+          'mode',
+          'model_policy',
+          'allowed_runtime_tools_json',
+          'allowed_capability_ids_json',
+          'memory_scope',
+          'recall_scope',
+          'filesystem_policy_class',
+          'context_release_policy',
+          'updated_at',
+        ]));
+
+        const taskColumns = databases.app.pragma('table_info(tasks)') as Array<{ name: string }>;
+        expect(taskColumns.map((column) => column.name)).toContain('profile_id');
+
+        const runColumns = databases.app.pragma('table_info(runs)') as Array<{ name: string }>;
+        expect(runColumns.map((column) => column.name)).toContain('profile_id');
+
+        const envelopeColumns = databases.app.pragma('table_info(execution_envelopes)') as Array<{ name: string }>;
+        expect(envelopeColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+          'run_id',
+          'task_id',
+          'profile_id',
+          'workspace_id',
+          'project_id',
+          'allowed_runtime_tools_json',
+          'allowed_capability_ids_json',
+          'memory_scope',
+          'recall_scope',
+          'filesystem_policy_class',
+          'context_release_policy',
+          'read_roots_json',
+          'write_roots_json',
+          'protected_paths_json',
+          'scratch_root',
+          'cwd',
+          'provenance_json',
+        ]));
 
         const workspace = databases.app.prepare('SELECT id, name, root_path FROM workspaces WHERE id = ?').get('ws-1') as {
           id: string;
@@ -610,6 +938,7 @@ describe('openRuntimeDatabases', () => {
           .prepare('SELECT id FROM schema_migrations ORDER BY id')
           .all() as Array<{ id: string }>;
         expect(migrationIds.map((row) => row.id)).toContain('006-memory-fts-stable-id');
+        expect(migrationIds.map((row) => row.id)).toContain('011-memory-locations');
 
         const ftsColumns = databases.memory.pragma('table_info(memories_fts)') as Array<{ name: string }>;
         expect(ftsColumns.map((column) => column.name)).toEqual(['memory_id', 'description', 'content']);
@@ -618,6 +947,59 @@ describe('openRuntimeDatabases', () => {
           .prepare("SELECT memory_id, description FROM memories_fts WHERE memories_fts MATCH 'beta'")
           .all() as Array<{ memory_id: string; description: string }>;
         expect(searchRows).toEqual([{ memory_id: 'm-beta', description: 'Beta memory' }]);
+
+        const locationRow = databases.memory
+          .prepare('SELECT scope, workspace_id, project_id FROM memories WHERE id = ?')
+          .get('m-beta') as { scope: string; workspace_id: string | null; project_id: string | null } | undefined;
+        expect(locationRow).toEqual({
+          scope: 'workspace',
+          workspace_id: 'workspace',
+          project_id: null,
+        });
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('applies memory migration 012 and backfills structured location columns', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'popeye-db-structured-location-upgrade-'));
+      chmodSync(dir, 0o700);
+      seedStructuredMemoryDatabaseBeforeLocationMigration(dir);
+
+      const databases = openRuntimeDatabases(makeConfig(dir));
+      try {
+        const migrationIds = databases.memory
+          .prepare('SELECT id FROM schema_migrations ORDER BY id')
+          .all() as Array<{ id: string }>;
+        expect(migrationIds.map((row) => row.id)).toContain('012-structured-memory-locations');
+
+        const artifact = databases.memory
+          .prepare('SELECT scope, workspace_id, project_id FROM memory_artifacts WHERE id = ?')
+          .get('artifact-1') as { scope: string; workspace_id: string | null; project_id: string | null } | undefined;
+        expect(artifact).toEqual({
+          scope: 'ws-1/proj-1',
+          workspace_id: 'ws-1',
+          project_id: 'proj-1',
+        });
+
+        const fact = databases.memory
+          .prepare('SELECT scope, workspace_id, project_id FROM memory_facts WHERE id = ?')
+          .get('fact-1') as { scope: string; workspace_id: string | null; project_id: string | null } | undefined;
+        expect(fact).toEqual({
+          scope: 'ws-1',
+          workspace_id: 'ws-1',
+          project_id: null,
+        });
+
+        const synthesis = databases.memory
+          .prepare('SELECT scope, workspace_id, project_id FROM memory_syntheses WHERE id = ?')
+          .get('synth-1') as { scope: string; workspace_id: string | null; project_id: string | null } | undefined;
+        expect(synthesis).toEqual({
+          scope: 'global',
+          workspace_id: null,
+          project_id: null,
+        });
       } finally {
         databases.app.close();
         databases.memory.close();

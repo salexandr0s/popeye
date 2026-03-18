@@ -56,3 +56,19 @@ export const AuthRotationRecordSchema = z.object({
   overlapEndsAt: z.string().optional(),
 });
 export type AuthRotationRecord = z.infer<typeof AuthRotationRecordSchema>;
+
+export const AuthRoleSchema = z.enum(['operator', 'service', 'readonly']);
+export type AuthRole = z.infer<typeof AuthRoleSchema>;
+
+export const AuthRoleStoreSchema = z.object({
+  version: z.literal(2).default(2),
+  roles: z.object({
+    operator: AuthRotationRecordSchema,
+    service: AuthRotationRecordSchema.optional(),
+    readonly: AuthRotationRecordSchema.optional(),
+  }),
+});
+export type AuthRoleStore = z.infer<typeof AuthRoleStoreSchema>;
+
+export const AuthStoreFileSchema = z.union([AuthRotationRecordSchema, AuthRoleStoreSchema]);
+export type AuthStoreFile = z.infer<typeof AuthStoreFileSchema>;

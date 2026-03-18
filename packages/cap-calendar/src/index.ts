@@ -91,9 +91,9 @@ export function createCalendarCapability(): CapabilityModule {
       return { healthy: calendarService !== null && calendarDb !== null };
     },
 
-    getRuntimeTools(_taskContext) {
+    getRuntimeTools(taskContext) {
       if (!calendarService || !searchService || !digestService || !ctx) return [];
-      return createCalendarTools(calendarService, searchService, digestService, ctx);
+      return createCalendarTools(calendarService, searchService, digestService, ctx, taskContext);
     },
 
     getTimers() {

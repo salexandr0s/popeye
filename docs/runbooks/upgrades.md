@@ -43,10 +43,11 @@
 2. Create backup — `pop backup create`
 3. Pull or checkout target version
 4. Install dependencies — `pnpm install`
-5. Start daemon — `pop daemon start`
-6. Verify reconciliation
-7. Run security audit — `pop security audit`
-8. Verify scheduler — `pop task list`
+5. Run `pnpm verify:src-build-artifacts` to confirm no source-adjacent build artifacts reappeared
+6. Start daemon — `pop daemon start`
+7. Verify reconciliation
+8. Run security audit — `pop security audit`
+9. Verify scheduler — `pop task list`
 
 ### Rollback
 

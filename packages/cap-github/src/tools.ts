@@ -11,8 +11,41 @@ export function createGithubTools(
   searchService: GithubSearchService,
   digestService: GithubDigestService,
   ctx: CapabilityContext,
+  taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
   const redactionPatterns = extractRedactionPatterns(ctx.config);
+
+  function authorizeRelease(input: {
+    sourceRef: string;
+    releaseLevel: 'summary';
+    tokenEstimate: number;
+    payloadPreview?: string;
+  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
+    if (!taskContext.runId || !ctx.authorizeContextRelease) {
+      return { ok: true };
+    }
+    const authorization = ctx.authorizeContextRelease({
+      runId: taskContext.runId,
+      domain: 'github',
+      sourceRef: input.sourceRef,
+      requestedLevel: input.releaseLevel,
+      tokenEstimate: input.tokenEstimate,
+      resourceType: 'github_context',
+      resourceId: input.sourceRef,
+      requestedBy: 'cap-github',
+      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
+    });
+    if (authorization.outcome === 'deny') {
+      return { ok: false, text: authorization.reason };
+    }
+    if (authorization.outcome === 'approval_required') {
+      return {
+        ok: false,
+        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
+      };
+    }
+    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
+  }
 
   return [
     {
@@ -135,10 +168,22 @@ export function createGithubTools(
           lines.push(redactedBody);
         }
 
+        const release = authorizeRelease({
+          sourceRef: `github:pr:${pr.id}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          payloadPreview: pr.title,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'github',
           sourceRef: `github:pr:${pr.id}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
           redacted: true,
         });
@@ -183,10 +228,22 @@ export function createGithubTools(
           lines.push(redactedBody);
         }
 
+        const release = authorizeRelease({
+          sourceRef: `github:issue:${issue.id}`,
+          releaseLevel: 'summary',
+          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          payloadPreview: issue.title,
+        });
+        if (!release.ok) {
+          return { content: [{ type: 'text', text: release.text }] };
+        }
+
         ctx.contextReleaseRecord({
           domain: 'github',
           sourceRef: `github:issue:${issue.id}`,
           releaseLevel: 'summary',
+          ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
           redacted: true,
         });

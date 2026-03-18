@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import {
   type AppConfig,
+  type EngineCapabilities,
   NormalizedEngineEventSchema,
   type EngineFailureClassification,
   type NormalizedEngineEvent,
@@ -134,6 +135,7 @@ export interface EngineRunRequest {
 export interface EngineAdapter {
   startRun(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunHandle>;
   run(input: EngineRunRequest, options?: EngineRunOptions): Promise<EngineRunResult>;
+  getCapabilities(): EngineCapabilities;
 }
 
 export interface PiAdapterConfig {
@@ -867,6 +869,19 @@ export class FakeEngineAdapter implements EngineAdapter {
       failureClassification: completion.failureClassification,
     };
   }
+
+  getCapabilities(): EngineCapabilities {
+    return {
+      engineKind: 'fake',
+      persistentSessionSupport: false,
+      resumeBySessionRefSupport: false,
+      hostToolMode: 'none',
+      compactionEventSupport: false,
+      cancellationMode: 'cooperative',
+      acceptedRequestMetadata: ['prompt', 'workspaceId', 'projectId', 'sessionPolicy', 'instructionSnapshotId', 'trigger', 'cwd', 'modelOverride'],
+      warnings: ['fake engine does not provide persistent sessions or host tools'],
+    };
+  }
 }
 
 export class FailingFakeEngineAdapter implements EngineAdapter {
@@ -930,6 +945,19 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
       failureClassification: completion.failureClassification,
     };
   }
+
+  getCapabilities(): EngineCapabilities {
+    return {
+      engineKind: 'fake',
+      persistentSessionSupport: false,
+      resumeBySessionRefSupport: false,
+      hostToolMode: 'none',
+      compactionEventSupport: false,
+      cancellationMode: 'cooperative',
+      acceptedRequestMetadata: ['prompt', 'workspaceId', 'projectId', 'sessionPolicy', 'instructionSnapshotId', 'trigger', 'cwd', 'modelOverride'],
+      warnings: ['failing fake engine is a test adapter only'],
+    };
+  }
 }
 
 export class PiEngineAdapter implements EngineAdapter {
@@ -938,6 +966,7 @@ export class PiEngineAdapter implements EngineAdapter {
   private readonly args: string[];
   private readonly timeoutMs: number | undefined;
   private readonly runtimeToolTimeoutMs: number;
+  private readonly expectedPiVersion: string | undefined;
 
   constructor(config: PiAdapterConfig = {}) {
     const status = assertPiCheckoutAvailable(config.piPath);
@@ -946,6 +975,7 @@ export class PiEngineAdapter implements EngineAdapter {
     this.args = config.args ?? [];
     this.timeoutMs = config.timeoutMs;
     this.runtimeToolTimeoutMs = config.runtimeToolTimeoutMs ?? DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
+    this.expectedPiVersion = config.piVersion;
     if (config.piVersion) {
       const versionCheck = checkPiVersion(config.piVersion, config.piPath);
       if (!versionCheck.ok) {
@@ -1585,6 +1615,34 @@ export class PiEngineAdapter implements EngineAdapter {
       failureClassification: completion.failureClassification,
       failureMessage,
       warnings: completion.warnings,
+    };
+  }
+
+  getCapabilities(): EngineCapabilities {
+    const warnings: string[] = [];
+    const versionCheck = checkPiVersion(this.expectedPiVersion, this.piPath);
+    if (!versionCheck.ok) {
+      warnings.push(versionCheck.message);
+    }
+    return {
+      engineKind: 'pi',
+      persistentSessionSupport: true,
+      resumeBySessionRefSupport: false,
+      hostToolMode: 'native_with_fallback',
+      compactionEventSupport: true,
+      cancellationMode: 'rpc_abort_with_signal_fallback',
+      acceptedRequestMetadata: [
+        'prompt',
+        'cwd',
+        'modelOverride',
+        'runtimeTools',
+        'workspaceId',
+        'projectId',
+        'sessionPolicy',
+        'instructionSnapshotId',
+        'trigger',
+      ],
+      warnings,
     };
   }
 }

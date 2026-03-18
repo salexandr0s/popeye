@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 
+import { buildLocationCondition } from './location.js';
 import type { MemoryType } from './types.js';
 
 /** Same shape as FtsCandidate from fts5-search — defined here to avoid circular import. */
@@ -10,6 +11,8 @@ export interface LikeFallbackCandidate {
   memoryType: MemoryType;
   confidence: number;
   scope: string;
+  workspaceId: string | null;
+  projectId: string | null;
   sourceType: string;
   createdAt: string;
   lastReinforcedAt: string | null;
@@ -36,7 +39,15 @@ export function splitQueryTokens(query: string): string[] {
  */
 export function buildLikeQuery(
   query: string,
-  filters: { scope?: string; minConfidence?: number; memoryTypes?: MemoryType[]; limit?: number },
+  filters: {
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
+    minConfidence?: number;
+    memoryTypes?: MemoryType[];
+    limit?: number;
+  },
   limit = 60,
 ): { sql: string; params: unknown[] } {
   const tokens = splitQueryTokens(query);
@@ -62,6 +73,16 @@ export function buildLikeQuery(
   if (filters.scope !== undefined) {
     conditions.push('scope = ?');
     params.push(filters.scope);
+  } else if (filters.workspaceId !== undefined || filters.projectId !== undefined || filters.includeGlobal) {
+    const location = buildLocationCondition('', {
+      workspaceId: filters.workspaceId ?? null,
+      projectId: filters.projectId ?? null,
+      includeGlobal: filters.includeGlobal,
+    });
+    if (location.sql) {
+      conditions.push(location.sql);
+      params.push(...location.params);
+    }
   }
   if (filters.memoryTypes !== undefined && filters.memoryTypes.length > 0) {
     const placeholders = filters.memoryTypes.map(() => '?').join(', ');
@@ -71,7 +92,7 @@ export function buildLikeQuery(
 
   params.push(effectiveLimit);
 
-  const sql = `SELECT id, description, content, memory_type, confidence, scope, source_type, created_at, last_reinforced_at, durable
+  const sql = `SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable
 FROM memories
 WHERE ${conditions.join(' AND ')}
 ORDER BY confidence DESC
@@ -103,7 +124,15 @@ function computeSyntheticRank(description: string, content: string, tokens: stri
 export function searchLikeFallback(
   db: Database.Database,
   query: string,
-  filters: { scope?: string; minConfidence?: number; memoryTypes?: MemoryType[]; limit?: number },
+  filters: {
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
+    minConfidence?: number;
+    memoryTypes?: MemoryType[];
+    limit?: number;
+  },
   limit = 60,
 ): LikeFallbackCandidate[] {
   const { sql, params } = buildLikeQuery(query, filters, limit);
@@ -118,6 +147,8 @@ export function searchLikeFallback(
     memory_type: string;
     confidence: number;
     scope: string;
+    workspace_id: string | null;
+    project_id: string | null;
     source_type: string;
     created_at: string;
     last_reinforced_at: string | null;
@@ -131,6 +162,8 @@ export function searchLikeFallback(
     memoryType: row.memory_type as MemoryType,
     confidence: row.confidence,
     scope: row.scope,
+    workspaceId: row.workspace_id,
+    projectId: row.project_id,
     sourceType: row.source_type,
     createdAt: row.created_at,
     lastReinforcedAt: row.last_reinforced_at,

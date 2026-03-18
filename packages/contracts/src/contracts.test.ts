@@ -37,7 +37,10 @@ import {
   RuntimePathsSchema,
 
   // Engine domain
+  EngineCapabilitiesSchema,
+  EngineCancellationModeSchema,
   EngineKindSchema,
+  EngineHostToolModeSchema,
   EngineFailureClassificationSchema,
   NormalizedEngineEventSchema,
   UsageMetricsSchema,
@@ -78,6 +81,7 @@ describe('Schema parse tests', () => {
       id: 'task-001',
       workspaceId: 'ws-1',
       projectId: null,
+      profileId: 'default',
       title: 'Run tests',
       prompt: 'Execute the test suite',
       source: 'manual' as const,
@@ -93,6 +97,7 @@ describe('Schema parse tests', () => {
       expect(result.id).toBe('task-001');
       expect(result.title).toBe('Run tests');
       expect(result.source).toBe('manual');
+      expect(result.profileId).toBe('default');
     });
 
     it('rejects missing required field (id)', () => {
@@ -124,6 +129,7 @@ describe('Schema parse tests', () => {
       const result = TaskRecordSchema.parse(minimal);
       expect(result.status).toBe('active');
       expect(result.coalesceKey).toBeNull();
+      expect(result.profileId).toBe('default');
     });
   });
 
@@ -133,6 +139,7 @@ describe('Schema parse tests', () => {
       jobId: 'job-001',
       taskId: 'task-001',
       workspaceId: 'ws-1',
+      profileId: 'default',
       sessionRootId: 'sr-001',
       engineSessionRef: null,
       state: 'running' as const,
@@ -145,6 +152,7 @@ describe('Schema parse tests', () => {
       const result = RunRecordSchema.parse(validRun);
       expect(result.id).toBe('run-001');
       expect(result.state).toBe('running');
+      expect(result.profileId).toBe('default');
     });
 
     it('rejects invalid state', () => {
@@ -316,14 +324,45 @@ describe('Schema parse tests', () => {
       const result = AgentProfileRecordSchema.parse({
         id: 'agent-1',
         name: 'Popeye Agent',
+        description: 'Default interactive operator profile',
+        mode: 'interactive',
+        modelPolicy: 'inherit',
+        allowedRuntimeTools: ['popeye_memory_search'],
+        allowedCapabilityIds: ['files', 'email'],
+        memoryScope: 'workspace',
+        recallScope: 'workspace',
+        filesystemPolicyClass: 'workspace',
+        contextReleasePolicy: 'summary_only',
         createdAt: '2026-03-13T00:00:00Z',
+        updatedAt: '2026-03-14T00:00:00Z',
       });
       expect(result.id).toBe('agent-1');
       expect(result.name).toBe('Popeye Agent');
+      expect(result.mode).toBe('interactive');
+      expect(result.allowedCapabilityIds).toEqual(['files', 'email']);
+      expect(result.updatedAt).toBe('2026-03-14T00:00:00Z');
     });
 
     it('rejects missing name', () => {
       expect(() => AgentProfileRecordSchema.parse({ id: 'agent-1', createdAt: '2026-03-13T00:00:00Z' })).toThrow();
+    });
+
+    it('applies execution-profile defaults', () => {
+      const result = AgentProfileRecordSchema.parse({
+        id: 'agent-default',
+        name: 'Default agent profile',
+        createdAt: '2026-03-13T00:00:00Z',
+      });
+      expect(result.description).toBe('');
+      expect(result.mode).toBe('interactive');
+      expect(result.modelPolicy).toBe('inherit');
+      expect(result.allowedRuntimeTools).toEqual([]);
+      expect(result.allowedCapabilityIds).toEqual([]);
+      expect(result.memoryScope).toBe('workspace');
+      expect(result.recallScope).toBe('workspace');
+      expect(result.filesystemPolicyClass).toBe('workspace');
+      expect(result.contextReleasePolicy).toBe('summary_only');
+      expect(result.updatedAt).toBeNull();
     });
   });
 
@@ -508,6 +547,55 @@ describe('Enum coverage', () => {
 
     it('rejects invalid kind', () => {
       expect(() => EngineKindSchema.parse('openai')).toThrow();
+    });
+  });
+
+  describe('EngineHostToolModeSchema', () => {
+    it('accepts supported host tool modes', () => {
+      expect(EngineHostToolModeSchema.parse('none')).toBe('none');
+      expect(EngineHostToolModeSchema.parse('native')).toBe('native');
+      expect(EngineHostToolModeSchema.parse('bridge')).toBe('bridge');
+      expect(EngineHostToolModeSchema.parse('native_with_fallback')).toBe('native_with_fallback');
+    });
+  });
+
+  describe('EngineCancellationModeSchema', () => {
+    it('accepts supported cancellation modes', () => {
+      expect(EngineCancellationModeSchema.parse('none')).toBe('none');
+      expect(EngineCancellationModeSchema.parse('cooperative')).toBe('cooperative');
+      expect(EngineCancellationModeSchema.parse('rpc_abort')).toBe('rpc_abort');
+      expect(EngineCancellationModeSchema.parse('rpc_abort_with_signal_fallback')).toBe('rpc_abort_with_signal_fallback');
+    });
+  });
+
+  describe('EngineCapabilitiesSchema', () => {
+    it('parses valid engine capability data', () => {
+      const result = EngineCapabilitiesSchema.parse({
+        engineKind: 'pi',
+        persistentSessionSupport: true,
+        resumeBySessionRefSupport: false,
+        hostToolMode: 'native_with_fallback',
+        compactionEventSupport: true,
+        cancellationMode: 'rpc_abort_with_signal_fallback',
+        acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId'],
+        warnings: ['pi version mismatch'],
+      });
+      expect(result.engineKind).toBe('pi');
+      expect(result.hostToolMode).toBe('native_with_fallback');
+      expect(result.acceptedRequestMetadata).toContain('workspaceId');
+    });
+
+    it('applies defaults for warnings and metadata', () => {
+      const result = EngineCapabilitiesSchema.parse({
+        engineKind: 'fake',
+        persistentSessionSupport: false,
+        resumeBySessionRefSupport: false,
+        hostToolMode: 'none',
+        compactionEventSupport: false,
+        cancellationMode: 'cooperative',
+      });
+      expect(result.acceptedRequestMetadata).toEqual([]);
+      expect(result.warnings).toEqual([]);
     });
   });
 
@@ -728,6 +816,7 @@ describe('Cross-schema consistency', () => {
     expect(taskRecord.id).toBe('task-cross-001');
     expect(taskRecord.title).toBe('Cross-schema test');
     expect(taskRecord.workspaceId).toBe('default');
+    expect(taskRecord.profileId).toBe('default');
     expect(taskRecord.source).toBe('manual');
     expect(taskRecord.coalesceKey).toBeNull();
     expect(taskRecord.projectId).toBeNull();
@@ -781,6 +870,7 @@ describe('Cross-schema consistency', () => {
         jobId: 'job-001',
         taskId: 'task-001',
         workspaceId: 'ws-1',
+        profileId: 'default',
         sessionRootId: 'sr-001',
         engineSessionRef: null,
         state,
@@ -816,6 +906,7 @@ describe('Cross-schema consistency', () => {
         id: 'task-compose-001',
         workspaceId: 'ws-1',
         projectId: null,
+        profileId: 'default',
         title: 'Compose test',
         prompt: 'Test composition',
         source: 'api',
@@ -840,6 +931,7 @@ describe('Cross-schema consistency', () => {
     });
 
     expect(response.task.id).toBe('task-compose-001');
+    expect(response.task.profileId).toBe('default');
     expect(response.job?.id).toBe('job-compose-001');
     expect(response.run).toBeNull();
   });

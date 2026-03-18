@@ -139,7 +139,10 @@ describe('CapabilityRegistry', () => {
     await registry.initializeAll();
     const tools = registry.getRuntimeTools({ workspaceId: 'default' });
     expect(tools).toHaveLength(1);
-    expect(tools[0]!.name).toBe('test_tool');
+    expect(tools[0]).toMatchObject({
+      capabilityId: 'tooled',
+      tool: expect.objectContaining({ name: 'test_tool' }),
+    });
   });
 
   it('does not return tools from uninitialized capabilities', () => {

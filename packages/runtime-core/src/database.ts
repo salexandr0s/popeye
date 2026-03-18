@@ -419,6 +419,54 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_context_releases_approval ON context_releases(approval_id);',
     ],
   },
+  {
+    id: '014-execution-profiles',
+    statements: [
+      "ALTER TABLE agent_profiles ADD COLUMN description TEXT NOT NULL DEFAULT '';",
+      "ALTER TABLE agent_profiles ADD COLUMN mode TEXT NOT NULL DEFAULT 'interactive';",
+      "ALTER TABLE agent_profiles ADD COLUMN model_policy TEXT NOT NULL DEFAULT 'inherit';",
+      "ALTER TABLE agent_profiles ADD COLUMN allowed_runtime_tools_json TEXT NOT NULL DEFAULT '[]';",
+      "ALTER TABLE agent_profiles ADD COLUMN allowed_capability_ids_json TEXT NOT NULL DEFAULT '[]';",
+      "ALTER TABLE agent_profiles ADD COLUMN memory_scope TEXT NOT NULL DEFAULT 'workspace';",
+      "ALTER TABLE agent_profiles ADD COLUMN recall_scope TEXT NOT NULL DEFAULT 'workspace';",
+      "ALTER TABLE agent_profiles ADD COLUMN filesystem_policy_class TEXT NOT NULL DEFAULT 'workspace';",
+      "ALTER TABLE agent_profiles ADD COLUMN context_release_policy TEXT NOT NULL DEFAULT 'summary_only';",
+      'ALTER TABLE agent_profiles ADD COLUMN updated_at TEXT;',
+      "ALTER TABLE tasks ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default';",
+      "ALTER TABLE runs ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default';",
+      'CREATE INDEX IF NOT EXISTS idx_tasks_profile_id ON tasks(profile_id);',
+      'CREATE INDEX IF NOT EXISTS idx_runs_profile_id ON runs(profile_id);',
+    ],
+  },
+  {
+    id: '015-execution-envelopes',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS execution_envelopes (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id),
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        profile_id TEXT NOT NULL REFERENCES agent_profiles(id),
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        project_id TEXT REFERENCES projects(id),
+        mode TEXT NOT NULL,
+        model_policy TEXT NOT NULL,
+        allowed_runtime_tools_json TEXT NOT NULL,
+        allowed_capability_ids_json TEXT NOT NULL,
+        memory_scope TEXT NOT NULL,
+        recall_scope TEXT NOT NULL,
+        filesystem_policy_class TEXT NOT NULL,
+        context_release_policy TEXT NOT NULL,
+        read_roots_json TEXT NOT NULL,
+        write_roots_json TEXT NOT NULL,
+        protected_paths_json TEXT NOT NULL,
+        scratch_root TEXT NOT NULL,
+        cwd TEXT,
+        provenance_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_execution_envelopes_profile_id ON execution_envelopes(profile_id);',
+      'CREATE INDEX IF NOT EXISTS idx_execution_envelopes_workspace_id ON execution_envelopes(workspace_id);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [
@@ -532,6 +580,198 @@ const MEMORY_MIGRATIONS: Migration[] = [
       "ALTER TABLE memories ADD COLUMN domain TEXT DEFAULT 'general';",
       "ALTER TABLE memories ADD COLUMN context_release_policy TEXT DEFAULT 'full';",
       'CREATE INDEX IF NOT EXISTS idx_memory_sources_source_ref ON memory_sources(source_type, source_ref);',
+    ],
+  },
+  {
+    id: '010-structured-memory',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_namespaces (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        external_ref TEXT,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_namespaces_kind_ref ON memory_namespaces(kind, external_ref);',
+      `CREATE TABLE IF NOT EXISTS memory_tags (
+        id TEXT PRIMARY KEY,
+        owner_kind TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_tags_owner ON memory_tags(owner_kind, owner_id);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);',
+      `CREATE TABLE IF NOT EXISTS memory_artifacts (
+        id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        namespace_id TEXT NOT NULL REFERENCES memory_namespaces(id),
+        source_run_id TEXT,
+        source_ref TEXT,
+        source_ref_type TEXT,
+        captured_at TEXT NOT NULL,
+        occurred_at TEXT,
+        content TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_artifacts_scope ON memory_artifacts(scope, source_type, captured_at);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_artifacts_hash ON memory_artifacts(content_hash);',
+      `CREATE TABLE IF NOT EXISTS memory_facts (
+        id TEXT PRIMARY KEY,
+        namespace_id TEXT NOT NULL REFERENCES memory_namespaces(id),
+        scope TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        memory_type TEXT NOT NULL,
+        fact_kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        source_reliability REAL NOT NULL,
+        extraction_confidence REAL NOT NULL,
+        human_confirmed INTEGER NOT NULL DEFAULT 0,
+        occurred_at TEXT,
+        valid_from TEXT,
+        valid_to TEXT,
+        source_run_id TEXT,
+        source_timestamp TEXT,
+        dedup_key TEXT,
+        last_reinforced_at TEXT,
+        archived_at TEXT,
+        created_at TEXT NOT NULL,
+        durable INTEGER NOT NULL DEFAULT 0,
+        revision_status TEXT NOT NULL DEFAULT 'active'
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_facts_dedup_key ON memory_facts(dedup_key) WHERE dedup_key IS NOT NULL;',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_scope ON memory_facts(scope, memory_type, created_at);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_namespace ON memory_facts(namespace_id, archived_at);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_occurred ON memory_facts(occurred_at);',
+      `CREATE TABLE IF NOT EXISTS memory_fact_sources (
+        id TEXT PRIMARY KEY,
+        fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+        artifact_id TEXT NOT NULL REFERENCES memory_artifacts(id),
+        excerpt TEXT,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_fact_sources_pair ON memory_fact_sources(fact_id, artifact_id);',
+      `CREATE TABLE IF NOT EXISTS memory_revisions (
+        id TEXT PRIMARY KEY,
+        relation_type TEXT NOT NULL,
+        source_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+        target_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+        reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_revisions_source ON memory_revisions(source_fact_id);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_revisions_target ON memory_revisions(target_fact_id);',
+      `CREATE TABLE IF NOT EXISTS memory_syntheses (
+        id TEXT PRIMARY KEY,
+        namespace_id TEXT NOT NULL REFERENCES memory_namespaces(id),
+        scope TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        synthesis_kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        text TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        refresh_policy TEXT NOT NULL DEFAULT 'manual',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_syntheses_scope ON memory_syntheses(scope, synthesis_kind, updated_at);',
+      `CREATE TABLE IF NOT EXISTS memory_synthesis_sources (
+        id TEXT PRIMARY KEY,
+        synthesis_id TEXT NOT NULL REFERENCES memory_syntheses(id),
+        fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_synthesis_sources_pair ON memory_synthesis_sources(synthesis_id, fact_id);',
+      'CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(fact_id UNINDEXED, text);',
+      'CREATE VIRTUAL TABLE IF NOT EXISTS memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);',
+    ],
+  },
+  {
+    id: '011-memory-locations',
+    statements: [
+      'ALTER TABLE memories ADD COLUMN workspace_id TEXT;',
+      'ALTER TABLE memories ADD COLUMN project_id TEXT;',
+      `UPDATE memories
+       SET workspace_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, 1, instr(scope, '/') - 1)
+         ELSE scope
+       END
+       WHERE workspace_id IS NULL;`,
+      `UPDATE memories
+       SET project_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, instr(scope, '/') + 1)
+         ELSE NULL
+       END
+       WHERE project_id IS NULL;`,
+      'CREATE INDEX IF NOT EXISTS idx_memories_location_created ON memories(workspace_id, project_id, created_at);',
+    ],
+  },
+  {
+    id: '012-structured-memory-locations',
+    statements: [
+      'ALTER TABLE memory_artifacts ADD COLUMN workspace_id TEXT;',
+      'ALTER TABLE memory_artifacts ADD COLUMN project_id TEXT;',
+      `UPDATE memory_artifacts
+       SET workspace_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, 1, instr(scope, '/') - 1)
+         ELSE scope
+       END
+       WHERE workspace_id IS NULL;`,
+      `UPDATE memory_artifacts
+       SET project_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, instr(scope, '/') + 1)
+         ELSE NULL
+       END
+       WHERE project_id IS NULL;`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_artifacts_location_captured ON memory_artifacts(workspace_id, project_id, captured_at);',
+
+      'ALTER TABLE memory_facts ADD COLUMN workspace_id TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN project_id TEXT;',
+      `UPDATE memory_facts
+       SET workspace_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, 1, instr(scope, '/') - 1)
+         ELSE scope
+       END
+       WHERE workspace_id IS NULL;`,
+      `UPDATE memory_facts
+       SET project_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, instr(scope, '/') + 1)
+         ELSE NULL
+       END
+       WHERE project_id IS NULL;`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_location_created ON memory_facts(workspace_id, project_id, created_at);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_location_occurred ON memory_facts(workspace_id, project_id, occurred_at);',
+
+      'ALTER TABLE memory_syntheses ADD COLUMN workspace_id TEXT;',
+      'ALTER TABLE memory_syntheses ADD COLUMN project_id TEXT;',
+      `UPDATE memory_syntheses
+       SET workspace_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, 1, instr(scope, '/') - 1)
+         ELSE scope
+       END
+       WHERE workspace_id IS NULL;`,
+      `UPDATE memory_syntheses
+       SET project_id = CASE
+         WHEN scope = 'global' THEN NULL
+         WHEN instr(scope, '/') > 0 THEN substr(scope, instr(scope, '/') + 1)
+         ELSE NULL
+       END
+       WHERE project_id IS NULL;`,
+      'CREATE INDEX IF NOT EXISTS idx_memory_syntheses_location_updated ON memory_syntheses(workspace_id, project_id, updated_at);',
     ],
   },
 ];

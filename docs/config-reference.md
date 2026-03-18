@@ -11,7 +11,7 @@ Example config: `config/example.json`
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `runtimeDataDir` | `string` | Yes | -- | Absolute path to the runtime data directory. Houses state, logs, receipts, backups, and memory databases. |
-| `authFile` | `string` | Yes | -- | Absolute path to the auth store JSON file. Created by `initAuthStore` on first run. |
+| `authFile` | `string` | Yes | -- | Absolute path to the auth store JSON file. Created by `initAuthStore` on first run. Stores rotating local bearer tokens for the configured roles. |
 
 ---
 

@@ -2,94 +2,211 @@
 
 ## Architecture
 
-Popeye's memory is a two-layer system:
+Popeye memory is now a **layered local-first system**:
 
-- **Markdown layer** (human-readable): `MEMORY.md` (curated), `memory/daily/YYYY-MM-DD.md` (daily notes), workspace knowledge docs.
-- **SQLite layer** (machine-queryable): `memory.db` containing `memories`, `memory_events`, `memory_sources`, `memory_consolidations`, `memories_fts` (FTS5), and `memory_vec` (sqlite-vec).
+- **Working/session context** — transient, engine-owned, not durable truth
+- **Artifacts** — immutable source captures (receipts, compaction flushes, workspace docs, daily summaries)
+- **Facts** — extracted atomic claims with temporal fields and evidence links
+- **Syntheses** — evidence-backed higher-order summaries
+- **Curated markdown** — operator-owned long-term memory files
 
-## Memory Types
+Storage remains two-surface:
 
-| Type | Description | Storage |
-|---|---|---|
-| Episodic | What happened — receipts, run events, conversation snapshots | SQLite |
-| Semantic | What is known — extracted facts, preferences, decisions | SQLite + markdown |
-| Procedural | How to do things — learned workflows, correction patterns | SQLite + markdown |
+- **Markdown layer** (human-readable): curated files and `memory/daily/YYYY-MM-DD.md`
+- **SQLite layer** (machine-queryable): legacy `memories` plus structured artifact/fact/synthesis tables
 
-## Retrieval Pipeline
+## Durable SQLite tables
 
-Two-stage hybrid search, target latency <200ms:
+### Compatibility / existing
 
-1. **Fast index:** FTS5 (lexical) + sqlite-vec (semantic) fired in parallel, results unioned.
-2. **Rerank:** Weighted scoring formula:
-   - 0.40 x relevance (max of FTS5 BM25 normalized rank and vector cosine similarity)
-   - 0.25 x recency (exponential decay: `exp(-days/90)`)
-   - 0.20 x confidence (confidence decay applied)
-   - 0.15 x scope match (exact=1.0, global=0.7, other=0.1)
-3. **Filter:** workspace/project scope, memory type, minimum confidence threshold.
-4. **Package:** Descriptions first (progressive disclosure), full content on demand via `includeContent`.
+- `memories`
+- `memory_events`
+- `memory_sources`
+- `memory_consolidations`
+- `memories_fts`
+- `memory_entities`
+- `memory_entity_mentions`
+- `memory_summaries`
+- `memory_summary_sources`
 
-### Search Modes
+### Structured memory foundation
 
-- **hybrid**: Both FTS5 and sqlite-vec available. Best quality.
-- **fts_only**: sqlite-vec not loaded. Lexical search only.
-- **vec_only**: FTS5 empty but vectors available. Rare.
+- `memory_namespaces`
+- `memory_tags`
+- `memory_artifacts`
+- `memory_facts`
+- `memory_fact_sources`
+- `memory_revisions`
+- `memory_syntheses`
+- `memory_synthesis_sources`
+- `memory_facts_fts`
+- `memory_syntheses_fts`
 
-## Confidence Decay
+`memories` remains the compatibility layer while new ingestion dual-writes into artifacts/facts/syntheses.
 
-Memories decay in confidence without reinforcement:
+For compatibility, legacy `memories.scope` remains present, but retrieval and
+policy enforcement now use explicit memory location fields:
 
+- `workspace_id`
+- `project_id`
+
+Location invariants:
+
+- both `NULL` -> global
+- `workspace_id != NULL`, `project_id = NULL` -> workspace-scoped
+- both set -> project-scoped
+
+Explicit location is the canonical authority for durable access decisions.
+`scope` remains a compatibility and display field and is regenerated from
+`workspace_id` / `project_id` when new records are written.
+
+## Key semantics
+
+### Memory axes
+
+- **Type:** `episodic | semantic | procedural`
+- **Layer:** `artifact | fact | synthesis | curated`
+
+### Namespace model
+
+Namespaces replace flat scope-only reasoning for structured memory. The legacy
+compatibility layer also now stores explicit workspace/project location, so
+project-aware retrieval no longer has to infer everything from a single scope
+string.
+
+Namespaces do not replace runtime access control. Agent-facing search,
+describe, expand, explain, and budget-fit paths all apply the same explicit
+location gate before returning durable memory.
+
+Kinds:
+
+- `global`
+- `workspace`
+- `project`
+- `communications`
+- `integration`
+
+Tags are additive filters; they do not replace namespace isolation.
+
+### Temporal model
+
+Facts can store:
+
+- `occurred_at`
+- `valid_from`
+- `valid_to`
+- `created_at`
+- `source_timestamp`
+
+Recall prefers event/valid time when available instead of relying only on record creation time.
+
+### Evidence model
+
+- artifacts capture source content
+- facts link back to artifacts via `memory_fact_sources`
+- syntheses link back to facts via `memory_synthesis_sources`
+- revisions record explicit fact-to-fact supersession/confirmation edges
+
+## Ingestion
+
+Current structured dual-write sources:
+
+- **receipts** → artifact + facts
+- **compaction flushes** → artifact + facts, plus project-state synthesis for summary rollups
+- **workspace docs** → artifact + facts
+- **daily summaries** → artifact + facts + daily synthesis
+
+General flow:
+
+```text
+source input
+  -> redact
+  -> legacy memory write (compatibility)
+  -> artifact capture
+  -> fact extraction
+  -> fact upsert + evidence links
+  -> optional synthesis creation
 ```
-newConfidence = initialConfidence x 0.5^(daysSinceLastReinforcement / halfLifeDays)
-```
 
-Default half-life: 30 days. Configurable via `memory.confidenceHalfLifeDays`.
+## Retrieval
 
-Memories below the archive threshold (default 0.1) are archived — excluded from search but not deleted.
+Retrieval is still local and deterministic.
 
-## Deduplication
+### Candidate sources
 
-Every memory gets a dedup key: `sha256(scope:description:content[0:500])`. If a new memory matches an existing dedup key, the existing memory is reinforced (confidence boosted) instead of creating a duplicate.
+- legacy `memories`
+- `memory_facts`
+- `memory_syntheses`
 
-## Consolidation
+Artifacts remain read-by-ID evidence objects in this tranche; they participate
+in describe/expand/explain flows and use the same location gate as other memory
+layers.
 
-Periodic consolidation merges redundant memories:
+### Query planning
 
-1. **Exact dedup:** Same `dedup_key` (race condition cleanup). Keeps highest confidence.
-2. **Text overlap:** Jaccard token similarity > 0.8. Merges content, keeps higher confidence.
+For each query, Popeye derives:
 
-Consolidation preserves provenance through `memory_consolidations` records.
+- strategy (`factual`, `temporal`, `procedural`, `exploratory`)
+- optional temporal constraint (for example `today`, `yesterday`, `last week`, `last month`, `recent`)
+- requested layers / namespaces / tags
+- superseded-record policy
 
-## Lifecycle
+### Ranking
 
-1. **Capture** — Automatic extraction from receipts at run end.
-2. **Daily summaries** — Generated at configured hour for previous day's activity.
-3. **Compaction flush** — Runtime intercepts Pi compaction events, extracts memories before context loss.
-4. **Decay** — Daily confidence decay reduces stale memory scores.
-5. **Consolidation** — Daily merge of redundant memories.
-6. **Promotion** — Explicit promotion to curated markdown files requires diff review and receipt.
-7. **Archive** — Low-confidence memories archived (excluded from search, not deleted).
+Default ranking remains deterministic and explainable:
 
-## Redaction
+- relevance
+- recency / temporal fit
+- effective confidence
+- location match / scope match
+- optional entity boost
 
-All memory content is redacted before storage using `redactText()`. Sensitive patterns (API keys, tokens, PEM blocks, JWTs) are replaced with redaction markers.
+### Packaging
 
-## Configuration
+Results can expose:
 
-```json
-{
-  "memory": {
-    "confidenceHalfLifeDays": 30,
-    "archiveThreshold": 0.1,
-    "dailySummaryHour": 23,
-    "consolidationEnabled": true,
-    "compactionFlushConfidence": 0.7
-  },
-  "embeddings": {
-    "provider": "disabled",
-    "model": "text-embedding-3-small",
-    "dimensions": 1536
-  }
-}
-```
+- `layer`
+- `namespaceId`
+- temporal fields
+- revision status
+- evidence count
 
-Set `embeddings.provider` to `"openai"` and provide `OPENAI_API_KEY` env var to enable vector search.
+Recall explanations can include score breakdown plus evidence links.
+
+### Location filtering
+
+- project-scoped recall can see:
+  - project-local records in the same workspace
+  - workspace-shared records in the same workspace
+  - global records only when `includeGlobal = true`
+- project-scoped recall cannot see:
+  - sibling projects
+  - other workspaces
+- `global` does not imply cross-workspace access; it only admits records whose
+  explicit location is global
+
+## Privacy and safety
+
+- redaction still happens before durable writes
+- structured memory respects namespace boundaries
+- facts and syntheses remain inspectable and traceable
+- curated memory remains operator-owned and explicit
+- no mandatory external memory service is introduced
+
+## Current phase state
+
+Implemented now:
+
+- structured schema + migrations
+- dual-write foundation
+- deterministic fact extraction
+- daily/project-state syntheses for selected flows
+- layered search over legacy memories, facts, and syntheses
+- recall explanation with evidence links
+
+Still intentionally deferred:
+
+- full graph retrieval
+- contradiction-heavy revision logic beyond supersession/confirmation
+- automatic neural reranking in the hot path
+- broad UI explorer surfaces

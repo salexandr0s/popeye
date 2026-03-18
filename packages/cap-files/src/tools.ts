@@ -13,7 +13,26 @@ export function createFileTools(
   rootService: FileRootService,
   searchService: FileSearchService,
   ctx: CapabilityContext,
+  taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
+  function listAllowedRoots() {
+    const roots = rootService.listRoots(taskContext.workspaceId).filter((root) => root.enabled);
+    if (!taskContext.runId || !ctx.getExecutionEnvelope) {
+      return roots;
+    }
+    const envelope = ctx.getExecutionEnvelope(taskContext.runId);
+    if (!envelope) {
+      return [];
+    }
+    return roots.filter((root) =>
+      envelope.readRoots.some((allowedRoot) => {
+        const resolvedRoot = resolve(root.rootPath);
+        const resolvedAllowedRoot = resolve(allowedRoot);
+        return resolvedRoot === resolvedAllowedRoot || resolvedRoot.startsWith(`${resolvedAllowedRoot}/`);
+      }),
+    );
+  }
+
   return [
     {
       name: 'popeye_file_search',
@@ -42,15 +61,20 @@ export function createFileTools(
           limit: parsed.limit ?? 10,
           includeContent: false,
         });
+        const allowedRootIds = new Set(listAllowedRoots().map((root) => root.id));
+        const filteredResults = response.results.filter((result) => allowedRootIds.has(result.fileRootId));
 
-        if (response.results.length === 0) {
+        if (filteredResults.length === 0) {
           return { content: [{ type: 'text', text: 'No matching files found.' }] };
         }
 
-        const lines = response.results.map((r, i) =>
+        const lines = filteredResults.map((r, i) =>
           `${i + 1}. ${r.relativePath} [root:${r.fileRootId}]${r.memoryId ? ` [memory:${r.memoryId}]` : ''}`,
         );
-        return { content: [{ type: 'text', text: lines.join('\n') }], details: response };
+        return {
+          content: [{ type: 'text', text: lines.join('\n') }],
+          details: { ...response, results: filteredResults, totalCandidates: filteredResults.length },
+        };
       },
     },
     {
@@ -74,9 +98,9 @@ export function createFileTools(
           maxChars: z.number().int().positive().optional(),
         }).parse(params ?? {});
 
-        const root = rootService.getRoot(parsed.rootId);
+        const root = listAllowedRoots().find((candidate) => candidate.id === parsed.rootId) ?? null;
         if (!root) {
-          return { content: [{ type: 'text', text: `File root ${parsed.rootId} not found.` }] };
+          return { content: [{ type: 'text', text: `File root ${parsed.rootId} is not available in this execution profile.` }] };
         }
 
         // All permission levels (read, index, index_and_derive) allow reading
@@ -102,13 +126,40 @@ export function createFileTools(
         const security = config['security'] as Record<string, unknown> | undefined;
         const redactionPatterns = (security?.['redactionPatterns'] as string[]) ?? [];
         const content = redactText(rawContent, redactionPatterns).text;
+        const tokenEstimate = Math.ceil(content.length / 4);
+
+        let approvalId: string | undefined;
+        if (taskContext.runId && ctx.authorizeContextRelease) {
+          const authorization = ctx.authorizeContextRelease({
+            runId: taskContext.runId,
+            domain: 'files',
+            sourceRef: `file_root:${root.id}/${parsed.relativePath}`,
+            requestedLevel: 'full',
+            tokenEstimate,
+            resourceType: 'file',
+            resourceId: `${root.id}:${parsed.relativePath}`,
+            requestedBy: 'popeye_file_read',
+            payloadPreview: parsed.relativePath,
+          });
+          if (authorization.outcome === 'deny') {
+            return { content: [{ type: 'text', text: authorization.reason }] };
+          }
+          if (authorization.outcome === 'approval_required') {
+            return {
+              content: [{ type: 'text', text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}` }],
+            };
+          }
+          approvalId = authorization.approvalId ?? undefined;
+        }
 
         // Record context release
         ctx.contextReleaseRecord({
           domain: 'files',
           sourceRef: `file_root:${root.id}/${parsed.relativePath}`,
           releaseLevel: 'full',
-          tokenEstimate: Math.ceil(content.length / 4),
+          ...(approvalId !== undefined ? { approvalId } : {}),
+          ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
+          tokenEstimate,
         });
 
         const maxChars = parsed.maxChars ?? 50_000;
@@ -142,9 +193,9 @@ export function createFileTools(
           limit: z.number().int().positive().max(500).optional(),
         }).parse(params ?? {});
 
-        const root = rootService.getRoot(parsed.rootId);
+        const root = listAllowedRoots().find((candidate) => candidate.id === parsed.rootId) ?? null;
         if (!root) {
-          return { content: [{ type: 'text', text: `File root ${parsed.rootId} not found.` }] };
+          return { content: [{ type: 'text', text: `File root ${parsed.rootId} is not available in this execution profile.` }] };
         }
 
         let docs = rootService.listDocuments(parsed.rootId);

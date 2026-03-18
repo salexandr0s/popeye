@@ -46,6 +46,26 @@ describe('PopeyeApiClient', () => {
     expect(status.ok).toBe(true);
     expect(status.engineKind).toBe('fake');
 
+    const capabilities = await client.engineCapabilities();
+    expect(capabilities).toMatchObject({
+      engineKind: 'fake',
+      hostToolMode: 'none',
+    });
+
+    const profiles = await client.listProfiles();
+    expect(profiles).toEqual([
+      expect.objectContaining({
+        id: 'default',
+        mode: 'interactive',
+      }),
+    ]);
+
+    const profile = await client.getProfile('default');
+    expect(profile).toMatchObject({
+      id: 'default',
+      name: 'Default agent profile',
+    });
+
     await runtime.close();
     await app.close();
   });
@@ -73,7 +93,46 @@ describe('PopeyeApiClient', () => {
 
     expect(result.task.title).toBe('test task');
     expect(result.task.prompt).toBe('hello world');
+    expect(result.task.profileId).toBe('default');
     expect(result.job).toBeNull();
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('fetches a persisted run envelope through the API client', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-envelope-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'envelope task',
+      prompt: 'hello envelope',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.run?.id).toBeTruthy();
+
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+    const envelope = await client.getRunEnvelope(terminal!.run!.id);
+    expect(envelope).toMatchObject({
+      runId: terminal!.run!.id,
+      profileId: 'default',
+      workspaceId: 'default',
+      filesystemPolicyClass: 'workspace',
+      contextReleasePolicy: 'summary_only',
+    });
 
     await runtime.close();
     await app.close();
