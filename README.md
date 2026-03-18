@@ -1,86 +1,188 @@
-# Popeye
-![logo](https://github.com/user-attachments/assets/77bbf39b-d279-4b5a-a427-aab4eb640ecf)
+<p align="center">
+  <img
+    src="https://github.com/user-attachments/assets/77bbf39b-d279-4b5a-a427-aab4eb640ecf"
+    alt="Popeye logo"
+    width="260"
+  />
+</p>
 
-Popeye is my always-on personal agent.
+<h1 align="center">Popeye</h1>
 
-It is a local-first, single-operator runtime I own, powered by Pi, with deliberate integrations like messaging, browser, email, and memory.
+<p align="center">
+  A local-first, always-on personal agent runtime.
+</p>
 
-Popeye is not trying to be a clone of OpenClaw, a cloud SaaS, or a sprawling agent platform. It is a simpler, more opinionated system built for continuity, auditability, and control.
+<p align="center">
+  Built on Pi. Operated by one person. Designed for continuity, auditability, and control.
+</p>
 
-## North Star
+---
 
-Build an always-on personal agent that can reliably act on my behalf across trusted capabilities, while remaining fully owned, inspectable, and controlled by me.
+## Overview
 
-**Shorthand:** own the runtime, keep it on, expand capabilities deliberately, avoid platform sprawl.
+Popeye is a long-lived personal agent platform for a single operator.
 
-## Non-Goals
+**Pi is the engine. Popeye is the product.** Popeye adds the runtime,
+orchestration, memory, receipts, policy, and control surfaces needed to run a
+personal agent continuously and safely on infrastructure you own.
 
-Popeye is intentionally **not**:
+It is intentionally opinionated:
 
-- a wholesale recreation of OpenClaw
-- a multi-tenant SaaS or team collaboration platform
-- a broad channel ecosystem
-- a plugin marketplace
-- a remote-first cloud control plane
-- an autonomy-first system with hidden actions and weak auditability
-- an interface-led architecture where UI drives runtime design
+- **local-first** rather than cloud-first
+- **single-operator** rather than multi-tenant
+- **auditable** rather than opaque
+- **deliberate** rather than platform-sprawl-driven
 
-## Roadmap
+Popeye is not trying to recreate OpenClaw wholesale, become a general-purpose
+SaaS, or hide autonomous behavior behind weak operational controls.
 
-### Core runtime
+## What Popeye includes
 
-Get the foundation right: always-on, inspectable, safe.
+Today the repository contains the core pieces of the platform:
 
-- daemon (`popeyed`)
-- scheduler and heartbeat
-- control API
-- session orchestration
-- receipts, audit, and recovery
-- memory foundation
-- CLI and inspector surfaces
+- **daemon runtime** for scheduling, heartbeats, runs, receipts, recovery, and
+  supervision
+- **loopback-only control API** with token auth, CSRF protection on mutations,
+  and explicit route authorization
+- **CLI (`pop`)** for operator workflows
+- **web inspector** for runtime visibility
+- **structured memory system** with SQLite, FTS5, sqlite-vec, provenance, and
+  promotion-managed curated memory
+- **capability packages** for files, email, calendar, GitHub, and todos
+- **Telegram bridge** implemented as a thin control-plane adapter
 
-### Messaging ingress
+## Design principles
 
-Let Popeye receive work continuously.
+- **Ownership first** — runtime state, policy, and operational records stay
+  under operator control
+- **Hard boundaries** — Pi stays behind `@popeye/engine-pi`; UI stays behind
+  the control API
+- **Security by default** — loopback-only API, auth token required, CSRF on
+  mutations, redaction before durable writes
+- **Receipts and visibility** — every run leaves durable evidence, including
+  failures and cancellations
+- **Memory with provenance** — durable recall is explainable, location-aware,
+  and operator-governed
+- **Boring upgrades** — deliberate, testable change over incidental complexity
 
-- Telegram adapter
-- manual and API message ingest
-- allowlist, rate limiting, and prompt-injection checks
-- task creation from inbound messages
+## Architecture at a glance
 
-### Operator memory
+Popeye is organized into three layers:
 
-Let Popeye remember useful context safely.
+1. **Pi layer** — engine capabilities: model/provider abstraction, agent loop,
+   sessions, tool calling, event streaming
+2. **Popeye runtime** — product semantics: daemon lifecycle, scheduling,
+   instruction resolution, memory, receipts, audit, security, control API
+3. **Interfaces** — replaceable operator surfaces: CLI, Telegram bridge, web
+   inspector, generated clients
 
-- searchable memory
-- daily notes
-- promotion flow into curated memory
-- provenance, confidence, decay, and consolidation
+## Repository layout
 
-### Action capabilities
+```text
+apps/
+  cli/              pop operator CLI
+  daemon/           runtime daemon entrypoint
+  web-inspector/    React-based control-plane UI
 
-Give Popeye tightly bounded ways to do real work.
+packages/
+  engine-pi/        the only Pi integration boundary
+  runtime-core/     daemon/runtime orchestration and policy
+  control-api/      Fastify control plane
+  memory/           durable memory system and retrieval
+  instructions/     instruction resolution
+  receipts/         receipt creation and rendering
+  contracts/        shared Zod/API contracts
+  api-client/       typed client for the control API
+  telegram/         thin Telegram adapter
+  cap-*/            bounded capability packages
+```
 
-- browser capability
-- email capability
-- file and system capability
-- selected external service integrations
+## Security model
 
-### Personal workflow automation
+Popeye is designed as a local control plane, not a remote service:
 
-Make Popeye genuinely useful day to day.
+- API binds to **`127.0.0.1` only**
+- **auth token required** on every route
+- **browser sessions are operator-only**
+- **CSRF protection** is enforced on state-changing routes
+- **secrets are redacted before durable writes**
+- runtime data is stored outside the workspace
 
-- recurring routines
-- inbox triage
-- research and follow-up workflows
-- reminders, summaries, and proactive check-ins
+## Memory model
 
-### Mature personal agent
+Popeye uses a layered memory system:
 
-Make it dependable enough to live with long term.
+- **legacy compatibility layer** in `memories`
+- **structured durable memory** via artifacts, facts, and syntheses
+- **curated markdown memory** for explicit operator-managed long-term context
 
-- stronger policy controls
-- intervention and approval flows
-- richer observability
-- stable client surfaces
-- deliberate expansion of trusted capabilities
+Durable recall is:
+
+- provenance-aware
+- confidence-scored
+- location-aware (`workspaceId` / `projectId`)
+- explainable with evidence links
+
+See:
+
+- [`docs/memory-model.md`](docs/memory-model.md)
+- [`docs/domain-model.md`](docs/domain-model.md)
+
+## Getting started
+
+### Prerequisites
+
+- Node.js **22 LTS**
+- `pnpm`
+- macOS is the primary supported operator environment today
+
+### Install
+
+```bash
+pnpm install
+```
+
+### Core verification
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm verify:pi-boundary
+pnpm verify:src-build-artifacts
+pnpm dev-verify
+```
+
+### Bootstrap
+
+For full setup, configuration, auth initialization, and Pi integration, use:
+
+- [`docs/runbooks/bootstrap.md`](docs/runbooks/bootstrap.md)
+
+Notes:
+
+- `config/example.json` defaults to a fake engine for local development
+- real Pi-backed runs expect a sibling `../pi` checkout unless configured
+  otherwise
+
+## Documentation
+
+- [`docs/control-api.md`](docs/control-api.md) — control-plane routes and auth
+- [`docs/api-contracts.md`](docs/api-contracts.md) — contract behavior notes
+- [`docs/memory-model.md`](docs/memory-model.md) — memory architecture
+- [`docs/domain-model.md`](docs/domain-model.md) — runtime entities and
+  relationships
+- [`docs/runbooks/bootstrap.md`](docs/runbooks/bootstrap.md) — installation and
+  bootstrap
+
+## Status
+
+Popeye is under active development, but the architecture direction is stable:
+
+- Pi remains the engine boundary
+- the runtime remains local-first and operator-owned
+- the API remains loopback-only and authenticated
+- memory, policy, and capability expansion continue incrementally
+
+The goal is not maximum surface area. The goal is a dependable personal agent
+that can stay on, stay inspectable, and become more useful over time without
+losing operational discipline.
