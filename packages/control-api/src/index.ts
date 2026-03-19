@@ -721,7 +721,7 @@ export async function createControlApi(
   });
   app.get('/v1/interventions', async () => dependencies.runtime.listInterventions());
   app.post('/v1/interventions/:id/resolve', async (request) => {
-    const body = z.object({ resolutionNote: z.string().max(2000).optional() }).default({}).parse(request.body ?? {});
+    const body = z.object({ resolutionNote: z.string().max(2000).optional() }).parse(request.body ?? {});
     return dependencies.runtime.resolveIntervention(parseIdParam(request.params), body.resolutionNote);
   });
 
@@ -1344,7 +1344,7 @@ export async function createControlApi(
   });
 
   app.post('/v1/email/digest', async (request, reply) => {
-    const body = z.object({ accountId: z.string().optional() }).default({}).parse(request.body ?? {});
+    const body = z.object({ accountId: z.string().optional() }).parse(request.body ?? {});
     try {
       return dependencies.runtime.triggerEmailDigest(body.accountId);
     } catch (error) {

@@ -73,6 +73,12 @@ describe('path-security', () => {
       expect(isPathWithinRoot(tempDir, tempDir)).toBe(true);
     });
 
+    it('accepts missing path within root when existing ancestors stay within root', () => {
+      const subDir = join(tempDir, 'sub');
+      mkdirSync(subDir);
+      expect(isPathWithinRoot(tempDir, join(subDir, 'missing.txt'))).toBe(true);
+    });
+
     it('detects symlink escape', () => {
       const subDir = join(tempDir, 'sub');
       mkdirSync(subDir);
