@@ -59,6 +59,15 @@ export const EngineConfigSchema = z.object({
 });
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
+const DEFAULT_ENGINE_CONFIG = {
+  kind: 'fake' as const,
+  command: 'node',
+  args: [] as string[],
+  timeoutMs: 300_000,
+  runtimeToolTimeoutMs: 30_000,
+  allowRuntimeToolBridgeFallback: true,
+};
+
 export const ProjectConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -88,12 +97,30 @@ export const WorkspaceConfigSchema = z.object({
 });
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 
+const DEFAULT_WORKSPACES = [
+  {
+    id: 'default',
+    name: 'Default workspace',
+    rootPath: null,
+    projects: [],
+    heartbeatEnabled: true,
+    heartbeatIntervalSeconds: 3600,
+    fileRoots: [],
+  },
+];
+
 export const BudgetAllocationConfigSchema = z.object({
   enabled: z.boolean().default(false),
   minPerType: z.number().int().nonnegative().default(1),
   maxPerType: z.number().int().positive().default(10),
 });
 export type BudgetAllocationConfig = z.infer<typeof BudgetAllocationConfigSchema>;
+
+const DEFAULT_BUDGET_ALLOCATION_CONFIG = {
+  enabled: false,
+  minPerType: 1,
+  maxPerType: 10,
+};
 
 export const MemoryConfigSchema = z.object({
   confidenceHalfLifeDays: z.number().positive().default(30),
@@ -103,7 +130,7 @@ export const MemoryConfigSchema = z.object({
   dailySummaryHour: z.number().int().min(0).max(23).default(2),
   docIndexEnabled: z.boolean().default(true),
   docIndexIntervalHours: z.number().int().positive().default(6),
-  budgetAllocation: BudgetAllocationConfigSchema.default({}),
+  budgetAllocation: BudgetAllocationConfigSchema.default(DEFAULT_BUDGET_ALLOCATION_CONFIG),
   qualitySweepEnabled: z.boolean().default(false),
   compactionFanout: z.number().int().positive().default(8),
   compactionFreshTailCount: z.number().int().nonnegative().default(4),
@@ -114,24 +141,47 @@ export const MemoryConfigSchema = z.object({
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
+const DEFAULT_MEMORY_CONFIG = {
+  confidenceHalfLifeDays: 30,
+  archiveThreshold: 0.1,
+  consolidationEnabled: true,
+  compactionFlushConfidence: 0.7,
+  dailySummaryHour: 2,
+  docIndexEnabled: true,
+  docIndexIntervalHours: 6,
+  budgetAllocation: DEFAULT_BUDGET_ALLOCATION_CONFIG,
+  qualitySweepEnabled: false,
+  compactionFanout: 8,
+  compactionFreshTailCount: 4,
+  compactionMaxLeafTokens: 2000,
+  compactionMaxCondensedTokens: 4000,
+  compactionMaxRetries: 1,
+  expandTokenCap: 8000,
+};
+
+const DEFAULT_APPROVAL_POLICY_CONFIG = {
+  rules: [],
+  defaultRiskClass: 'ask' as const,
+  pendingExpiryMinutes: 60,
+};
+
+const DEFAULT_VAULT_CONFIG = {
+  restrictedVaultDir: 'vaults',
+  capabilityStoreDir: 'capabilities',
+  backupEncryptedVaults: true,
+};
+
 export const AppConfigSchema = z.object({
   runtimeDataDir: z.string().min(1),
   authFile: z.string().min(1),
   security: SecurityConfigSchema,
   telegram: TelegramConfigSchema,
   embeddings: EmbeddingConfigSchema,
-  engine: EngineConfigSchema.default({ kind: 'fake', command: 'node', args: [] }),
-  memory: MemoryConfigSchema.default({}),
-  workspaces: z.array(WorkspaceConfigSchema).default([
-    {
-      id: 'default',
-      name: 'Default workspace',
-      heartbeatEnabled: true,
-      heartbeatIntervalSeconds: 3600,
-    },
-  ]),
-  approvalPolicy: ApprovalPolicyConfigSchema.default({}),
-  vaults: VaultConfigSchema.default({}),
+  engine: EngineConfigSchema.default(DEFAULT_ENGINE_CONFIG),
+  memory: MemoryConfigSchema.default(DEFAULT_MEMORY_CONFIG),
+  workspaces: z.array(WorkspaceConfigSchema).default(DEFAULT_WORKSPACES),
+  approvalPolicy: ApprovalPolicyConfigSchema.default(DEFAULT_APPROVAL_POLICY_CONFIG),
+  vaults: VaultConfigSchema.default(DEFAULT_VAULT_CONFIG),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 

@@ -1,34 +1,33 @@
 import { expect, test } from '@playwright/test';
+import { unlockInspector } from './helpers';
 
 test.describe('web inspector smoke', () => {
   test('dashboard shell loads', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Popeye' })).toBeVisible({ timeout: 5_000 });
+    await unlockInspector(page);
     await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible({ timeout: 5_000 });
   });
 
   test('navigates to runs page', async ({ page }) => {
-    await page.goto('/');
-    await page.click('text=Runs');
+    await unlockInspector(page);
+    await page.getByRole('link', { name: 'Runs' }).click();
     await expect(page).toHaveURL(/\/runs/);
     await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible();
   });
 
   test('navigates to receipts page', async ({ page }) => {
-    await page.goto('/');
-    await page.click('text=Receipts');
+    await unlockInspector(page);
+    await page.getByRole('link', { name: 'Receipts' }).click();
     await expect(page).toHaveURL(/\/receipts/);
   });
 
   test('navigates to memory search', async ({ page }) => {
-    await page.goto('/');
-    await page.click('text=Memory');
+    await unlockInspector(page);
+    await page.getByRole('link', { name: 'Memory' }).click();
     await expect(page).toHaveURL(/\/memory/);
   });
 
   test('browser bootstrap supports csrf-protected mutations', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 5_000 });
+    await unlockInspector(page);
 
     const result = await page.evaluate(async () => {
       const csrfResponse = await fetch('/v1/security/csrf-token', {
