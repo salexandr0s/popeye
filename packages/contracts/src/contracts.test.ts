@@ -776,7 +776,15 @@ describe('Config validation', () => {
     const { workspaces: _ws, ...noWs } = completeConfig;
     const result = AppConfigSchema.parse(noWs);
     expect(result.workspaces).toHaveLength(1);
-    expect(result.workspaces[0]?.id).toBe('default');
+    expect(result.workspaces[0]).toMatchObject({
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: null,
+      projects: [],
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+      fileRoots: [],
+    });
   });
 
   it('applies default engine when omitted', () => {
@@ -795,6 +803,65 @@ describe('Config validation', () => {
     const { engine: _eng, ...noEngine } = completeConfig;
     const result = AppConfigSchema.parse(noEngine);
     expect(result.engine.allowRuntimeToolBridgeFallback).toBe(true);
+  });
+
+  it('fills full nested defaults when optional sections are omitted', () => {
+    const result = AppConfigSchema.parse({
+      runtimeDataDir: '/tmp/popeye-test',
+      authFile: '/tmp/popeye-test/config/auth.json',
+      security: { bindHost: '127.0.0.1' as const },
+      telegram: { enabled: false },
+      embeddings: {},
+    });
+
+    expect(result.engine).toMatchObject({
+      kind: 'fake',
+      command: 'node',
+      args: [],
+      timeoutMs: 300_000,
+      runtimeToolTimeoutMs: 30_000,
+      allowRuntimeToolBridgeFallback: true,
+    });
+    expect(result.memory).toMatchObject({
+      confidenceHalfLifeDays: 30,
+      archiveThreshold: 0.1,
+      consolidationEnabled: true,
+      compactionFlushConfidence: 0.7,
+      dailySummaryHour: 2,
+      docIndexEnabled: true,
+      docIndexIntervalHours: 6,
+      qualitySweepEnabled: false,
+      compactionFanout: 8,
+      compactionFreshTailCount: 4,
+      compactionMaxLeafTokens: 2000,
+      compactionMaxCondensedTokens: 4000,
+      compactionMaxRetries: 1,
+      expandTokenCap: 8000,
+    });
+    expect(result.memory.budgetAllocation).toEqual({
+      enabled: false,
+      minPerType: 1,
+      maxPerType: 10,
+    });
+    expect(result.workspaces[0]).toMatchObject({
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: null,
+      projects: [],
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+      fileRoots: [],
+    });
+    expect(result.approvalPolicy).toEqual({
+      rules: [],
+      defaultRiskClass: 'ask',
+      pendingExpiryMinutes: 60,
+    });
+    expect(result.vaults).toEqual({
+      restrictedVaultDir: 'vaults',
+      capabilityStoreDir: 'capabilities',
+      backupEncryptedVaults: true,
+    });
   });
 
   describe('SecurityConfigSchema', () => {

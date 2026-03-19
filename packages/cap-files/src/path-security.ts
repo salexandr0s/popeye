@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { minimatch } from 'minimatch';
 
@@ -42,22 +42,41 @@ export function validateRootPath(path: string): { valid: boolean; reason?: strin
 
 export function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
   let canonicalRoot: string;
-  let canonicalCandidate: string;
   try {
     canonicalRoot = realpathSync(rootPath);
   } catch {
     return false;
   }
-  try {
-    canonicalCandidate = realpathSync(candidatePath);
-  } catch {
-    // If the candidate doesn't exist, resolve what we can
-    const resolved = resolve(candidatePath);
-    const rel = relative(canonicalRoot, resolved);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  const canonicalCandidate = resolveCandidatePath(candidatePath);
+  if (!canonicalCandidate) {
+    return false;
   }
   const rel = relative(canonicalRoot, canonicalCandidate);
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function resolveCandidatePath(candidatePath: string): string | null {
+  const resolved = resolve(candidatePath);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    const missingSegments: string[] = [];
+    let current = resolved;
+    while (!existsSync(current)) {
+      const parent = dirname(current);
+      if (parent === current) {
+        return null;
+      }
+      missingSegments.unshift(basename(current));
+      current = parent;
+    }
+    try {
+      const canonicalBase = realpathSync(current);
+      return missingSegments.reduce((acc, segment) => join(acc, segment), canonicalBase);
+    } catch {
+      return null;
+    }
+  }
 }
 
 export function isPathAllowed(
