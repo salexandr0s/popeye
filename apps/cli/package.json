@@ -17,7 +17,7 @@
     "@popeye/engine-pi": "workspace:*",
     "@popeye/receipts": "workspace:*",
     "@popeye/runtime-core": "workspace:*",
-    "zod": "^3.24.4"
+    "zod": "^4.3.6"
   },
   "exports": {
     ".": {
