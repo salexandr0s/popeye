@@ -10,6 +10,27 @@ export type ConnectionMode = z.infer<typeof ConnectionModeSchema>;
 export const ConnectionSyncStatusSchema = z.enum(['success', 'partial', 'failed']);
 export type ConnectionSyncStatus = z.infer<typeof ConnectionSyncStatusSchema>;
 
+export const ConnectionPolicyDiagnosticSchema = z.object({
+  code: z.string(),
+  severity: z.enum(['info', 'warn', 'error']),
+  message: z.string(),
+});
+export type ConnectionPolicyDiagnostic = z.infer<typeof ConnectionPolicyDiagnosticSchema>;
+
+export const ConnectionReadinessStatusSchema = z.enum(['ready', 'disabled', 'incomplete']);
+export type ConnectionReadinessStatus = z.infer<typeof ConnectionReadinessStatusSchema>;
+
+export const ConnectionSecretStatusSchema = z.enum(['not_required', 'configured', 'missing', 'stale']);
+export type ConnectionSecretStatus = z.infer<typeof ConnectionSecretStatusSchema>;
+
+export const ConnectionPolicySummarySchema = z.object({
+  status: ConnectionReadinessStatusSchema.default('ready'),
+  secretStatus: ConnectionSecretStatusSchema.default('not_required'),
+  mutatingRequiresApproval: z.boolean().default(false),
+  diagnostics: z.array(ConnectionPolicyDiagnosticSchema).default([]),
+});
+export type ConnectionPolicySummary = z.infer<typeof ConnectionPolicySummarySchema>;
+
 export const ConnectionRecordSchema = z.object({
   id: z.string(),
   domain: DomainKindSchema,
@@ -23,6 +44,7 @@ export const ConnectionRecordSchema = z.object({
   allowedResources: z.array(z.string()).default([]),
   lastSyncAt: z.string().nullable().default(null),
   lastSyncStatus: ConnectionSyncStatusSchema.nullable().default(null),
+  policy: ConnectionPolicySummarySchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -6,7 +6,7 @@ Popeye's first non-CLI client. A Vite + React SPA served by the daemon on loopba
 
 - **Stack:** Vite + React + TailwindCSS v4
 - **Serving:** Static files served by `popeyed` via `@fastify/static`
-- **Auth:** One-time bootstrap nonce injected into `index.html`, exchanged via `POST /v1/auth/exchange` for an HttpOnly browser-session cookie; mutations then fetch a CSRF token from `GET /v1/security/csrf-token`
+- **Auth:** One-time bootstrap nonce injected into `index.html`, then exchanged via `POST /v1/auth/exchange` using an operator bearer token for an HttpOnly browser-session cookie; mutations then fetch a CSRF token from `GET /v1/security/csrf-token`
 - **Location:** `apps/web-inspector/`
 - **Build output:** `apps/web-inspector/dist/`
 
@@ -14,12 +14,16 @@ Popeye's first non-CLI client. A Vite + React SPA served by the daemon on loopba
 
 The daemon injects `window.__POPEYE_BOOTSTRAP_NONCE__` into the served HTML. On first use, the SPA:
 
-1. POSTs the nonce to `/v1/auth/exchange`
-2. receives an HttpOnly `popeye_auth` browser-session cookie
-3. performs same-origin GET requests with the cookie
-4. fetches a CSRF token from `/v1/security/csrf-token` before POST mutations
+1. opens a dedicated unlock modal if no valid browser session is already present
+2. POSTs the nonce to `/v1/auth/exchange` with `Authorization: Bearer <operator-token>`
+3. receives an HttpOnly `popeye_auth` browser-session cookie
+4. performs same-origin GET requests with the cookie
+5. fetches a CSRF token from `/v1/security/csrf-token` before POST mutations
 
-The long-lived bearer token is **not** exposed to browser JavaScript or stored in the browser cookie.
+The bearer token is used only to mint the browser session and is not stored in
+browser cookies or browser storage by Popeye. The unlock modal keeps the token
+in memory only long enough to complete the exchange and surfaces inline retry
+errors for invalid tokens, expired nonces, or daemon unavailability.
 
 ## Views and API Dependencies
 
@@ -45,6 +49,15 @@ All visual values come from `~/.claude/uiux-contract/design_tokens.json`, mapped
 - Idle and stuck-risk badges are **operator heuristics** derived from observed run activity (`/v1/runs/:id/events` + SSE `run_started` / `run_event` / `run_completed`) and fall back to `startedAt` when no prior events are loaded.
 - Related tools stay within Popeye boundaries: quick-open links to existing views plus copyable `pop` command snippets. The web inspector does not launch terminals directly.
 - Layout, panel visibility, dense mode, detail width, and current inline selection persist locally in browser storage only.
+
+## Receipt detail surface notes
+
+- Receipt detail renders the additive `receipt.runtime.timeline` as a **Policy Timeline**.
+- The timeline is snapshot-based, ordered chronologically, and combines run
+  events, policy denials, approvals, context releases, and the terminal receipt
+  outcome into one operator-readable view.
+- Timeline metadata is intentionally operator-safe and does not expose secret
+  values.
 
 ## How to Add New Views
 

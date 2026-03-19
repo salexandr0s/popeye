@@ -7,10 +7,7 @@
   },
   "references": [
     {
-      "path": "../contracts/tsconfig.build.json"
-    },
-    {
-      "path": "../runtime-core/tsconfig.build.json"
+      "path": "../../packages/contracts/tsconfig.build.json"
     }
   ]
 }

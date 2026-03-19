@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApi } from './provider';
-import { readBootstrapNonce } from './bootstrap';
+import { ensureBrowserSession } from './browser-session';
+export { resetBrowserBootstrapForTests } from './browser-session';
 
 import type {
   AgentProfileRecord,
@@ -46,34 +47,6 @@ export interface EventStreamFreshness {
 export interface EventStreamEnvelope {
   event: string;
   data: string;
-}
-
-let bootstrapPromise: Promise<void> | null = null;
-
-export function resetBrowserBootstrapForTests(): void {
-  bootstrapPromise = null;
-}
-
-function ensureBrowserBootstrap(): Promise<void> {
-  if (bootstrapPromise) return bootstrapPromise;
-  const nonce = readBootstrapNonce();
-  if (!nonce) {
-    return Promise.reject(new Error('Missing bootstrap nonce'));
-  }
-  bootstrapPromise = fetch('/v1/auth/exchange', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    body: JSON.stringify({ nonce }),
-  }).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-  }).catch((error: unknown) => {
-    bootstrapPromise = null;
-    throw error;
-  });
-  return bootstrapPromise;
 }
 
 function usePolling<T>(path: string, intervalMs: number): PollingResult<T> {
@@ -155,7 +128,7 @@ export function useEventStreamFreshness(onEvent?: (event: EventStreamEnvelope) =
     const connect = async (): Promise<void> => {
       controller = new AbortController();
       try {
-        await ensureBrowserBootstrap();
+        await ensureBrowserSession();
         const response = await fetch('/v1/events/stream', {
           headers: {
             Accept: 'text/event-stream',

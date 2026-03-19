@@ -1,9 +1,25 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
     "noEmit": false
   },
-  "include": ["src/**/*.ts"]
+  "references": [
+    {
+      "path": "../../packages/contracts/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/runtime-core/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/api-client/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/engine-pi/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/receipts/tsconfig.build.json"
+    }
+  ]
 }

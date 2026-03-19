@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 import type {
   AgentProfileRecord,
@@ -33,6 +34,7 @@ import type {
   ProjectRecord,
   ProjectRegistrationInput,
   ReceiptRecord,
+  ReceiptTimelineEvent,
   RunEventRecord,
   RunReply,
   RunRecord,
@@ -490,6 +492,41 @@ function parseCreatedAt(row: unknown): string | null {
   return parsed.success ? parsed.data.created_at : null;
 }
 
+const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRecord['providerKind']>> = {
+  general: ['local'],
+  email: ['gmail', 'proton'],
+  calendar: ['google_calendar'],
+  todos: ['todoist', 'local'],
+  github: ['github'],
+  files: ['local_fs', 'local'],
+  people: ['local'],
+  finance: ['local'],
+  medical: ['local'],
+};
+
+const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>(['proton', 'todoist']);
+
+function providerRequiresSecret(providerKind: ConnectionRecord['providerKind']): boolean {
+  return SECRET_REQUIRED_CONNECTION_PROVIDERS.has(providerKind);
+}
+
+function isProviderAllowedForDomain(domain: DomainKind, providerKind: ConnectionRecord['providerKind']): boolean {
+  return (ALLOWED_CONNECTION_PROVIDERS[domain] ?? []).includes(providerKind);
+}
+
+function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const rel = relative(rootPath, candidatePath);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function canonicalizeLocalPath(inputPath: string): string {
+  try {
+    return realpathSync(inputPath);
+  } catch {
+    return resolve(inputPath);
+  }
+}
+
 function buildReceiptFallbackReplyText(receipt: ReceiptRecord): string {
   const parts = [
     receipt.summary,
@@ -502,6 +539,99 @@ function buildReceiptFallbackReplyText(receipt: ReceiptRecord): string {
     parts.push(`Details: ${receipt.details}`);
   }
   return parts.join('\n');
+}
+
+function stringifyTimelineMetadata(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function buildTimelineMetadata(details: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(details)
+      .map(([key, value]) => [key, stringifyTimelineMetadata(value)] as const)
+      .filter(([, value]) => value.length > 0),
+  );
+}
+
+function parseRunEventPayload(payload: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function mapRunEventTitle(type: RunEventRecord['type']): string {
+  switch (type) {
+    case 'started':
+      return 'Engine run started';
+    case 'session':
+      return 'Engine session assigned';
+    case 'message':
+      return 'Assistant message emitted';
+    case 'tool_call':
+      return 'Tool call requested';
+    case 'tool_result':
+      return 'Tool result received';
+    case 'completed':
+      return 'Engine run completed';
+    case 'failed':
+      return 'Engine run failed';
+    case 'usage':
+      return 'Usage reported';
+    case 'compaction':
+      return 'Compaction captured';
+    default:
+      return titleCase(type);
+  }
+}
+
+function mapRunEventDetail(record: RunEventRecord): string {
+  const payload = parseRunEventPayload(record.payload);
+  switch (record.type) {
+    case 'started':
+      return typeof payload.input === 'string' ? `Prompt: ${payload.input}` : '';
+    case 'session':
+      return typeof payload.sessionRef === 'string' ? `Session ref: ${payload.sessionRef}` : '';
+    case 'completed':
+      return typeof payload.output === 'string' ? payload.output : '';
+    case 'failed':
+      return typeof payload.error === 'string' ? payload.error : '';
+    case 'usage': {
+      const provider = typeof payload.provider === 'string' ? payload.provider : 'unknown';
+      const model = typeof payload.model === 'string' ? payload.model : 'unknown';
+      const tokensIn = typeof payload.tokensIn === 'number' ? payload.tokensIn : 0;
+      const tokensOut = typeof payload.tokensOut === 'number' ? payload.tokensOut : 0;
+      return `${provider}/${model} · ${tokensIn}/${tokensOut} tokens`;
+    }
+    case 'tool_call':
+      return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
+    case 'tool_result':
+      return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
+    case 'compaction':
+      return typeof payload.content === 'string' ? 'Compaction flush captured before context loss.' : '';
+    default:
+      return '';
+  }
+}
+
+function mapSecurityAuditKind(code: string): ReceiptTimelineEvent['kind'] {
+  if (code.startsWith('approval_')) return 'approval';
+  if (code.startsWith('context_')) return 'context_release';
+  if (code.includes('warning')) return 'warning';
+  return 'policy';
 }
 
 function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
@@ -518,6 +648,7 @@ function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
     allowedResources: JSON.parse((row['allowed_resources'] as string) ?? '[]') as string[],
     lastSyncAt: (row['last_sync_at'] as string) ?? null,
     lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
+    policy: undefined,
     createdAt: row['created_at'] as string,
     updatedAt: row['updated_at'] as string,
   };
@@ -728,8 +859,18 @@ export class PopeyeRuntimeService {
         contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
         events: this.events,
         resolveEmailAdapter: async (connectionId: string) => {
-          const connection = this.getConnection(connectionId);
-          if (!connection || connection.domain !== 'email') return null;
+          let connection: ConnectionRecord;
+          try {
+            connection = this.requireConnectionForOperation({
+              connectionId,
+              purpose: 'email_adapter_resolve',
+              expectedDomain: 'email',
+              allowedProviderKinds: ['gmail', 'proton'],
+              requireSecret: false,
+            });
+          } catch {
+            return null;
+          }
 
           const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
           const readDb = new BetterSqlite3(dbPath, { readonly: true });
@@ -742,8 +883,16 @@ export class PopeyeRuntimeService {
             if (connection.providerKind === 'gmail') {
               adapter = createAdapter('gmail');
             } else if (connection.providerKind === 'proton') {
-              if (!connection.secretRefId) return null;
-              const password = this.secretStore.getSecretValue(connection.secretRefId);
+              if (this.requireConnectionForOperation({
+                connectionId,
+                purpose: 'email_adapter_resolve',
+                expectedDomain: 'email',
+                allowedProviderKinds: ['proton'],
+                requireSecret: true,
+              }).policy?.secretStatus !== 'configured') {
+                return null;
+              }
+              const password = this.secretStore.getSecretValue(connection.secretRefId!);
               if (!password) return null;
               adapter = createAdapter('proton', { username: account.emailAddress, password });
             } else {
@@ -925,16 +1074,245 @@ export class PopeyeRuntimeService {
 
   // --- Delegated: ReceiptManager ---
 
+  private listSecurityAuditEventsForRun(runId: string): SecurityAuditEvent[] {
+    const rows = this.databases.app
+      .prepare('SELECT code, severity, message, component, timestamp, details_json FROM security_audit ORDER BY timestamp ASC')
+      .all() as Array<{
+        code: string;
+        severity: SecurityAuditEvent['severity'];
+        message: string;
+        component: string;
+        timestamp: string;
+        details_json: string;
+      }>;
+
+    return rows
+      .map((row) => {
+        const details = JSON.parse(row.details_json || '{}') as Record<string, string>;
+        return {
+          code: row.code,
+          severity: row.severity,
+          message: row.message,
+          component: row.component,
+          timestamp: row.timestamp,
+          details,
+        } satisfies SecurityAuditEvent;
+      })
+      .filter((event) => event.details.runId === runId);
+  }
+
+  private buildReceiptTimeline(runId: string, status?: ReceiptRecord['status']): ReceiptTimelineEvent[] {
+    const timeline: ReceiptTimelineEvent[] = [];
+
+    for (const event of this.listRunEvents(runId)) {
+      timeline.push({
+        id: `run_event:${event.id}`,
+        at: event.createdAt,
+        kind: 'run',
+        severity: event.type === 'failed' ? 'error' : 'info',
+        code: `engine_${event.type}`,
+        title: mapRunEventTitle(event.type),
+        detail: mapRunEventDetail(event),
+        source: 'run_event',
+        metadata: buildTimelineMetadata(parseRunEventPayload(event.payload)),
+      });
+    }
+
+    for (const event of this.listSecurityAuditEventsForRun(runId)) {
+      if (event.code === 'context_released') continue;
+      timeline.push({
+        id: `security_audit:${event.timestamp}:${event.code}`,
+        at: event.timestamp,
+        kind: mapSecurityAuditKind(event.code),
+        severity: event.severity,
+        code: event.code,
+        title: titleCase(event.code),
+        detail: event.message,
+        source: 'security_audit',
+        metadata: buildTimelineMetadata(event.details),
+      });
+    }
+
+    const releases = this.contextReleaseService.listReleasesForRun(runId);
+    const approvalIds = new Set(
+      releases
+        .map((release) => release.approvalId)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0),
+    );
+
+    for (const approvalId of approvalIds) {
+      const approval = this.approvalService.getApproval(approvalId);
+      if (!approval) continue;
+      timeline.push({
+        id: `approval:${approval.id}:requested`,
+        at: approval.createdAt,
+        kind: 'approval',
+        severity: approval.riskClass === 'deny' ? 'error' : 'info',
+        code: 'approval_requested',
+        title: 'Approval requested',
+        detail: `${approval.scope} · ${approval.resourceType}/${approval.resourceId}`,
+        source: 'approval',
+        metadata: buildTimelineMetadata({
+          approvalId: approval.id,
+          domain: approval.domain,
+          riskClass: approval.riskClass,
+          status: approval.status,
+        }),
+      });
+      if (approval.resolvedAt) {
+        timeline.push({
+          id: `approval:${approval.id}:resolved`,
+          at: approval.resolvedAt,
+          kind: 'approval',
+          severity: approval.status === 'approved' ? 'info' : approval.status === 'expired' ? 'warn' : 'error',
+          code: `approval_${approval.status}`,
+          title: `Approval ${approval.status}`,
+          detail: approval.decisionReason ?? `${approval.scope} decision recorded.`,
+          source: 'approval',
+          metadata: buildTimelineMetadata({
+            approvalId: approval.id,
+            resolvedBy: approval.resolvedBy ?? '',
+            domain: approval.domain,
+          }),
+        });
+      }
+    }
+
+    for (const release of releases) {
+      timeline.push({
+        id: `context_release:${release.id}`,
+        at: release.createdAt,
+        kind: 'context_release',
+        severity: 'info',
+        code: 'context_released',
+        title: `Context released to ${release.domain}`,
+        detail: `${release.releaseLevel}${release.redacted ? ' · redacted' : ''}`,
+        source: 'context_release',
+        metadata: buildTimelineMetadata({
+          releaseId: release.id,
+          sourceRef: release.sourceRef,
+          tokenEstimate: release.tokenEstimate,
+          ...(release.approvalId ? { approvalId: release.approvalId } : {}),
+        }),
+      });
+    }
+
+    if (status) {
+      const run = this.getRun(runId);
+      timeline.push({
+        id: `receipt:${runId}:${status}`,
+        at: run?.finishedAt ?? nowIso(),
+        kind: status === 'succeeded' ? 'run' : 'warning',
+        severity: status === 'succeeded' ? 'info' : status === 'cancelled' || status === 'abandoned' ? 'warn' : 'error',
+        code: `receipt_${status}`,
+        title: `Receipt ${status}`,
+        detail: `Run finished with status ${status}.`,
+        source: 'receipt',
+        metadata: {},
+      });
+    }
+
+    return timeline.sort((left, right) => {
+      const byTime = Date.parse(left.at) - Date.parse(right.at);
+      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+    });
+  }
+
+  private buildReceiptRuntimeSummary(
+    runId: string,
+    taskId: string,
+    status?: ReceiptRecord['status'],
+  ): NonNullable<ReceiptRecord['runtime']> | undefined {
+    const run = this.getRun(runId);
+    const task = this.getTask(taskId);
+    const envelope = this.getExecutionEnvelope(runId);
+    const contextReleases = this.summarizeRunReleases(runId);
+    const timeline = this.buildReceiptTimeline(runId, status);
+
+    const runtimeSummary: NonNullable<ReceiptRecord['runtime']> = {
+      projectId: task?.projectId ?? null,
+      profileId: run?.profileId ?? null,
+      execution: envelope
+        ? {
+            mode: envelope.mode,
+            memoryScope: envelope.memoryScope,
+            recallScope: envelope.recallScope,
+            filesystemPolicyClass: envelope.filesystemPolicyClass,
+            contextReleasePolicy: envelope.contextReleasePolicy,
+            sessionPolicy: envelope.provenance.sessionPolicy,
+            warnings: envelope.provenance.warnings,
+          }
+        : null,
+      contextReleases: contextReleases.totalReleases > 0
+        ? contextReleases
+        : null,
+      timeline,
+    };
+
+    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.timeline.length === 0) {
+      return undefined;
+    }
+    return runtimeSummary;
+  }
+
+  private mergeReceiptRuntimeSummary(receipt: ReceiptRecord): ReceiptRecord['runtime'] | undefined {
+    const derived = this.buildReceiptRuntimeSummary(receipt.runId, receipt.taskId, receipt.status);
+    if (!receipt.runtime) {
+      return derived;
+    }
+    if (!derived) {
+      return receipt.runtime;
+    }
+    const timelineById = new Map<string, ReceiptTimelineEvent>();
+    for (const event of receipt.runtime.timeline) {
+      timelineById.set(event.id, event);
+    }
+    for (const event of derived.timeline) {
+      timelineById.set(event.id, event);
+    }
+    const mergedTimeline = Array.from(timelineById.values()).sort((left, right) => {
+      const byTime = Date.parse(left.at) - Date.parse(right.at);
+      return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
+    });
+    return {
+      projectId: receipt.runtime.projectId ?? derived.projectId ?? null,
+      profileId: receipt.runtime.profileId ?? derived.profileId ?? null,
+      execution: receipt.runtime.execution ?? derived.execution ?? null,
+      contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
+      timeline: mergedTimeline,
+    };
+  }
+
+  private enrichReceipt(receipt: ReceiptRecord | null): ReceiptRecord | null {
+    if (!receipt) return null;
+    const runtime = this.mergeReceiptRuntimeSummary(receipt);
+    return {
+      ...receipt,
+      ...(runtime !== undefined ? { runtime } : {}),
+    };
+  }
+
+  private writeRuntimeReceipt(input: Omit<ReceiptRecord, 'id' | 'createdAt'>): ReceiptRecord {
+    const runtime = input.runtime ?? this.buildReceiptRuntimeSummary(input.runId, input.taskId, input.status);
+    const receipt = this.receiptManager.writeReceipt({
+      ...input,
+      ...(runtime !== undefined ? { runtime } : {}),
+    });
+    const enriched = this.enrichReceipt(receipt) ?? receipt;
+    this.receiptManager.captureMemoryFromReceipt(enriched);
+    return enriched;
+  }
+
   listReceipts(): ReceiptRecord[] {
-    return this.receiptManager.listReceipts();
+    return this.receiptManager.listReceipts().map((receipt) => this.enrichReceipt(receipt) ?? receipt);
   }
 
   getReceipt(receiptId: string): ReceiptRecord | null {
-    return this.receiptManager.getReceipt(receiptId);
+    return this.enrichReceipt(this.receiptManager.getReceipt(receiptId));
   }
 
   getReceiptByRunId(runId: string): ReceiptRecord | null {
-    return this.receiptManager.getReceiptByRunId(runId);
+    return this.enrichReceipt(this.receiptManager.getReceiptByRunId(runId));
   }
 
   getUsageSummary(): UsageSummary {
@@ -1597,7 +1975,7 @@ export class PopeyeRuntimeService {
   getRunReply(runId: string): RunReply | null {
     const run = this.getRun(runId);
     if (!run) return null;
-    const receipt = this.receiptManager.getReceiptByRunId(runId);
+    const receipt = this.getReceiptByRunId(runId);
     if (!receipt) return null;
     const reply = buildCanonicalRunReply(this.listRunEvents(runId), receipt, buildReceiptFallbackReplyText);
     if (!reply) return null;
@@ -1627,7 +2005,7 @@ export class PopeyeRuntimeService {
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ? WHERE id = ?').run('cancelled', nowIso(), runId);
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
     this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(run.jobId);
-    const receipt = this.receiptManager.writeReceipt({
+    const receipt = this.writeRuntimeReceipt({
       runId,
       jobId: run.jobId,
       taskId: run.taskId,
@@ -1637,7 +2015,6 @@ export class PopeyeRuntimeService {
       details: '',
       usage: { provider: this.config.engine.kind, model: 'n/a', tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
     });
-    this.receiptManager.captureMemoryFromReceipt(receipt);
     this.emit('run_completed', receipt);
     return this.getRun(runId);
   }
@@ -1648,7 +2025,7 @@ export class PopeyeRuntimeService {
       const job = this.getJob(jobId);
       if (job && isTerminalJobStatus(job.status)) {
         const run = job.lastRunId ? this.getRun(job.lastRunId) : null;
-        const receipt = run ? this.receiptManager.getReceiptByRunId(run.id) : null;
+        const receipt = run ? this.getReceiptByRunId(run.id) : null;
         return { job, run, receipt };
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -1659,7 +2036,7 @@ export class PopeyeRuntimeService {
   async waitForTaskTerminalReceipt(taskId: string, timeoutMs = 10_000): Promise<ReceiptRecord | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() <= deadline) {
-      const receipt = this.receiptManager.getReceiptByTaskId(taskId);
+      const receipt = this.enrichReceipt(this.receiptManager.getReceiptByTaskId(taskId));
       if (receipt) return receipt;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -1750,8 +2127,8 @@ export class PopeyeRuntimeService {
     return this.memorySearch.explainRecall(input, locationFilter);
   }
 
-  getMemoryContent(memoryId: string): MemoryRecord | null {
-    const record = this.memorySearch.getMemoryContent(memoryId);
+  getMemoryContent(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }): MemoryRecord | null {
+    const record = this.memorySearch.getMemoryContent(memoryId, locationFilter);
     return record ? MemoryRecordSchema.parse(record) : null;
   }
 
@@ -1831,8 +2208,8 @@ export class PopeyeRuntimeService {
       );
   }
 
-  getMemory(memoryId: string): MemoryRecord | null {
-    return this.getMemoryContent(memoryId);
+  getMemory(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }): MemoryRecord | null {
+    return this.getMemoryContent(memoryId, locationFilter);
   }
 
   async budgetFitMemory(query: {
@@ -1890,8 +2267,8 @@ export class PopeyeRuntimeService {
       sourceType: input.sourceType ?? 'curated_memory',
       ...(input.memoryType !== undefined && { memoryType: input.memoryType }),
       scope,
-      workspaceId: input.workspaceId,
-      projectId: input.projectId,
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       confidence: input.confidence ?? 0.8,
       classification: input.classification ?? 'embeddable',
     });
@@ -2010,16 +2387,300 @@ export class PopeyeRuntimeService {
     return { domainPolicies, approvalRules };
   }
 
+  private buildConnectionPolicySummary(connection: ConnectionRecord): NonNullable<ConnectionRecord['policy']> {
+    const diagnostics: NonNullable<ConnectionRecord['policy']>['diagnostics'] = [];
+
+    if (!isProviderAllowedForDomain(connection.domain, connection.providerKind)) {
+      diagnostics.push({
+        code: 'provider_domain_mismatch',
+        severity: 'error',
+        message: `Provider ${connection.providerKind} is not allowed for ${connection.domain} connections.`,
+      });
+    }
+
+    let secretStatus: NonNullable<ConnectionRecord['policy']>['secretStatus'] = 'not_required';
+    if (providerRequiresSecret(connection.providerKind)) {
+      if (!connection.secretRefId) {
+        secretStatus = 'missing';
+        diagnostics.push({
+          code: 'secret_required',
+          severity: 'error',
+          message: `Provider ${connection.providerKind} requires a configured secret reference.`,
+        });
+      } else if (!this.secretStore.hasSecret(connection.secretRefId)) {
+        secretStatus = 'stale';
+        diagnostics.push({
+          code: 'secret_unavailable',
+          severity: 'error',
+          message: `Referenced secret ${connection.secretRefId} is missing or unavailable.`,
+        });
+      } else {
+        secretStatus = 'configured';
+      }
+    } else if (connection.secretRefId) {
+      secretStatus = this.secretStore.hasSecret(connection.secretRefId) ? 'configured' : 'stale';
+      if (secretStatus === 'stale') {
+        diagnostics.push({
+          code: 'secret_unavailable',
+          severity: 'error',
+          message: `Referenced secret ${connection.secretRefId} is missing or unavailable.`,
+        });
+      }
+    }
+
+    if (!connection.enabled) {
+      diagnostics.push({
+        code: 'connection_disabled',
+        severity: 'warn',
+        message: 'Connection is disabled and cannot be used until re-enabled.',
+      });
+    }
+
+    return {
+      status: !connection.enabled
+        ? 'disabled'
+        : diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+          ? 'incomplete'
+          : 'ready',
+      secretStatus,
+      mutatingRequiresApproval: connection.mode === 'read_write',
+      diagnostics,
+    };
+  }
+
+  private withConnectionPolicy(connection: ConnectionRecord): ConnectionRecord {
+    return {
+      ...connection,
+      policy: this.buildConnectionPolicySummary(connection),
+    };
+  }
+
+  private getConnectionRow(id: string): ConnectionRecord | null {
+    const row = this.databases.app.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    return row ? mapConnectionRow(row) : null;
+  }
+
+  private validateConnectionMutation(input: {
+    domain: DomainKind;
+    providerKind: ConnectionRecord['providerKind'];
+    secretRefId: string | null;
+  }): void {
+    if (!isProviderAllowedForDomain(input.domain, input.providerKind)) {
+      throw new RuntimeValidationError(`Provider ${input.providerKind} is not allowed for ${input.domain} connections`);
+    }
+    if (input.secretRefId && !this.secretStore.hasSecret(input.secretRefId)) {
+      throw new RuntimeValidationError(`Secret reference ${input.secretRefId} is missing or unavailable`);
+    }
+  }
+
+  private denyConnectionOperation(input: {
+    reasonCode: string;
+    message: string;
+    connectionId: string;
+    purpose: string;
+    domain?: string | undefined;
+    providerKind?: string | undefined;
+    runId?: string | undefined;
+    jobId?: string | undefined;
+    taskId?: string | undefined;
+  }): never {
+    const details = {
+      connectionId: input.connectionId,
+      purpose: input.purpose,
+      reasonCode: input.reasonCode,
+      ...(input.domain !== undefined ? { domain: input.domain } : {}),
+      ...(input.providerKind !== undefined ? { providerKind: input.providerKind } : {}),
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
+      ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+      ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+    };
+    this.log.warn('connection policy denied', details);
+    this.recordSecurityAudit({
+      code: 'connection_policy_denied',
+      severity: 'warn',
+      message: input.message,
+      component: 'runtime-core',
+      timestamp: nowIso(),
+      details: Object.fromEntries(Object.entries(details).map(([key, value]) => [key, String(value)])),
+    });
+    throw new RuntimeValidationError(input.message);
+  }
+
+  private requireConnectionForOperation(input: {
+    connectionId: string;
+    purpose: string;
+    expectedDomain: DomainKind;
+    allowedProviderKinds?: Array<ConnectionRecord['providerKind']>;
+    requireSecret?: boolean | undefined;
+    runId?: string | undefined;
+    jobId?: string | undefined;
+    taskId?: string | undefined;
+  }): ConnectionRecord {
+    const connection = this.getConnection(input.connectionId);
+    if (!connection) {
+      return this.denyConnectionOperation({
+        connectionId: input.connectionId,
+        purpose: input.purpose,
+        reasonCode: 'connection_not_found',
+        message: `Connection ${input.connectionId} not found`,
+        domain: input.expectedDomain,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
+    if (connection.domain !== input.expectedDomain) {
+      return this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose: input.purpose,
+        reasonCode: 'wrong_domain',
+        message: `Connection ${connection.id} is not a ${input.expectedDomain} connection`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
+    if (input.allowedProviderKinds && !input.allowedProviderKinds.includes(connection.providerKind)) {
+      return this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose: input.purpose,
+        reasonCode: 'wrong_provider',
+        message: `Provider ${connection.providerKind} is not allowed for ${input.purpose}`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
+    if (connection.policy?.status === 'disabled') {
+      return this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose: input.purpose,
+        reasonCode: 'connection_disabled',
+        message: `Connection ${connection.id} is disabled`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
+    const requiresSecret = input.requireSecret ?? providerRequiresSecret(connection.providerKind);
+    if (requiresSecret && connection.policy?.secretStatus !== 'configured') {
+      return this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose: input.purpose,
+        reasonCode: connection.policy?.secretStatus === 'stale' ? 'secret_unavailable' : 'secret_required',
+        message: `Connection ${connection.id} does not have a usable secret reference`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
+    return connection;
+  }
+
+  private requireEmailAccountForOperation(
+    service: EmailService,
+    accountId: string,
+    purpose: string,
+  ): { account: EmailAccountRecord; connection: ConnectionRecord } {
+    const account = service.getAccount(accountId);
+    if (!account) {
+      throw new RuntimeValidationError(`Email account ${accountId} not found`);
+    }
+    const connection = this.requireConnectionForOperation({
+      connectionId: account.connectionId,
+      purpose,
+      expectedDomain: 'email',
+      allowedProviderKinds: ['gmail', 'proton'],
+      requireSecret: false,
+    });
+    return { account, connection };
+  }
+
+  private requireGithubAccountForOperation(
+    service: GithubService,
+    accountId: string,
+    purpose: string,
+  ): { account: GithubAccountRecord; connection: ConnectionRecord } {
+    const account = service.getAccount(accountId);
+    if (!account) {
+      throw new RuntimeValidationError(`GitHub account ${accountId} not found`);
+    }
+    const connection = this.requireConnectionForOperation({
+      connectionId: account.connectionId,
+      purpose,
+      expectedDomain: 'github',
+      allowedProviderKinds: ['github'],
+      requireSecret: false,
+    });
+    return { account, connection };
+  }
+
+  private requireCalendarAccountForOperation(
+    service: CalendarService,
+    accountId: string,
+    purpose: string,
+  ): { account: CalendarAccountRecord; connection: ConnectionRecord } {
+    const account = service.getAccount(accountId);
+    if (!account) {
+      throw new RuntimeValidationError(`Calendar account ${accountId} not found`);
+    }
+    const connection = this.requireConnectionForOperation({
+      connectionId: account.connectionId,
+      purpose,
+      expectedDomain: 'calendar',
+      allowedProviderKinds: ['google_calendar'],
+      requireSecret: false,
+    });
+    return { account, connection };
+  }
+
+  private requireTodoAccountForOperation(
+    service: TodoService,
+    accountId: string,
+    purpose: string,
+    options: { requireSecret?: boolean | undefined } = {},
+  ): { account: TodoAccountRecord; connection: ConnectionRecord | null } {
+    const account = service.getAccount(accountId);
+    if (!account) {
+      throw new RuntimeValidationError(`Todo account ${accountId} not found`);
+    }
+    if (!account.connectionId) {
+      return { account, connection: null };
+    }
+    const allowedProviderKinds = account.providerKind === 'todoist' ? ['todoist'] : ['local'];
+    const connection = this.requireConnectionForOperation({
+      connectionId: account.connectionId,
+      purpose,
+      expectedDomain: 'todos',
+      allowedProviderKinds,
+      requireSecret: options.requireSecret ?? account.providerKind === 'todoist',
+    });
+    return { account, connection };
+  }
+
   listConnections(domain?: string): ConnectionRecord[] {
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (domain) { conditions.push('domain = ?'); params.push(domain); }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = this.databases.app.prepare(`SELECT * FROM connections ${where} ORDER BY created_at DESC`).all(...params) as Record<string, unknown>[];
-    return rows.map(mapConnectionRow);
+    return rows.map((row) => this.withConnectionPolicy(mapConnectionRow(row)));
   }
 
   createConnection(input: ConnectionCreateInput): ConnectionRecord {
+    this.validateConnectionMutation({
+      domain: input.domain,
+      providerKind: input.providerKind,
+      secretRefId: input.secretRefId ?? null,
+    });
     const id = randomUUID();
     const now = nowIso();
     this.databases.app
@@ -2032,8 +2693,13 @@ export class PopeyeRuntimeService {
   }
 
   updateConnection(id: string, input: ConnectionUpdateInput): ConnectionRecord | null {
-    const existing = this.getConnection(id);
+    const existing = this.getConnectionRow(id);
     if (!existing) return null;
+    this.validateConnectionMutation({
+      domain: existing.domain,
+      providerKind: existing.providerKind,
+      secretRefId: input.secretRefId !== undefined ? input.secretRefId : existing.secretRefId,
+    });
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.label !== undefined) { sets.push('label = ?'); params.push(input.label); }
@@ -2043,7 +2709,7 @@ export class PopeyeRuntimeService {
     if (input.syncIntervalSeconds !== undefined) { sets.push('sync_interval_seconds = ?'); params.push(input.syncIntervalSeconds); }
     if (input.allowedScopes !== undefined) { sets.push('allowed_scopes = ?'); params.push(JSON.stringify(input.allowedScopes)); }
     if (input.allowedResources !== undefined) { sets.push('allowed_resources = ?'); params.push(JSON.stringify(input.allowedResources)); }
-    if (sets.length === 0) return existing;
+    if (sets.length === 0) return this.withConnectionPolicy(existing);
     sets.push('updated_at = ?');
     params.push(nowIso());
     params.push(id);
@@ -2057,8 +2723,8 @@ export class PopeyeRuntimeService {
   }
 
   private getConnection(id: string): ConnectionRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-    return row ? mapConnectionRow(row) : null;
+    const connection = this.getConnectionRow(id);
+    return connection ? this.withConnectionPolicy(connection) : null;
   }
 
   // --- Internal: event emission ---
@@ -2674,7 +3340,7 @@ export class PopeyeRuntimeService {
       this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), safeMessage, run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), job.id);
-      const receipt = this.receiptManager.writeReceipt({
+      const receipt = this.writeRuntimeReceipt({
         runId: run.id,
         jobId: job.id,
         taskId: task.id,
@@ -2684,7 +3350,6 @@ export class PopeyeRuntimeService {
         details: safeMessage,
         usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
       });
-      this.receiptManager.captureMemoryFromReceipt(receipt);
       this.emit('run_completed', receipt);
       this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: safeMessage, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
       return this.getRun(run.id);
@@ -2744,7 +3409,7 @@ export class PopeyeRuntimeService {
     if (failure === null) {
       this.databases.app.prepare('UPDATE runs SET state = ?, engine_session_ref = ?, finished_at = ?, error = ? WHERE id = ?').run('succeeded', completion.engineSessionRef, nowIso(), null, run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('succeeded', nowIso(), run.jobId);
-      const receipt = this.receiptManager.writeReceipt({
+      const receipt = this.writeRuntimeReceipt({
         runId: run.id,
         jobId: run.jobId,
         taskId: run.taskId,
@@ -2754,7 +3419,6 @@ export class PopeyeRuntimeService {
         details: JSON.stringify(this.listRunEvents(run.id)),
         usage: completion.usage,
       });
-      this.receiptManager.captureMemoryFromReceipt(receipt);
       runLog.info('run succeeded', {
         provider: completion.usage.provider,
         model: completion.usage.model,
@@ -2770,7 +3434,7 @@ export class PopeyeRuntimeService {
     if (failure === 'cancelled') {
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('cancelled', nowIso(), this.redactError('cancelled'), run.id);
       this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
-      const receipt = this.receiptManager.writeReceipt({
+      const receipt = this.writeRuntimeReceipt({
         runId: run.id,
         jobId: run.jobId,
         taskId: run.taskId,
@@ -2780,7 +3444,6 @@ export class PopeyeRuntimeService {
         details: 'Cancelled by operator or daemon shutdown',
         usage: completion.usage,
       });
-      this.receiptManager.captureMemoryFromReceipt(receipt);
       runLog.info('run cancelled');
       this.emit('run_completed', receipt);
       this.cleanupActiveRun(activeRun);
@@ -2797,7 +3460,7 @@ export class PopeyeRuntimeService {
 
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ?, engine_session_ref = ? WHERE id = ?').run('failed_final', nowIso(), this.redactError(failure), completion.engineSessionRef, run.id);
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), run.jobId);
-    const receipt = this.receiptManager.writeReceipt({
+    const receipt = this.writeRuntimeReceipt({
       runId: run.id,
       jobId: run.jobId,
       taskId: run.taskId,
@@ -2807,7 +3470,6 @@ export class PopeyeRuntimeService {
       details: failure,
       usage: completion.usage,
     });
-    this.receiptManager.captureMemoryFromReceipt(receipt);
     runLog.error('run failed (final)', { failure });
     this.emit('run_completed', receipt);
     this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
@@ -2830,7 +3492,7 @@ export class PopeyeRuntimeService {
       this.createIntervention('retry_budget_exhausted', job.lastRunId, `Retry budget exhausted for job ${jobId}`);
     }
 
-    const receipt = this.receiptManager.writeReceipt({
+    const receipt = this.writeRuntimeReceipt({
       runId: job.lastRunId ?? 'unknown',
       jobId,
       taskId: task.id,
@@ -2840,7 +3502,6 @@ export class PopeyeRuntimeService {
       details: reason,
       usage: completion.usage,
     });
-    this.receiptManager.captureMemoryFromReceipt(receipt);
     this.emit('run_completed', receipt);
   }
 
@@ -2856,7 +3517,7 @@ export class PopeyeRuntimeService {
     this.log.warn('run abandoned', { runId, reason });
     this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), this.redactError(reason), run.id);
-    const receipt = this.receiptManager.getReceiptByRunId(run.id);
+    const receipt = this.getReceiptByRunId(run.id);
     if (receipt) {
       this.emit('run_completed', receipt);
     }
@@ -3061,9 +3722,128 @@ export class PopeyeRuntimeService {
     return new FileSearchService(this.databases.app);
   }
 
+  private denyFileRootRegistration(reasonCode: string, message: string, details: Record<string, string>): never {
+    this.log.warn('file root registration denied', { reasonCode, ...details });
+    this.recordSecurityAudit({
+      code: 'file_root_registration_denied',
+      severity: 'warn',
+      message,
+      component: 'runtime-core',
+      timestamp: nowIso(),
+      details: {
+        reasonCode,
+        ...details,
+      },
+    });
+    throw new RuntimeValidationError(message);
+  }
+
+  private denyFileRootOperation(reasonCode: string, message: string, details: Record<string, string>): never {
+    this.log.warn('file root policy denied', { reasonCode, ...details });
+    this.recordSecurityAudit({
+      code: 'file_root_policy_denied',
+      severity: 'warn',
+      message,
+      component: 'runtime-core',
+      timestamp: nowIso(),
+      details: {
+        reasonCode,
+        ...details,
+      },
+    });
+    throw new RuntimeValidationError(message);
+  }
+
+  private validateFileRootRegistration(input: FileRootRegistrationInput): void {
+    if (!this.getWorkspace(input.workspaceId)) {
+      this.denyFileRootRegistration('workspace_not_found', `Workspace ${input.workspaceId} not found`, {
+        workspaceId: input.workspaceId,
+        rootPath: input.rootPath,
+      });
+    }
+
+    const canonicalRootPath = canonicalizeLocalPath(input.rootPath);
+
+    const protectedRuntimeRoots = [
+      this.config.runtimeDataDir,
+      this.databases.paths.stateDir,
+      this.databases.paths.logsDir,
+      this.databases.paths.receiptsDir,
+      this.databases.paths.backupsDir,
+      this.databases.paths.capabilityStoresDir,
+      resolve(this.databases.paths.memoryDailyDir, '..'),
+    ];
+
+    for (const protectedRoot of protectedRuntimeRoots) {
+      const resolvedProtectedRoot = canonicalizeLocalPath(protectedRoot);
+      if (isPathWithinRoot(resolvedProtectedRoot, canonicalRootPath)) {
+        this.denyFileRootRegistration(
+          'runtime_directory_forbidden',
+          'File roots cannot point at Popeye runtime data directories',
+          {
+            workspaceId: input.workspaceId,
+            rootPath: canonicalRootPath,
+            protectedRoot: resolvedProtectedRoot,
+          },
+        );
+      }
+    }
+
+    const existingRoot = this.listFileRoots(input.workspaceId).find((root) => {
+      return root.enabled && canonicalizeLocalPath(root.rootPath) === canonicalRootPath;
+    });
+    if (existingRoot) {
+      this.denyFileRootRegistration(
+        'duplicate_root',
+        `File root ${canonicalRootPath} is already registered for workspace ${input.workspaceId}`,
+        {
+          workspaceId: input.workspaceId,
+          rootPath: canonicalRootPath,
+          existingRootId: existingRoot.id,
+        },
+      );
+    }
+  }
+
+  private requireFileRootForOperation(input: {
+    rootId: string;
+    purpose: string;
+    workspaceId?: string | undefined;
+  }): FileRootRecord {
+    const root = this.getFileRoot(input.rootId);
+    if (!root) {
+      return this.denyFileRootOperation('root_not_found', `File root ${input.rootId} not found`, {
+        rootId: input.rootId,
+        purpose: input.purpose,
+        ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+      });
+    }
+    if (!root.enabled) {
+      return this.denyFileRootOperation('root_disabled', `File root ${input.rootId} is disabled`, {
+        rootId: input.rootId,
+        purpose: input.purpose,
+        workspaceId: root.workspaceId,
+      });
+    }
+    if (input.workspaceId !== undefined && root.workspaceId !== input.workspaceId) {
+      return this.denyFileRootOperation(
+        'workspace_mismatch',
+        `File root ${input.rootId} does not belong to workspace ${input.workspaceId}`,
+        {
+          rootId: input.rootId,
+          purpose: input.purpose,
+          workspaceId: input.workspaceId,
+          rootWorkspaceId: root.workspaceId,
+        },
+      );
+    }
+    return root;
+  }
+
   registerFileRoot(input: FileRootRegistrationInput): FileRootRecord {
     const svc = this.getFilesRootService();
     if (!svc) throw new Error('Files capability not available');
+    this.validateFileRootRegistration(input);
     return svc.registerRoot(input);
   }
 
@@ -3094,6 +3874,13 @@ export class PopeyeRuntimeService {
   searchFiles(query: FileSearchQuery): FileSearchResponse {
     const svc = this.getFilesSearchService();
     if (!svc) return { query: query.query, results: [], totalCandidates: 0 };
+    if (query.rootId) {
+      this.requireFileRootForOperation({
+        rootId: query.rootId,
+        purpose: 'file_search',
+        ...(query.workspaceId !== undefined ? { workspaceId: query.workspaceId } : {}),
+      });
+    }
     return svc.search(query);
   }
 
@@ -3101,13 +3888,27 @@ export class PopeyeRuntimeService {
     const indexer = this.getFilesIndexer();
     const rootService = this.getFilesRootService();
     if (!indexer || !rootService) return null;
+    this.requireFileRootForOperation({ rootId, purpose: 'file_reindex' });
     return indexer.reindexRoot(rootId, rootService);
   }
 
   getFileDocument(id: string): FileDocumentRecord | null {
     const svc = this.getFilesRootService();
     if (!svc) return null;
-    return svc.getDocument(id);
+    const document = svc.getDocument(id);
+    if (!document) return null;
+    try {
+      this.requireFileRootForOperation({
+        rootId: document.fileRootId,
+        purpose: 'file_document_read',
+      });
+      return document;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   // --- Email facade ---
@@ -3149,23 +3950,57 @@ export class PopeyeRuntimeService {
   }
 
   listEmailThreads(accountId: string, options?: { limit?: number | undefined; unreadOnly?: boolean | undefined }): EmailThreadRecord[] {
-    return this.getEmailServiceFacade()?.listThreads(accountId, options) ?? [];
+    const svc = this.getEmailServiceFacade();
+    if (!svc) return [];
+    this.requireEmailAccountForOperation(svc, accountId, 'email_thread_list');
+    return svc.listThreads(accountId, options);
   }
 
   getEmailThread(id: string): EmailThreadRecord | null {
-    return this.getEmailServiceFacade()?.getThread(id) ?? null;
+    const svc = this.getEmailServiceFacade();
+    if (!svc) return null;
+    const thread = svc.getThread(id);
+    if (!thread) return null;
+    try {
+      this.requireEmailAccountForOperation(svc, thread.accountId, 'email_thread_read');
+      return thread;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
+    const svc = this.getEmailServiceFacade();
+    if (query.accountId && svc) {
+      this.requireEmailAccountForOperation(svc, query.accountId, 'email_search');
+    }
     return this.getEmailSearchFacade()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getEmailDigest(accountId: string): EmailDigestRecord | null {
-    return this.getEmailServiceFacade()?.getLatestDigest(accountId) ?? null;
+    const svc = this.getEmailServiceFacade();
+    if (!svc) return null;
+    this.requireEmailAccountForOperation(svc, accountId, 'email_digest_read');
+    return svc.getLatestDigest(accountId);
   }
 
   getEmailMessage(id: string): EmailMessageRecord | null {
-    return this.getEmailServiceFacade()?.getMessage(id) ?? null;
+    const svc = this.getEmailServiceFacade();
+    if (!svc) return null;
+    const message = svc.getMessage(id);
+    if (!message) return null;
+    try {
+      this.requireEmailAccountForOperation(svc, message.accountId, 'email_message_read');
+      return message;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   // --- GitHub facade ---
@@ -3206,35 +4041,78 @@ export class PopeyeRuntimeService {
   }
 
   listGithubRepos(accountId: string, options?: { limit?: number | undefined }): GithubRepoRecord[] {
-    return this.getGithubServiceFacade()?.listRepos(accountId, options) ?? [];
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return [];
+    this.requireGithubAccountForOperation(svc, accountId, 'github_repo_list');
+    return svc.listRepos(accountId, options);
   }
 
   listGithubPullRequests(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; repoId?: string | undefined }): GithubPullRequestRecord[] {
-    return this.getGithubServiceFacade()?.listPullRequests(accountId, options) ?? [];
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return [];
+    this.requireGithubAccountForOperation(svc, accountId, 'github_pr_list');
+    return svc.listPullRequests(accountId, options);
   }
 
   listGithubIssues(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; assignedOnly?: boolean | undefined }): GithubIssueRecord[] {
-    return this.getGithubServiceFacade()?.listIssues(accountId, options) ?? [];
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return [];
+    this.requireGithubAccountForOperation(svc, accountId, 'github_issue_list');
+    return svc.listIssues(accountId, options);
   }
 
   listGithubNotifications(accountId: string, options?: { unreadOnly?: boolean | undefined; limit?: number | undefined }): GithubNotificationRecord[] {
-    return this.getGithubServiceFacade()?.listNotifications(accountId, options) ?? [];
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return [];
+    this.requireGithubAccountForOperation(svc, accountId, 'github_notification_list');
+    return svc.listNotifications(accountId, options);
   }
 
   getGithubPullRequest(id: string): GithubPullRequestRecord | null {
-    return this.getGithubServiceFacade()?.getPullRequest(id) ?? null;
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return null;
+    const pullRequest = svc.getPullRequest(id);
+    if (!pullRequest) return null;
+    try {
+      this.requireGithubAccountForOperation(svc, pullRequest.accountId, 'github_pr_read');
+      return pullRequest;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   getGithubIssue(id: string): GithubIssueRecord | null {
-    return this.getGithubServiceFacade()?.getIssue(id) ?? null;
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return null;
+    const issue = svc.getIssue(id);
+    if (!issue) return null;
+    try {
+      this.requireGithubAccountForOperation(svc, issue.accountId, 'github_issue_read');
+      return issue;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   searchGithub(query: GithubSearchQuery): { query: string; results: GithubSearchResult[] } {
+    const svc = this.getGithubServiceFacade();
+    if (query.accountId && svc) {
+      this.requireGithubAccountForOperation(svc, query.accountId, 'github_search');
+    }
     return this.getGithubSearchFacade()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getGithubDigest(accountId: string): GithubDigestRecord | null {
-    return this.getGithubServiceFacade()?.getLatestDigest(accountId) ?? null;
+    const svc = this.getGithubServiceFacade();
+    if (!svc) return null;
+    this.requireGithubAccountForOperation(svc, accountId, 'github_digest_read');
+    return svc.getLatestDigest(accountId);
   }
 
   // --- GitHub mutation methods ---
@@ -3247,8 +4125,7 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccount(accountId);
-      if (!account) throw new Error(`GitHub account ${accountId} not found`);
+      const { account } = this.requireGithubAccountForOperation(svc, accountId, 'github_sync');
 
       const adapter = new GhCliAdapter();
       const ctx = this.buildCapabilityContext();
@@ -3277,8 +4154,14 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (accounts.length === 0) return null;
+      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (candidateAccounts.length === 0) return null;
+      const accounts = candidateAccounts.map((account) => {
+        if (!account) {
+          throw new RuntimeValidationError(`GitHub account ${accountId} not found`);
+        }
+        return this.requireGithubAccountForOperation(svc, account.id, 'github_digest_generate').account;
+      });
 
       const ctx = this.buildCapabilityContext();
       const digestService = new GithubDigestService(svc, ctx);
@@ -3306,13 +4189,13 @@ export class PopeyeRuntimeService {
   // --- Email mutation methods ---
 
   registerEmailAccount(input: EmailAccountRegistrationInput): EmailAccountRecord {
-    // Verify connection exists and is an email connection
-    const connection = this.getConnection(input.connectionId);
-    if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
-    if (connection.domain !== 'email') throw new Error(`Connection ${input.connectionId} is not an email connection (domain: ${connection.domain})`);
-    if (connection.providerKind !== 'gmail' && connection.providerKind !== 'proton') {
-      throw new Error(`Unsupported email provider: ${connection.providerKind}`);
-    }
+    this.requireConnectionForOperation({
+      connectionId: input.connectionId,
+      purpose: 'email_account_register',
+      expectedDomain: 'email',
+      allowedProviderKinds: ['gmail', 'proton'],
+      requireSecret: false,
+    });
 
     // Use the write-capable email service from the capability
     const emailCap = this.capabilityRegistry.getCapability('email');
@@ -3336,12 +4219,7 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccount(accountId);
-      if (!account) throw new Error(`Email account ${accountId} not found`);
-
-      // Get connection to determine provider
-      const connection = this.getConnection(account.connectionId);
-      if (!connection) throw new Error(`Connection ${account.connectionId} not found`);
+      const { account, connection } = this.requireEmailAccountForOperation(svc, accountId, 'email_sync');
 
       // Resolve credentials based on provider
       let adapter: EmailProviderAdapter;
@@ -3349,13 +4227,16 @@ export class PopeyeRuntimeService {
         // gws manages its own auth
         adapter = createAdapter('gmail');
       } else if (connection.providerKind === 'proton') {
-        // Resolve Bridge password from SecretStore
-        if (!connection.secretRefId) {
-          throw new Error('Proton connection has no secretRefId — re-register with bridge password');
-        }
-        const password = this.secretStore.getSecretValue(connection.secretRefId);
+        this.requireConnectionForOperation({
+          connectionId: connection.id,
+          purpose: 'email_sync',
+          expectedDomain: 'email',
+          allowedProviderKinds: ['proton'],
+          requireSecret: true,
+        });
+        const password = this.secretStore.getSecretValue(connection.secretRefId!);
         if (!password) {
-          throw new Error('Failed to retrieve Proton Bridge password from SecretStore');
+          throw new RuntimeValidationError('Failed to retrieve Proton Bridge password from SecretStore');
         }
         adapter = createAdapter('proton', {
           username: account.emailAddress,
@@ -3391,8 +4272,14 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (accounts.length === 0) return null;
+      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (candidateAccounts.length === 0) return null;
+      const accounts = candidateAccounts.map((account) => {
+        if (!account) {
+          throw new RuntimeValidationError(`Email account ${accountId} not found`);
+        }
+        return this.requireEmailAccountForOperation(svc, account.id, 'email_digest_generate').account;
+      });
 
       const ctx = this.buildCapabilityContext();
       const digestService = new EmailDigestService(svc, ctx);
@@ -3454,29 +4341,58 @@ export class PopeyeRuntimeService {
   }
 
   listCalendarEvents(accountId: string, options?: { limit?: number | undefined; dateFrom?: string | undefined; dateTo?: string | undefined }): CalendarEventRecord[] {
-    return this.getCalendarServiceFacade()?.listEvents(accountId, options) ?? [];
+    const svc = this.getCalendarServiceFacade();
+    if (!svc) return [];
+    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_event_list');
+    return svc.listEvents(accountId, options);
   }
 
   getCalendarEvent(id: string): CalendarEventRecord | null {
-    return this.getCalendarServiceFacade()?.getEvent(id) ?? null;
+    const svc = this.getCalendarServiceFacade();
+    if (!svc) return null;
+    const event = svc.getEvent(id);
+    if (!event) return null;
+    try {
+      this.requireCalendarAccountForOperation(svc, event.accountId, 'calendar_event_read');
+      return event;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   searchCalendar(query: CalendarSearchQuery): { query: string; results: CalendarSearchResult[] } {
+    const svc = this.getCalendarServiceFacade();
+    if (query.accountId && svc) {
+      this.requireCalendarAccountForOperation(svc, query.accountId, 'calendar_search');
+    }
     return this.getCalendarSearchFacade()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getCalendarDigest(accountId: string): CalendarDigestRecord | null {
-    return this.getCalendarServiceFacade()?.getLatestDigest(accountId) ?? null;
+    const svc = this.getCalendarServiceFacade();
+    if (!svc) return null;
+    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_digest_read');
+    return svc.getLatestDigest(accountId);
   }
 
   getCalendarAvailability(accountId: string, date: string, startHour = 9, endHour = 17, slotMinutes = 30): CalendarAvailabilitySlot[] {
-    return this.getCalendarServiceFacade()?.computeAvailability(accountId, date, startHour, endHour, slotMinutes) ?? [];
+    const svc = this.getCalendarServiceFacade();
+    if (!svc) return [];
+    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_availability_read');
+    return svc.computeAvailability(accountId, date, startHour, endHour, slotMinutes);
   }
 
   registerCalendarAccount(input: CalendarAccountRegistrationInput): CalendarAccountRecord {
-    const connection = this.getConnection(input.connectionId);
-    if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
-    if (connection.domain !== 'calendar') throw new Error(`Connection ${input.connectionId} is not a calendar connection`);
+    this.requireConnectionForOperation({
+      connectionId: input.connectionId,
+      purpose: 'calendar_account_register',
+      expectedDomain: 'calendar',
+      allowedProviderKinds: ['google_calendar'],
+      requireSecret: false,
+    });
 
     const calCap = this.capabilityRegistry.getCapability('calendar');
     if (!calCap) throw new Error('Calendar capability not initialized');
@@ -3499,8 +4415,7 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccount(accountId);
-      if (!account) throw new Error(`Calendar account ${accountId} not found`);
+      const { account } = this.requireCalendarAccountForOperation(svc, accountId, 'calendar_sync');
 
       const adapter = new GcalcliAdapter();
       const ctx = this.buildCapabilityContext();
@@ -3528,8 +4443,14 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (accounts.length === 0) return null;
+      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (candidateAccounts.length === 0) return null;
+      const accounts = candidateAccounts.map((account) => {
+        if (!account) {
+          throw new RuntimeValidationError(`Calendar account ${accountId} not found`);
+        }
+        return this.requireCalendarAccountForOperation(svc, account.id, 'calendar_digest_generate').account;
+      });
 
       const ctx = this.buildCapabilityContext();
       const digestService = new CalendarDigestService(svc, ctx);
@@ -3590,27 +4511,53 @@ export class PopeyeRuntimeService {
   }
 
   listTodos(accountId: string, options?: { status?: string | undefined; priority?: number | undefined; projectName?: string | undefined; limit?: number | undefined }): TodoItemRecord[] {
-    return this.getTodosServiceFacade()?.listItems(accountId, options) ?? [];
+    const svc = this.getTodosServiceFacade();
+    if (!svc) return [];
+    this.requireTodoAccountForOperation(svc, accountId, 'todo_list');
+    return svc.listItems(accountId, options);
   }
 
   getTodo(id: string): TodoItemRecord | null {
-    return this.getTodosServiceFacade()?.getItem(id) ?? null;
+    const svc = this.getTodosServiceFacade();
+    if (!svc) return null;
+    const todo = svc.getItem(id);
+    if (!todo) return null;
+    try {
+      this.requireTodoAccountForOperation(svc, todo.accountId, 'todo_read');
+      return todo;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   searchTodos(query: TodoSearchQuery): { query: string; results: TodoSearchResult[] } {
+    const svc = this.getTodosServiceFacade();
+    if (query.accountId && svc) {
+      this.requireTodoAccountForOperation(svc, query.accountId, 'todo_search');
+    }
     return this.getTodosSearchFacade()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getTodoDigest(accountId: string): TodoDigestRecord | null {
-    return this.getTodosServiceFacade()?.getLatestDigest(accountId) ?? null;
+    const svc = this.getTodosServiceFacade();
+    if (!svc) return null;
+    this.requireTodoAccountForOperation(svc, accountId, 'todo_digest_read');
+    return svc.getLatestDigest(accountId);
   }
 
   registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
     // Local accounts don't need a connection
     if (input.connectionId) {
-      const connection = this.getConnection(input.connectionId);
-      if (!connection) throw new Error(`Connection ${input.connectionId} not found`);
-      if (connection.domain !== 'todos') throw new Error(`Connection ${input.connectionId} is not a todos connection`);
+      this.requireConnectionForOperation({
+        connectionId: input.connectionId,
+        purpose: 'todo_account_register',
+        expectedDomain: 'todos',
+        allowedProviderKinds: ['todoist', 'local'],
+        requireSecret: false,
+      });
     }
 
     const todosCap = this.capabilityRegistry.getCapability('todos');
@@ -3634,6 +4581,7 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      this.requireTodoAccountForOperation(svc, input.accountId, 'todo_create');
       const data: { title: string; description?: string; priority?: number; dueDate?: string; dueTime?: string; labels?: string[]; projectName?: string } = { title: input.title };
       if (input.description !== undefined) data.description = input.description;
       if (input.priority !== undefined) data.priority = input.priority;
@@ -3664,6 +4612,11 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const existing = svc.getItem(id);
+      if (!existing) {
+        return null;
+      }
+      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_complete');
       svc.completeItem(id);
       const result = svc.getItem(id);
 
@@ -3688,8 +4641,9 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccount(accountId);
-      if (!account) throw new Error(`Todo account ${accountId} not found`);
+      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_sync', {
+        requireSecret: true,
+      });
 
       const ctx = this.buildCapabilityContext();
       const syncService = new TodoSyncService(svc, ctx);
@@ -3699,17 +4653,12 @@ export class PopeyeRuntimeService {
       if (account.providerKind === 'local') {
         adapter = new LocalTodoAdapter();
       } else if (account.providerKind === 'todoist') {
-        if (!account.connectionId) {
-          throw new Error('Todoist account has no connectionId — re-register with a connection');
+        if (!connection?.secretRefId) {
+          throw new RuntimeValidationError('Todoist account has no usable connection secret');
         }
-        const connection = this.getConnection(account.connectionId);
-        if (!connection) throw new Error(`Connection ${account.connectionId} not found`);
-        if (!connection.secretRefId) {
-          throw new Error('Todoist connection has no secretRefId — re-register with API token');
-        }
-        const apiToken = this.secretStore.getSecretValue(connection.secretRefId);
+        const apiToken = this.secretStore.getSecretValue(connection.secretRefId!);
         if (!apiToken) {
-          throw new Error('Failed to retrieve Todoist API token from SecretStore');
+          throw new RuntimeValidationError('Failed to retrieve Todoist API token from SecretStore');
         }
         adapter = new TodoistAdapter({ apiToken });
       } else {
@@ -3739,8 +4688,14 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const accounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (accounts.length === 0) return null;
+      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
+      if (candidateAccounts.length === 0) return null;
+      const accounts = candidateAccounts.map((account) => {
+        if (!account) {
+          throw new RuntimeValidationError(`Todo account ${accountId} not found`);
+        }
+        return this.requireTodoAccountForOperation(svc, account.id, 'todo_digest_generate').account;
+      });
 
       const ctx = this.buildCapabilityContext();
       const digestService = new TodoDigestService(svc, ctx);

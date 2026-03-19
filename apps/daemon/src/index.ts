@@ -34,7 +34,6 @@ const webBootstrap = new WebBootstrapNonceStore();
 const app = await createControlApi({
   runtime,
   cspNonce,
-  authExemptPaths: new Set(['/v1/auth/exchange']),
   validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
   useSecureCookies: config.security.useSecureCookies,
   logger: log.child({}),

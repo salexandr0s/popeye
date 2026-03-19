@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type Database from 'better-sqlite3';
@@ -166,12 +166,14 @@ export class SecretStore {
     if (!existsSync(this.secretsDir)) {
       mkdirSync(this.secretsDir, { recursive: true, mode: 0o700 });
     }
+    chmodSync(this.secretsDir, 0o700);
   }
 
   private setFileValue(id: string, value: string): void {
     this.ensureSecretsDir();
     const filePath = join(this.secretsDir, `${id}.enc`);
     writeFileSync(filePath, value, { mode: 0o600 });
+    chmodSync(filePath, 0o600);
   }
 
   private getFileValue(id: string): string | null {

@@ -145,6 +145,7 @@ export interface PiAdapterConfig {
   args?: string[];
   timeoutMs?: number;
   runtimeToolTimeoutMs?: number;
+  allowRuntimeToolBridgeFallback?: boolean;
 }
 
 export interface PiCheckoutStatus {
@@ -967,6 +968,7 @@ export class PiEngineAdapter implements EngineAdapter {
   private readonly timeoutMs: number | undefined;
   private readonly runtimeToolTimeoutMs: number;
   private readonly expectedPiVersion: string | undefined;
+  private readonly allowRuntimeToolBridgeFallback: boolean;
 
   constructor(config: PiAdapterConfig = {}) {
     const status = assertPiCheckoutAvailable(config.piPath);
@@ -976,6 +978,7 @@ export class PiEngineAdapter implements EngineAdapter {
     this.timeoutMs = config.timeoutMs;
     this.runtimeToolTimeoutMs = config.runtimeToolTimeoutMs ?? DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
     this.expectedPiVersion = config.piVersion;
+    this.allowRuntimeToolBridgeFallback = config.allowRuntimeToolBridgeFallback ?? true;
     if (config.piVersion) {
       const versionCheck = checkPiVersion(config.piVersion, config.piPath);
       if (!versionCheck.ok) {
@@ -985,7 +988,14 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 
   async startRun(request: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
-    const runtimeToolBridge = prepareRuntimeToolBridge(request.runtimeTools ?? []);
+    const runtimeTools = request.runtimeTools ?? [];
+    const runtimeToolBridge = this.allowRuntimeToolBridgeFallback
+      ? prepareRuntimeToolBridge(runtimeTools)
+      : {
+          extensionPaths: [],
+          cleanup() {},
+          toolsByName: new Map<string, RuntimeToolDescriptor>(),
+        };
     const launch = buildPiCommand(
       this.piPath,
       this.command,
@@ -1019,6 +1029,7 @@ export class PiEngineAdapter implements EngineAdapter {
     let cancelRequested = false;
     let useNativeHostTools = false;
     let hostToolRegistrationAttempted = false;
+    let bridgeFallbackUsed = false;
     let hostToolRegistrationTimeout: ReturnType<typeof setTimeout> | undefined;
     const promptState: PromptState = { requested: false, accepted: false, completed: false };
     const diagnosticWarnings: string[] = [];
@@ -1035,6 +1046,12 @@ export class PiEngineAdapter implements EngineAdapter {
         ? [stderrWarning, ...diagnosticWarnings]
         : [...diagnosticWarnings];
       return warnings.length > 0 ? warnings.join('\n') : undefined;
+    };
+
+    const markBridgeFallbackUsed = (): void => {
+      if (bridgeFallbackUsed) return;
+      bridgeFallbackUsed = true;
+      appendWarning('Pi runtime-tool bridge fallback was used for this run.');
     };
 
     const safeEmit = (event: NormalizedEngineEvent): void => {
@@ -1126,6 +1143,7 @@ export class PiEngineAdapter implements EngineAdapter {
       const rawRequest = JSON.stringify(uiRequest);
       const startedAt = Date.now();
       try {
+        markBridgeFallbackUsed();
         if (uiRequest.method !== 'editor' || uiRequest.title !== 'popeye.runtime_tool') {
           throw new Error(`unsupported Pi RPC extension UI request: ${uiRequest.method}`);
         }
@@ -1229,13 +1247,13 @@ export class PiEngineAdapter implements EngineAdapter {
         const state = RpcStateDataSchema.parse(response.data) as RpcStateData;
         synthesizeSession(state, rawLine);
         // Attempt to register native host tools, with fallback to extension-UI bridge
-        const hasRuntimeTools = (request.runtimeTools ?? []).length > 0;
+        const hasRuntimeTools = runtimeTools.length > 0;
         if (hasRuntimeTools && !useNativeHostTools && !hostToolRegistrationAttempted) {
           hostToolRegistrationAttempted = true;
           sendCommand({
             id: INTERNAL_IDS.registerHostTools,
             type: 'register_host_tools',
-            tools: (request.runtimeTools ?? []).map((t) => ({
+            tools: runtimeTools.map((t) => ({
               name: t.name,
               description: t.description,
               parameters: t.inputSchema,
@@ -1243,10 +1261,19 @@ export class PiEngineAdapter implements EngineAdapter {
           });
           // Set a short fallback timer — if Pi doesn't know this command, it may not respond
           hostToolRegistrationTimeout = setTimeout(() => {
-            if (!promptState.requested) {
-              promptState.requested = true;
-              sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+            if (this.allowRuntimeToolBridgeFallback) {
+              if (!promptState.requested) {
+                promptState.requested = true;
+                sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+              }
+              return;
             }
+            markFailure(
+              'policy_failure',
+              'Pi native host-tool registration timed out and runtime-tool bridge fallback is disabled',
+              rawLine,
+            );
+            requestShutdown();
           }, 500);
           return;
         }
@@ -1264,6 +1291,14 @@ export class PiEngineAdapter implements EngineAdapter {
         }
         if (response.success) {
           useNativeHostTools = true;
+        } else if (!this.allowRuntimeToolBridgeFallback) {
+          markFailure(
+            'policy_failure',
+            response.error ?? 'Pi native host-tool registration failed and runtime-tool bridge fallback is disabled',
+            rawLine,
+          );
+          requestShutdown();
+          return;
         }
         // Proceed to prompt regardless of registration outcome (fallback to extension bridge)
         if (!promptState.requested) {
@@ -1624,11 +1659,14 @@ export class PiEngineAdapter implements EngineAdapter {
     if (!versionCheck.ok) {
       warnings.push(versionCheck.message);
     }
+    if (this.allowRuntimeToolBridgeFallback) {
+      warnings.push('Pi runtime-tool bridge fallback is enabled for compatibility; disable it for higher-assurance deployments.');
+    }
     return {
       engineKind: 'pi',
       persistentSessionSupport: true,
       resumeBySessionRefSupport: false,
-      hostToolMode: 'native_with_fallback',
+      hostToolMode: this.allowRuntimeToolBridgeFallback ? 'native_with_fallback' : 'native',
       compactionEventSupport: true,
       cancellationMode: 'rpc_abort_with_signal_fallback',
       acceptedRequestMetadata: [
@@ -1670,6 +1708,9 @@ export function createEngineAdapter(config: AppConfig): EngineAdapter {
       ...(config.engine.runtimeToolTimeoutMs === undefined
         ? {}
         : { runtimeToolTimeoutMs: config.engine.runtimeToolTimeoutMs }),
+      ...(config.engine.allowRuntimeToolBridgeFallback === undefined
+        ? {}
+        : { allowRuntimeToolBridgeFallback: config.engine.allowRuntimeToolBridgeFallback }),
     });
   }
   return new FakeEngineAdapter();

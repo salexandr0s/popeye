@@ -8,16 +8,19 @@ import { describe, expect, it } from 'vitest';
 import {
   AgentProfileRecordSchema,
   AuthExchangeResponseSchema,
+  ConnectionRecordSchema,
   CsrfTokenResponseSchema,
   DaemonStatusResponseSchema,
   EngineCapabilitiesResponseSchema,
   ExecutionEnvelopeResponseSchema,
+  FileRootRecordSchema,
   JobRecordSchema,
   MemoryPromotionResponseSchema,
   ProjectRecordSchema,
   ReceiptRecordSchema,
   RunRecordSchema,
   SchedulerStatusResponseSchema,
+  SecretRefRecordSchema,
   TaskRecordSchema,
   UsageSummarySchema,
   WorkspaceRecordSchema,
@@ -339,7 +342,91 @@ describe('API contract tests', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    ReceiptRecordSchema.parse(response.json());
+    const parsed = ReceiptRecordSchema.parse(response.json());
+    expect(parsed.runtime?.execution).toEqual(
+      expect.objectContaining({
+        mode: 'interactive',
+        memoryScope: 'workspace',
+        recallScope: 'workspace',
+      }),
+    );
+    expect(parsed.runtime?.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: expect.stringMatching(/^engine_/),
+          source: 'run_event',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/connections and GET /v1/connections conform to ConnectionRecordSchema[]', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(store);
+    const secret = runtime.setSecret({
+      key: 'proton-token',
+      value: 'top-secret-value',
+      description: 'Proton test token',
+    });
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/connections',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        domain: 'email',
+        providerKind: 'proton',
+        label: 'Contract Proton mailbox',
+        secretRefId: secret.id,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    ConnectionRecordSchema.parse(created.json());
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/v1/connections',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listed.statusCode).toBe(200);
+    z.array(ConnectionRecordSchema).parse(listed.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/files/roots conforms to FileRootRecordSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(store);
+    const externalRoot = mkdtempSync(join(tmpdir(), 'popeye-contract-file-root-'));
+    chmodSync(externalRoot, 0o700);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/files/roots',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        label: 'Contract root',
+        rootPath: externalRoot,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    FileRootRecordSchema.parse(response.json());
 
     await runtime.close();
     await app.close();
@@ -381,21 +468,44 @@ describe('API contract tests', () => {
   });
 
   it('POST /v1/auth/exchange conforms to AuthExchangeResponseSchema', async () => {
-    const { runtime } = createTestEnv();
+    const { store, runtime } = createTestEnv();
     const app = await createControlApi({
       runtime,
-      authExemptPaths: new Set(['/v1/auth/exchange']),
       validateAuthExchangeNonce: (nonce) => nonce === 'contract-bootstrap-nonce' ? 'accepted' : 'invalid',
     });
 
     const response = await app.inject({
       method: 'POST',
       url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${store.current.token}` },
       payload: { nonce: 'contract-bootstrap-nonce' },
     });
 
     expect(response.statusCode).toBe(200);
     AuthExchangeResponseSchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/secrets conforms to SecretRefRecordSchema', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(store);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/secrets',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { key: 'github-token', value: 'super-secret-token', description: 'GitHub PAT' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    SecretRefRecordSchema.parse(response.json());
 
     await runtime.close();
     await app.close();

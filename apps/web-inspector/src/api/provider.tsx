@@ -1,5 +1,11 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { readBootstrapNonce } from './bootstrap';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  ensureBrowserCsrfToken,
+  ensureBrowserSession,
+  getBrowserUnlockState,
+  subscribeBrowserUnlockState,
+} from './browser-session';
+import { BrowserUnlockModal } from './browser-unlock-modal';
 
 export interface ApiClient {
   get: <T>(path: string) => Promise<T>;
@@ -9,53 +15,18 @@ export interface ApiClient {
 const ApiContext = createContext<ApiClient | null>(null);
 
 export function ApiProvider({ children }: { children: ReactNode }) {
-  const client = useMemo(() => {
-    let csrfToken: string | null = null;
-    let bootstrapped = false;
-    let bootstrapPromise: Promise<void> | null = null;
+  const [unlockState, setUnlockState] = useState(getBrowserUnlockState());
 
+  useEffect(() => subscribeBrowserUnlockState(setUnlockState), []);
+
+  const client = useMemo(() => {
     const baseHeaders = (): Record<string, string> => ({
       'Content-Type': 'application/json',
     });
 
-    const ensureBootstrap = async (): Promise<void> => {
-      if (bootstrapped) return;
-      if (bootstrapPromise) return bootstrapPromise;
-      const nonce = readBootstrapNonce();
-      if (!nonce) {
-        throw new Error('Missing bootstrap nonce');
-      }
-      bootstrapPromise = fetch('/v1/auth/exchange', {
-        method: 'POST',
-        headers: baseHeaders(),
-        credentials: 'same-origin',
-        body: JSON.stringify({ nonce }),
-      }).then(async (res) => {
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        bootstrapped = true;
-      }).catch((error: unknown) => {
-        bootstrapPromise = null;
-        throw error;
-      });
-      return bootstrapPromise;
-    };
-
-    const ensureCsrf = async (): Promise<string> => {
-      if (csrfToken) return csrfToken;
-      await ensureBootstrap();
-      const res = await fetch('/v1/security/csrf-token', {
-        headers: baseHeaders(),
-        credentials: 'same-origin',
-      });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data: { token: string } = await res.json();
-      csrfToken = data.token;
-      return csrfToken;
-    };
-
     return {
       get: async <T,>(path: string): Promise<T> => {
-        await ensureBootstrap();
+        await ensureBrowserSession();
         const res = await fetch(path, {
           headers: baseHeaders(),
           credentials: 'same-origin',
@@ -64,7 +35,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
         return res.json() as Promise<T>;
       },
       post: async <T,>(path: string, body?: unknown): Promise<T> => {
-        const csrf = await ensureCsrf();
+        const csrf = await ensureBrowserCsrfToken();
         const res = await fetch(path, {
           method: 'POST',
           credentials: 'same-origin',
@@ -81,7 +52,12 @@ export function ApiProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <ApiContext.Provider value={client}>{children}</ApiContext.Provider>;
+  return (
+    <ApiContext.Provider value={client}>
+      {children}
+      <BrowserUnlockModal state={unlockState} />
+    </ApiContext.Provider>
+  );
 }
 
 export function useApi(): ApiClient {

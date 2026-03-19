@@ -72,6 +72,7 @@ Engine adapter configuration. Controls how Pi (or a fake engine) is invoked.
 | `args` | `string[]` | No | `[]` | -- | Arguments passed to the engine command. |
 | `timeoutMs` | `integer` | No | `300000` (5 min) | Must be positive | Maximum run duration in milliseconds before timeout. |
 | `runtimeToolTimeoutMs` | `integer` | No | `30000` (30 sec) | Must be positive | Timeout for runtime-provided tool executions during a run. |
+| `allowRuntimeToolBridgeFallback` | `boolean` | No | `true` | -- | Allows the temporary Pi extension/UI runtime-tool bridge when native host-tool RPC is unavailable. Disable for stricter deployments. |
 
 ---
 

@@ -4,6 +4,7 @@ import { renderHook, waitFor, act, cleanup } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ApiProvider } from './provider';
 import { resetBrowserBootstrapForTests, useDaemonStatus, useRun } from './hooks';
+import { submitBrowserUnlockToken } from './browser-session';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,6 +50,10 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
 
     expect(result.current.loading).toBe(true);
 
+    act(() => {
+      submitBrowserUnlockToken('operator-token-123');
+    });
+
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -73,6 +78,10 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
 
     renderHook(() => useDaemonStatus(), {
       wrapper: createWrapper(),
+    });
+
+    act(() => {
+      submitBrowserUnlockToken('operator-token-123');
     });
 
     await act(async () => {
@@ -102,6 +111,10 @@ describe('hooks (usePolling via useDaemonStatus)', () => {
 
     const { unmount } = renderHook(() => useDaemonStatus(), {
       wrapper: createWrapper(),
+    });
+
+    act(() => {
+      submitBrowserUnlockToken('operator-token-123');
     });
 
     await act(async () => {
@@ -160,6 +173,10 @@ describe('hooks (useFetch via useRun)', () => {
       wrapper: createWrapper(),
     });
 
+    act(() => {
+      submitBrowserUnlockToken('operator-token-123');
+    });
+
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
     });
@@ -179,6 +196,10 @@ describe('hooks (useFetch via useRun)', () => {
 
     const { result } = renderHook(() => useRun('run-1'), {
       wrapper: createWrapper(),
+    });
+
+    act(() => {
+      submitBrowserUnlockToken('operator-token-123');
     });
 
     await waitFor(() => {

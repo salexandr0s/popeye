@@ -135,6 +135,8 @@ export class MemorySearchService {
     let searchMode: 'hybrid' | 'fts_only' | 'vec_only' = 'fts_only';
     let results: MemorySearchResult[];
     let totalCandidates = 0;
+    const occurredAfter = query.occurredAfter ?? plan.temporalConstraint?.from ?? undefined;
+    const occurredBefore = query.occurredBefore ?? plan.temporalConstraint?.to ?? undefined;
 
     const overfetch = limit * 3;
     const shouldSearchFacts = !layers || layers.length === 0 || layers.includes('fact');
@@ -158,12 +160,8 @@ export class MemorySearchService {
       ...(namespaceIds !== undefined ? { namespaceIds } : {}),
       ...(tags !== undefined ? { tags } : {}),
       includeSuperseded,
-      ...(query.occurredAfter !== undefined || plan.temporalConstraint?.from
-        ? { occurredAfter: query.occurredAfter ?? plan.temporalConstraint?.from ?? undefined }
-        : {}),
-      ...(query.occurredBefore !== undefined || plan.temporalConstraint?.to
-        ? { occurredBefore: query.occurredBefore ?? plan.temporalConstraint?.to ?? undefined }
-        : {}),
+      ...(occurredAfter !== undefined ? { occurredAfter } : {}),
+      ...(occurredBefore !== undefined ? { occurredBefore } : {}),
       minConfidence,
       limit: overfetch,
     };
@@ -182,7 +180,13 @@ export class MemorySearchService {
       temporalConstraint: plan.temporalConstraint,
     };
     if (scopeAliasQuery && scope !== undefined) rerankParams.queryScope = scope;
-    if (queryLocation) rerankParams.queryLocation = queryLocation;
+    if (queryLocation) {
+      rerankParams.queryLocation = {
+        workspaceId: queryLocation.workspaceId,
+        projectId: queryLocation.projectId,
+        ...(queryLocation.includeGlobal !== undefined ? { includeGlobal: queryLocation.includeGlobal } : {}),
+      };
+    }
 
     const queryEntities = extractEntities(queryText);
     const entityMatches = new Map<string, number>();

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 
 import type { AppConfig, ReceiptRecord } from '../../contracts/src/index.ts';
+import { GithubService } from '../../cap-github/src/index.ts';
 import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../engine-pi/src/index.ts';
 import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
 import { initAuthStore } from './auth.ts';
@@ -111,6 +112,69 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('enriches receipts with a timeline built from run events, policy events, and context releases', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-timeline-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'timeline',
+      prompt: 'show the timeline',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    const runId = terminal!.run!.id;
+
+    runtime.recordContextRelease({
+      domain: 'files',
+      sourceRef: 'workspace://notes.md',
+      releaseLevel: 'summary_only',
+      runId,
+      tokenEstimate: 42,
+      redacted: true,
+    });
+    runtime.recordSecurityAuditEvent({
+      code: 'connection_policy_denied',
+      severity: 'warn',
+      message: 'Connection conn-1 is disabled',
+      component: 'runtime-core',
+      timestamp: new Date().toISOString(),
+      details: {
+        runId,
+        connectionId: 'conn-1',
+        purpose: 'email_sync',
+      },
+    });
+
+    const receipt = runtime.getReceiptByRunId(runId);
+    expect(receipt?.runtime?.contextReleases?.totalReleases).toBe(1);
+    expect(receipt?.runtime?.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'engine_started',
+          source: 'run_event',
+        }),
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          source: 'security_audit',
+        }),
+        expect.objectContaining({
+          code: 'context_released',
+          source: 'context_release',
+        }),
+        expect.objectContaining({
+          code: 'receipt_succeeded',
+          source: 'receipt',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
   it('rejects tasks with unknown execution profiles', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-invalid-profile-'));
     chmodSync(dir, 0o700);
@@ -125,6 +189,173 @@ describe('PopeyeRuntimeService', () => {
       source: 'manual',
       autoEnqueue: false,
     })).toThrow(RuntimeValidationError);
+
+    await runtime.close();
+  });
+
+  it('blocks todo creation for disabled connection-backed accounts through the centralized policy guard', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-todos-policy-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const secret = runtime.setSecret({ key: 'todoist-token', value: 'token-123', provider: 'file' });
+    const connection = runtime.createConnection({
+      domain: 'todos',
+      providerKind: 'todoist',
+      label: 'Todoist',
+      mode: 'read_write',
+      secretRefId: secret.id,
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const account = runtime.registerTodoAccount({
+      providerKind: 'todoist',
+      connectionId: connection.id,
+      displayName: 'Primary todos',
+    });
+    runtime.updateConnection(connection.id, { enabled: false });
+
+    expect(() => runtime.createTodo({
+      accountId: account.id,
+      title: 'Blocked task',
+    })).toThrow(RuntimeValidationError);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: connection.id,
+            purpose: 'todo_create',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('blocks digest reads and generation for disabled connection-backed capability accounts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-digest-policy-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const emailConnection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Gmail',
+      mode: 'read_only',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const emailAccount = runtime.registerEmailAccount({
+      connectionId: emailConnection.id,
+      emailAddress: 'operator@example.com',
+      displayName: 'Operator Mail',
+    });
+
+    const githubConnection = runtime.createConnection({
+      domain: 'github',
+      providerKind: 'github',
+      label: 'GitHub',
+      mode: 'read_only',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const githubDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'github.db'));
+    const githubAccount = new GithubService(githubDb as never).registerAccount({
+      connectionId: githubConnection.id,
+      githubUsername: 'operator',
+      displayName: 'Operator GitHub',
+    });
+    githubDb.close();
+
+    const calendarConnection = runtime.createConnection({
+      domain: 'calendar',
+      providerKind: 'google_calendar',
+      label: 'Calendar',
+      mode: 'read_only',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const calendarAccount = runtime.registerCalendarAccount({
+      connectionId: calendarConnection.id,
+      calendarEmail: 'operator@example.com',
+      displayName: 'Operator Calendar',
+      timeZone: 'UTC',
+    });
+
+    const todoConnection = runtime.createConnection({
+      domain: 'todos',
+      providerKind: 'local',
+      label: 'Local Todos',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const todoAccount = runtime.registerTodoAccount({
+      providerKind: 'local',
+      connectionId: todoConnection.id,
+      displayName: 'Operator Todos',
+    });
+
+    runtime.updateConnection(emailConnection.id, { enabled: false });
+    runtime.updateConnection(githubConnection.id, { enabled: false });
+    runtime.updateConnection(calendarConnection.id, { enabled: false });
+    runtime.updateConnection(todoConnection.id, { enabled: false });
+
+    expect(() => runtime.getEmailDigest(emailAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.triggerEmailDigest(emailAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.getGithubDigest(githubAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.triggerGithubDigest(githubAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.getCalendarDigest(calendarAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.triggerCalendarDigest(calendarAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.getTodoDigest(todoAccount.id)).toThrow(RuntimeValidationError);
+    expect(() => runtime.triggerTodoDigest(todoAccount.id)).toThrow(RuntimeValidationError);
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: emailConnection.id,
+            purpose: 'email_digest_generate',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: githubConnection.id,
+            purpose: 'github_digest_generate',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: calendarConnection.id,
+            purpose: 'calendar_digest_generate',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: todoConnection.id,
+            purpose: 'todo_digest_generate',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+      ]),
+    );
 
     await runtime.close();
   });

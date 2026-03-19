@@ -1,4 +1,5 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import safe from 'safe-regex2';
@@ -53,6 +54,26 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
     const mode = statSync(dirPath).mode & 0o777;
     if (mode !== 0o700) {
       findings.push({ code: `${label}_permissions`, severity: 'error', message: `${label} must be 700, received ${mode.toString(8)}` });
+    }
+  }
+
+  const secretsDir = join(config.runtimeDataDir, 'secrets');
+  if (existsSync(secretsDir)) {
+    const secretsDirMode = statSync(secretsDir).mode & 0o777;
+    if (secretsDirMode !== 0o700) {
+      findings.push({ code: 'secrets_dir_permissions', severity: 'error', message: `secrets_dir must be 700, received ${secretsDirMode.toString(8)}` });
+    }
+    for (const entry of readdirSync(secretsDir)) {
+      const entryPath = join(secretsDir, entry);
+      const stats = statSync(entryPath);
+      if (!stats.isFile()) {
+        findings.push({ code: 'secret_store_entry_unexpected', severity: 'warn', message: `Unexpected non-file entry in secrets dir: ${entry}` });
+        continue;
+      }
+      const mode = stats.mode & 0o777;
+      if (mode !== 0o600) {
+        findings.push({ code: 'secret_file_permissions', severity: 'error', message: `Secret file ${entry} must be 600, received ${mode.toString(8)}` });
+      }
     }
   }
 
@@ -131,6 +152,13 @@ export function runLocalSecurityAudit(config: AppConfig): SecurityAuditFinding[]
   if (config.engine.kind === 'pi') {
     if (!config.engine.piVersion) {
       findings.push({ code: 'pi_version_not_pinned', severity: 'warn', message: 'No piVersion configured — engine dependency is unpinned' });
+    }
+    if (config.engine.allowRuntimeToolBridgeFallback) {
+      findings.push({
+        code: 'pi_runtime_tool_bridge_fallback_enabled',
+        severity: 'warn',
+        message: 'Pi runtime-tool bridge fallback is enabled — disable it for higher-assurance deployments',
+      });
     }
     const versionCheck = checkPiVersion(config.engine.piVersion, config.engine.piPath);
     if (!versionCheck.ok) {

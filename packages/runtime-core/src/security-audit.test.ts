@@ -66,6 +66,23 @@ describe('security audit', () => {
     expect(findings.some((f) => f.code === 'logs_dir_permissions')).toBe(true);
   });
 
+  it('reports secret store permission violations', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
+    chmodSync(dir, 0o700);
+    setupDirs(dir);
+    initAuthStore(join(dir, 'config', 'auth.json'));
+    const secretsDir = join(dir, 'secrets');
+    mkdirSync(secretsDir, { recursive: true, mode: 0o755 });
+    chmodSync(secretsDir, 0o755);
+    const secretFile = join(secretsDir, 'test.enc');
+    writeFileSync(secretFile, 'secret', { mode: 0o644 });
+    chmodSync(secretFile, 0o644);
+
+    const findings = runLocalSecurityAudit(makeConfig(dir));
+    expect(findings.some((f) => f.code === 'secrets_dir_permissions')).toBe(true);
+    expect(findings.some((f) => f.code === 'secret_file_permissions')).toBe(true);
+  });
+
   it('warns on old auth token', () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
     chmodSync(dir, 0o700);
@@ -153,5 +170,19 @@ describe('security audit', () => {
       }),
     );
     expect(findings.some((f) => f.code === 'pi_version_mismatch')).toBe(false);
+  });
+
+  it('warns when Pi runtime-tool bridge fallback remains enabled', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-audit-'));
+    chmodSync(dir, 0o700);
+    setupDirs(dir);
+    initAuthStore(join(dir, 'config', 'auth.json'));
+    const piPath = createFakePiCheckout('0.57.1', '0.57.1');
+    const findings = runLocalSecurityAudit(
+      makeConfig(dir, {
+        engine: { kind: 'pi', command: 'node', args: [], piPath, piVersion: '0.57.1', allowRuntimeToolBridgeFallback: true },
+      }),
+    );
+    expect(findings.some((f) => f.code === 'pi_runtime_tool_bridge_fallback_enabled')).toBe(true);
   });
 });

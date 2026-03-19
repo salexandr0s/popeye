@@ -193,6 +193,61 @@ describe('Schema parse tests', () => {
       expect(result.id).toBe('rcpt-001');
       expect(result.usage.tokensIn).toBe(1000);
       expect(result.usage.estimatedCostUsd).toBe(0.05);
+      expect(result.runtime).toBeUndefined();
+    });
+
+    it('parses optional runtime observability context', () => {
+      const result = ReceiptRecordSchema.parse({
+        ...validReceipt,
+        runtime: {
+          projectId: 'proj-1',
+          profileId: 'default',
+          execution: {
+            mode: 'interactive',
+            memoryScope: 'workspace',
+            recallScope: 'project',
+            filesystemPolicyClass: 'workspace',
+            contextReleasePolicy: 'summary_only',
+            sessionPolicy: 'dedicated',
+            warnings: ['profile inherited runtime tool allowlist'],
+          },
+          contextReleases: {
+            totalReleases: 2,
+            totalTokenEstimate: 320,
+            byDomain: {
+              email: {
+                count: 2,
+                tokens: 320,
+              },
+            },
+          },
+          timeline: [
+            {
+              id: 'timeline-1',
+              at: '2026-03-13T00:00:01Z',
+              kind: 'policy',
+              severity: 'warn',
+              code: 'connection_policy_denied',
+              title: 'Connection Policy Denied',
+              detail: 'Connection conn-1 is disabled.',
+              source: 'security_audit',
+              metadata: {
+                connectionId: 'conn-1',
+              },
+            },
+          ],
+        },
+      });
+
+      expect(result.runtime?.projectId).toBe('proj-1');
+      expect(result.runtime?.execution?.sessionPolicy).toBe('dedicated');
+      expect(result.runtime?.contextReleases?.byDomain.email?.tokens).toBe(320);
+      expect(result.runtime?.timeline).toEqual([
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          source: 'security_audit',
+        }),
+      ]);
     });
 
     it('rejects missing usage', () => {
@@ -734,6 +789,12 @@ describe('Config validation', () => {
     const { engine: _eng, ...noEngine } = completeConfig;
     const result = AppConfigSchema.parse(noEngine);
     expect(result.engine.timeoutMs).toBe(300_000);
+  });
+
+  it('default engine config keeps runtime-tool bridge fallback enabled for compatibility', () => {
+    const { engine: _eng, ...noEngine } = completeConfig;
+    const result = AppConfigSchema.parse(noEngine);
+    expect(result.engine.allowRuntimeToolBridgeFallback).toBe(true);
   });
 
   describe('SecurityConfigSchema', () => {

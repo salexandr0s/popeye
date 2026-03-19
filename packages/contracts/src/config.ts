@@ -55,6 +55,7 @@ export const EngineConfigSchema = z.object({
   args: z.array(z.string()).default([]),
   timeoutMs: z.number().int().positive().default(300_000),
   runtimeToolTimeoutMs: z.number().int().positive().default(30_000),
+  allowRuntimeToolBridgeFallback: z.boolean().default(true),
 });
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 

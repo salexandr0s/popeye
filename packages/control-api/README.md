@@ -11,7 +11,8 @@ authentication on API requests and CSRF protection (token + Sec-Fetch-Site
 validation) on all state-changing mutations. Bearer auth is role-scoped
 (`operator`, `service`, `readonly`), and routes default to operator-only unless
 explicitly downgraded. Browser clients can bootstrap a same-origin HttpOnly
-browser-session cookie through a one-time `/v1/auth/exchange` nonce exchange;
+browser-session cookie through a one-time `/v1/auth/exchange` nonce exchange
+that also requires a valid operator bearer token;
 browser sessions are operator-only. Provides SSE streaming for real-time event
 delivery. Contains no business logic -- all operations delegate to
 `PopeyeRuntimeService`.
@@ -31,7 +32,7 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~35 routes)
+## Endpoints (~50 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
@@ -45,8 +46,11 @@ New platform implementation.
 | Receipts       | `GET /v1/receipts`, `GET /v1/receipts/:id`                   |
 | Instructions   | `GET /v1/instruction-previews/:scope`                        |
 | Interventions  | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve`|
+| Connections    | `GET /v1/connections`, `POST /v1/connections`, `PATCH /v1/connections/:id`, `DELETE /v1/connections/:id` |
+| File roots     | `GET /v1/files/roots`, `POST /v1/files/roots`, `GET /v1/files/roots/:id`, `PATCH /v1/files/roots/:id`, `DELETE /v1/files/roots/:id`, `GET /v1/files/search`, `GET /v1/files/documents/:id`, `POST /v1/files/roots/:id/reindex` |
 | Memory         | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit`, `POST /v1/memory/maintenance`, `POST /v1/memory/:id/promote/propose`, `POST /v1/memory/:id/promote/execute` |
 | Messages       | `POST /v1/messages/ingest`, `GET /v1/messages/:id`           |
+| Secrets        | `POST /v1/secrets`                                           |
 | Security       | `GET /v1/security/audit`, `GET /v1/security/csrf-token`      |
 | Usage          | `GET /v1/usage/summary`                                      |
 | Events         | `GET /v1/events/stream` (SSE)                                |
@@ -76,15 +80,19 @@ security enforcement tests.
 The web inspector does not receive the long-lived bearer token in HTML. Instead:
 
 1. the daemon serves HTML with a one-time bootstrap nonce
-2. the browser posts that nonce to `POST /v1/auth/exchange`
-3. the control API sets an HttpOnly `popeye_auth` browser-session cookie
-4. subsequent same-origin requests rely on the cookie plus CSRF token
+2. the inspector presents an unlock modal only when a browser session is needed
+3. the browser posts the nonce to `POST /v1/auth/exchange` with `Authorization: Bearer <operator-token>`
+4. the control API sets an HttpOnly `popeye_auth` browser-session cookie
+5. subsequent same-origin requests rely on the cookie plus CSRF token
+
+The bearer token is used only for the exchange request, stays in memory only,
+and is not persisted in browser cookies or browser storage by the control API.
 
 ### Role model
 
 - `readonly`: non-mutating observability routes and SSE
 - `service`: readonly + local automation mutations (task/job/run/message relay)
-- `operator`: full access, including browser bootstrap, profiles, memory
+- `operator`: full access, including browser-session minting, profiles, memory
   maintenance, and security surfaces
 
 Legacy auth files with a single rotating token are still accepted and treated
@@ -100,6 +108,37 @@ The memory API includes a two-step promotion flow:
 
 Promotion routes are covered by contract and behavior tests in
 `src/contract.test.ts` and `src/index.test.ts`.
+
+### Connection and file-root policy surfaces
+
+- Connection reads include an additive `policy` summary with readiness,
+  secret status, approval posture, and non-sensitive diagnostics.
+- Invalid provider/domain combinations fail closed with
+  `400 { error: "invalid_connection" }`.
+- File-root registration rejects runtime-managed directories with
+  `400 { error: "invalid_file_root" }` and emits `security_audit` evidence.
+- File-root search/reindex operations fail closed with
+  `400 { error: "invalid_file_root" }` when the target root is missing,
+  disabled, or outside the requested workspace. These denials emit
+  `security_audit.code === "file_root_policy_denied"`.
+- Account-scoped capability reads/searches/digests route through centralized
+  connection guards and fail closed with domain-specific `400` errors when the
+  backing connection policy is invalid.
+
+### Receipt observability
+
+Receipt reads now include an additive `runtime` section when available:
+
+- `projectId`
+- `profileId`
+- `execution` summary (mode, memory/recall scope, filesystem/context-release
+  policy, session policy, warnings)
+- `contextReleases` summary for recorded context-release events
+- `timeline` entries with normalized `kind`, `severity`, `code`, `title`,
+  `detail`, `source`, and operator-safe `metadata`
+
+The timeline is the canonical per-run policy/forensics view in the inspector
+receipt detail page.
 
 ### Instruction preview validation
 

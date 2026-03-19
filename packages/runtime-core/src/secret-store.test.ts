@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -99,6 +99,33 @@ describe('SecretStore', () => {
 
       const value = store.getSecretValue(ref.id);
       expect(value).toBe('new-value');
+    } finally {
+      databases.app.close();
+      databases.memory.close();
+    }
+  });
+
+  it('rehardens permissive secret directory and file permissions on write and rotation', () => {
+    const { databases, store, dir } = setup();
+    try {
+      const secretsDir = join(dir, 'secrets');
+      mkdirSync(secretsDir, { recursive: true, mode: 0o755 });
+      chmodSync(secretsDir, 0o755);
+      const existingId = 'existing-secret';
+      const existingFile = join(secretsDir, `${existingId}.enc`);
+      writeFileSync(existingFile, 'old-value', { mode: 0o644 });
+      chmodSync(existingFile, 0o644);
+      databases.app.prepare(
+        `INSERT INTO secret_refs (id, provider, key, created_at) VALUES (?, 'file', ?, ?)`,
+      ).run(existingId, 'existing-key', new Date().toISOString());
+
+      const created = store.setSecret({ key: 'new-key', value: 'new-secret', provider: 'file' });
+      const rotated = store.rotateSecret(existingId, 'newer-value');
+
+      expect(rotated).not.toBeNull();
+      expect(statSync(secretsDir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(secretsDir, `${created.id}.enc`)).mode & 0o777).toBe(0o600);
+      expect(statSync(existingFile).mode & 0o777).toBe(0o600);
     } finally {
       databases.app.close();
       databases.memory.close();

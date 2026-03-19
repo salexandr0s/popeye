@@ -14,8 +14,8 @@ permissions. The store contains independent rotating token records for:
 - `readonly`
 
 Each role keeps its own `current` token plus optional `next` overlap token for
-rotation. Browser-session auth remains **operator-only** and is still bootstrapped
-through `POST /v1/auth/exchange`.
+rotation. Browser-session auth remains **operator-only** and is bootstrapped
+through `POST /v1/auth/exchange` using an operator bearer token plus a daemon-issued nonce.
 
 ## Why
 
@@ -35,7 +35,7 @@ providing safer least-privilege access for local clients.
 - Route authorization is role-based:
   - `readonly` for non-mutating observability and event-stream access
   - `service` for local automation mutations such as task enqueue/retry/ingest
-  - `operator` for everything, including browser bootstrap, memory maintenance,
+  - `operator` for everything, including browser-session minting, memory maintenance,
     profiles, approvals, and security surfaces
 - CSRF stays required for all mutating routes.
 - No remote auth, OAuth, SSO, or multi-user identity is introduced.

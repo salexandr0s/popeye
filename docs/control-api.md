@@ -13,8 +13,9 @@ Popeye supports two authenticated client modes:
    Legacy single-token auth files still load as `operator`.
 2. **Browser session auth** for the web inspector. A one-time bootstrap nonce
    is exchanged at `POST /v1/auth/exchange` for an HttpOnly `popeye_auth`
-   browser-session cookie. This cookie is **not** the long-lived bearer token
-   and always carries `operator` authority.
+   browser-session cookie, but the exchange itself now requires a valid
+   `Authorization: Bearer <operator-token>` header. This cookie is **not** the
+   long-lived bearer token and always carries `operator` authority.
 
 Unauthenticated requests receive `401 { error: "unauthorized" }`.
 
@@ -28,7 +29,7 @@ Routes are role-gated in addition to authentication:
 - `service` — everything `readonly` can do, plus local automation mutations
   such as task creation, job enqueue/pause/resume, run retry/cancel, message
   ingest, and Telegram relay state updates
-- `operator` — everything, including browser bootstrap, profiles, security
+- `operator` — everything, including browser-session minting, profiles, security
   audit, memory maintenance/promotion, and other operator-only control surfaces
 
 Routes default to `operator` unless explicitly downgraded.
@@ -46,6 +47,9 @@ All mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) require two additional c
 2. **Sec-Fetch-Site** -- if present, must be `same-origin` or `none`. Cross-site requests are blocked with `403 { error: "csrf_cross_site_blocked" }`.
 
 Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
+
+`POST /v1/auth/exchange` is the single mutation exempt from CSRF because it
+requires operator bearer auth and a valid daemon-issued nonce.
 
 ## Endpoints
 
@@ -93,7 +97,7 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | GET | `/v1/runs` | List all runs |
 | GET | `/v1/runs/:id` | Get a single run. Returns 404 if not found. |
 | GET | `/v1/runs/:id/envelope` | Get the persisted execution envelope for a run. Returns 404 if not found. |
-| GET | `/v1/runs/:id/receipt` | Get the latest receipt for a run. Returns 404 if none exists yet. |
+| GET | `/v1/runs/:id/receipt` | Get the latest receipt for a run. Returns 404 if none exists yet. Receipts may include additive runtime execution/context-release summaries plus a chronological policy timeline. |
 | GET | `/v1/runs/:id/reply` | Get the packaged terminal reply for a run. Returns 404 if the run does not exist and `409 { error: "run_not_terminal" }` if no terminal receipt exists yet. |
 | GET | `/v1/runs/:id/events` | List engine events for a run |
 | POST | `/v1/runs/:id/retry` | Retry a run by creating a new job |
@@ -103,7 +107,16 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/receipts/:id` | Get a receipt by ID. Returns 404 if not found. |
+| GET | `/v1/receipts/:id` | Get a receipt by ID. Returns 404 if not found. When present, `receipt.runtime.timeline` is the canonical per-run policy/forensics summary. |
+
+Receipt reads may include an additive `runtime` section with:
+
+- `projectId`
+- `profileId`
+- `execution` summary
+- `contextReleases` summary
+- `timeline` entries with normalized `kind`, `severity`, `code`, `title`,
+  `detail`, `source`, and operator-safe `metadata`
 
 ### Instructions
 
@@ -117,6 +130,28 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 |--------|------|-------------|
 | GET | `/v1/interventions` | List all interventions |
 | POST | `/v1/interventions/:id/resolve` | Resolve an open intervention |
+
+### Connections
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include an additive `policy` summary (`status`, `secretStatus`, `mutatingRequiresApproval`, `diagnostics`). |
+| POST | `/v1/connections` | Create a connection. Invalid provider/domain combinations or missing secret refs fail closed with `400 { error: "invalid_connection" }`. |
+| PATCH | `/v1/connections/:id` | Update a connection. Returns 404 if not found and `400 { error: "invalid_connection" }` for policy validation failures. |
+| DELETE | `/v1/connections/:id` | Delete a connection. Returns 404 if not found. |
+
+### File roots
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/files/roots` | List file roots. Optional query: `workspaceId`. |
+| POST | `/v1/files/roots` | Register a file root. Runtime-managed directories and duplicate enabled roots fail closed with `400 { error: "invalid_file_root" }`. |
+| GET | `/v1/files/roots/:id` | Get a file root by ID. Returns 404 if not found. |
+| PATCH | `/v1/files/roots/:id` | Update a file root. Returns 404 if not found. |
+| DELETE | `/v1/files/roots/:id` | Disable a file root. Returns 404 if not found. |
+| GET | `/v1/files/search` | Search indexed files within registered roots. Disabled, unknown, or workspace-mismatched roots fail closed with `400 { error: "invalid_file_root" }` and emit `file_root_policy_denied`. |
+| GET | `/v1/files/documents/:id` | Read an indexed document. Returns 404 if the document is missing or its file root is no longer policy-allowed. |
+| POST | `/v1/files/roots/:id/reindex` | Reindex one file root. Disabled or unknown roots fail closed with `400 { error: "invalid_file_root" }` and emit `file_root_policy_denied`. |
 
 ### Messages
 
@@ -148,11 +183,11 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 |--------|------|-------------|
 | GET | `/v1/memory/search` | Hybrid memory search. Query params: `q` or `query`, optional `scope`, `workspaceId`, `projectId`, `includeGlobal`, `types`, `limit`, `full=true`. Operator-only. Explicit `workspaceId` / `projectId` are authoritative; `scope` remains a compatibility alias. |
 | GET | `/v1/memory/audit` | Memory subsystem audit summary. Operator-only. |
-| GET | `/v1/memory/:id` | Get a single memory record. Returns 404 if not found. Operator-only. |
+| GET | `/v1/memory/:id` | Get a single memory record. Returns 404 if not found. Operator-only. Explicit `workspaceId` / `projectId` filters are authoritative; `scope` remains a compatibility alias. |
 | GET | `/v1/memory` | List memories. Query params: `type`, `scope`, `workspaceId`, `projectId`, `includeGlobal`, `limit`. Operator-only. |
 | POST | `/v1/memory/maintenance` | Trigger confidence decay + consolidation maintenance. Operator-only. |
-| POST | `/v1/memory/:id/promote/propose` | Propose promotion of a memory into a curated markdown file. Body: `{ targetPath }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. |
-| POST | `/v1/memory/:id/promote/execute` | Execute a previously reviewed promotion. Body: `{ targetPath, diff, approved, promoted }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. |
+| POST | `/v1/memory/:id/promote/propose` | Propose promotion of a memory into a curated markdown file. Body: `{ targetPath }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. Per-item location filters match memory read routes. |
+| POST | `/v1/memory/:id/promote/execute` | Execute a previously reviewed promotion. Body: `{ targetPath, diff, approved, promoted }`. Returns `{ memoryId, targetPath, diff, approved, promoted }`. Operator-only. Per-item location filters match memory read routes. |
 
 ### Events (SSE)
 
@@ -165,6 +200,7 @@ Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/v1/usage/summary` | Aggregated usage: `{ runs, tokensIn, tokensOut, estimatedCostUsd }` |
+| POST | `/v1/secrets` | Create a secret reference. Body: `{ key, value, connectionId?, description? }`. Returns secret metadata only; the secret value is never echoed back. |
 | GET | `/v1/security/audit` | Security audit findings: `{ findings: [...] }` |
 | GET | `/v1/security/csrf-token` | Issue a CSRF token. Sets `popeye_csrf` HttpOnly cookie. Returns `{ token }`. |
 

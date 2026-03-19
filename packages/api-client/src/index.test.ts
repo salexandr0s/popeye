@@ -290,6 +290,26 @@ describe('PopeyeApiClient', () => {
     );
   });
 
+  it('omits null memory location filters from query params', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, []);
+
+    await client.listMemories({
+      workspaceId: null,
+      projectId: null,
+      includeGlobal: true,
+      limit: 5,
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210/v1/memory?includeGlobal=true&limit=5',
+      expect.anything(),
+    );
+  });
+
   it('encodes optional projectId for instruction previews', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',

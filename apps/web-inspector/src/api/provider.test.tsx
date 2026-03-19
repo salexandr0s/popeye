@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { fireEvent, render, screen, cleanup, waitFor } from '@testing-library/react';
 import { ApiProvider, useApi } from './provider';
 import type { ApiClient } from './provider';
+import { resetBrowserBootstrapForTests } from './browser-session';
 
 const BOOTSTRAP_NONCE = 'bootstrap-nonce-abc123';
 const CSRF_TOKEN = 'csrf-token-xyz789';
@@ -26,6 +27,7 @@ describe('ApiProvider', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    resetBrowserBootstrapForTests();
     (window as unknown as { __POPEYE_BOOTSTRAP_NONCE__: string }).__POPEYE_BOOTSTRAP_NONCE__ = BOOTSTRAP_NONCE;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -33,6 +35,7 @@ describe('ApiProvider', () => {
 
   afterEach(() => {
     cleanup();
+    resetBrowserBootstrapForTests();
     vi.restoreAllMocks();
   });
 
@@ -60,7 +63,15 @@ describe('ApiProvider', () => {
     );
 
     expect(capturedApi).not.toBeNull();
-    const result = await capturedApi!.get<{ status: string }>('/v1/status');
+    const resultPromise = capturedApi!.get<{ status: string }>('/v1/status');
+
+    await screen.findByRole('heading', { name: 'Unlock Popeye Inspector' });
+    fireEvent.change(screen.getByLabelText('Operator bearer token'), {
+      target: { value: 'Bearer operator-token-123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    const result = await resultPromise;
 
     expect(result).toEqual(responseData);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -70,6 +81,10 @@ describe('ApiProvider', () => {
     expect(exchangeOptions.method).toBe('POST');
     expect(exchangeOptions.credentials).toBe('same-origin');
     expect(exchangeOptions.body).toBe(JSON.stringify({ nonce: BOOTSTRAP_NONCE }));
+    expect((exchangeOptions.headers as Record<string, string>)['Authorization']).toBe('Bearer operator-token-123');
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Unlock Popeye Inspector' })).toBeNull();
+    });
 
     const [path, options] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(path).toBe('/v1/status');
@@ -100,7 +115,15 @@ describe('ApiProvider', () => {
     );
 
     expect(capturedApi).not.toBeNull();
-    const result = await capturedApi!.post<{ created: boolean }>('/v1/runs', { task: 'test' });
+    const resultPromise = capturedApi!.post<{ created: boolean }>('/v1/runs', { task: 'test' });
+
+    await screen.findByRole('heading', { name: 'Unlock Popeye Inspector' });
+    fireEvent.change(screen.getByLabelText('Operator bearer token'), {
+      target: { value: 'operator-token-123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    const result = await resultPromise;
 
     expect(result).toEqual({ created: true });
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -109,6 +132,7 @@ describe('ApiProvider', () => {
     expect(exchangePath).toBe('/v1/auth/exchange');
     expect(exchangeOptions.method).toBe('POST');
     expect(exchangeOptions.body).toBe(JSON.stringify({ nonce: BOOTSTRAP_NONCE }));
+    expect((exchangeOptions.headers as Record<string, string>)['Authorization']).toBe('Bearer operator-token-123');
 
     const [csrfPath, csrfOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(csrfPath).toBe('/v1/security/csrf-token');
@@ -149,7 +173,15 @@ describe('ApiProvider', () => {
       </ApiProvider>,
     );
 
-    await capturedApi!.post('/v1/runs', { task: 'first' });
+    const firstPost = capturedApi!.post('/v1/runs', { task: 'first' });
+
+    await screen.findByRole('heading', { name: 'Unlock Popeye Inspector' });
+    fireEvent.change(screen.getByLabelText('Operator bearer token'), {
+      target: { value: 'operator-token-123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    await firstPost;
     await capturedApi!.post('/v1/runs', { task: 'second' });
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
@@ -173,6 +205,37 @@ describe('ApiProvider', () => {
       </ApiProvider>,
     );
 
-    await expect(capturedApi!.get('/v1/missing')).rejects.toThrow('404 Not Found');
+    const promise = capturedApi!.get('/v1/missing');
+    await screen.findByRole('heading', { name: 'Unlock Popeye Inspector' });
+    fireEvent.change(screen.getByLabelText('Operator bearer token'), {
+      target: { value: 'operator-token-123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    await expect(promise).rejects.toThrow('404 Not Found');
+  });
+
+  it('keeps the unlock modal open with an inline error when auth exchange fails', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+    });
+
+    let capturedApi: ApiClient | null = null;
+    render(
+      <ApiProvider>
+        <TestConsumer onApi={(api) => { capturedApi = api; }} />
+      </ApiProvider>,
+    );
+
+    void capturedApi!.get('/v1/status').catch(() => {});
+    await screen.findByRole('heading', { name: 'Unlock Popeye Inspector' });
+    fireEvent.change(screen.getByLabelText('Operator bearer token'), {
+      target: { value: 'bad-token' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    expect(await screen.findByText('Operator bearer token rejected. Check the token and try again.')).toBeDefined();
   });
 });

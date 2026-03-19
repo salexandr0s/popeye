@@ -288,10 +288,10 @@ export class PopeyeApiClient {
     this.csrfToken = result.token;
   }
 
-  private buildQuery(params: Record<string, string | number | boolean | undefined>): string {
+  private buildQuery(params: Record<string, string | number | boolean | null | undefined>): string {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
+      if (value !== undefined && value !== null) {
         query.set(key, String(value));
       }
     }

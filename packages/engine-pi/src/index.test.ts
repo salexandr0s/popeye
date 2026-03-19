@@ -216,6 +216,26 @@ describe('engine-pi', () => {
     expect(parsed.runtimeToolTimeoutMs).toBe(30_000);
   });
 
+  it('defaults engine runtime-tool bridge fallback to enabled', () => {
+    const parsed = EngineConfigSchema.parse({ kind: 'pi' });
+    expect(parsed.allowRuntimeToolBridgeFallback).toBe(true);
+  });
+
+  it('reports host-tool capabilities as native_with_fallback or native based on config', () => {
+    const piPath = createFakePiRepo('', { defaultCli: false });
+    const compatAdapter = new PiEngineAdapter({ ...explicitConfig(piPath), allowRuntimeToolBridgeFallback: true });
+    expect(compatAdapter.getCapabilities().hostToolMode).toBe('native_with_fallback');
+    expect(compatAdapter.getCapabilities().warnings).toContain(
+      'Pi runtime-tool bridge fallback is enabled for compatibility; disable it for higher-assurance deployments.',
+    );
+
+    const strictAdapter = new PiEngineAdapter({ ...explicitConfig(piPath), allowRuntimeToolBridgeFallback: false });
+    expect(strictAdapter.getCapabilities().hostToolMode).toBe('native');
+    expect(strictAdapter.getCapabilities().warnings).not.toContain(
+      'Pi runtime-tool bridge fallback is enabled for compatibility; disable it for higher-assurance deployments.',
+    );
+  });
+
   it('uses Pi RPC responses/events and compatibility checks', async () => {
     const piPath = createFakePiRepo(`
       let buffer = '';
@@ -541,6 +561,7 @@ describe('engine-pi', () => {
     });
 
     expect(result.failureClassification).toBeNull();
+    expect(result.warnings).toContain('Pi runtime-tool bridge fallback was used for this run.');
     expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('memory result ready');
     expect(result.events.find((event) => event.type === 'message')?.payload.text).toContain('extension=true');
     expect(result.events).toContainEqual(expect.objectContaining({
@@ -562,6 +583,49 @@ describe('engine-pi', () => {
         detailsPresent: true,
       }),
     }));
+  });
+
+  it('fails fast when Pi native host-tool registration is unavailable and fallback is disabled', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:native-only', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({ type: 'agent_end', messages: [] });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({ ...explicitConfig(piPath), allowRuntimeToolBridgeFallback: false });
+    const result = await adapter.run({
+      prompt: 'native-only',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute() {
+          return { content: [{ type: 'text', text: 'should not execute' }] };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBe('policy_failure');
+    expect(result.failureMessage).toBe('Pi native host-tool registration timed out and runtime-tool bridge fallback is disabled');
+    expect(result.events.some((event) => event.type === 'started')).toBe(false);
+    expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('policy_failure');
   });
 
   it('times out runtime-tool bridge calls and emits structured bridge diagnostics', async () => {

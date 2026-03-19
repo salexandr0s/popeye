@@ -10,6 +10,7 @@
   - repo root version: `0.0.3`
   - `packages/coding-agent` version: `0.57.1`
 - `security-audit` reports `pi_version_not_pinned` (warn) when no `piVersion` is set, and `pi_version_mismatch` (warn) when the configured coding-agent version differs
+- `security-audit` also warns when `config.engine.allowRuntimeToolBridgeFallback` remains enabled in Pi mode
 
 ## Current integration shape
 - Popeye owns all runtime orchestration, receipts, scheduling, auth, CSRF, and backup/restore.
@@ -29,8 +30,10 @@
   - `{"id":"popeye:prompt","type":"prompt","message":"..."}`
   - `{"id":"popeye:abort","type":"abort"}` on cancellation
 - Pi returns JSONL `response` envelopes plus streamed `AgentSessionEvent` objects.
-- When runtime-owned tools are supplied, `@popeye/engine-pi` generates a temporary Pi extension, loads it with `--extension`, and tunnels tool calls through `extension_ui_request(method:"editor", title:"popeye.runtime_tool")` / `extension_ui_response(value)`.
+- When runtime-owned tools are supplied, `@popeye/engine-pi` first attempts native `register_host_tools`.
+- If `config.engine.allowRuntimeToolBridgeFallback !== false` and native registration is unavailable, `@popeye/engine-pi` generates a temporary Pi extension, loads it with `--extension`, and tunnels tool calls through `extension_ui_request(method:"editor", title:"popeye.runtime_tool")` / `extension_ui_response(value)`.
 - That path is explicitly a Popeye-owned workaround over Pi's extension UI carrier, not a first-class Pi host-tool RPC protocol.
+- If fallback is disabled, Popeye fails the run before prompt execution when native host-tool registration is unavailable.
 - Popeye bounds each bridged runtime-tool call with `config.engine.runtimeToolTimeoutMs` (default `30000`) and emits structured bridge diagnostics through normalized `tool_call` / `tool_result` events.
 - That timeout is a Popeye-side wait bound only; it does not cancel the underlying host tool execution.
 - When a timed-out host tool settles later, `@popeye/engine-pi` suppresses the late settlement and records a diagnostic warning when it is observed before run completion.
@@ -62,8 +65,8 @@ Pi now supports a native `register_host_tools` / `host_tool_request` / `host_too
 ### Popeye-side additions
 - `@popeye/engine-pi` attempts `register_host_tools` after `get_state` succeeds, with 500ms fallback timeout
 - On success: `useNativeHostTools = true`, runtime tools routed via `host_tool_request` / `host_tool_response`
-- On timeout/error: falls back to extension-UI bridge (existing path)
-- Both paths coexist; native path preferred when available
+- On timeout/error: falls back to extension-UI bridge only when `allowRuntimeToolBridgeFallback` is enabled
+- Both paths coexist in compatibility mode; native path is preferred when available
 
 ### Protocol semantics
 - **Timeout:** Popeye-owned (configurable `runtimeToolTimeoutMs`). On timeout, sends `host_tool_response` with `status: "cancelled"`

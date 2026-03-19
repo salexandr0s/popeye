@@ -62,8 +62,6 @@ import type { PopeyeLogger } from '@popeye/observability';
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
   cspNonce?: string;
-  /** Paths exempt from bearer auth (e.g. nonce exchange). CSRF is also skipped for these. */
-  authExemptPaths?: ReadonlySet<string>;
   validateAuthExchangeNonce?: (nonce: string) => 'accepted' | 'expired' | 'invalid';
   /** When true, emitted Set-Cookie headers include the Secure flag. */
   useSecureCookies?: boolean;
@@ -74,6 +72,7 @@ export interface ControlApiDependencies {
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const CSRF_EXEMPT_PATHS = new Set(['/v1/auth/exchange']);
 
 type RequestAuthContext =
   | { kind: 'bearer'; role: AuthRole; csrfToken: string; record: AuthRotationRecord }
@@ -113,6 +112,13 @@ const MemoryListQueryParamsSchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
+const MemoryLocationQueryParamsSchema = z.object({
+  scope: z.string().optional(),
+  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
+  includeGlobal: z.enum(['true', 'false']).optional(),
+});
+
 const RunListQueryParamsSchema = z.object({
   state: z.string().optional(),
 });
@@ -127,6 +133,37 @@ const TelegramRelayCheckpointQueryParamsSchema = z.object({
 
 function parseIdParam(params: unknown): string {
   return PathIdParamSchema.parse(params).id;
+}
+
+function parseMemoryLocationQuery(query: unknown): {
+  workspaceId: string | null;
+  projectId: string | null;
+  includeGlobal?: boolean;
+} {
+  const parsed = MemoryLocationQueryParamsSchema.parse(query);
+  let workspaceId = parsed.workspaceId ?? null;
+  let projectId = parsed.projectId ?? null;
+  if (parsed.scope && parsed.workspaceId === undefined && parsed.projectId === undefined) {
+    const scope = parsed.scope.trim();
+    if (scope === 'global' || scope.length === 0) {
+      workspaceId = null;
+      projectId = null;
+    } else {
+      const separator = scope.indexOf('/');
+      if (separator === -1) {
+        workspaceId = scope;
+        projectId = null;
+      } else {
+        workspaceId = scope.slice(0, separator).trim() || null;
+        projectId = scope.slice(separator + 1).trim() || null;
+      }
+    }
+  }
+  return stripUndefined({
+    workspaceId,
+    projectId,
+    ...(parsed.includeGlobal !== undefined ? { includeGlobal: parsed.includeGlobal === 'true' } : {}),
+  });
 }
 
 function readCookieValue(cookieHeader: string | undefined, name: string): string | undefined {
@@ -400,16 +437,11 @@ export async function createControlApi(
     },
   });
 
-  const authExemptPaths = dependencies.authExemptPaths ?? new Set<string>();
   const log = dependencies.logger ?? null;
 
   app.addHook('preHandler', async (request, reply) => {
     const path = request.url.split('?')[0]!;
     if (!path.startsWith('/v1/')) {
-      return undefined;
-    }
-    // Allow explicitly exempted paths (e.g. nonce exchange) to bypass bearer + CSRF
-    if (authExemptPaths.has(path)) {
       return undefined;
     }
 
@@ -463,7 +495,7 @@ export async function createControlApi(
       return reply.code(403).send({ error: 'forbidden' });
     }
 
-    if (MUTATING_METHODS.has(request.method)) {
+    if (MUTATING_METHODS.has(request.method) && !CSRF_EXEMPT_PATHS.has(path)) {
       const csrfHeader = request.headers['x-popeye-csrf'];
       const csrf = Array.isArray(csrfHeader) ? csrfHeader[0] : csrfHeader;
       const authContext = request.popeyeAuthContext;
@@ -503,6 +535,17 @@ export async function createControlApi(
   app.post('/v1/auth/exchange', async (request, reply) => {
     if (!dependencies.validateAuthExchangeNonce) {
       return reply.code(404).send({ error: 'not_found' });
+    }
+    const authContext = request.popeyeAuthContext;
+    if (!authContext || authContext.kind !== 'bearer' || authContext.role !== 'operator') {
+      log?.warn('auth exchange requires operator bearer auth', { path: '/v1/auth/exchange' });
+      recordAuthFailureAudit(dependencies.runtime, request, 'role_forbidden', {
+        path: '/v1/auth/exchange',
+        method: 'POST',
+        actualRole: authContext?.role ?? 'none',
+        requiredRole: 'operator_bearer',
+      });
+      return reply.code(403).send({ error: 'forbidden' });
     }
     const body = AuthExchangeRequestSchema.parse(request.body);
     const outcome = dependencies.validateAuthExchangeNonce(body.nonce);
@@ -728,22 +771,30 @@ export async function createControlApi(
 
   app.get('/v1/memory/:id/describe', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const desc = dependencies.runtime.describeMemory(id);
+    const locationFilter = parseMemoryLocationQuery(request.query);
+    const desc = dependencies.runtime.describeMemory(id, locationFilter);
     if (!desc) return reply.code(404).send({ error: 'not_found' });
     return desc;
   });
 
   app.get('/v1/memory/:id/expand', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const params = z.object({ maxTokens: z.coerce.number().int().positive().optional() }).parse(request.query);
-    const expanded = dependencies.runtime.expandMemory(id, params.maxTokens);
+    const params = z.object({
+      maxTokens: z.coerce.number().int().positive().optional(),
+      scope: z.string().optional(),
+      workspaceId: z.string().optional(),
+      projectId: z.string().optional(),
+      includeGlobal: z.enum(['true', 'false']).optional(),
+    }).parse(request.query);
+    const expanded = dependencies.runtime.expandMemory(id, params.maxTokens, parseMemoryLocationQuery(params));
     if (!expanded) return reply.code(404).send({ error: 'not_found' });
     return expanded;
   });
 
   app.get('/v1/memory/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const memory = dependencies.runtime.getMemory(id);
+    const locationFilter = parseMemoryLocationQuery(request.query);
+    const memory = dependencies.runtime.getMemory(id, locationFilter);
     if (!memory) return reply.code(404).send({ error: 'not_found' });
     return memory;
   });
@@ -770,14 +821,22 @@ export async function createControlApi(
   app.post('/v1/memory/:id/promote/propose', async (request, reply) => {
     const id = parseIdParam(request.params);
     const body = MemoryPromotionProposalRequestSchema.parse(request.body);
+    const locationFilter = parseMemoryLocationQuery(request.query);
+    if (!dependencies.runtime.getMemory(id, locationFilter)) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
     const result = dependencies.runtime.proposeMemoryPromotion(id, body.targetPath);
     if (!result.diff) return reply.code(404).send({ error: 'not_found' });
     return result;
   });
 
-  app.post('/v1/memory/:id/promote/execute', async (request) => {
+  app.post('/v1/memory/:id/promote/execute', async (request, reply) => {
     const id = parseIdParam(request.params);
     const body = MemoryPromotionExecuteRequestSchema.parse(request.body);
+    const locationFilter = parseMemoryLocationQuery(request.query);
+    if (!dependencies.runtime.getMemory(id, locationFilter)) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
     return dependencies.runtime.executeMemoryPromotion({ memoryId: id, ...body });
   });
 
@@ -1040,15 +1099,30 @@ export async function createControlApi(
     return dependencies.runtime.listConnections(query.domain);
   });
 
-  app.post('/v1/connections', async (request) => {
+  app.post('/v1/connections', async (request, reply) => {
     const body = ConnectionCreateInputSchema.parse(request.body);
-    return dependencies.runtime.createConnection(body);
+    try {
+      return dependencies.runtime.createConnection(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_connection', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.patch('/v1/connections/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const body = ConnectionUpdateInputSchema.parse(request.body);
-    const result = dependencies.runtime.updateConnection(id, body);
+    let result;
+    try {
+      result = dependencies.runtime.updateConnection(id, body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_connection', details: error.message });
+      }
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: 'connection not found' });
     return result;
   });
@@ -1089,9 +1163,16 @@ export async function createControlApi(
     return dependencies.runtime.listFileRoots(query.workspaceId);
   });
 
-  app.post('/v1/files/roots', async (request) => {
+  app.post('/v1/files/roots', async (request, reply) => {
     const body = FileRootRegistrationInputSchema.parse(request.body);
-    return dependencies.runtime.registerFileRoot(body);
+    try {
+      return dependencies.runtime.registerFileRoot(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_file_root', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/files/roots/:id', async (request, reply) => {
@@ -1116,20 +1197,27 @@ export async function createControlApi(
     return { ok: true };
   });
 
-  app.get('/v1/files/search', async (request) => {
+  app.get('/v1/files/search', async (request, reply) => {
     const query = z.object({
       query: z.string().min(1).max(1000),
       rootId: z.string().optional(),
       workspaceId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
-    return dependencies.runtime.searchFiles({
-      query: query.query,
-      limit: query.limit ?? 10,
-      includeContent: false,
-      ...(query.rootId ? { rootId: query.rootId } : {}),
-      ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
-    });
+    try {
+      return dependencies.runtime.searchFiles({
+        query: query.query,
+        limit: query.limit ?? 10,
+        includeContent: false,
+        ...(query.rootId ? { rootId: query.rootId } : {}),
+        ...(query.workspaceId ? { workspaceId: query.workspaceId } : {}),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_file_root', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/files/documents/:id', async (request, reply) => {
@@ -1141,7 +1229,15 @@ export async function createControlApi(
 
   app.post('/v1/files/roots/:id/reindex', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const result = dependencies.runtime.reindexFileRoot(id);
+    let result;
+    try {
+      result = dependencies.runtime.reindexFileRoot(id);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_file_root', details: error.message });
+      }
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: 'file root not found' });
     return result;
   });
@@ -1152,7 +1248,7 @@ export async function createControlApi(
     return dependencies.runtime.listEmailAccounts();
   });
 
-  app.get('/v1/email/threads', async (request) => {
+  app.get('/v1/email/threads', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
@@ -1161,10 +1257,17 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listEmailAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listEmailThreads(accountId, {
-      limit: query.limit ?? 50,
-      unreadOnly: query.unreadOnly === 'true',
-    });
+    try {
+      return dependencies.runtime.listEmailThreads(accountId, {
+        limit: query.limit ?? 50,
+        unreadOnly: query.unreadOnly === 'true',
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/email/threads/:id', async (request, reply) => {
@@ -1181,40 +1284,75 @@ export async function createControlApi(
     return message;
   });
 
-  app.get('/v1/email/digest', async (request) => {
+  app.get('/v1/email/digest', async (request, reply) => {
     const query = z.object({ accountId: z.string().optional() }).parse(request.query);
     const accounts = dependencies.runtime.listEmailAccounts();
     if (accounts.length === 0) return null;
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.getEmailDigest(accountId);
+    try {
+      return dependencies.runtime.getEmailDigest(accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/email/search', async (request) => {
+  app.get('/v1/email/search', async (request, reply) => {
     const query = z.object({
       query: z.string().min(1).max(1000),
       accountId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
-    return dependencies.runtime.searchEmail({
-      query: query.query,
-      accountId: query.accountId,
-      limit: query.limit ?? 20,
-    });
+    try {
+      return dependencies.runtime.searchEmail({
+        query: query.query,
+        accountId: query.accountId,
+        limit: query.limit ?? 20,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/email/accounts', async (request) => {
+  app.post('/v1/email/accounts', async (request, reply) => {
     const body = EmailAccountRegistrationInputSchema.parse(request.body);
-    return dependencies.runtime.registerEmailAccount(body);
+    try {
+      return dependencies.runtime.registerEmailAccount(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/email/sync', async (request) => {
+  app.post('/v1/email/sync', async (request, reply) => {
     const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
-    return dependencies.runtime.syncEmailAccount(body.accountId);
+    try {
+      return dependencies.runtime.syncEmailAccount(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_sync', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/email/digest', async (request) => {
+  app.post('/v1/email/digest', async (request, reply) => {
     const body = z.object({ accountId: z.string().optional() }).default({}).parse(request.body ?? {});
-    return dependencies.runtime.triggerEmailDigest(body.accountId);
+    try {
+      return dependencies.runtime.triggerEmailDigest(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_digest', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/email/providers', async () => {
@@ -1228,7 +1366,7 @@ export async function createControlApi(
     return dependencies.runtime.listGithubAccounts();
   });
 
-  app.get('/v1/github/repos', async (request) => {
+  app.get('/v1/github/repos', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(200).optional(),
@@ -1236,10 +1374,17 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listGithubAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listGithubRepos(accountId, { limit: query.limit });
+    try {
+      return dependencies.runtime.listGithubRepos(accountId, { limit: query.limit });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/github/prs', async (request) => {
+  app.get('/v1/github/prs', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       state: z.string().optional(),
@@ -1248,10 +1393,17 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listGithubAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listGithubPullRequests(accountId, {
-      state: query.state,
-      limit: query.limit ?? 50,
-    });
+    try {
+      return dependencies.runtime.listGithubPullRequests(accountId, {
+        state: query.state,
+        limit: query.limit ?? 50,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/github/prs/:id', async (request, reply) => {
@@ -1261,7 +1413,7 @@ export async function createControlApi(
     return pr;
   });
 
-  app.get('/v1/github/issues', async (request) => {
+  app.get('/v1/github/issues', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       state: z.string().optional(),
@@ -1271,11 +1423,18 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listGithubAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listGithubIssues(accountId, {
-      state: query.state,
-      limit: query.limit ?? 50,
-      assignedOnly: query.assigned === 'true',
-    });
+    try {
+      return dependencies.runtime.listGithubIssues(accountId, {
+        state: query.state,
+        limit: query.limit ?? 50,
+        assignedOnly: query.assigned === 'true',
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/github/issues/:id', async (request, reply) => {
@@ -1285,7 +1444,7 @@ export async function createControlApi(
     return issue;
   });
 
-  app.get('/v1/github/notifications', async (request) => {
+  app.get('/v1/github/notifications', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
@@ -1293,33 +1452,54 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listGithubAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listGithubNotifications(accountId, {
-      unreadOnly: true,
-      limit: query.limit ?? 50,
-    });
+    try {
+      return dependencies.runtime.listGithubNotifications(accountId, {
+        unreadOnly: true,
+        limit: query.limit ?? 50,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/github/digest', async (request) => {
+  app.get('/v1/github/digest', async (request, reply) => {
     const query = z.object({ accountId: z.string().optional() }).parse(request.query);
     const accounts = dependencies.runtime.listGithubAccounts();
     if (accounts.length === 0) return null;
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.getGithubDigest(accountId);
+    try {
+      return dependencies.runtime.getGithubDigest(accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/github/search', async (request) => {
+  app.get('/v1/github/search', async (request, reply) => {
     const query = z.object({
       query: z.string().min(1).max(1000),
       accountId: z.string().optional(),
       entityType: z.enum(['pr', 'issue', 'all']).optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
-    return dependencies.runtime.searchGithub({
-      query: query.query,
-      accountId: query.accountId,
-      entityType: query.entityType,
-      limit: query.limit ?? 20,
-    });
+    try {
+      return dependencies.runtime.searchGithub({
+        query: query.query,
+        accountId: query.accountId,
+        entityType: query.entityType,
+        limit: query.limit ?? 20,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   // --- Calendar routes ---
@@ -1328,7 +1508,7 @@ export async function createControlApi(
     return dependencies.runtime.listCalendarAccounts();
   });
 
-  app.get('/v1/calendar/events', async (request) => {
+  app.get('/v1/calendar/events', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       dateFrom: z.string().optional(),
@@ -1338,11 +1518,18 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listCalendarAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listCalendarEvents(accountId, {
-      limit: query.limit,
-      dateFrom: query.dateFrom,
-      dateTo: query.dateTo,
-    });
+    try {
+      return dependencies.runtime.listCalendarEvents(accountId, {
+        limit: query.limit,
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/calendar/events/:id', async (request, reply) => {
@@ -1352,7 +1539,7 @@ export async function createControlApi(
     return event;
   });
 
-  app.get('/v1/calendar/search', async (request) => {
+  app.get('/v1/calendar/search', async (request, reply) => {
     const query = z.object({
       query: z.string().min(1).max(1000),
       accountId: z.string().optional(),
@@ -1360,24 +1547,38 @@ export async function createControlApi(
       dateTo: z.string().optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
-    return dependencies.runtime.searchCalendar({
-      query: query.query,
-      accountId: query.accountId,
-      dateFrom: query.dateFrom,
-      dateTo: query.dateTo,
-      limit: query.limit ?? 20,
-    });
+    try {
+      return dependencies.runtime.searchCalendar({
+        query: query.query,
+        accountId: query.accountId,
+        dateFrom: query.dateFrom,
+        dateTo: query.dateTo,
+        limit: query.limit ?? 20,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/calendar/digest', async (request) => {
+  app.get('/v1/calendar/digest', async (request, reply) => {
     const query = z.object({ accountId: z.string().optional() }).parse(request.query);
     const accounts = dependencies.runtime.listCalendarAccounts();
     if (accounts.length === 0) return null;
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.getCalendarDigest(accountId);
+    try {
+      return dependencies.runtime.getCalendarDigest(accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/calendar/availability', async (request) => {
+  app.get('/v1/calendar/availability', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       date: z.string().min(1),
@@ -1388,23 +1589,44 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listCalendarAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.getCalendarAvailability(
-      accountId,
-      query.date,
-      query.startHour ?? 9,
-      query.endHour ?? 17,
-      query.slotMinutes ?? 30,
-    );
+    try {
+      return dependencies.runtime.getCalendarAvailability(
+        accountId,
+        query.date,
+        query.startHour ?? 9,
+        query.endHour ?? 17,
+        query.slotMinutes ?? 30,
+      );
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/calendar/accounts', async (request) => {
+  app.post('/v1/calendar/accounts', async (request, reply) => {
     const body = CalendarAccountRegistrationInputSchema.parse(request.body);
-    return dependencies.runtime.registerCalendarAccount(body);
+    try {
+      return dependencies.runtime.registerCalendarAccount(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/calendar/sync', async (request) => {
+  app.post('/v1/calendar/sync', async (request, reply) => {
     const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
-    return dependencies.runtime.syncCalendarAccount(body.accountId);
+    try {
+      return dependencies.runtime.syncCalendarAccount(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_sync', details: error.message });
+      }
+      throw error;
+    }
   });
 
   // --- Todos routes ---
@@ -1413,7 +1635,7 @@ export async function createControlApi(
     return dependencies.runtime.listTodoAccounts();
   });
 
-  app.get('/v1/todos/items', async (request) => {
+  app.get('/v1/todos/items', async (request, reply) => {
     const query = z.object({
       accountId: z.string().optional(),
       status: z.string().optional(),
@@ -1424,12 +1646,19 @@ export async function createControlApi(
     const accounts = dependencies.runtime.listTodoAccounts();
     if (accounts.length === 0) return [];
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.listTodos(accountId, {
-      status: query.status,
-      priority: query.priority,
-      projectName: query.project,
-      limit: query.limit ?? 50,
-    });
+    try {
+      return dependencies.runtime.listTodos(accountId, {
+        status: query.status,
+        priority: query.priority,
+        projectName: query.project,
+        limit: query.limit ?? 50,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/todos/items/:id', async (request, reply) => {
@@ -1439,49 +1668,92 @@ export async function createControlApi(
     return todo;
   });
 
-  app.get('/v1/todos/search', async (request) => {
+  app.get('/v1/todos/search', async (request, reply) => {
     const query = z.object({
       query: z.string().min(1).max(1000),
       accountId: z.string().optional(),
       status: z.enum(['pending', 'completed', 'all']).optional(),
       limit: z.coerce.number().int().positive().max(100).optional(),
     }).parse(request.query);
-    return dependencies.runtime.searchTodos({
-      query: query.query,
-      accountId: query.accountId,
-      status: query.status,
-      limit: query.limit ?? 20,
-    });
+    try {
+      return dependencies.runtime.searchTodos({
+        query: query.query,
+        accountId: query.accountId,
+        status: query.status,
+        limit: query.limit ?? 20,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.get('/v1/todos/digest', async (request) => {
+  app.get('/v1/todos/digest', async (request, reply) => {
     const query = z.object({ accountId: z.string().optional() }).parse(request.query);
     const accounts = dependencies.runtime.listTodoAccounts();
     if (accounts.length === 0) return null;
     const accountId = query.accountId ?? accounts[0]!.id;
-    return dependencies.runtime.getTodoDigest(accountId);
+    try {
+      return dependencies.runtime.getTodoDigest(accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/todos/items', async (request) => {
+  app.post('/v1/todos/items', async (request, reply) => {
     const body = TodoCreateInputSchema.parse(request.body);
-    return dependencies.runtime.createTodo(body);
+    try {
+      return dependencies.runtime.createTodo(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.post('/v1/todos/items/:id/complete', async (request, reply) => {
     const id = parseIdParam(request.params);
-    const result = dependencies.runtime.completeTodo(id);
+    let result;
+    try {
+      result = dependencies.runtime.completeTodo(id);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
+      }
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: 'todo not found' });
     return result;
   });
 
-  app.post('/v1/todos/accounts', async (request) => {
+  app.post('/v1/todos/accounts', async (request, reply) => {
     const body = TodoAccountRegistrationInputSchema.parse(request.body);
-    return dependencies.runtime.registerTodoAccount(body);
+    try {
+      return dependencies.runtime.registerTodoAccount(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
+      }
+      throw error;
+    }
   });
 
-  app.post('/v1/todos/sync', async (request) => {
+  app.post('/v1/todos/sync', async (request, reply) => {
     const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
-    return dependencies.runtime.syncTodoAccount(body.accountId);
+    try {
+      return dependencies.runtime.syncTodoAccount(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_sync', details: error.message });
+      }
+      throw error;
+    }
   });
 
   return app;

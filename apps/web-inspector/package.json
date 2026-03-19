@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b --force && vite build",
+    "build": "tsc -b tsconfig.build.json --pretty false && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b tsconfig.build.json --pretty false"
   },
   "dependencies": {
     "@popeye/contracts": "workspace:*",

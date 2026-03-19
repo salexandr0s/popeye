@@ -14,6 +14,7 @@ vi.mock('node:fs', async (importOriginal) => {
     mkdtempSync: actual.mkdtempSync,
     writeFileSync: vi.fn(),
     unlinkSync: vi.fn(),
+    rmSync: vi.fn(),
     chmodSync: vi.fn(),
   };
 });

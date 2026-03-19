@@ -10,8 +10,9 @@ Loads configuration from `POPEYE_CONFIG_PATH`, ensures all runtime directories
 exist with secure permissions, creates a `PopeyeRuntimeService`, starts the task
 scheduler, and mounts the Fastify control API on the configured loopback address
 and port. Optionally serves the web inspector static files with a one-time
-bootstrap nonce; the browser exchanges that nonce for an HttpOnly browser-session cookie
-before calling protected API routes. Handles graceful shutdown on SIGTERM/SIGINT,
+bootstrap nonce; the browser exchanges that nonce with an operator bearer token
+for an HttpOnly browser-session cookie before calling protected API routes.
+Handles graceful shutdown on SIGTERM/SIGINT,
 draining in-flight work and closing databases cleanly.
 
 ## Layer
@@ -57,5 +58,5 @@ pop daemon load
 
 Requires `POPEYE_CONFIG_PATH` environment variable. The daemon binds to
 loopback only (`127.0.0.1`). API routes require auth; browser clients obtain
-same-origin session access through the bootstrap nonce exchange and HttpOnly browser-session
-cookie.
+same-origin session access through the bootstrap nonce exchange plus operator
+bearer auth, then continue on an HttpOnly browser-session cookie.

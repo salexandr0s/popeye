@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, unlinkSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -69,7 +69,7 @@ export function keychainSet(key: string, value: string): KeychainResult {
     return { ok: false, error: result.stderr?.trim() || `exit code ${result.status}` };
   } finally {
     try { unlinkSync(tmpFile); } catch { /* best effort */ }
-    try { unlinkSync(tmpDir); } catch { /* dir may not be empty */ }
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 

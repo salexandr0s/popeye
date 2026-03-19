@@ -43,6 +43,22 @@ export class ReceiptManager {
     return receipt;
   }
 
+  private hydrateReceiptFromArtifact(receipt: ReceiptRecord): ReceiptRecord {
+    const artifact = readReceiptArtifact(this.databases.paths, receipt.id);
+    if (!artifact) {
+      return receipt;
+    }
+    try {
+      const parsed = JSON.parse(artifact) as { receipt?: unknown };
+      if (parsed.receipt) {
+        return ReceiptRecordSchema.parse(parsed.receipt);
+      }
+    } catch {
+      // Fall back to DB-backed receipt below.
+    }
+    return receipt;
+  }
+
   captureMemoryFromReceipt(receipt: ReceiptRecord): void {
     this.callbacks.captureMemory({
       description: receipt.summary,
@@ -64,6 +80,7 @@ export class ReceiptManager {
         taskId: receipt.taskId,
         jobId: receipt.jobId,
         usage: receipt.usage,
+        runtime: receipt.runtime ?? null,
       },
     });
   }
@@ -75,11 +92,7 @@ export class ReceiptManager {
   getReceipt(receiptId: string): ReceiptRecord | null {
     const row = this.databases.app.prepare('SELECT * FROM receipts WHERE id = ?').get(receiptId);
     if (!row) return null;
-    const receipt = mapReceiptRow(row);
-    return ReceiptRecordSchema.parse({
-      ...receipt,
-      details: readReceiptArtifact(this.databases.paths, receiptId) ?? receipt.details,
-    });
+    return this.hydrateReceiptFromArtifact(mapReceiptRow(row));
   }
 
   writeAbandonedReceiptIfMissing(runId: string, jobId: string, taskId: string, workspaceId: string, summary: string, details: string): void {
@@ -101,12 +114,12 @@ export class ReceiptManager {
 
   getReceiptByRunId(runId: string): ReceiptRecord | null {
     const row = this.databases.app.prepare('SELECT * FROM receipts WHERE run_id = ? ORDER BY created_at DESC LIMIT 1').get(runId);
-    return row ? mapReceiptRow(row) : null;
+    return row ? this.hydrateReceiptFromArtifact(mapReceiptRow(row)) : null;
   }
 
   getReceiptByTaskId(taskId: string): ReceiptRecord | null {
     const row = this.databases.app.prepare('SELECT * FROM receipts WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(taskId);
-    return row ? mapReceiptRow(row) : null;
+    return row ? this.hydrateReceiptFromArtifact(mapReceiptRow(row)) : null;
   }
 
   getUsageSummary(): UsageSummary {

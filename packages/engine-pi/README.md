@@ -67,12 +67,14 @@ Notes:
 
 - `cwd` must be an absolute existing directory; otherwise startup fails clearly
 - `modelOverride` overrides any configured `--model` in `engine.args`
-- runtime tools are currently bridged through a temporary Pi extension and
-  `extension_ui_request(method:"editor")` carrier messages
+- native Pi host-tool RPC is preferred for runtime tools
+- the temporary extension/UI bridge remains available as a compatibility
+  fallback when `engine.allowRuntimeToolBridgeFallback !== false`
 - that bridge is a Popeye-owned workaround over Pi's extension UI channel, not
   a first-class upstream host-tool RPC protocol
 - Popeye bounds each bridged runtime-tool call with `engine.runtimeToolTimeoutMs`
   (default `30000`) and emits structured bridge `tool_call` / `tool_result` diagnostics
+- when the fallback bridge is actually used, the adapter emits a per-run warning
 - a runtime-tool timeout is a Popeye-side bridge race only: the bridge returns
   a timeout result, but it does not cancel the underlying tool promise
 - when a timed-out tool settles later, `@popeye/engine-pi` suppresses the late
@@ -105,5 +107,7 @@ Notes:
   `--extension` or `--model`), the adapter prepends the built Pi CLI path
 - A request-level `modelOverride` replaces any configured `--model`
 - A request-level `cwd` overrides the default Pi checkout working directory
+- `engine.allowRuntimeToolBridgeFallback` defaults to `true` for compatibility;
+  disable it to require native Pi host-tool RPC only
 
 See `src/index.test.ts` for adapter behavior and failure mode tests.

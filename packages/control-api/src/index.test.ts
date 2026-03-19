@@ -104,11 +104,12 @@ describe('control api', () => {
     await app.close();
   });
 
-  it('exchanges a bootstrap nonce for an auth cookie on the exempt route', async () => {
+  it('requires an operator bearer token to exchange a bootstrap nonce for a browser auth cookie', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
     const store = initAuthStore(authFile);
+    const readonlyStore = initAuthStore(authFile, 'readonly');
     const runtime = createRuntimeService({
       runtimeDataDir: dir,
       authFile,
@@ -121,20 +122,36 @@ describe('control api', () => {
     });
     const app = await createControlApi({
       runtime,
-      authExemptPaths: new Set(['/v1/auth/exchange']),
       validateAuthExchangeNonce: (nonce) => nonce === 'valid-bootstrap-nonce' ? 'accepted' : 'invalid',
     });
 
     const rejected = await app.inject({
       method: 'POST',
       url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${store.current.token}` },
       payload: { nonce: 'invalid' },
     });
     expect(rejected.statusCode).toBe(401);
 
+    const readonlyRejected = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${readonlyStore.current.token}` },
+      payload: { nonce: 'valid-bootstrap-nonce' },
+    });
+    expect(readonlyRejected.statusCode).toBe(403);
+
+    const missingAuth = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/exchange',
+      payload: { nonce: 'valid-bootstrap-nonce' },
+    });
+    expect(missingAuth.statusCode).toBe(401);
+
     const exchanged = await app.inject({
       method: 'POST',
       url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${store.current.token}` },
       payload: { nonce: 'valid-bootstrap-nonce' },
     });
     expect(exchanged.statusCode).toBe(200);
@@ -191,7 +208,7 @@ describe('control api', () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-expired-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
-    initAuthStore(authFile);
+    const store = initAuthStore(authFile);
     const runtime = createRuntimeService({
       runtimeDataDir: dir,
       authFile,
@@ -204,13 +221,13 @@ describe('control api', () => {
     });
     const app = await createControlApi({
       runtime,
-      authExemptPaths: new Set(['/v1/auth/exchange']),
       validateAuthExchangeNonce: () => 'expired',
     });
 
     const response = await app.inject({
       method: 'POST',
       url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${store.current.token}` },
       payload: { nonce: 'expired-bootstrap-nonce' },
     });
 
@@ -283,6 +300,450 @@ describe('control api', () => {
       payload: { source: 'telegram', senderId: '42', text: 'hello', chatId: 'chat-3', chatType: 'private', telegramMessageId: 5, workspaceId: 'default' },
     });
     expect(accepted.statusCode).toBe(200);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('stores secrets via the control API without echoing secret values', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-secrets-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/secrets',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        key: 'github-token',
+        value: 'top-secret-value',
+        description: 'GitHub PAT',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      key: 'github-token',
+      description: 'GitHub PAT',
+      provider: expect.any(String),
+    });
+    expect(JSON.stringify(response.json())).not.toContain('top-secret-value');
+    expect(runtime.listSecrets()).toHaveLength(1);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns connection policy metadata and rejects invalid provider/domain pairs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-connections-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const headers = {
+      authorization: `Bearer ${store.current.token}`,
+      'x-popeye-csrf': csrf,
+      'sec-fetch-site': 'same-origin',
+    };
+    const secret = runtime.setSecret({
+      key: 'proton-token',
+      value: 'top-secret-value',
+      description: 'Proton mail access token',
+    });
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/connections',
+      headers,
+      payload: {
+        domain: 'email',
+        providerKind: 'proton',
+        label: 'Primary Proton inbox',
+        mode: 'read_write',
+        secretRefId: secret.id,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const createdBody = created.json();
+    expect(createdBody).toMatchObject({
+      domain: 'email',
+      providerKind: 'proton',
+      secretRefId: secret.id,
+      policy: {
+        status: 'ready',
+        secretStatus: 'configured',
+        mutatingRequiresApproval: true,
+        diagnostics: [],
+      },
+    });
+
+    const listed = await app.inject({
+      method: 'GET',
+      url: '/v1/connections?domain=email',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: createdBody.id,
+          policy: expect.objectContaining({ status: 'ready', secretStatus: 'configured' }),
+        }),
+      ]),
+    );
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/v1/connections',
+      headers,
+      payload: {
+        domain: 'email',
+        providerKind: 'github',
+        label: 'Bad connection',
+      },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toMatchObject({
+      error: 'invalid_connection',
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('rejects file roots inside runtime data directories and records audit evidence', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-file-roots-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/files/roots',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        label: 'Runtime data dir',
+        rootPath: dir,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_file_root' });
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'file_root_registration_denied',
+          severity: 'warn',
+          details: expect.objectContaining({
+            reasonCode: 'runtime_directory_forbidden',
+          }),
+        }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('rejects file searches against disabled roots and records audit evidence', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-file-search-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const externalRoot = mkdtempSync(join(tmpdir(), 'popeye-search-root-'));
+    const created = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'Search root',
+      rootPath: externalRoot,
+      permission: 'read',
+      filePatterns: ['**/*'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1024,
+    });
+    runtime.disableFileRoot(created.id);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/files/search?query=notes&rootId=${encodeURIComponent(created.id)}`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_file_root' });
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'file_root_policy_denied',
+          severity: 'warn',
+          details: expect.objectContaining({
+            reasonCode: 'root_disabled',
+            rootId: created.id,
+          }),
+        }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('rejects email digest reads for disabled connection-backed accounts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-email-digest-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const connection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Gmail',
+      mode: 'read_only',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const account = runtime.registerEmailAccount({
+      connectionId: connection.id,
+      emailAddress: 'operator@example.com',
+      displayName: 'Operator Mail',
+    });
+    runtime.updateConnection(connection.id, { enabled: false });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/email/digest?accountId=${encodeURIComponent(account.id)}`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_email_account' });
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'connection_policy_denied',
+          details: expect.objectContaining({
+            connectionId: connection.id,
+            purpose: 'email_digest_read',
+            reasonCode: 'connection_disabled',
+          }),
+        }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('applies per-item memory location filters on read and promotion routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-memory-scope-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [
+          { id: 'proj-1', name: 'Project One' },
+          { id: 'proj-2', name: 'Project Two' },
+        ],
+      }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const memory = runtime.insertMemory({
+      description: 'Project two private memory',
+      classification: 'internal',
+      sourceType: 'curated_memory',
+      content: 'Only project two should be able to read this memory.',
+      confidence: 0.9,
+      scope: 'default/proj-2',
+      workspaceId: 'default',
+      projectId: 'proj-2',
+    });
+
+    const denied = await app.inject({
+      method: 'GET',
+      url: `/v1/memory/${memory.id}?workspaceId=default&projectId=proj-1`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(denied.statusCode).toBe(404);
+
+    const allowed = await app.inject({
+      method: 'GET',
+      url: `/v1/memory/${memory.id}?scope=default/proj-2`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({
+      id: memory.id,
+      workspaceId: 'default',
+      projectId: 'proj-2',
+    });
+
+    const deniedPromotion = await app.inject({
+      method: 'POST',
+      url: `/v1/memory/${memory.id}/promote/propose?workspaceId=default&projectId=proj-1`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { targetPath: join(runtime.databases.paths.memoryDailyDir, 'project-two.md') },
+    });
+    expect(deniedPromotion.statusCode).toBe(404);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('exposes runtime execution context on receipt routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-receipt-runtime-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project One' }],
+      }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      title: 'receipt runtime context',
+      prompt: 'hello from receipt observability',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/runs/${terminal!.run!.id}/receipt`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      runId: terminal!.run!.id,
+      runtime: {
+        projectId: 'proj-1',
+        profileId: 'default',
+        execution: expect.objectContaining({
+          mode: 'interactive',
+          memoryScope: 'workspace',
+          recallScope: 'workspace',
+          filesystemPolicyClass: 'workspace',
+          contextReleasePolicy: 'summary_only',
+          sessionPolicy: expect.any(String),
+          warnings: expect.any(Array),
+        }),
+        timeline: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'engine_started',
+            source: 'run_event',
+          }),
+          expect.objectContaining({
+            code: 'receipt_succeeded',
+            source: 'receipt',
+          }),
+        ]),
+      },
+    });
 
     await runtime.close();
     await app.close();
@@ -934,7 +1395,7 @@ describe('control api', () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-memory-browser-'));
     chmodSync(dir, 0o700);
     const authFile = join(dir, 'auth.json');
-    initAuthStore(authFile);
+    const store = initAuthStore(authFile);
     const runtime = createRuntimeService({
       runtimeDataDir: dir,
       authFile,
@@ -947,13 +1408,13 @@ describe('control api', () => {
     });
     const app = await createControlApi({
       runtime,
-      authExemptPaths: new Set(['/v1/auth/exchange']),
       validateAuthExchangeNonce: (nonce) => nonce === 'accepted-nonce' ? 'accepted' : 'invalid',
     });
 
     const exchange = await app.inject({
       method: 'POST',
       url: '/v1/auth/exchange',
+      headers: { authorization: `Bearer ${store.current.token}` },
       payload: { nonce: 'accepted-nonce' },
     });
     expect(exchange.statusCode).toBe(200);

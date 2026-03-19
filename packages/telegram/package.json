@@ -10,9 +10,9 @@
     "@popeye/observability": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json --pretty false",
+    "build": "tsc -b tsconfig.build.json --pretty false",
     "clean": "find src -type f \\( -name '*.js' -o -name '*.js.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \\) -delete 2>/dev/null || true; rm -rf dist *.tsbuildinfo",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b tsconfig.build.json --pretty false"
   },
   "exports": {
     ".": {

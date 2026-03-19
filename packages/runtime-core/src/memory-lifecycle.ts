@@ -336,11 +336,11 @@ export class MemoryLifecycleService {
       content: input.content,
       confidence: input.confidence,
       scope: input.scope,
-      workspaceId: input.workspaceId,
-      projectId: input.projectId,
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       memoryType,
-      sourceRef: input.sourceRef,
-      sourceRefType: input.sourceRefType,
+      ...(input.sourceRef !== undefined ? { sourceRef: input.sourceRef } : {}),
+      ...(input.sourceRefType !== undefined ? { sourceRefType: input.sourceRefType } : {}),
     });
 
     // Apply caller-provided domain, contextReleasePolicy, and dedupKey
@@ -684,6 +684,8 @@ export class MemoryLifecycleService {
             content: rootRow.content,
             confidence: this.config.memory.compactionFlushConfidence,
             scope: workspaceId,
+            workspaceId,
+            projectId: null,
             sourceRunId: runId,
             sourceTimestamp: now,
             memoryType: classifyMemoryType('compaction_flush', rootRow.content),
@@ -756,6 +758,8 @@ export class MemoryLifecycleService {
         content: chunk,
         confidence: this.config.memory.compactionFlushConfidence,
         scope: workspaceId,
+        workspaceId,
+        projectId: null,
         sourceRunId: runId,
         sourceTimestamp: now,
         memoryType,
