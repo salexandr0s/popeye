@@ -174,7 +174,7 @@ import {
 import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
 import { z } from 'zod';
 import safe from 'safe-regex2';
-import { readAuthStore, readRoleAuthStore, rotateAuthStore } from './auth.js';
+import { initAuthStore, readAuthStore, readRoleAuthStore, rotateAuthStore } from './auth.js';
 
 function isTerminalJobStatus(status: JobRecord['status']): boolean {
   return ['succeeded', 'failed_final', 'cancelled'].includes(status);
@@ -731,6 +731,7 @@ export class PopeyeRuntimeService {
     PopeyeRuntimeService.validateRegexPatterns(config);
     this.config = config;
     this.log = loggerOverride ?? createLogger('runtime', config.security.redactionPatterns);
+    initAuthStore(config.authFile);
     this.startedAt = nowIso();
     this.databases = openRuntimeDatabases(config);
     this.engine = engineOverride ?? createEngineAdapter(config);
@@ -2655,7 +2656,8 @@ export class PopeyeRuntimeService {
     if (!account.connectionId) {
       return { account, connection: null };
     }
-    const allowedProviderKinds = account.providerKind === 'todoist' ? ['todoist'] : ['local'];
+    const allowedProviderKinds: Array<ConnectionRecord['providerKind']> =
+      account.providerKind === 'todoist' ? ['todoist'] : ['local'];
     const connection = this.requireConnectionForOperation({
       connectionId: account.connectionId,
       purpose,

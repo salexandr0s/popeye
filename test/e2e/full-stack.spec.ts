@@ -1,38 +1,23 @@
-/* eslint-disable no-undef -- page.evaluate runs in the browser context where window/document are globals */
 import { expect, test } from '@playwright/test';
+import { unlockInspector } from './helpers';
 
 test.describe('full-stack daemon e2e (fake engine)', () => {
   let csrfToken: string;
 
   test.beforeEach(async ({ page }) => {
-    // Auth bootstrap via nonce exchange: load the shell page to get a nonce,
-    // then exchange it for a browser session cookie.
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Popeye' })).toBeVisible({ timeout: 5_000 });
+    await unlockInspector(page);
 
     const bootstrap = await page.evaluate(async () => {
-      // The page was served with a nonce embedded — exchange it via the API
-      const exchangeResponse = await fetch('/v1/auth/exchange', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nonce: (window as unknown as { __POPEYE_BOOTSTRAP_NONCE__?: string }).__POPEYE_BOOTSTRAP_NONCE__
-            ?? '',
-        }),
-      });
       const csrfResponse = await fetch('/v1/security/csrf-token', {
         credentials: 'same-origin',
       });
       const csrfBody = await csrfResponse.json() as { token: string };
       return {
-        exchangeStatus: exchangeResponse.status,
         csrfStatus: csrfResponse.status,
         csrfToken: csrfBody.token,
       };
     });
 
-    expect(bootstrap.exchangeStatus).toBe(200);
     expect(bootstrap.csrfStatus).toBe(200);
     expect(bootstrap.csrfToken).toBeTruthy();
     csrfToken = bootstrap.csrfToken;

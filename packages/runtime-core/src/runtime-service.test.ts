@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -92,6 +92,31 @@ describe('PopeyeRuntimeService', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+  });
+
+  it('initializes the operator auth store on startup when missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-init-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'config', 'auth.json');
+    const config: AppConfig = {
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: true, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    };
+
+    expect(existsSync(authFile)).toBe(false);
+
+    const runtime = createRuntimeService(config);
+
+    expect(existsSync(authFile)).toBe(true);
+    expect(runtime.getStatus().ok).toBe(true);
 
     await runtime.close();
   });
