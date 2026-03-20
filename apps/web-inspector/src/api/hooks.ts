@@ -42,6 +42,10 @@ import type {
   TodoAccountRecord,
   TodoProjectRecord,
   VaultRecord,
+  FinanceImportRecord,
+  MedicalImportRecord,
+  FileRootRecord,
+  FileWriteIntentRecord,
 } from '@popeye/contracts';
 
 // Re-export contract types for view convenience
@@ -69,6 +73,10 @@ export type {
   TodoAccountRecord,
   TodoProjectRecord,
   VaultRecord,
+  FinanceImportRecord,
+  MedicalImportRecord,
+  FileRootRecord,
+  FileWriteIntentRecord,
 };
 export type InstructionBundle = CompiledInstructionBundle;
 
@@ -365,6 +373,23 @@ export function useConnectionDiagnostics(connectionId: string) {
   return useFetch<ConnectionDiagnosticsResponse>(
     connectionId ? `/v1/connections/${encodeURIComponent(connectionId)}/diagnostics` : null,
   );
+}
+
+export function useFinanceImports() {
+  return usePolling<FinanceImportRecord[]>('/v1/finance/imports', 5000);
+}
+
+export function useMedicalImports() {
+  return usePolling<MedicalImportRecord[]>('/v1/medical/imports', 5000);
+}
+
+export function useFileRoots() {
+  return usePolling<FileRootRecord[]>('/v1/files/roots', 5000);
+}
+
+export function useFileWriteIntents(status?: string) {
+  const suffix = status ? `?status=${encodeURIComponent(status)}` : '';
+  return usePolling<FileWriteIntentRecord[]>(`/v1/files/write-intents${suffix}`, 5000);
 }
 
 export function useTodoProjects(accountId: string) {

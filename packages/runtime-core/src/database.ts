@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import type { AppConfig, RuntimePaths } from '@popeye/contracts';
 
 import { ensureRuntimePaths } from './config.js';
+import { MigrationManager } from './migration-manager.js';
 
 export interface RuntimeDatabases {
   app: Database.Database;
@@ -896,5 +897,16 @@ export function openRuntimeDatabases(config: AppConfig): RuntimeDatabases {
   configure(memory);
   applyMigrations(app, APP_MIGRATIONS);
   applyMigrations(memory, MEMORY_MIGRATIONS);
+
+  // Post-migration verification via MigrationManager
+  const migrationManager = new MigrationManager(app);
+  migrationManager.ensureSchemaTable();
+  const verification = migrationManager.verifyPostMigration();
+  if (!verification.ok) {
+    for (const error of verification.errors) {
+      console.warn(`[migration-manager] post-migration warning: ${error}`);
+    }
+  }
+
   return { app, memory, paths };
 }

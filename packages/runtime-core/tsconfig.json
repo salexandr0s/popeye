@@ -51,6 +51,12 @@
     },
     {
       "path": "../cap-people"
+    },
+    {
+      "path": "../cap-finance"
+    },
+    {
+      "path": "../cap-medical"
     }
   ],
   "exclude": [

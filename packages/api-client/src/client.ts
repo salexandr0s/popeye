@@ -207,6 +207,28 @@ import {
   type FileWriteIntentCreateInput,
   type FileWriteIntentRecord,
   FileWriteIntentRecordSchema,
+  type FinanceImportRecord,
+  FinanceImportRecordSchema,
+  type FinanceTransactionRecord,
+  FinanceTransactionRecordSchema,
+  type FinanceDocumentRecord,
+  FinanceDocumentRecordSchema,
+  type FinanceDigestRecord,
+  FinanceDigestRecordSchema,
+  FinanceSearchResultSchema,
+  type FinanceSearchResult,
+  type MedicalImportRecord,
+  MedicalImportRecordSchema,
+  type MedicalAppointmentRecord,
+  MedicalAppointmentRecordSchema,
+  type MedicalMedicationRecord,
+  MedicalMedicationRecordSchema,
+  type MedicalDocumentRecord,
+  MedicalDocumentRecordSchema,
+  type MedicalDigestRecord,
+  MedicalDigestRecordSchema,
+  MedicalSearchResultSchema,
+  type MedicalSearchResult,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -1233,6 +1255,72 @@ export class PopeyeApiClient {
 
   async getPersonActivityRollups(personId: string): Promise<PersonActivityRollup[]> {
     return this.getArray(`/v1/people/${encodeURIComponent(personId)}/activity`, PersonActivityRollupSchema);
+  }
+
+  // --- Finance ---
+
+  async listFinanceImports(): Promise<FinanceImportRecord[]> {
+    return this.getArray('/v1/finance/imports', FinanceImportRecordSchema);
+  }
+
+  async getFinanceImport(id: string): Promise<FinanceImportRecord> {
+    return this.get(`/v1/finance/imports/${encodeURIComponent(id)}`, FinanceImportRecordSchema);
+  }
+
+  async listFinanceTransactions(options?: { importId?: string; category?: string; dateFrom?: string; dateTo?: string; limit?: number }): Promise<FinanceTransactionRecord[]> {
+    return this.getArray(`/v1/finance/transactions${this.buildQuery(options ?? {})}`, FinanceTransactionRecordSchema);
+  }
+
+  async listFinanceDocuments(importId?: string): Promise<FinanceDocumentRecord[]> {
+    return this.getArray(`/v1/finance/documents${this.buildQuery({ importId })}`, FinanceDocumentRecordSchema);
+  }
+
+  async searchFinance(query: string, options?: { category?: string; dateFrom?: string; dateTo?: string; limit?: number }): Promise<{ query: string; results: FinanceSearchResult[] }> {
+    const params = this.buildQuery({ query, ...options });
+    const schema = z.object({
+      query: z.string(),
+      results: z.array(FinanceSearchResultSchema),
+    });
+    return this.get(`/v1/finance/search${params}`, schema);
+  }
+
+  async getFinanceDigest(period?: string): Promise<FinanceDigestRecord | null> {
+    return this.get(`/v1/finance/digest${this.buildQuery({ period })}`, FinanceDigestRecordSchema.nullable());
+  }
+
+  // --- Medical ---
+
+  async listMedicalImports(): Promise<MedicalImportRecord[]> {
+    return this.getArray('/v1/medical/imports', MedicalImportRecordSchema);
+  }
+
+  async getMedicalImport(id: string): Promise<MedicalImportRecord> {
+    return this.get(`/v1/medical/imports/${encodeURIComponent(id)}`, MedicalImportRecordSchema);
+  }
+
+  async listMedicalAppointments(options?: { importId?: string; limit?: number }): Promise<MedicalAppointmentRecord[]> {
+    return this.getArray(`/v1/medical/appointments${this.buildQuery(options ?? {})}`, MedicalAppointmentRecordSchema);
+  }
+
+  async listMedicalMedications(importId?: string): Promise<MedicalMedicationRecord[]> {
+    return this.getArray(`/v1/medical/medications${this.buildQuery({ importId })}`, MedicalMedicationRecordSchema);
+  }
+
+  async listMedicalDocuments(importId?: string): Promise<MedicalDocumentRecord[]> {
+    return this.getArray(`/v1/medical/documents${this.buildQuery({ importId })}`, MedicalDocumentRecordSchema);
+  }
+
+  async searchMedical(query: string, options?: { limit?: number }): Promise<{ query: string; results: MedicalSearchResult[] }> {
+    const params = this.buildQuery({ query, ...options });
+    const schema = z.object({
+      query: z.string(),
+      results: z.array(MedicalSearchResultSchema),
+    });
+    return this.get(`/v1/medical/search${params}`, schema);
+  }
+
+  async getMedicalDigest(period?: string): Promise<MedicalDigestRecord | null> {
+    return this.get(`/v1/medical/digest${this.buildQuery({ period })}`, MedicalDigestRecordSchema.nullable());
   }
 
   // --- File write-intents ---

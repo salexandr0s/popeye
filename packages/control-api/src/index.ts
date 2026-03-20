@@ -2320,6 +2320,118 @@ export async function createControlApi(
     return dependencies.runtime.getPersonActivityRollups(id);
   });
 
+  // --- Finance routes ---
+
+  app.get('/v1/finance/imports', async () => {
+    return dependencies.runtime.listFinanceImports();
+  });
+
+  app.get('/v1/finance/imports/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const record = dependencies.runtime.getFinanceImport(id);
+    if (!record) return reply.code(404).send({ error: 'finance import not found' });
+    return record;
+  });
+
+  app.get('/v1/finance/transactions', async (request) => {
+    const query = z.object({
+      importId: z.string().optional(),
+      category: z.string().optional(),
+      dateFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listFinanceTransactions(query.importId, {
+      category: query.category,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      limit: query.limit,
+    });
+  });
+
+  app.get('/v1/finance/documents', async (request) => {
+    const query = z.object({
+      importId: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listFinanceDocuments(query.importId);
+  });
+
+  app.get('/v1/finance/search', async (request, reply) => {
+    const query = z.object({
+      query: z.string().min(1),
+      dateFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      category: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    if (!query.query) return reply.code(400).send({ error: 'query parameter is required' });
+    return dependencies.runtime.searchFinance({
+      query: query.query,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      category: query.category,
+      limit: query.limit ?? 20,
+    });
+  });
+
+  app.get('/v1/finance/digest', async (request) => {
+    const query = z.object({
+      period: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.getFinanceDigest(query.period);
+  });
+
+  // --- Medical routes ---
+
+  app.get('/v1/medical/imports', async () => {
+    return dependencies.runtime.listMedicalImports();
+  });
+
+  app.get('/v1/medical/imports/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const record = dependencies.runtime.getMedicalImport(id);
+    if (!record) return reply.code(404).send({ error: 'medical import not found' });
+    return record;
+  });
+
+  app.get('/v1/medical/appointments', async (request) => {
+    const query = z.object({
+      importId: z.string().optional(),
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listMedicalAppointments(query.importId, { limit: query.limit });
+  });
+
+  app.get('/v1/medical/medications', async (request) => {
+    const query = z.object({
+      importId: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listMedicalMedications(query.importId);
+  });
+
+  app.get('/v1/medical/documents', async (request) => {
+    const query = z.object({
+      importId: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listMedicalDocuments(query.importId);
+  });
+
+  app.get('/v1/medical/search', async (request, reply) => {
+    const query = z.object({
+      query: z.string().min(1),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    if (!query.query) return reply.code(400).send({ error: 'query parameter is required' });
+    return dependencies.runtime.searchMedical(query.query, query.limit);
+  });
+
+  app.get('/v1/medical/digest', async (request) => {
+    const query = z.object({
+      period: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.getMedicalDigest(query.period);
+  });
+
   // --- File write-intent routes ---
 
   app.post('/v1/files/write-intents', async (request, reply) => {

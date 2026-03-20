@@ -104,6 +104,10 @@ export class MigrationManager {
   /**
    * Checks schema_migrations table integrity.
    * Returns status with count of applied migrations and any detected errors.
+   *
+   * Handles both the legacy schema (id, applied_at) created by the inline
+   * applyMigrations() helper and the MigrationManager schema (version,
+   * timestamp, status, backup_path).
    */
   verifyPostMigration(): PostMigrationResult {
     const errors: string[] = [];
@@ -117,7 +121,39 @@ export class MigrationManager {
       return { ok: false, applied: 0, errors: ['schema_migrations table does not exist'] };
     }
 
-    // Count applied migrations
+    // Detect which schema variant is present by inspecting column names
+    const columns = this.db.prepare('PRAGMA table_info(schema_migrations)').all() as Array<{
+      name: string;
+    }>;
+    const columnNames = new Set(columns.map((c) => c.name));
+    const hasLegacySchema = columnNames.has('id') && !columnNames.has('version');
+
+    if (hasLegacySchema) {
+      // Legacy schema: columns are (id, applied_at)
+      const rows = this.db
+        .prepare('SELECT id, applied_at FROM schema_migrations ORDER BY id')
+        .all() as Array<{ id: string; applied_at: string }>;
+
+      for (const row of rows) {
+        if (!row.id) {
+          errors.push('Migration record with empty id found');
+        }
+        if (!row.applied_at) {
+          errors.push(`Migration ${row.id}: missing applied_at`);
+        }
+      }
+
+      // Check for duplicates
+      const ids = rows.map((r) => r.id);
+      const uniqueIds = new Set(ids);
+      if (ids.length !== uniqueIds.size) {
+        errors.push('Duplicate migration ids detected');
+      }
+
+      return { ok: errors.length === 0, applied: rows.length, errors };
+    }
+
+    // MigrationManager schema: columns are (version, timestamp, status, backup_path)
     const rows = this.db
       .prepare('SELECT version, timestamp, status FROM schema_migrations ORDER BY version')
       .all() as MigrationRecord[];

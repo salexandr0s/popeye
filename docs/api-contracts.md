@@ -134,6 +134,22 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/files/write-intents` | `FileWriteIntentRecordSchema[]` |
 | GET | `/v1/files/write-intents/:id` | `FileWriteIntentRecordSchema` |
 | POST | `/v1/files/write-intents/:id/review` | `FileWriteIntentRecordSchema` (req: `FileWriteIntentReviewInputSchema`) |
+| GET | `/v1/finance/imports` | `FinanceImportRecordSchema[]` |
+| GET | `/v1/finance/imports/:id` | `FinanceImportRecordSchema` |
+| GET | `/v1/finance/transactions` | `FinanceTransactionRecordSchema[]` |
+| GET | `/v1/finance/documents` | `FinanceDocumentRecordSchema[]` |
+| GET | `/v1/finance/search?query=...` | `{ query, results: FinanceSearchResultSchema[] }` |
+| GET | `/v1/finance/digest` | `FinanceDigestRecordSchema \| null` |
+| GET | `/v1/medical/imports` | `MedicalImportRecordSchema[]` |
+| GET | `/v1/medical/imports/:id` | `MedicalImportRecordSchema` |
+| GET | `/v1/medical/appointments` | `MedicalAppointmentRecordSchema[]` |
+| GET | `/v1/medical/medications` | `MedicalMedicationRecordSchema[]` |
+| GET | `/v1/medical/documents` | `MedicalDocumentRecordSchema[]` |
+| GET | `/v1/medical/search?query=...` | `{ query, results: MedicalSearchResultSchema[] }` |
+| GET | `/v1/medical/digest` | `MedicalDigestRecordSchema \| null` |
+| POST | `/v1/vaults/:id/backup` | `VaultBackupResultSchema` (req: `{ destinationDir? }`) |
+| POST | `/v1/vaults/:id/restore` | `VaultBackupResultSchema` (req: `{ backupPath }`) |
+| GET | `/v1/vaults/:id/backup/verify` | `VaultVerifyResultSchema` |
 | GET | `/v1/events/stream` | SSE `text/event-stream` |
 | POST | `/v1/messages/ingest` | `MessageIngressResponseSchema` (req: `IngestMessageInputSchema`) |
 | GET | `/v1/messages/:id` | `MessageRecordSchema` |

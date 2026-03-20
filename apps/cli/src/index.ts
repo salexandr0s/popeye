@@ -153,6 +153,9 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     search: { desc: 'Search indexed files', usage: 'pop files search <query> [--root-id <id>] [--limit <n>]' },
     reindex: { desc: 'Trigger reindex', usage: 'pop files reindex <root-id>' },
     status: { desc: 'Show indexing stats', usage: 'pop files status' },
+    review: { desc: 'List pending write intents', usage: 'pop files review [--json]' },
+    apply: { desc: 'Apply a write intent', usage: 'pop files apply <intentId>' },
+    reject: { desc: 'Reject a write intent', usage: 'pop files reject <intentId> [reason]' },
   },
   email: {
     accounts: { desc: 'List email accounts', usage: 'pop email accounts [--json]' },
@@ -214,6 +217,26 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     split: { desc: 'Split identities into a new person', usage: 'pop people split <personId> <identityId> [identityId...]' },
     attach: { desc: 'Attach an identity to a person', usage: 'pop people attach <personId> --provider <email|calendar|github> --external-id <value> [--display-name <name>] [--handle <value>]' },
     detach: { desc: 'Detach an identity into a new person', usage: 'pop people detach <identityId>' },
+    history: { desc: 'Show merge/split/attach/detach events', usage: 'pop people history <personId> [--json]' },
+    suggestions: { desc: 'Show merge suggestions', usage: 'pop people suggestions [--json]' },
+    activity: { desc: 'Show activity rollups', usage: 'pop people activity <personId> [--json]' },
+  },
+  finance: {
+    imports: { desc: 'List finance imports', usage: 'pop finance imports [--json]' },
+    transactions: { desc: 'List transactions', usage: 'pop finance transactions [--category <cat>] [--limit <n>] [--json]' },
+    search: { desc: 'Search finance data', usage: 'pop finance search <query> [--json]' },
+    digest: { desc: 'Show finance digest', usage: 'pop finance digest [--period <YYYY-MM>] [--json]' },
+  },
+  medical: {
+    imports: { desc: 'List medical imports', usage: 'pop medical imports [--json]' },
+    appointments: { desc: 'List appointments', usage: 'pop medical appointments [--limit <n>] [--json]' },
+    medications: { desc: 'List medications', usage: 'pop medical medications [--json]' },
+    search: { desc: 'Search medical data', usage: 'pop medical search <query> [--json]' },
+    digest: { desc: 'Show medical digest', usage: 'pop medical digest [--json]' },
+  },
+  upgrade: {
+    verify: { desc: 'Verify post-upgrade state', usage: 'pop upgrade verify [--json]' },
+    rollback: { desc: 'Restore from pre-upgrade backup', usage: 'pop upgrade rollback <backupPath>' },
   },
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
@@ -2271,6 +2294,296 @@ async function main(): Promise<void> {
       console.info(JSON.stringify(split, null, 2));
     } else {
       console.info(`Split into ${split.id}: ${split.displayName}`);
+    }
+    return;
+  }
+
+  // --- People Tranche 2: history, suggestions, activity ---
+
+  if (command === 'people' && subcommand === 'history' && arg1) {
+    const client = await requireDaemonClient(config);
+    const events = await client.listPersonMergeEvents(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(events, null, 2));
+    } else if (events.length === 0) {
+      console.info('No merge/split events found.');
+    } else {
+      for (const event of events) {
+        console.info(`  ${event.eventType.padEnd(10)} ${event.sourcePersonId} → ${event.targetPersonId}  ${event.createdAt}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'suggestions') {
+    const client = await requireDaemonClient(config);
+    const suggestions = await client.getPersonMergeSuggestions();
+    if (jsonFlag) {
+      console.info(JSON.stringify(suggestions, null, 2));
+    } else if (suggestions.length === 0) {
+      console.info('No merge suggestions found.');
+    } else {
+      for (const sug of suggestions) {
+        console.info(`  ${sug.sourceDisplayName} → ${sug.targetDisplayName}  (${sug.reason}, confidence: ${sug.confidence})`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'activity' && arg1) {
+    const client = await requireDaemonClient(config);
+    const rollups = await client.getPersonActivityRollups(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(rollups, null, 2));
+    } else if (rollups.length === 0) {
+      console.info('No activity found.');
+    } else {
+      for (const rollup of rollups) {
+        console.info(`  ${rollup.domain.padEnd(12)} ${rollup.summary.padEnd(30)} count: ${rollup.count}  last: ${rollup.lastSeenAt}`);
+      }
+    }
+    return;
+  }
+
+  // --- Finance CLI ---
+
+  if (command === 'finance' && subcommand === 'imports') {
+    const client = await requireDaemonClient(config);
+    const imports = await client.listFinanceImports();
+    if (jsonFlag) {
+      console.info(JSON.stringify(imports, null, 2));
+    } else if (imports.length === 0) {
+      console.info('No finance imports found.');
+    } else {
+      for (const imp of imports) {
+        console.info(`  ${imp.id.slice(0, 8)}  ${imp.fileName.padEnd(30)} ${imp.status.padEnd(12)} ${imp.importType}  records: ${imp.recordCount}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'finance' && subcommand === 'transactions') {
+    const client = await requireDaemonClient(config);
+    const category = getFlagValue('--category');
+    const limit = getFlagValue('--limit');
+    const opts: { category?: string; limit?: number } = {};
+    if (category) opts.category = category;
+    if (limit) opts.limit = Number(limit);
+    const transactions = await client.listFinanceTransactions(opts);
+    if (jsonFlag) {
+      console.info(JSON.stringify(transactions, null, 2));
+    } else if (transactions.length === 0) {
+      console.info('No transactions found.');
+    } else {
+      for (const tx of transactions) {
+        const sign = tx.amount >= 0 ? '+' : '';
+        console.info(`  ${tx.date}  ${sign}${tx.currency} ${tx.amount.toFixed(2).padStart(10)}  ${tx.description.slice(0, 40)}${tx.category ? `  [${tx.category}]` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'finance' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const result = await client.searchFinance(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else if (result.results.length === 0) {
+      console.info('No results found.');
+    } else {
+      for (const item of result.results) {
+        console.info(`  ${item.date}  $${item.amount.toFixed(2).padStart(10)}  ${item.description.slice(0, 40)}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'finance' && subcommand === 'digest') {
+    const client = await requireDaemonClient(config);
+    const period = getFlagValue('--period');
+    const digest = await client.getFinanceDigest(period ?? undefined);
+    if (jsonFlag) {
+      console.info(JSON.stringify(digest, null, 2));
+    } else if (!digest) {
+      console.info('No finance digest available.');
+    } else {
+      console.info(`Period: ${digest.period}`);
+      console.info(`Income:   $${digest.totalIncome.toFixed(2)}`);
+      console.info(`Expenses: $${digest.totalExpenses.toFixed(2)}`);
+      if (Object.keys(digest.categoryBreakdown).length > 0) {
+        console.info('Categories:');
+        for (const [cat, amount] of Object.entries(digest.categoryBreakdown)) {
+          console.info(`  ${cat.padEnd(20)} $${amount.toFixed(2)}`);
+        }
+      }
+    }
+    return;
+  }
+
+  // --- Medical CLI ---
+
+  if (command === 'medical' && subcommand === 'imports') {
+    const client = await requireDaemonClient(config);
+    const imports = await client.listMedicalImports();
+    if (jsonFlag) {
+      console.info(JSON.stringify(imports, null, 2));
+    } else if (imports.length === 0) {
+      console.info('No medical imports found.');
+    } else {
+      for (const imp of imports) {
+        console.info(`  ${imp.id.slice(0, 8)}  ${imp.fileName.padEnd(30)} ${imp.status.padEnd(12)} ${imp.importType}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'medical' && subcommand === 'appointments') {
+    const client = await requireDaemonClient(config);
+    const limit = getFlagValue('--limit');
+    const apptOpts: { limit?: number } = {};
+    if (limit) apptOpts.limit = Number(limit);
+    const appointments = await client.listMedicalAppointments(apptOpts);
+    if (jsonFlag) {
+      console.info(JSON.stringify(appointments, null, 2));
+    } else if (appointments.length === 0) {
+      console.info('No appointments found.');
+    } else {
+      for (const appt of appointments) {
+        console.info(`  ${appt.date}  ${appt.provider.padEnd(20)}${appt.specialty ? ` [${appt.specialty}]` : ''}${appt.location ? ` @ ${appt.location}` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'medical' && subcommand === 'medications') {
+    const client = await requireDaemonClient(config);
+    const medications = await client.listMedicalMedications();
+    if (jsonFlag) {
+      console.info(JSON.stringify(medications, null, 2));
+    } else if (medications.length === 0) {
+      console.info('No medications found.');
+    } else {
+      for (const med of medications) {
+        console.info(`  ${med.name.padEnd(25)} ${med.dosage ?? ''}${med.frequency ? ` · ${med.frequency}` : ''}${med.prescriber ? ` (${med.prescriber})` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'medical' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const result = await client.searchMedical(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else if (result.results.length === 0) {
+      console.info('No results found.');
+    } else {
+      for (const item of result.results) {
+        console.info(`  [${item.recordType}] ${item.redactedSummary.slice(0, 50)}${item.date ? ` (${item.date})` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (command === 'medical' && subcommand === 'digest') {
+    const client = await requireDaemonClient(config);
+    const digest = await client.getMedicalDigest();
+    if (jsonFlag) {
+      console.info(JSON.stringify(digest, null, 2));
+    } else if (!digest) {
+      console.info('No medical digest available.');
+    } else {
+      console.info(`Period: ${digest.period}`);
+      console.info(`Appointments: ${digest.appointmentCount}`);
+      console.info(`Active medications: ${digest.activeMedications}`);
+      if (digest.summary) {
+        console.info(`Summary: ${digest.summary}`);
+      }
+    }
+    return;
+  }
+
+  // --- File write-intent CLI ---
+
+  if (command === 'files' && subcommand === 'review') {
+    const client = await requireDaemonClient(config);
+    const intents = await client.listFileWriteIntents({ status: 'pending' });
+    if (jsonFlag) {
+      console.info(JSON.stringify(intents, null, 2));
+    } else if (intents.length === 0) {
+      console.info('No pending write intents.');
+    } else {
+      for (const intent of intents) {
+        console.info(`  ${intent.id.slice(0, 8)}  ${intent.intentType.padEnd(8)} ${intent.filePath}`);
+        if (intent.diffPreview) {
+          for (const line of intent.diffPreview.split('\n').slice(0, 5)) {
+            console.info(`    ${line}`);
+          }
+        }
+      }
+    }
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'apply' && arg1) {
+    const client = await requireDaemonClient(config);
+    const result = await client.reviewFileWriteIntent(arg1, { action: 'apply' });
+    console.info(`Applied write intent ${result.id}: ${result.filePath}`);
+    return;
+  }
+
+  if (command === 'files' && subcommand === 'reject' && arg1) {
+    const client = await requireDaemonClient(config);
+    const reviewInput: { action: 'reject'; reason?: string } = { action: 'reject' };
+    if (_arg2) reviewInput.reason = _arg2;
+    const result = await client.reviewFileWriteIntent(arg1, reviewInput);
+    console.info(`Rejected write intent ${result.id}: ${result.filePath}`);
+    return;
+  }
+
+  // --- Upgrade CLI ---
+
+  if (command === 'upgrade' && subcommand === 'verify') {
+    const client = await requireDaemonClient(config);
+    try {
+      const daemonStatus = await client.status();
+      const result = {
+        ok: daemonStatus.ok,
+        schedulerRunning: daemonStatus.schedulerRunning,
+        engineKind: daemonStatus.engineKind,
+        runningJobs: daemonStatus.runningJobs,
+        startedAt: daemonStatus.startedAt,
+      };
+      if (jsonFlag) {
+        console.info(JSON.stringify(result, null, 2));
+      } else {
+        console.info(`Daemon: ${result.ok ? 'healthy' : 'unhealthy'}`);
+        console.info(`Scheduler: ${result.schedulerRunning ? 'running' : 'stopped'}`);
+        console.info(`Engine: ${result.engineKind}`);
+        console.info(`Running jobs: ${result.runningJobs}`);
+        console.info(`Started: ${result.startedAt}`);
+      }
+    } catch (error) {
+      console.error(`Upgrade verification failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === 'upgrade' && subcommand === 'rollback' && arg1) {
+    const targetPath = resolve(arg1);
+    if (!existsSync(targetPath)) {
+      console.error(`Backup not found: ${targetPath}`);
+      process.exit(1);
+    }
+    const upgradePaths = deriveRuntimePaths(config.runtimeDataDir);
+    try {
+      restoreBackup(targetPath, upgradePaths);
+      console.info(`Restored from backup: ${targetPath}`);
+      console.info('Restart the daemon to apply the restored state.');
+    } catch (error) {
+      console.error(`Rollback failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
     }
     return;
   }

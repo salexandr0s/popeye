@@ -135,6 +135,18 @@ import type {
   PersonSearchResult,
   PersonSplitInput,
   PersonUpdateInput,
+  FinanceImportRecord,
+  FinanceTransactionRecord,
+  FinanceDocumentRecord,
+  FinanceDigestRecord,
+  FinanceSearchQuery,
+  FinanceSearchResult,
+  MedicalImportRecord,
+  MedicalAppointmentRecord,
+  MedicalMedicationRecord,
+  MedicalDocumentRecord,
+  MedicalDigestRecord,
+  MedicalSearchResult,
 } from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
@@ -197,6 +209,8 @@ import { createGithubCapability, GithubService, GithubSearchService, GithubSyncS
 import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GoogleCalendarAdapter } from '@popeye/cap-calendar';
 import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
 import { createPeopleCapability, PeopleService, type PersonProjectionSeed } from '@popeye/cap-people';
+import { createFinanceCapability, FinanceService, FinanceSearchService } from '@popeye/cap-finance';
+import { createMedicalCapability, MedicalService, MedicalSearchService } from '@popeye/cap-medical';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   clearBrowserSessions,
@@ -1034,6 +1048,8 @@ export class PopeyeRuntimeService {
     this.capabilityRegistry.register(createCalendarCapability());
     this.capabilityRegistry.register(createTodosCapability());
     this.capabilityRegistry.register(createPeopleCapability());
+    this.capabilityRegistry.register(createFinanceCapability());
+    this.capabilityRegistry.register(createMedicalCapability());
 
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
@@ -1109,6 +1125,18 @@ export class PopeyeRuntimeService {
       this.peopleReadDb.close();
       this.peopleReadDb = null;
       this.peopleServiceCache = null;
+    }
+    if (this.financeReadDb) {
+      this.financeReadDb.close();
+      this.financeReadDb = null;
+      this.financeServiceCache = null;
+      this.financeSearchCache = null;
+    }
+    if (this.medicalReadDb) {
+      this.medicalReadDb.close();
+      this.medicalReadDb = null;
+      this.medicalServiceCache = null;
+      this.medicalSearchCache = null;
     }
     if (this.capabilityInitPromise) await this.capabilityInitPromise;
     await this.capabilityRegistry.shutdownAll();
@@ -6977,6 +7005,122 @@ export class PopeyeRuntimeService {
     } finally {
       writeDb.close();
     }
+  }
+
+  // --- Finance facade ---
+
+  private financeReadDb: BetterSqlite3.Database | null = null;
+  private financeServiceCache: FinanceService | null = null;
+  private financeSearchCache: FinanceSearchService | null = null;
+
+  private getFinanceReadDb(): BetterSqlite3.Database | null {
+    if (this.financeReadDb) return this.financeReadDb;
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    if (!existsSync(dbPath)) return null;
+    this.financeReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.financeReadDb;
+  }
+
+  private getFinanceServiceFacade(): FinanceService | null {
+    if (this.financeServiceCache) return this.financeServiceCache;
+    const db = this.getFinanceReadDb();
+    if (!db) return null;
+    this.financeServiceCache = new FinanceService(db as unknown as CapabilityContext['appDb']);
+    return this.financeServiceCache;
+  }
+
+  private getFinanceSearchFacade(): FinanceSearchService | null {
+    if (this.financeSearchCache) return this.financeSearchCache;
+    const db = this.getFinanceReadDb();
+    if (!db) return null;
+    this.financeSearchCache = new FinanceSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.financeSearchCache;
+  }
+
+  listFinanceImports(): FinanceImportRecord[] {
+    return this.getFinanceServiceFacade()?.listImports() ?? [];
+  }
+
+  getFinanceImport(id: string): FinanceImportRecord | null {
+    return this.getFinanceServiceFacade()?.getImport(id) ?? null;
+  }
+
+  listFinanceTransactions(importId?: string, options?: { dateFrom?: string; dateTo?: string; category?: string; limit?: number }): FinanceTransactionRecord[] {
+    return this.getFinanceServiceFacade()?.listTransactions(importId, options) ?? [];
+  }
+
+  listFinanceDocuments(importId?: string): FinanceDocumentRecord[] {
+    return this.getFinanceServiceFacade()?.listDocuments(importId) ?? [];
+  }
+
+  searchFinance(query: FinanceSearchQuery): { query: string; results: FinanceSearchResult[] } {
+    return this.getFinanceSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+  }
+
+  getFinanceDigest(period?: string): FinanceDigestRecord | null {
+    return this.getFinanceServiceFacade()?.getDigest(period) ?? null;
+  }
+
+  // --- Medical facade ---
+
+  private medicalReadDb: BetterSqlite3.Database | null = null;
+  private medicalServiceCache: MedicalService | null = null;
+  private medicalSearchCache: MedicalSearchService | null = null;
+
+  private getMedicalReadDb(): BetterSqlite3.Database | null {
+    if (this.medicalReadDb) return this.medicalReadDb;
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    if (!existsSync(dbPath)) return null;
+    this.medicalReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.medicalReadDb;
+  }
+
+  private getMedicalServiceFacade(): MedicalService | null {
+    if (this.medicalServiceCache) return this.medicalServiceCache;
+    const db = this.getMedicalReadDb();
+    if (!db) return null;
+    this.medicalServiceCache = new MedicalService(db as unknown as CapabilityContext['appDb']);
+    return this.medicalServiceCache;
+  }
+
+  private getMedicalSearchFacade(): MedicalSearchService | null {
+    if (this.medicalSearchCache) return this.medicalSearchCache;
+    const db = this.getMedicalReadDb();
+    if (!db) return null;
+    this.medicalSearchCache = new MedicalSearchService(db as unknown as CapabilityContext['appDb']);
+    return this.medicalSearchCache;
+  }
+
+  listMedicalImports(): MedicalImportRecord[] {
+    return this.getMedicalServiceFacade()?.listImports() ?? [];
+  }
+
+  getMedicalImport(id: string): MedicalImportRecord | null {
+    return this.getMedicalServiceFacade()?.getImport(id) ?? null;
+  }
+
+  listMedicalAppointments(importId?: string, options?: { limit?: number }): MedicalAppointmentRecord[] {
+    return this.getMedicalServiceFacade()?.listAppointments(importId, options) ?? [];
+  }
+
+  listMedicalMedications(importId?: string): MedicalMedicationRecord[] {
+    return this.getMedicalServiceFacade()?.listMedications(importId) ?? [];
+  }
+
+  listMedicalDocuments(importId?: string): MedicalDocumentRecord[] {
+    return this.getMedicalServiceFacade()?.listDocuments(importId) ?? [];
+  }
+
+  searchMedical(query: string, limit?: number): { query: string; results: MedicalSearchResult[] } {
+    return this.getMedicalSearchFacade()?.search(query, limit) ?? { query, results: [] };
+  }
+
+  getMedicalDigest(period?: string): MedicalDigestRecord | null {
+    return this.getMedicalServiceFacade()?.getDigest(period) ?? null;
   }
 
   private buildCapabilityContext(): CapabilityContext {

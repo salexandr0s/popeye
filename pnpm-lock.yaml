@@ -395,9 +395,15 @@ importers:
       '@popeye/cap-files':
         specifier: workspace:*
         version: link:../cap-files
+      '@popeye/cap-finance':
+        specifier: workspace:*
+        version: link:../cap-finance
       '@popeye/cap-github':
         specifier: workspace:*
         version: link:../cap-github
+      '@popeye/cap-medical':
+        specifier: workspace:*
+        version: link:../cap-medical
       '@popeye/cap-people':
         specifier: workspace:*
         version: link:../cap-people

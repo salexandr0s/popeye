@@ -50,6 +50,12 @@
     },
     {
       "path": "../cap-people/tsconfig.build.json"
+    },
+    {
+      "path": "../cap-finance/tsconfig.build.json"
+    },
+    {
+      "path": "../cap-medical/tsconfig.build.json"
     }
   ]
 }

@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
@@ -23,6 +23,7 @@ interface OpenEntry {
 export class VaultManager {
   private readonly registry = new Map<string, VaultRecord>();
   private readonly openHandles = new Map<string, OpenEntry>();
+  private readonly cryptoMetadata = new Map<string, { kekRef: string; dekWrapped: string }>();
 
   constructor(
     private readonly db: Database.Database,
@@ -62,13 +63,26 @@ export class VaultManager {
     vaultDb.close();
     chmodSync(dbPath, 0o600);
 
+    // If restricted vault with encryption key available, encrypt the DB
+    let encrypted = false;
+    let encryptionKeyRef: string | null = null;
+    if (kind === 'restricted' && process.env['POPEYE_VAULT_KEK']) {
+      const kekHex = process.env['POPEYE_VAULT_KEK'];
+      const dek = this.generateDek();
+      const dekWrapped = this.wrapDekWithKek(dek, kekHex);
+      this.encryptFile(dbPath, dek);
+      this.cryptoMetadata.set(id, { kekRef: 'env:POPEYE_VAULT_KEK', dekWrapped });
+      encrypted = true;
+      encryptionKeyRef = 'env:POPEYE_VAULT_KEK';
+    }
+
     const record: VaultRecord = {
       id,
       domain: input.domain,
       kind,
       dbPath,
-      encrypted: false,
-      encryptionKeyRef: null,
+      encrypted,
+      encryptionKeyRef,
       status: 'closed',
       createdAt: now,
       lastAccessedAt: null,
@@ -208,6 +222,56 @@ export class VaultManager {
 
   getVault(vaultId: string): VaultRecord | null {
     return this.registry.get(vaultId) ?? null;
+  }
+
+  private generateDek(): Buffer {
+    return randomBytes(32);
+  }
+
+  private wrapDekWithKek(dek: Buffer, kekHex: string): string {
+    const kek = Buffer.from(kekHex, 'hex');
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', kek, iv);
+    const encrypted = Buffer.concat([cipher.update(dek), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    return Buffer.concat([iv, authTag, encrypted]).toString('base64');
+  }
+
+  private unwrapDek(wrappedDek: string, kekHex: string): Buffer {
+    const kek = Buffer.from(kekHex, 'hex');
+    const raw = Buffer.from(wrappedDek, 'base64');
+    const iv = raw.subarray(0, 12);
+    const authTag = raw.subarray(12, 28);
+    const encrypted = raw.subarray(28);
+    const decipher = createDecipheriv('aes-256-gcm', kek, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  }
+
+  private encryptFile(filePath: string, dek: Buffer): void {
+    const plaintext = readFileSync(filePath);
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', dek, iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    const output = Buffer.concat([iv, authTag, encrypted]);
+    writeFileSync(`${filePath}.enc`, output);
+    unlinkSync(filePath);
+    // Also clean up WAL/SHM files
+    for (const suffix of ['-wal', '-shm']) {
+      if (existsSync(`${filePath}${suffix}`)) unlinkSync(`${filePath}${suffix}`);
+    }
+  }
+
+  private decryptFile(encPath: string, dek: Buffer, outputPath: string): void {
+    const raw = readFileSync(encPath);
+    const iv = raw.subarray(0, 12);
+    const authTag = raw.subarray(12, 28);
+    const encrypted = raw.subarray(28);
+    const decipher = createDecipheriv('aes-256-gcm', dek, iv);
+    decipher.setAuthTag(authTag);
+    const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    writeFileSync(outputPath, plaintext);
   }
 
   private scanExistingVaults(): void {
