@@ -458,7 +458,7 @@ export class TodoService {
   }
 
   rescheduleItem(id: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
-    return this.updateItem(id, { dueDate, dueTime: dueTime ?? undefined });
+    return this.updateItem(id, { dueDate, dueTime: dueTime ?? null });
   }
 
   moveItem(id: string, projectName: string): TodoItemRecord | null {

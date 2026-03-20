@@ -127,7 +127,7 @@ export function MemorySearch() {
           </p>
           {response.results.length > 0 ? (
             <div className="space-y-[8px]">
-              {response.results.map((r) => (
+              {response.results.map((r: MemorySearchResult) => (
                 <MemoryResultCard key={r.id} result={r} />
               ))}
             </div>

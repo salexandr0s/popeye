@@ -1236,7 +1236,9 @@ export async function createControlApi(
 
   app.post('/v1/vaults', async (request) => {
     const body = VaultCreateRequestSchema.parse(request.body);
-    return dependencies.runtime.createVault(body);
+    const vaultInput: { domain: DomainKind; name: string; kind?: 'capability' | 'restricted' } = { domain: body.domain, name: body.name };
+    if (body.kind) vaultInput.kind = body.kind;
+    return dependencies.runtime.createVault(vaultInput);
   });
 
   app.get('/v1/vaults/:id', async (request, reply) => {
@@ -2341,12 +2343,12 @@ export async function createControlApi(
       dateTo: z.string().optional(),
       limit: z.coerce.number().int().positive().max(200).optional(),
     }).parse(request.query);
-    return dependencies.runtime.listFinanceTransactions(query.importId, {
-      category: query.category,
-      dateFrom: query.dateFrom,
-      dateTo: query.dateTo,
-      limit: query.limit,
-    });
+    const txOpts: { category?: string; dateFrom?: string; dateTo?: string; limit?: number } = {};
+    if (query.category) txOpts.category = query.category;
+    if (query.dateFrom) txOpts.dateFrom = query.dateFrom;
+    if (query.dateTo) txOpts.dateTo = query.dateTo;
+    if (query.limit) txOpts.limit = query.limit;
+    return dependencies.runtime.listFinanceTransactions(query.importId, txOpts);
   });
 
   app.get('/v1/finance/documents', async (request) => {
@@ -2399,7 +2401,9 @@ export async function createControlApi(
       importId: z.string().optional(),
       limit: z.coerce.number().int().positive().max(200).optional(),
     }).parse(request.query);
-    return dependencies.runtime.listMedicalAppointments(query.importId, { limit: query.limit });
+    const apptOpts: { limit?: number } = {};
+    if (query.limit) apptOpts.limit = query.limit;
+    return dependencies.runtime.listMedicalAppointments(query.importId, apptOpts);
   });
 
   app.get('/v1/medical/medications', async (request) => {

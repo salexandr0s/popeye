@@ -113,7 +113,7 @@ export function Instructions() {
               Sources ({bundle.sources.length})
             </h2>
             <div className="space-y-[8px]">
-              {bundle.sources.map((src, i) => (
+              {bundle.sources.map((src: InstructionBundle['sources'][number], i: number) => (
                 <div
                   key={i}
                   className="flex items-center gap-[12px] py-[4px]"
@@ -144,7 +144,7 @@ export function Instructions() {
                 Warnings
               </h2>
               <ul className="space-y-[4px]">
-                {bundle.warnings.map((w, i) => (
+                {bundle.warnings.map((w: string, i: number) => (
                   <li key={i} className="text-[14px] text-[var(--color-warning)]">
                     {w}
                   </li>

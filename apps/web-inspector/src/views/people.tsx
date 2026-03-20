@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../api/provider';
-import { usePeople } from '../api/hooks';
+import { usePeople, type PersonRecord } from '../api/hooks';
 import { PageHeader } from '../components/page-header';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
@@ -229,7 +229,7 @@ export function People() {
               <div>
                 <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Identities</p>
                 <div className="mt-[8px] space-y-[8px]">
-                  {selected.identities.map((identity) => (
+                  {selected.identities.map((identity: PersonRecord['identities'][number]) => (
                     <div key={identity.id} className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px]">
                       <div className="flex items-start justify-between gap-[12px]">
                         <div>
@@ -251,7 +251,7 @@ export function People() {
               <div>
                 <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Contacts</p>
                 <div className="mt-[8px] space-y-[8px]">
-                  {selected.contactMethods.map((contact) => (
+                  {selected.contactMethods.map((contact: PersonRecord['contactMethods'][number]) => (
                     <div key={contact.id} className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px]">
                       <p className="font-medium">{contact.type}</p>
                       <p className="mt-[4px] text-[12px] text-[var(--color-fg-muted)]">{contact.value}</p>

@@ -6,6 +6,8 @@ import type { TodoService } from './todo-service.js';
 import type { TodoSearchService } from './todo-search.js';
 import type { TodoDigestService } from './todo-digest.js';
 
+type ToolResult = { content: Array<{ type: string; text: string }>; details?: Record<string, unknown> };
+
 export function createTodoTools(
   todoService: TodoService,
   searchService: TodoSearchService,
@@ -68,7 +70,7 @@ export function createTodoTools(
         required: [],
         additionalProperties: false,
       },
-      execute: async (params) => {
+      execute: async (params: unknown): Promise<ToolResult> => {
         const parsed = z.object({
           accountId: z.string().optional(),
           priority: z.number().int().min(1).max(4).optional(),
@@ -147,7 +149,7 @@ export function createTodoTools(
         required: ['query'],
         additionalProperties: false,
       },
-      execute: async (params) => {
+      execute: async (params: unknown): Promise<ToolResult> => {
         const parsed = z.object({
           query: z.string().min(1),
           accountId: z.string().optional(),
@@ -214,7 +216,7 @@ export function createTodoTools(
         required: ['title'],
         additionalProperties: false,
       },
-      execute: async (params) => {
+      execute: async (params: unknown): Promise<ToolResult> => {
         const parsed = z.object({
           accountId: z.string().optional(),
           title: z.string().min(1),
@@ -295,7 +297,7 @@ export function createTodoTools(
         required: ['todoId'],
         additionalProperties: false,
       },
-      execute: async (params) => {
+      execute: async (params: unknown): Promise<ToolResult> => {
         const parsed = z.object({
           todoId: z.string().min(1),
         }).parse(params ?? {});
@@ -352,7 +354,7 @@ export function createTodoTools(
         required: [],
         additionalProperties: false,
       },
-      execute: async (params) => {
+      execute: async (params: unknown): Promise<ToolResult> => {
         const parsed = z.object({
           accountId: z.string().optional(),
           date: z.string().optional(),

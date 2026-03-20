@@ -273,7 +273,7 @@ export class ActionPolicyEvaluator {
   }
 
   private findMatchingRule(input: Pick<ActionApprovalRequestInput, 'scope' | 'domain' | 'actionKind' | 'resourceScope'>): ApprovalPolicyRule | null {
-    return this.config.rules.find((rule) => {
+    return this.config.rules.find((rule: ApprovalPolicyRule) => {
       if (rule.scope !== input.scope) return false;
       if (rule.domain !== input.domain) return false;
       if (rule.actionKinds.length > 0 && !rule.actionKinds.includes(input.actionKind)) return false;

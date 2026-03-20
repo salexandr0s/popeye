@@ -117,6 +117,7 @@ export class ContextReleaseService {
       domain: input.domain,
       sourceRef: input.sourceRef,
       releaseLevel: policy.contextReleasePolicy,
+      fidelityLevel: 'summary',
       previewText: `[${input.domain}] ${input.sourceRef}`,
       tokenEstimate: 0,
       requiresApproval,

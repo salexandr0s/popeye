@@ -310,7 +310,7 @@ export function Connections() {
             row.health?.remediation ? (
               <button
                 className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
-                onClick={() => void handleConnect(row.providerKind, row.id)}
+                onClick={() => void handleConnect(row.providerKind as 'gmail' | 'google_calendar' | 'github', row.id)}
                 type="button"
               >
                 {busyKey === `reconnect:${row.id}` ? 'Opening…' : 'Reconnect'}
@@ -433,7 +433,7 @@ export function Connections() {
             <div className="mt-[16px] space-y-[8px]">
               {(resourceRules.data ?? selectedConnection.resourceRules ?? []).length === 0 ? (
                 <p className="text-[14px] text-[var(--color-fg-muted)]">No resource rules configured.</p>
-              ) : (resourceRules.data ?? selectedConnection.resourceRules ?? []).map((rule) => (
+              ) : (resourceRules.data ?? selectedConnection.resourceRules ?? []).map((rule: ConnectionResourceRule) => (
                 <div key={`${rule.resourceType}:${rule.resourceId}`} className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px]">
                   <div>
                     <p className="font-medium">{rule.displayName}</p>

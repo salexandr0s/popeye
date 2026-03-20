@@ -1004,14 +1004,14 @@ async function main(): Promise<void> {
   }
   if (command === 'approvals' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
-    const approvals = await client.listApprovals({
-      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
-      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
-      ...(readFlagValue('--scope') ? { scope: readFlagValue('--scope') } : {}),
-      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
-      ...(readFlagValue('--run-id') ? { runId: readFlagValue('--run-id') } : {}),
-      ...(readFlagValue('--resolved-by') ? { resolvedBy: readFlagValue('--resolved-by') } : {}),
-    });
+    const approvalFilters: { status?: string; domain?: string; scope?: string; actionKind?: string; runId?: string; resolvedBy?: string } = {};
+    const aStatus = readFlagValue('--status'); if (aStatus) approvalFilters.status = aStatus;
+    const aDomain = readFlagValue('--domain'); if (aDomain) approvalFilters.domain = aDomain;
+    const aScope = readFlagValue('--scope'); if (aScope) approvalFilters.scope = aScope;
+    const aKind = readFlagValue('--action-kind'); if (aKind) approvalFilters.actionKind = aKind;
+    const aRunId = readFlagValue('--run-id'); if (aRunId) approvalFilters.runId = aRunId;
+    const aResolvedBy = readFlagValue('--resolved-by'); if (aResolvedBy) approvalFilters.resolvedBy = aResolvedBy;
+    const approvals = await client.listApprovals(approvalFilters);
     if (jsonFlag) {
       console.info(JSON.stringify(approvals, null, 2));
     } else if (approvals.length === 0) {
@@ -1045,11 +1045,11 @@ async function main(): Promise<void> {
   }
   if (command === 'standing-approvals' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
-    const records = await client.listStandingApprovals({
-      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
-      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
-      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
-    });
+    const saFilters: { status?: string; domain?: string; actionKind?: string } = {};
+    const saStatus = readFlagValue('--status'); if (saStatus) saFilters.status = saStatus;
+    const saDomain = readFlagValue('--domain'); if (saDomain) saFilters.domain = saDomain;
+    const saKind = readFlagValue('--action-kind'); if (saKind) saFilters.actionKind = saKind;
+    const records = await client.listStandingApprovals(saFilters);
     if (jsonFlag) {
       console.info(JSON.stringify(records, null, 2));
     } else if (records.length === 0) {
@@ -1091,11 +1091,11 @@ async function main(): Promise<void> {
   }
   if (command === 'automation-grants' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
-    const records = await client.listAutomationGrants({
-      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
-      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
-      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
-    });
+    const agFilters: { status?: string; domain?: string; actionKind?: string } = {};
+    const agStatus = readFlagValue('--status'); if (agStatus) agFilters.status = agStatus;
+    const agDomain = readFlagValue('--domain'); if (agDomain) agFilters.domain = agDomain;
+    const agKind = readFlagValue('--action-kind'); if (agKind) agFilters.actionKind = agKind;
+    const records = await client.listAutomationGrants(agFilters);
     if (jsonFlag) {
       console.info(JSON.stringify(records, null, 2));
     } else if (records.length === 0) {
@@ -1117,7 +1117,7 @@ async function main(): Promise<void> {
       requestedBy: readFlagValue('--requested-by') ?? null,
       workspaceId: readFlagValue('--workspace-id') ?? null,
       projectId: readFlagValue('--project-id') ?? null,
-      taskSources: readCsvFlag('--task-sources') as AutomationGrantRecord['taskSources'] | undefined,
+      taskSources: (readCsvFlag('--task-sources') ?? []) as AutomationGrantRecord['taskSources'],
       note: readFlagValue('--note') ?? '',
       expiresAt: readFlagValue('--expires-at') ?? null,
       createdBy: readFlagValue('--created-by') ?? 'cli:pop',

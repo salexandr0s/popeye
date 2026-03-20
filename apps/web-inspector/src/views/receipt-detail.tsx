@@ -1,4 +1,5 @@
 import { useParams, Link } from 'react-router-dom';
+import type { ReceiptContextReleaseDomainSummary, ReceiptTimelineEvent } from '@popeye/contracts';
 import { useReceipt } from '../api/hooks';
 import { Badge } from '../components/badge';
 import { Loading } from '../components/loading';
@@ -178,7 +179,7 @@ export function ReceiptDetail() {
                   Runtime Warnings
                 </p>
                 <ul className="space-y-[4px] text-[14px] text-[var(--color-fg)]">
-                  {receipt.runtime.execution.warnings.map((warning) => (
+                  {receipt.runtime.execution.warnings.map((warning: string) => (
                     <li key={warning}>• {warning}</li>
                   ))}
                 </ul>
@@ -203,7 +204,7 @@ export function ReceiptDetail() {
               </div>
             </div>
             <div className="mt-[16px] space-y-[8px]">
-              {Object.entries(receipt.runtime.contextReleases.byDomain).map(([domain, summary]) => (
+              {Object.entries(receipt.runtime.contextReleases.byDomain).map(([domain, summary]: [string, ReceiptContextReleaseDomainSummary]) => (
                 <div
                   key={domain}
                   className="flex items-center justify-between rounded-[var(--radius-sm)] bg-[var(--color-bg-muted)] px-[12px] py-[10px] text-[14px]"
@@ -224,7 +225,7 @@ export function ReceiptDetail() {
               Policy Timeline
             </h2>
             <div className="space-y-[12px]">
-              {receipt.runtime.timeline.map((event) => {
+              {receipt.runtime.timeline.map((event: ReceiptTimelineEvent) => {
                 const metadataEntries = Object.entries(event.metadata);
                 return (
                   <div

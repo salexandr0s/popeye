@@ -765,12 +765,12 @@ function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
     syncIntervalSeconds: (row['sync_interval_seconds'] as number) ?? 900,
     allowedScopes: parseStringArrayColumn(row['allowed_scopes']),
     allowedResources,
-    resourceRules: resourceRules.length > 0 ? resourceRules : buildLegacyConnectionResourceRules(allowedResources, timestamp),
+    resourceRules: (resourceRules.length > 0 ? resourceRules : buildLegacyConnectionResourceRules(allowedResources, timestamp)).map((r) => ({ ...r, writeAllowed: r.writeAllowed ?? false })),
     lastSyncAt: (row['last_sync_at'] as string) ?? null,
     lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
-    policy: undefined,
-    health: parseJsonColumn(row['health_json'], ConnectionHealthSummarySchema),
-    sync: parseJsonColumn(row['sync_json'], ConnectionSyncSummarySchema),
+    policy: undefined as unknown as ConnectionRecord['policy'],
+    health: (parseJsonColumn(row['health_json'], ConnectionHealthSummarySchema) ?? { status: 'unknown', diagnostics: [], authState: 'unknown', checkedAt: null, lastError: null, remediation: null }) as ConnectionRecord['health'],
+    sync: (parseJsonColumn(row['sync_json'], ConnectionSyncSummarySchema) ?? { status: 'idle', lastAttemptAt: null, lastSuccessAt: null, cursorKind: 'none', cursorPresent: false, lagSummary: '' }) as ConnectionRecord['sync'],
     createdAt: row['created_at'] as string,
     updatedAt: row['updated_at'] as string,
   };
@@ -3124,7 +3124,7 @@ export class PopeyeRuntimeService {
       JSON.stringify(nextHealth),
       JSON.stringify(nextSync),
       lastSyncAt,
-      lastSyncStatus === 'idle' ? null : lastSyncStatus,
+      (lastSyncStatus as string) === 'idle' ? null : lastSyncStatus,
       nowIso(),
       input.connectionId,
     );
@@ -3551,7 +3551,7 @@ export class PopeyeRuntimeService {
       resourceType: rule.resourceType,
       resourceId: rule.resourceId,
       displayName: rule.displayName,
-      writeAllowed: rule.writeAllowed,
+      writeAllowed: rule.writeAllowed ?? false,
       createdAt: timestamp,
       updatedAt: timestamp,
     }));
@@ -3639,7 +3639,7 @@ export class PopeyeRuntimeService {
     });
     const id = randomUUID();
     const now = nowIso();
-    const resourceRules = this.materializeConnectionResourceRules(input.resourceRules ?? [], now);
+    const resourceRules = this.materializeConnectionResourceRules((input.resourceRules ?? []).map((r) => ({ ...r, writeAllowed: r.writeAllowed ?? false })), now);
     this.databases.app
       .prepare(
         `INSERT INTO connections (
@@ -3684,7 +3684,7 @@ export class PopeyeRuntimeService {
     if (input.allowedResources !== undefined) { sets.push('allowed_resources = ?'); params.push(JSON.stringify(input.allowedResources)); }
     if (input.resourceRules !== undefined) {
       sets.push('resource_rules_json = ?');
-      params.push(JSON.stringify(this.materializeConnectionResourceRules(input.resourceRules)));
+      params.push(JSON.stringify(this.materializeConnectionResourceRules(input.resourceRules.map((r) => ({ ...r, writeAllowed: r.writeAllowed ?? false })))));
     }
     if (sets.length === 0) return this.withConnectionPolicy(existing);
     sets.push('updated_at = ?');
@@ -7165,8 +7165,8 @@ export class PopeyeRuntimeService {
           ...(result.rejectionReason !== undefined ? { rejectionReason: result.rejectionReason } : {}),
         };
       },
-      approvalRequest: (input) => this.requestApproval(input),
-      actionApprovalRequest: (input) => this.requestActionApproval(input),
+      approvalRequest: (input) => this.requestApproval(input as Parameters<typeof this.requestApproval>[0]),
+      actionApprovalRequest: (input) => this.requestActionApproval(input as ActionApprovalRequestInput),
       contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
       getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
       authorizeContextRelease: (input) => this.authorizeContextRelease(input),

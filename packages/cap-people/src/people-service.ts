@@ -304,7 +304,7 @@ export class PeopleService {
       throw new Error(`Person ${personId} not found`);
     }
     const identities = input.identityIds
-      .map((identityId) => this.getIdentity(identityId))
+      .map((identityId: string) => this.getIdentity(identityId))
       .filter((identity): identity is PersonIdentityRecord => Boolean(identity));
     if (identities.length === 0) {
       throw new Error('No identities found for split');
@@ -314,7 +314,7 @@ export class PeopleService {
       `UPDATE person_identities
        SET person_id = ?, updated_at = ?
        WHERE id IN (${identities.map(() => '?').join(', ')})`,
-    )(newPerson.id, nowIso(), ...identities.map((identity) => identity.id));
+    )(newPerson.id, nowIso(), ...identities.map((identity: PersonIdentityRecord) => identity.id));
     for (const identity of identities) {
       this.recordMergeEvent({
         eventType: 'split',
@@ -497,10 +497,10 @@ export class PeopleService {
     )(personId);
     return rows.map((row) => ({
       personId: row.person_id,
-      domain: (row as Record<string, unknown>)['domain'] as string ?? '',
+      domain: (row as unknown as Record<string, unknown>)['domain'] as string ?? '',
       summary: row.summary,
-      count: ((row as Record<string, unknown>)['count'] as number) ?? 0,
-      lastSeenAt: ((row as Record<string, unknown>)['last_seen_at'] as string) ?? row.updated_at,
+      count: ((row as unknown as Record<string, unknown>)['count'] as number) ?? 0,
+      lastSeenAt: ((row as unknown as Record<string, unknown>)['last_seen_at'] as string) ?? row.updated_at,
     }));
   }
 
