@@ -1288,6 +1288,56 @@ export class PopeyeApiClient {
     return this.get(`/v1/finance/digest${this.buildQuery({ period })}`, FinanceDigestRecordSchema.nullable());
   }
 
+  async createFinanceImport(data: { vaultId: string; importType?: string; fileName: string }): Promise<FinanceImportRecord> {
+    return this.post('/v1/finance/imports', data, FinanceImportRecordSchema);
+  }
+
+  async insertFinanceTransaction(data: {
+    importId: string;
+    date: string;
+    description: string;
+    amount: number;
+    currency?: string;
+    category?: string | null;
+    merchantName?: string | null;
+    accountLabel?: string | null;
+    redactedSummary?: string;
+  }): Promise<FinanceTransactionRecord> {
+    return this.post('/v1/finance/transactions', data, FinanceTransactionRecordSchema);
+  }
+
+  async insertFinanceTransactionBatch(data: {
+    importId: string;
+    transactions: Array<{
+      date: string;
+      description: string;
+      amount: number;
+      currency?: string;
+      category?: string | null;
+      merchantName?: string | null;
+      accountLabel?: string | null;
+      redactedSummary?: string;
+    }>;
+  }): Promise<FinanceTransactionRecord[]> {
+    await this.ensureCsrfToken();
+    const response = await fetch(`${this.baseUrl}/v1/finance/transactions/batch`, {
+      method: 'POST',
+      headers: this.mutationHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+    const result: unknown = await response.json();
+    if (!Array.isArray(result)) throw new Error('Expected array response');
+    return result.map((item) => FinanceTransactionRecordSchema.parse(item));
+  }
+
+  async updateFinanceImportStatus(id: string, status: string, recordCount?: number): Promise<void> {
+    const response = await this.postRaw(`/v1/finance/imports/${encodeURIComponent(id)}/status`, { status, recordCount });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
+  }
+
   // --- Medical ---
 
   async listMedicalImports(): Promise<MedicalImportRecord[]> {
@@ -1321,6 +1371,39 @@ export class PopeyeApiClient {
 
   async getMedicalDigest(period?: string): Promise<MedicalDigestRecord | null> {
     return this.get(`/v1/medical/digest${this.buildQuery({ period })}`, MedicalDigestRecordSchema.nullable());
+  }
+
+  async createMedicalImport(data: { vaultId: string; importType?: string; fileName: string }): Promise<MedicalImportRecord> {
+    return this.post('/v1/medical/imports', data, MedicalImportRecordSchema);
+  }
+
+  async insertMedicalAppointment(data: {
+    importId: string;
+    date: string;
+    provider: string;
+    specialty?: string | null;
+    location?: string | null;
+    redactedSummary?: string;
+  }): Promise<MedicalAppointmentRecord> {
+    return this.post('/v1/medical/appointments', data, MedicalAppointmentRecordSchema);
+  }
+
+  async insertMedicalMedication(data: {
+    importId: string;
+    name: string;
+    dosage?: string | null;
+    frequency?: string | null;
+    prescriber?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    redactedSummary?: string;
+  }): Promise<MedicalMedicationRecord> {
+    return this.post('/v1/medical/medications', data, MedicalMedicationRecordSchema);
+  }
+
+  async updateMedicalImportStatus(id: string, status: string): Promise<void> {
+    const response = await this.postRaw(`/v1/medical/imports/${encodeURIComponent(id)}/status`, { status });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
   }
 
   // --- File write-intents ---

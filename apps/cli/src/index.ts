@@ -116,6 +116,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     open: { desc: 'Open a vault using an approved approval', usage: 'pop vaults open <vaultId> <approvalId>' },
     close: { desc: 'Close a vault', usage: 'pop vaults close <vaultId>' },
     seal: { desc: 'Seal a vault', usage: 'pop vaults seal <vaultId>' },
+    'set-kek': { desc: 'Store vault KEK in Keychain', usage: 'pop vaults set-kek [--generate]' },
   },
   recovery: {
     retry: { desc: 'Retry a failed run', usage: 'pop recovery retry <runId>' },
@@ -223,12 +224,14 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   finance: {
     imports: { desc: 'List finance imports', usage: 'pop finance imports [--json]' },
+    import: { desc: 'Import a finance file', usage: 'pop finance import <file>' },
     transactions: { desc: 'List transactions', usage: 'pop finance transactions [--category <cat>] [--limit <n>] [--json]' },
     search: { desc: 'Search finance data', usage: 'pop finance search <query> [--json]' },
     digest: { desc: 'Show finance digest', usage: 'pop finance digest [--period <YYYY-MM>] [--json]' },
   },
   medical: {
     imports: { desc: 'List medical imports', usage: 'pop medical imports [--json]' },
+    import: { desc: 'Import a medical file', usage: 'pop medical import <file>' },
     appointments: { desc: 'List appointments', usage: 'pop medical appointments [--limit <n>] [--json]' },
     medications: { desc: 'List medications', usage: 'pop medical medications [--json]' },
     search: { desc: 'Search medical data', usage: 'pop medical search <query> [--json]' },
@@ -243,6 +246,37 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     'openclaw-memory': { desc: 'Import OpenClaw memory files', usage: 'pop migrate openclaw-memory <directory>' },
   },
 };
+
+/** Parse a CSV line respecting quoted fields (handles commas inside quotes). */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      fields.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current);
+  return fields;
+}
 
 function showHelp(): void {
   console.info(`pop v${VERSION} — Popeye CLI\n`);
@@ -1192,6 +1226,37 @@ async function main(): Promise<void> {
     const client = await requireDaemonClient(config);
     const vault = await client.sealVault(arg1);
     console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'set-kek') {
+    const { randomBytes: rb } = await import('node:crypto');
+    const { keychainSet } = await import('@popeye/runtime-core');
+    const generateFlag = process.argv.includes('--generate');
+    let kekValue: string;
+    if (generateFlag) {
+      kekValue = rb(32).toString('hex');
+    } else {
+      const { createInterface } = await import('node:readline');
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      kekValue = await new Promise<string>((resolveValue) => {
+        rl.question('Enter KEK (64-char hex string): ', (answer) => {
+          rl.close();
+          resolveValue(answer.trim());
+        });
+      });
+    }
+    if (kekValue.length !== 64 || !/^[0-9a-f]+$/i.test(kekValue)) {
+      console.error('KEK must be a 64-character hex string (256 bits).');
+      process.exitCode = 1;
+      return;
+    }
+    const result = keychainSet('vault-kek', kekValue);
+    if (result.ok) {
+      console.info('Vault KEK stored in macOS Keychain.');
+    } else {
+      console.error(`Failed to store KEK: ${result.error}`);
+      process.exitCode = 1;
+    }
     return;
   }
   if (command === 'recovery' && subcommand === 'retry') {
@@ -2420,6 +2485,67 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'finance' && subcommand === 'import' && arg1) {
+    const client = await requireDaemonClient(config);
+    const filePath = resolve(arg1);
+    if (!existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exitCode = 1;
+      return;
+    }
+    const fileName = filePath.split('/').pop() ?? arg1;
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const importType = (['csv', 'ofx', 'qfx'].includes(ext) ? ext : 'other') as 'csv' | 'ofx' | 'qfx' | 'other';
+
+    const vaultId = getFlagValue('--vault');
+    if (!vaultId) {
+      const vaults = await client.listVaults('finance');
+      if (vaults.length === 0) {
+        console.error('No finance vaults found. Create one first: pop vaults create finance <name>');
+        process.exitCode = 1;
+        return;
+      }
+      const defaultVault = vaults[0];
+      const imp = await client.createFinanceImport({ vaultId: defaultVault.id, importType, fileName });
+      if (importType === 'csv') {
+        const content = readFileSync(filePath, 'utf-8');
+        const lines = content.trim().split('\n');
+        const header = parseCsvLine(lines[0] ?? '');
+        const dateIdx = header.findIndex((h) => /date/i.test(h));
+        const descIdx = header.findIndex((h) => /desc|memo|name/i.test(h));
+        const amountIdx = header.findIndex((h) => /amount/i.test(h));
+        const catIdx = header.findIndex((h) => /category|cat/i.test(h));
+        const transactions: Array<{
+          date: string;
+          description: string;
+          amount: number;
+          category?: string | null;
+        }> = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = parseCsvLine(lines[i]);
+          if (cols.length < 3) continue;
+          transactions.push({
+            date: cols[dateIdx >= 0 ? dateIdx : 0]?.trim() ?? '',
+            description: cols[descIdx >= 0 ? descIdx : 1]?.trim() ?? '',
+            amount: parseFloat(cols[amountIdx >= 0 ? amountIdx : 2]?.trim() ?? '0') || 0,
+            category: catIdx >= 0 ? (cols[catIdx]?.trim() || null) : null,
+          });
+        }
+        if (transactions.length > 0) {
+          await client.insertFinanceTransactionBatch({ importId: imp.id, transactions });
+        }
+        await client.updateFinanceImportStatus(imp.id, 'completed', transactions.length);
+        console.info(`Imported ${transactions.length} transactions from ${fileName}`);
+      } else {
+        console.info(`Import created: ${imp.id.slice(0, 8)} (${importType}). Parse and add transactions via API or web inspector.`);
+      }
+      return;
+    }
+    const imp = await client.createFinanceImport({ vaultId, importType, fileName });
+    console.info(`Import created: ${imp.id.slice(0, 8)} (${importType})`);
+    return;
+  }
+
   // --- Medical CLI ---
 
   if (command === 'medical' && subcommand === 'imports') {
@@ -2503,6 +2629,35 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'medical' && subcommand === 'import' && arg1) {
+    const client = await requireDaemonClient(config);
+    const filePath = resolve(arg1);
+    if (!existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exitCode = 1;
+      return;
+    }
+    const fileName = filePath.split('/').pop() ?? arg1;
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const importType = (ext === 'pdf' ? 'pdf' : ext === 'document' ? 'document' : 'other') as 'pdf' | 'document' | 'other';
+
+    const vaultId = getFlagValue('--vault');
+    let resolvedVaultId = vaultId;
+    if (!resolvedVaultId) {
+      const vaults = await client.listVaults('medical');
+      if (vaults.length === 0) {
+        console.error('No medical vaults found. Create one first: pop vaults create medical <name>');
+        process.exitCode = 1;
+        return;
+      }
+      resolvedVaultId = vaults[0].id;
+    }
+    const imp = await client.createMedicalImport({ vaultId: resolvedVaultId, importType, fileName });
+    console.info(`Import created: ${imp.id.slice(0, 8)} (${importType})`);
+    console.info('Add appointments/medications via API or web inspector.');
+    return;
+  }
+
   // --- File write-intent CLI ---
 
   if (command === 'files' && subcommand === 'review') {
@@ -2578,8 +2733,14 @@ async function main(): Promise<void> {
     }
     const upgradePaths = deriveRuntimePaths(config.runtimeDataDir);
     try {
-      restoreBackup(targetPath, upgradePaths);
-      console.info(`Restored from backup: ${targetPath}`);
+      const { MigrationManager } = await import('@popeye/runtime-core');
+      const Database = (await import('better-sqlite3')).default;
+      const appDbPath = upgradePaths.appDbPath;
+      const tempDb = new Database(':memory:');
+      const mgr = new MigrationManager(tempDb);
+      mgr.rollbackMigration(targetPath, appDbPath);
+      tempDb.close();
+      console.info(`Restored app database from backup: ${targetPath}`);
       console.info('Restart the daemon to apply the restored state.');
     } catch (error) {
       console.error(`Rollback failed: ${error instanceof Error ? error.message : String(error)}`);

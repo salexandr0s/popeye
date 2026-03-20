@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -201,5 +202,136 @@ describe('VaultManager', () => {
     mgr.sealVault(record.id);
     expect(auditEvents).toHaveLength(4);
     expect(auditEvents[3].eventType).toBe('vault_sealed');
+  });
+});
+
+describe('VaultManager encryption', () => {
+  it('restricted vault with KEK creates .enc file and removes .db', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'encrypted', kind: 'restricted' });
+      expect(record.encrypted).toBe(true);
+      expect(existsSync(`${record.dbPath}.enc`)).toBe(true);
+      expect(existsSync(record.dbPath)).toBe(false);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
+  });
+});
+
+describe('VaultManager encryption round-trip', () => {
+  it('create encrypted → open → read/write → close → verify re-encrypted', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'rt', kind: 'restricted' });
+
+      const handle = mgr.openVault(record.id);
+      expect(handle).not.toBeNull();
+
+      handle!.query('CREATE TABLE items (id TEXT, value TEXT)');
+      handle!.insert('items', { id: '1', value: 'test' });
+
+      mgr.closeVault(record.id);
+
+      expect(existsSync(`${record.dbPath}.enc`)).toBe(true);
+      expect(existsSync(record.dbPath)).toBe(false);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
+  });
+
+  it('multi-cycle — data persists across open/close', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'mc', kind: 'restricted' });
+
+      // Cycle 1: write data
+      const h1 = mgr.openVault(record.id)!;
+      h1.query('CREATE TABLE items (id TEXT, value TEXT)');
+      h1.insert('items', { id: '1', value: 'persisted' });
+      mgr.closeVault(record.id);
+
+      // Cycle 2: read data back
+      const h2 = mgr.openVault(record.id)!;
+      expect(h2).not.toBeNull();
+      const rows = h2.query<{ id: string; value: string }>('SELECT * FROM items');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe('1');
+      expect(rows[0].value).toBe('persisted');
+      mgr.closeVault(record.id);
+
+      expect(existsSync(`${record.dbPath}.enc`)).toBe(true);
+      expect(existsSync(record.dbPath)).toBe(false);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
+  });
+
+  it('open fails when KEK is unavailable', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'nokey', kind: 'restricted' });
+      expect(existsSync(`${record.dbPath}.enc`)).toBe(true);
+
+      delete process.env['POPEYE_VAULT_KEK'];
+
+      const handle = mgr.openVault(record.id);
+      expect(handle).toBeNull();
+
+      // .enc must still be intact
+      expect(existsSync(`${record.dbPath}.enc`)).toBe(true);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
+  });
+
+  it('close without KEK logs error and leaves plaintext', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr, auditEvents } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'nokek-close', kind: 'restricted' });
+
+      mgr.openVault(record.id);
+
+      delete process.env['POPEYE_VAULT_KEK'];
+
+      expect(mgr.closeVault(record.id)).toBe(true);
+
+      const reencryptFailed = auditEvents.find((e) => e.eventType === 'vault_reencrypt_failed');
+      expect(reencryptFailed).toBeDefined();
+
+      expect(existsSync(record.dbPath)).toBe(true);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
   });
 });

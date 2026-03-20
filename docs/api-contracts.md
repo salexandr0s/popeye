@@ -140,6 +140,10 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/finance/documents` | `FinanceDocumentRecordSchema[]` |
 | GET | `/v1/finance/search?query=...` | `{ query, results: FinanceSearchResultSchema[] }` |
 | GET | `/v1/finance/digest` | `FinanceDigestRecordSchema \| null` |
+| POST | `/v1/finance/imports` | `FinanceImportRecordSchema` (req: `{ vaultId, importType?, fileName }`) |
+| POST | `/v1/finance/transactions` | `FinanceTransactionRecordSchema` (req: `{ importId, date, description, amount, ... }`) |
+| POST | `/v1/finance/transactions/batch` | `FinanceTransactionRecordSchema[]` (req: `{ importId, transactions: [{ date, description, amount, ... }] }`) |
+| POST | `/v1/finance/imports/:id/status` | `{ ok: true }` (req: `{ status, recordCount? }`) |
 | GET | `/v1/medical/imports` | `MedicalImportRecordSchema[]` |
 | GET | `/v1/medical/imports/:id` | `MedicalImportRecordSchema` |
 | GET | `/v1/medical/appointments` | `MedicalAppointmentRecordSchema[]` |
@@ -147,6 +151,10 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/medical/documents` | `MedicalDocumentRecordSchema[]` |
 | GET | `/v1/medical/search?query=...` | `{ query, results: MedicalSearchResultSchema[] }` |
 | GET | `/v1/medical/digest` | `MedicalDigestRecordSchema \| null` |
+| POST | `/v1/medical/imports` | `MedicalImportRecordSchema` (req: `{ vaultId, importType?, fileName }`) |
+| POST | `/v1/medical/appointments` | `MedicalAppointmentRecordSchema` (req: `{ importId, date, provider, ... }`) |
+| POST | `/v1/medical/medications` | `MedicalMedicationRecordSchema` (req: `{ importId, name, dosage?, ... }`) |
+| POST | `/v1/medical/imports/:id/status` | `{ ok: true }` (req: `{ status }`) |
 | POST | `/v1/vaults/:id/backup` | `VaultBackupResultSchema` (req: `{ destinationDir? }`) |
 | POST | `/v1/vaults/:id/restore` | `VaultBackupResultSchema` (req: `{ backupPath }`) |
 | GET | `/v1/vaults/:id/backup/verify` | `VaultVerifyResultSchema` |

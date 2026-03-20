@@ -7063,6 +7063,118 @@ export class PopeyeRuntimeService {
     return this.getFinanceServiceFacade()?.getDigest(period) ?? null;
   }
 
+  private invalidateFinanceFacade(): void {
+    if (this.financeReadDb) {
+      this.financeReadDb.close();
+      this.financeReadDb = null;
+    }
+    this.financeServiceCache = null;
+    this.financeSearchCache = null;
+  }
+
+  createFinanceImport(data: { vaultId: string; importType: FinanceImportRecord['importType']; fileName: string }): FinanceImportRecord {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.createImport(data);
+      this.invalidateFinanceFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertFinanceTransaction(data: {
+    importId: string;
+    date: string;
+    description: string;
+    amount: number;
+    currency?: string;
+    category?: string | null;
+    merchantName?: string | null;
+    accountLabel?: string | null;
+    redactedSummary?: string;
+  }): FinanceTransactionRecord {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.insertTransaction(data);
+      this.invalidateFinanceFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertFinanceTransactionBatch(data: {
+    importId: string;
+    transactions: Array<{
+      date: string;
+      description: string;
+      amount: number;
+      currency?: string;
+      category?: string | null;
+      merchantName?: string | null;
+      accountLabel?: string | null;
+      redactedSummary?: string;
+    }>;
+  }): FinanceTransactionRecord[] {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      const records = data.transactions.map((tx) => ({ ...tx, importId: data.importId }));
+      const result = svc.insertTransactionBatch(records);
+      this.invalidateFinanceFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertFinanceDocument(data: {
+    importId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    redactedSummary?: string;
+  }): FinanceDocumentRecord {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.insertDocument(data);
+      this.invalidateFinanceFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  updateFinanceImportStatus(id: string, status: FinanceImportRecord['status'], recordCount?: number): void {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      svc.updateImportStatus(id, status, recordCount);
+      this.invalidateFinanceFacade();
+    } finally {
+      writeDb.close();
+    }
+  }
+
   // --- Medical facade ---
 
   private medicalReadDb: BetterSqlite3.Database | null = null;
@@ -7121,6 +7233,111 @@ export class PopeyeRuntimeService {
 
   getMedicalDigest(period?: string): MedicalDigestRecord | null {
     return this.getMedicalServiceFacade()?.getDigest(period) ?? null;
+  }
+
+  private invalidateMedicalFacade(): void {
+    if (this.medicalReadDb) {
+      this.medicalReadDb.close();
+      this.medicalReadDb = null;
+    }
+    this.medicalServiceCache = null;
+    this.medicalSearchCache = null;
+  }
+
+  createMedicalImport(data: { vaultId: string; importType: MedicalImportRecord['importType']; fileName: string }): MedicalImportRecord {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.createImport(data);
+      this.invalidateMedicalFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertMedicalAppointment(data: {
+    importId: string;
+    date: string;
+    provider: string;
+    specialty?: string | null;
+    location?: string | null;
+    redactedSummary?: string;
+  }): MedicalAppointmentRecord {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.insertAppointment(data);
+      this.invalidateMedicalFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertMedicalMedication(data: {
+    importId: string;
+    name: string;
+    dosage?: string | null;
+    frequency?: string | null;
+    prescriber?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    redactedSummary?: string;
+  }): MedicalMedicationRecord {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.insertMedication(data);
+      this.invalidateMedicalFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  insertMedicalDocument(data: {
+    importId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    redactedSummary?: string;
+  }): MedicalDocumentRecord {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      const result = svc.insertDocument(data);
+      this.invalidateMedicalFacade();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  updateMedicalImportStatus(id: string, status: MedicalImportRecord['status']): void {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      svc.updateImportStatus(id, status);
+      this.invalidateMedicalFacade();
+    } finally {
+      writeDb.close();
+    }
   }
 
   private buildCapabilityContext(): CapabilityContext {

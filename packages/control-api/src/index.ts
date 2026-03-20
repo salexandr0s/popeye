@@ -340,6 +340,14 @@ function requiredRoleForRoute(path: string, method: string): AuthRole {
     ['POST', /^\/v1\/telegram\/replies\/[^/]+\/[^/]+\/mark-uncertain$/],
     ['POST', /^\/v1\/telegram\/deliveries\/[^/]+\/resolve$/],
     ['POST', /^\/v1\/telegram\/send-attempts$/],
+    ['POST', /^\/v1\/finance\/imports$/],
+    ['POST', /^\/v1\/finance\/transactions$/],
+    ['POST', /^\/v1\/finance\/transactions\/batch$/],
+    ['POST', /^\/v1\/finance\/imports\/[^/]+\/status$/],
+    ['POST', /^\/v1\/medical\/imports$/],
+    ['POST', /^\/v1\/medical\/appointments$/],
+    ['POST', /^\/v1\/medical\/medications$/],
+    ['POST', /^\/v1\/medical\/imports\/[^/]+\/status$/],
   ];
   if (serviceMutations.some(([candidateMethod, pattern]) => candidateMethod === method && pattern.test(path))) {
     return 'service';
@@ -2383,6 +2391,57 @@ export async function createControlApi(
     return dependencies.runtime.getFinanceDigest(query.period);
   });
 
+  app.post('/v1/finance/imports', async (request) => {
+    const body = z.object({
+      vaultId: z.string().min(1),
+      importType: z.enum(['csv', 'ofx', 'qfx', 'other']).default('csv'),
+      fileName: z.string().min(1),
+    }).parse(request.body);
+    return dependencies.runtime.createFinanceImport(body);
+  });
+
+  app.post('/v1/finance/transactions', async (request) => {
+    const body = z.object({
+      importId: z.string().min(1),
+      date: z.string().min(1),
+      description: z.string().min(1),
+      amount: z.number(),
+      currency: z.string().optional(),
+      category: z.string().nullable().optional(),
+      merchantName: z.string().nullable().optional(),
+      accountLabel: z.string().nullable().optional(),
+      redactedSummary: z.string().optional(),
+    }).parse(request.body);
+    return dependencies.runtime.insertFinanceTransaction(body);
+  });
+
+  app.post('/v1/finance/transactions/batch', async (request) => {
+    const body = z.object({
+      importId: z.string().min(1),
+      transactions: z.array(z.object({
+        date: z.string().min(1),
+        description: z.string().min(1),
+        amount: z.number(),
+        currency: z.string().optional(),
+        category: z.string().nullable().optional(),
+        merchantName: z.string().nullable().optional(),
+        accountLabel: z.string().nullable().optional(),
+        redactedSummary: z.string().optional(),
+      })).max(5000),
+    }).parse(request.body);
+    return dependencies.runtime.insertFinanceTransactionBatch(body);
+  });
+
+  app.post('/v1/finance/imports/:id/status', async (request) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({
+      status: z.enum(['pending', 'processing', 'completed', 'failed']),
+      recordCount: z.number().int().nonnegative().optional(),
+    }).parse(request.body);
+    dependencies.runtime.updateFinanceImportStatus(id, body.status, body.recordCount);
+    return { ok: true };
+  });
+
   // --- Medical routes ---
 
   app.get('/v1/medical/imports', async () => {
@@ -2434,6 +2493,50 @@ export async function createControlApi(
       period: z.string().optional(),
     }).parse(request.query);
     return dependencies.runtime.getMedicalDigest(query.period);
+  });
+
+  app.post('/v1/medical/imports', async (request) => {
+    const body = z.object({
+      vaultId: z.string().min(1),
+      importType: z.enum(['pdf', 'document', 'other']).default('pdf'),
+      fileName: z.string().min(1),
+    }).parse(request.body);
+    return dependencies.runtime.createMedicalImport(body);
+  });
+
+  app.post('/v1/medical/appointments', async (request) => {
+    const body = z.object({
+      importId: z.string().min(1),
+      date: z.string().min(1),
+      provider: z.string().min(1),
+      specialty: z.string().nullable().optional(),
+      location: z.string().nullable().optional(),
+      redactedSummary: z.string().optional(),
+    }).parse(request.body);
+    return dependencies.runtime.insertMedicalAppointment(body);
+  });
+
+  app.post('/v1/medical/medications', async (request) => {
+    const body = z.object({
+      importId: z.string().min(1),
+      name: z.string().min(1),
+      dosage: z.string().nullable().optional(),
+      frequency: z.string().nullable().optional(),
+      prescriber: z.string().nullable().optional(),
+      startDate: z.string().nullable().optional(),
+      endDate: z.string().nullable().optional(),
+      redactedSummary: z.string().optional(),
+    }).parse(request.body);
+    return dependencies.runtime.insertMedicalMedication(body);
+  });
+
+  app.post('/v1/medical/imports/:id/status', async (request) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({
+      status: z.enum(['pending', 'processing', 'completed', 'failed']),
+    }).parse(request.body);
+    dependencies.runtime.updateMedicalImportStatus(id, body.status);
+    return { ok: true };
   });
 
   // --- File write-intent routes ---

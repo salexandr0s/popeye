@@ -226,6 +226,24 @@ export class FinanceService {
     return this.getTransaction(id)!;
   }
 
+  insertTransactionBatch(records: Array<{
+    importId: string;
+    date: string;
+    description: string;
+    amount: number;
+    currency?: string;
+    category?: string | null;
+    merchantName?: string | null;
+    accountLabel?: string | null;
+    redactedSummary?: string;
+  }>): FinanceTransactionRecord[] {
+    const dbUnknown = this.db as unknown as { transaction: (fn: () => FinanceTransactionRecord[]) => () => FinanceTransactionRecord[] };
+    const txn = dbUnknown.transaction(() => {
+      return records.map((data) => this.insertTransaction(data));
+    });
+    return txn();
+  }
+
   // --- Documents ---
 
   listDocuments(importId?: string): FinanceDocumentRecord[] {
