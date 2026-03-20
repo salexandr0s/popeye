@@ -11,8 +11,11 @@ import type {
   ApprovalResolveInput,
   CompiledInstructionBundle,
   ConnectionCreateInput,
+  ConnectionDiagnosticsResponse,
   ConnectionHealthSummary,
   ConnectionRecord,
+  ConnectionRemediationAction,
+  ConnectionResourceRule,
   ConnectionSyncSummary,
   ConnectionUpdateInput,
   ContextReleaseDecision,
@@ -72,6 +75,9 @@ import type {
   FileSearchQuery,
   FileSearchResponse,
   FileIndexResult,
+  FileWriteIntentCreateInput,
+  FileWriteIntentRecord,
+  FileWriteIntentReviewInput,
   EmailAccountRecord,
   EmailThreadRecord,
   EmailMessageRecord,
@@ -111,12 +117,29 @@ import type {
   TodoDigestRecord,
   TodoSearchQuery,
   TodoSearchResult,
+  TodoProjectRecord,
+  TodoReconcileResult,
   TodoSyncResult,
   TodoCreateInput,
+  TodoistConnectInput,
+  TodoistConnectResult,
+  PersonActivityRollup,
+  PersonIdentityAttachInput,
+  PersonIdentityDetachInput,
+  PersonListItem,
+  PersonMergeEventRecord,
+  PersonMergeInput,
+  PersonMergeSuggestion,
+  PersonRecord,
+  PersonSearchQuery,
+  PersonSearchResult,
+  PersonSplitInput,
+  PersonUpdateInput,
 } from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
   ConnectionHealthSummarySchema,
+  ConnectionResourceRuleSchema,
   ConnectionSyncSummarySchema,
   MemoryRecordSchema,
   RunEventRecordSchema,
@@ -173,6 +196,7 @@ import { createEmailCapability, EmailService, EmailSearchService, EmailSyncServi
 import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GithubApiAdapter } from '@popeye/cap-github';
 import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GoogleCalendarAdapter } from '@popeye/cap-calendar';
 import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
+import { createPeopleCapability, PeopleService, type PersonProjectionSeed } from '@popeye/cap-people';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   clearBrowserSessions,
@@ -665,7 +689,57 @@ function mapSecurityAuditKind(code: string): ReceiptTimelineEvent['kind'] {
   return 'policy';
 }
 
+function parseStringArrayColumn(value: unknown): string[] {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonArrayColumn<T>(value: unknown, schema: z.ZodType<T[]>): T[] {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return schema.parse([]);
+  }
+  try {
+    return schema.parse(JSON.parse(value));
+  } catch {
+    return schema.parse([]);
+  }
+}
+
+function matchesConnectionResourceId(left: string, right: string): boolean {
+  return left === right || left.toLowerCase() === right.toLowerCase();
+}
+
+function buildLegacyConnectionResourceRules(
+  resourceIds: string[],
+  timestamp: string,
+): ConnectionResourceRule[] {
+  return resourceIds.map((resourceId) => ({
+    resourceType: 'resource',
+    resourceId,
+    displayName: resourceId,
+    writeAllowed: true,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }));
+}
+
+function normalizeEmail(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0]!.toLowerCase() : null;
+}
+
 function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
+  const allowedResources = parseStringArrayColumn(row['allowed_resources']);
+  const resourceRules = parseJsonArrayColumn(row['resource_rules_json'], z.array(ConnectionResourceRuleSchema));
+  const timestamp = (row['updated_at'] as string) ?? (row['created_at'] as string) ?? nowIso();
   return {
     id: row['id'] as string,
     domain: row['domain'] as ConnectionRecord['domain'],
@@ -675,8 +749,9 @@ function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
     secretRefId: (row['secret_ref_id'] as string) ?? null,
     enabled: !!(row['enabled'] as number),
     syncIntervalSeconds: (row['sync_interval_seconds'] as number) ?? 900,
-    allowedScopes: JSON.parse((row['allowed_scopes'] as string) ?? '[]') as string[],
-    allowedResources: JSON.parse((row['allowed_resources'] as string) ?? '[]') as string[],
+    allowedScopes: parseStringArrayColumn(row['allowed_scopes']),
+    allowedResources,
+    resourceRules: resourceRules.length > 0 ? resourceRules : buildLegacyConnectionResourceRules(allowedResources, timestamp),
     lastSyncAt: (row['last_sync_at'] as string) ?? null,
     lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
     policy: undefined,
@@ -958,6 +1033,7 @@ export class PopeyeRuntimeService {
     this.capabilityRegistry.register(createGithubCapability());
     this.capabilityRegistry.register(createCalendarCapability());
     this.capabilityRegistry.register(createTodosCapability());
+    this.capabilityRegistry.register(createPeopleCapability());
 
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
@@ -1028,6 +1104,11 @@ export class PopeyeRuntimeService {
       this.todosReadDb = null;
       this.todosServiceCache = null;
       this.todosSearchCache = null;
+    }
+    if (this.peopleReadDb) {
+      this.peopleReadDb.close();
+      this.peopleReadDb = null;
+      this.peopleServiceCache = null;
     }
     if (this.capabilityInitPromise) await this.capabilityInitPromise;
     await this.capabilityRegistry.shutdownAll();
@@ -1732,6 +1813,7 @@ export class PopeyeRuntimeService {
     domain: DomainKind;
     label: string;
     allowedResources: string[];
+    resourceRules: Array<Pick<ConnectionResourceRule, 'resourceType' | 'resourceId' | 'displayName' | 'writeAllowed'>>;
     scopes: string[];
   }): ConnectionRecord {
     if (input.session.connectionId) {
@@ -1741,6 +1823,7 @@ export class PopeyeRuntimeService {
         syncIntervalSeconds: input.session.syncIntervalSeconds,
         allowedScopes: input.scopes,
         allowedResources: input.allowedResources,
+        resourceRules: input.resourceRules,
       });
       if (!updated) {
         throw new RuntimeNotFoundError(`Connection ${input.session.connectionId} not found`);
@@ -1757,6 +1840,7 @@ export class PopeyeRuntimeService {
       syncIntervalSeconds: input.session.syncIntervalSeconds,
       allowedScopes: input.scopes,
       allowedResources: input.allowedResources,
+      resourceRules: input.resourceRules,
     });
   }
 
@@ -1777,6 +1861,12 @@ export class PopeyeRuntimeService {
       domain: 'email',
       label: `Gmail (${profile.emailAddress})`,
       allowedResources: [profile.emailAddress],
+      resourceRules: [{
+        resourceType: 'mailbox',
+        resourceId: profile.emailAddress,
+        displayName: profile.emailAddress,
+        writeAllowed: true,
+      }],
       scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('gmail'),
     });
     const secretRef = this.storeOAuthSecret(connection.id, 'gmail', tokenPayload, connection.secretRefId);
@@ -1837,6 +1927,12 @@ export class PopeyeRuntimeService {
       domain: 'calendar',
       label: `Google Calendar (${profile.email})`,
       allowedResources: [profile.email],
+      resourceRules: [{
+        resourceType: 'calendar',
+        resourceId: profile.email,
+        displayName: profile.email,
+        writeAllowed: true,
+      }],
       scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_calendar'),
     });
     const secretRef = this.storeOAuthSecret(connection.id, 'google_calendar', tokenPayload, connection.secretRefId);
@@ -1893,6 +1989,7 @@ export class PopeyeRuntimeService {
       domain: 'github',
       label: `GitHub (${profile.username})`,
       allowedResources: [],
+      resourceRules: [],
       scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('github'),
     });
     const secretRef = this.storeOAuthSecret(connection.id, 'github', tokenPayload, connection.secretRefId);
@@ -2803,6 +2900,47 @@ export class PopeyeRuntimeService {
     };
   }
 
+  private buildConnectionRemediation(connection: ConnectionRecord, input: {
+    authState: ConnectionHealthSummary['authState'];
+    healthStatus: ConnectionHealthSummary['status'];
+    secretStatus: NonNullable<ConnectionRecord['policy']>['secretStatus'];
+    diagnostics: NonNullable<ConnectionRecord['policy']>['diagnostics'];
+  }): ConnectionHealthSummary['remediation'] {
+    const now = nowIso();
+    if (input.authState === 'invalid_scopes') {
+      return {
+        action: 'scope_fix',
+        message: 'Reconnect this provider and approve the required scopes.',
+        updatedAt: now,
+      };
+    }
+    if (['expired', 'revoked', 'stale'].includes(input.authState)) {
+      return {
+        action: 'reauthorize',
+        message: 'Reauthorize this provider to refresh credentials.',
+        updatedAt: now,
+      };
+    }
+    if (input.secretStatus === 'missing' || input.secretStatus === 'stale') {
+      const oauthProvider = ['gmail', 'google_calendar', 'github'].includes(connection.providerKind);
+      return {
+        action: oauthProvider ? 'reconnect' : 'secret_fix',
+        message: oauthProvider
+          ? 'Reconnect this provider to restore a usable secret.'
+          : 'Update the configured secret for this connection.',
+        updatedAt: now,
+      };
+    }
+    if (input.healthStatus === 'error' || input.healthStatus === 'degraded') {
+      return {
+        action: ['gmail', 'google_calendar', 'github'].includes(connection.providerKind) ? 'reconnect' : 'secret_fix',
+        message: input.diagnostics[0]?.message ?? 'Connection needs operator remediation before it can recover.',
+        updatedAt: now,
+      };
+    }
+    return null;
+  }
+
   private buildConnectionPolicySummary(connection: ConnectionRecord): {
     policy: NonNullable<ConnectionRecord['policy']>;
     health: ConnectionHealthSummary;
@@ -2885,6 +3023,12 @@ export class PopeyeRuntimeService {
           : storedHealth.lastError
             ? 'degraded'
             : 'healthy';
+    const remediation = this.buildConnectionRemediation(connection, {
+      authState,
+      healthStatus,
+      secretStatus,
+      diagnostics: mergedHealthDiagnostics,
+    });
 
     return {
       policy: {
@@ -2903,6 +3047,7 @@ export class PopeyeRuntimeService {
         checkedAt: storedHealth.checkedAt,
         lastError: storedHealth.lastError,
         diagnostics: mergedHealthDiagnostics,
+        remediation,
       },
       sync: storedSync,
     };
@@ -3370,8 +3515,34 @@ export class PopeyeRuntimeService {
     }
   }
 
+  private materializeConnectionResourceRules(
+    rules: Array<Pick<ConnectionResourceRule, 'resourceType' | 'resourceId' | 'displayName' | 'writeAllowed'>>,
+    timestamp = nowIso(),
+  ): ConnectionRecord['resourceRules'] {
+    return rules.map((rule) => ({
+      resourceType: rule.resourceType,
+      resourceId: rule.resourceId,
+      displayName: rule.displayName,
+      writeAllowed: rule.writeAllowed,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }));
+  }
+
+  private connectionAllowsResourceWrite(connection: ConnectionRecord, resourceType: string, resourceId: string): boolean {
+    const typedRule = connection.resourceRules.find((rule) =>
+      rule.writeAllowed
+      && (rule.resourceType === resourceType || rule.resourceType === 'resource')
+      && matchesConnectionResourceId(rule.resourceId, resourceId),
+    );
+    if (typedRule) {
+      return true;
+    }
+    return connection.allowedResources.some((allowed) => matchesConnectionResourceId(allowed, resourceId));
+  }
+
   private requireAllowlistedConnectionResource(connection: ConnectionRecord, purpose: string, resourceType: string, resourceId: string): void {
-    if (!connection.allowedResources.includes(resourceId)) {
+    if (!this.connectionAllowsResourceWrite(connection, resourceType, resourceId)) {
       this.denyConnectionOperation({
         connectionId: connection.id,
         purpose,
@@ -3440,12 +3611,29 @@ export class PopeyeRuntimeService {
     });
     const id = randomUUID();
     const now = nowIso();
+    const resourceRules = this.materializeConnectionResourceRules(input.resourceRules ?? [], now);
     this.databases.app
       .prepare(
-        `INSERT INTO connections (id, domain, provider_kind, label, mode, secret_ref_id, enabled, sync_interval_seconds, allowed_scopes, allowed_resources, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+        `INSERT INTO connections (
+           id, domain, provider_kind, label, mode, secret_ref_id, enabled, sync_interval_seconds,
+           allowed_scopes, allowed_resources, resource_rules_json, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.domain, input.providerKind, input.label, input.mode, input.secretRefId ?? null, input.syncIntervalSeconds, JSON.stringify(input.allowedScopes), JSON.stringify(input.allowedResources), now, now);
+      .run(
+        id,
+        input.domain,
+        input.providerKind,
+        input.label,
+        input.mode,
+        input.secretRefId ?? null,
+        input.syncIntervalSeconds,
+        JSON.stringify(input.allowedScopes),
+        JSON.stringify(input.allowedResources),
+        JSON.stringify(resourceRules),
+        now,
+        now,
+      );
     return this.getConnection(id)!;
   }
 
@@ -3466,6 +3654,10 @@ export class PopeyeRuntimeService {
     if (input.syncIntervalSeconds !== undefined) { sets.push('sync_interval_seconds = ?'); params.push(input.syncIntervalSeconds); }
     if (input.allowedScopes !== undefined) { sets.push('allowed_scopes = ?'); params.push(JSON.stringify(input.allowedScopes)); }
     if (input.allowedResources !== undefined) { sets.push('allowed_resources = ?'); params.push(JSON.stringify(input.allowedResources)); }
+    if (input.resourceRules !== undefined) {
+      sets.push('resource_rules_json = ?');
+      params.push(JSON.stringify(this.materializeConnectionResourceRules(input.resourceRules)));
+    }
     if (sets.length === 0) return this.withConnectionPolicy(existing);
     sets.push('updated_at = ?');
     params.push(nowIso());
@@ -3477,6 +3669,131 @@ export class PopeyeRuntimeService {
   deleteConnection(id: string): boolean {
     const result = this.databases.app.prepare('DELETE FROM connections WHERE id = ?').run(id);
     return result.changes > 0;
+  }
+
+  // --- Connection resource-rule CRUD ---
+
+  addConnectionResourceRule(connectionId: string, rule: { resourceType: string; resourceId: string; displayName: string; writeAllowed?: boolean }): ConnectionRecord | null {
+    const existing = this.getConnectionRow(connectionId);
+    if (!existing) return null;
+    const now = nowIso();
+    const rules = [...existing.resourceRules];
+    const idx = rules.findIndex((r) => r.resourceType === rule.resourceType && r.resourceId === rule.resourceId);
+    const newRule: ConnectionResourceRule = {
+      resourceType: rule.resourceType as ConnectionResourceRule['resourceType'],
+      resourceId: rule.resourceId,
+      displayName: rule.displayName,
+      writeAllowed: rule.writeAllowed ?? false,
+      createdAt: idx >= 0 ? rules[idx]!.createdAt : now,
+      updatedAt: now,
+    };
+    if (idx >= 0) { rules[idx] = newRule; } else { rules.push(newRule); }
+    this.databases.app.prepare('UPDATE connections SET resource_rules_json = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(rules), now, connectionId);
+    return this.getConnection(connectionId);
+  }
+
+  removeConnectionResourceRule(connectionId: string, resourceType: string, resourceId: string): ConnectionRecord | null {
+    const existing = this.getConnectionRow(connectionId);
+    if (!existing) return null;
+    const rules = existing.resourceRules.filter(
+      (r) => !(r.resourceType === resourceType && r.resourceId === resourceId),
+    );
+    const now = nowIso();
+    this.databases.app.prepare('UPDATE connections SET resource_rules_json = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(rules), now, connectionId);
+    return this.getConnection(connectionId);
+  }
+
+  listConnectionResourceRules(connectionId: string): ConnectionResourceRule[] {
+    const connection = this.getConnectionRow(connectionId);
+    return connection?.resourceRules ?? [];
+  }
+
+  // --- Connection diagnostics & reconnect ---
+
+  getConnectionDiagnostics(connectionId: string): ConnectionDiagnosticsResponse | null {
+    const connection = this.getConnection(connectionId);
+    if (!connection) return null;
+
+    const health = connection.health ?? { status: 'unknown', authState: 'not_required', checkedAt: null, lastError: null, diagnostics: [], remediation: null };
+    const sync = connection.sync ?? { lastAttemptAt: null, lastSuccessAt: null, status: 'idle', cursorKind: 'none', cursorPresent: false, lagSummary: '' };
+    const policy = connection.policy ?? { status: 'ready', secretStatus: 'not_required', mutatingRequiresApproval: false, diagnostics: [] };
+    const remediation = health.remediation ?? null;
+
+    const summaryParts: string[] = [];
+    summaryParts.push(`${connection.label} (${connection.providerKind})`);
+    summaryParts.push(`Health: ${health.status}`);
+    if (sync.lastSuccessAt) summaryParts.push(`Last sync: ${sync.lastSuccessAt}`);
+    else summaryParts.push('Never synced');
+    if (health.lastError) summaryParts.push(`Error: ${health.lastError}`);
+    if (remediation) summaryParts.push(`Remediation: ${remediation.action} — ${remediation.message}`);
+
+    return {
+      connectionId,
+      label: connection.label,
+      providerKind: connection.providerKind,
+      domain: connection.domain,
+      enabled: connection.enabled,
+      health,
+      sync,
+      policy,
+      remediation,
+      humanSummary: summaryParts.join('. '),
+    };
+  }
+
+  reconnectConnection(connectionId: string, action: ConnectionRemediationAction): ConnectionRecord | null {
+    const connection = this.getConnectionRow(connectionId);
+    if (!connection) return null;
+
+    const now = nowIso();
+    switch (action) {
+      case 'reauthorize':
+      case 'secret_fix':
+        if (connection.secretRefId) {
+          this.secretStore.deleteSecret(connection.secretRefId);
+        }
+        this.updateConnectionRollups({
+          connectionId,
+          health: {
+            status: 'degraded',
+            authState: 'missing',
+            checkedAt: now,
+            lastError: null,
+            diagnostics: [{ code: `${action}_pending`, severity: 'warn', message: `${action} initiated — re-authenticate to restore` }],
+            remediation: { action, message: `${action} initiated`, updatedAt: now },
+          },
+        });
+        break;
+      case 'reconnect':
+        this.updateConnectionRollups({
+          connectionId,
+          health: {
+            status: 'degraded',
+            authState: 'missing',
+            checkedAt: now,
+            lastError: null,
+            diagnostics: [{ code: 'reconnect_pending', severity: 'warn', message: 'Reconnect initiated — start new OAuth flow' }],
+            remediation: { action: 'reconnect', message: 'Reconnect initiated', updatedAt: now },
+          },
+        });
+        break;
+      case 'scope_fix':
+        this.updateConnectionRollups({
+          connectionId,
+          health: {
+            status: 'degraded',
+            authState: 'invalid_scopes',
+            checkedAt: now,
+            lastError: 'Scope mismatch flagged',
+            diagnostics: [{ code: 'scope_fix_pending', severity: 'warn', message: 'Scope fix initiated — re-authorize with correct scopes' }],
+            remediation: { action: 'scope_fix', message: 'Scope fix initiated', updatedAt: now },
+          },
+        });
+        break;
+    }
+    return this.getConnection(connectionId);
   }
 
   private getConnection(id: string): ConnectionRecord | null {
@@ -4668,6 +4985,73 @@ export class PopeyeRuntimeService {
     }
   }
 
+  // --- File write-intent facade ---
+
+  private fileWriteIntents: Map<string, FileWriteIntentRecord> = new Map();
+
+  createFileWriteIntent(input: FileWriteIntentCreateInput): FileWriteIntentRecord {
+    const root = this.getFileRootRecord(input.fileRootId);
+    if (!root) throw new RuntimeNotFoundError(`File root ${input.fileRootId} not found`);
+
+    const writePosture = (root as Record<string, unknown>)['writePosture'] as string ?? 'read_only';
+    if (writePosture === 'read_only') {
+      throw new RuntimeValidationError(`File root ${input.fileRootId} is read-only`);
+    }
+
+    const id = randomUUID();
+    const now = nowIso();
+    const intent: FileWriteIntentRecord = {
+      id,
+      fileRootId: input.fileRootId,
+      filePath: input.filePath,
+      intentType: input.intentType,
+      diffPreview: input.diffPreview ?? '',
+      status: writePosture === 'agent_owned' ? 'applied' : 'pending',
+      runId: input.runId ?? null,
+      approvalId: null,
+      receiptId: null,
+      createdAt: now,
+      reviewedAt: writePosture === 'agent_owned' ? now : null,
+    };
+    this.fileWriteIntents.set(id, intent);
+    return intent;
+  }
+
+  listFileWriteIntents(rootId?: string, status?: string): FileWriteIntentRecord[] {
+    const all = Array.from(this.fileWriteIntents.values());
+    return all.filter((intent) => {
+      if (rootId && intent.fileRootId !== rootId) return false;
+      if (status && intent.status !== status) return false;
+      return true;
+    });
+  }
+
+  getFileWriteIntent(id: string): FileWriteIntentRecord | null {
+    return this.fileWriteIntents.get(id) ?? null;
+  }
+
+  reviewFileWriteIntent(id: string, input: FileWriteIntentReviewInput): FileWriteIntentRecord | null {
+    const intent = this.fileWriteIntents.get(id);
+    if (!intent) return null;
+    if (intent.status !== 'pending') {
+      throw new RuntimeValidationError(`Write intent ${id} is already ${intent.status}`);
+    }
+    const now = nowIso();
+    const updated: FileWriteIntentRecord = {
+      ...intent,
+      status: input.action === 'apply' ? 'applied' : 'rejected',
+      reviewedAt: now,
+    };
+    this.fileWriteIntents.set(id, updated);
+    return updated;
+  }
+
+  private getFileRootRecord(id: string): FileRootRecord | null {
+    const svc = this.getFilesRootService();
+    if (!svc) return null;
+    return svc.getRoot(id);
+  }
+
   // --- Email facade ---
   // Uses a cached readonly DB handle opened on first access.
   // Closed when the runtime shuts down.
@@ -4941,6 +5325,14 @@ export class PopeyeRuntimeService {
       });
 
       this.invalidateGithubFacade();
+      try {
+        this.refreshPeopleProjectionForGithubAccount(svc, account.id);
+      } catch (error) {
+        this.log.warn('github people projection failed', {
+          accountId: account.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       return result;
     } catch (error) {
@@ -5238,6 +5630,14 @@ export class PopeyeRuntimeService {
       });
 
       this.invalidateEmailFacade();
+      try {
+        this.refreshPeopleProjectionForEmailAccount(svc, account.id);
+      } catch (error) {
+        this.log.warn('email people projection failed', {
+          accountId: account.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       return result;
     } catch (error) {
@@ -5338,6 +5738,17 @@ export class PopeyeRuntimeService {
         subject: input.subject,
         body: input.body,
       });
+      const stored = svc.upsertDraft({
+        accountId: account.id,
+        connectionId: connection.id,
+        providerDraftId: draft.draftId,
+        providerMessageId: draft.messageId ?? null,
+        to: draft.to,
+        cc: draft.cc,
+        subject: draft.subject,
+        bodyPreview: draft.bodyPreview,
+      });
+      this.invalidateEmailFacade();
 
       this.recordSecurityAudit({
         code: 'email_draft_created',
@@ -5358,14 +5769,7 @@ export class PopeyeRuntimeService {
       });
 
       return {
-        id: draft.draftId,
-        accountId: account.id,
-        providerDraftId: draft.draftId,
-        providerMessageId: draft.messageId ?? null,
-        to: draft.to,
-        cc: draft.cc,
-        subject: draft.subject,
-        bodyPreview: draft.bodyPreview,
+        ...stored,
         updatedAt: draft.updatedAt,
       };
     } finally {
@@ -5381,14 +5785,17 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const accounts = svc.listAccounts();
-      if (accounts.length === 0) {
-        throw new RuntimeValidationError('No email account available for draft update');
+      const mappedDraft = svc.getDraftByProviderDraftId(id) ?? svc.getDraft(id);
+      let accountId = mappedDraft?.accountId ?? input.accountId ?? null;
+      if (!accountId) {
+        throw new RuntimeValidationError(
+          `Email draft ${id} is not mapped to an account. Provide accountId or recreate the draft through Popeye.`,
+        );
       }
-      if (accounts.length > 1) {
-        throw new RuntimeValidationError('Email draft updates require a single connected email account in this tranche');
+      const account = svc.getAccount(accountId);
+      if (!account) {
+        throw new RuntimeValidationError(`Email draft ${id} resolves to unknown account ${accountId}`);
       }
-      const account = accounts[0]!;
       const { connection } = this.requireEmailAccountForOperation(svc, account.id, 'email_draft_update');
       this.requireReadWriteConnection(connection, 'email_draft_update');
       this.requireAllowlistedConnectionResource(connection, 'email_draft_update', 'mailbox', account.emailAddress);
@@ -5410,6 +5817,17 @@ export class PopeyeRuntimeService {
       });
 
       const draft = await resolved.adapter.updateDraft(id, input);
+      const stored = svc.upsertDraft({
+        accountId: account.id,
+        connectionId: connection.id,
+        providerDraftId: draft.draftId,
+        providerMessageId: draft.messageId ?? null,
+        to: draft.to,
+        cc: draft.cc,
+        subject: draft.subject,
+        bodyPreview: draft.bodyPreview,
+      });
+      this.invalidateEmailFacade();
       this.recordSecurityAudit({
         code: 'email_draft_updated',
         severity: 'info',
@@ -5429,14 +5847,7 @@ export class PopeyeRuntimeService {
       });
 
       return {
-        id: draft.draftId,
-        accountId: account.id,
-        providerDraftId: draft.draftId,
-        providerMessageId: draft.messageId ?? null,
-        to: draft.to,
-        cc: draft.cc,
-        subject: draft.subject,
-        bodyPreview: draft.bodyPreview,
+        ...stored,
         updatedAt: draft.updatedAt,
       };
     } finally {
@@ -5614,6 +6025,14 @@ export class PopeyeRuntimeService {
       });
 
       this.invalidateCalendarFacade();
+      try {
+        this.refreshPeopleProjectionForCalendarAccount(svc, account.id);
+      } catch (error) {
+        this.log.warn('calendar people projection failed', {
+          accountId: account.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       return result;
     } catch (error) {
@@ -5908,6 +6327,91 @@ export class PopeyeRuntimeService {
     return svc.getLatestDigest(accountId);
   }
 
+  connectTodoist(input: TodoistConnectInput): TodoistConnectResult {
+    const existingConnection = this
+      .listConnections('todos')
+      .find((connection) => connection.providerKind === 'todoist') ?? null;
+
+    let connection = existingConnection;
+    if (!connection) {
+      connection = this.createConnection({
+        domain: 'todos',
+        providerKind: 'todoist',
+        label: input.label,
+        mode: input.mode,
+        secretRefId: null,
+        syncIntervalSeconds: input.syncIntervalSeconds,
+        allowedScopes: [],
+        allowedResources: [],
+        resourceRules: [],
+      });
+    } else {
+      connection = this.updateConnection(connection.id, {
+        label: input.label,
+        mode: input.mode,
+        syncIntervalSeconds: input.syncIntervalSeconds,
+      }) ?? connection;
+    }
+
+    const secretRef = connection.secretRefId
+      ? (this.secretStore.rotateSecret(connection.secretRefId, input.apiToken) ?? this.secretStore.setSecret({
+        provider: 'keychain',
+        key: 'todoist-api-token',
+        value: input.apiToken,
+        connectionId: connection.id,
+        description: 'Todoist API token',
+      }))
+      : this.secretStore.setSecret({
+        provider: 'keychain',
+        key: 'todoist-api-token',
+        value: input.apiToken,
+        connectionId: connection.id,
+        description: 'Todoist API token',
+      });
+
+    connection = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
+
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccountByConnection(connection.id)
+        ?? svc.registerAccount({
+          connectionId: connection.id,
+          providerKind: 'todoist',
+          displayName: input.displayName,
+        });
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: {
+          status: 'healthy',
+          authState: 'configured',
+          checkedAt: nowIso(),
+          lastError: null,
+          diagnostics: [],
+        },
+        sync: {
+          status: 'idle',
+          cursorKind: 'since',
+          cursorPresent: false,
+          lagSummary: 'Awaiting first sync',
+        },
+      });
+      if (this.todosReadDb) {
+        this.todosReadDb.close();
+        this.todosReadDb = null;
+        this.todosServiceCache = null;
+        this.todosSearchCache = null;
+      }
+      return { connectionId: connection.id, account };
+    } finally {
+      writeDb.close();
+    }
+  }
+
   registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
     // Local accounts don't need a connection
     if (input.connectionId) {
@@ -5993,6 +6497,102 @@ export class PopeyeRuntimeService {
     }
   }
 
+  reprioritizeTodo(todoId: string, priority: number): TodoItemRecord | null {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const existing = svc.getItem(todoId);
+      if (!existing) return null;
+      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reprioritize');
+      const result = svc.reprioritizeItem(todoId, priority);
+      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      return result;
+    } finally { writeDb.close(); }
+  }
+
+  rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const existing = svc.getItem(todoId);
+      if (!existing) return null;
+      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reschedule');
+      const result = svc.rescheduleItem(todoId, dueDate, dueTime);
+      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      return result;
+    } finally { writeDb.close(); }
+  }
+
+  moveTodo(todoId: string, projectName: string): TodoItemRecord | null {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const existing = svc.getItem(todoId);
+      if (!existing) return null;
+      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_move');
+      const result = svc.moveItem(todoId, projectName);
+      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      return result;
+    } finally { writeDb.close(); }
+  }
+
+  listTodoProjects(accountId: string): TodoProjectRecord[] {
+    const svc = this.getTodosServiceFacade();
+    if (!svc) return [];
+    this.requireTodoAccountForOperation(svc, accountId, 'todo_projects_list');
+    return svc.listProjects(accountId);
+  }
+
+  async reconcileTodos(accountId: string): Promise<TodoReconcileResult> {
+    const todosCap = this.capabilityRegistry.getCapability('todos');
+    if (!todosCap) throw new Error('Todos capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_reconcile', { requireSecret: true });
+
+      let adapter;
+      if (account.providerKind === 'local') {
+        adapter = new LocalTodoAdapter();
+      } else if (account.providerKind === 'todoist') {
+        if (!connection?.secretRefId) throw new RuntimeValidationError('Todoist account has no usable connection secret');
+        const apiToken = this.secretStore.getSecretValue(connection.secretRefId!);
+        if (!apiToken) throw new RuntimeValidationError('Failed to retrieve Todoist API token from SecretStore');
+        adapter = new TodoistAdapter({ apiToken });
+      } else {
+        throw new Error(`Unsupported todo provider: ${account.providerKind}`);
+      }
+
+      const ctx = this.buildCapabilityContext();
+      const syncService = new TodoSyncService(svc, ctx);
+      const syncResult = await syncService.syncAccount(account, adapter);
+
+      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+
+      return {
+        accountId,
+        added: syncResult.todosSynced,
+        updated: syncResult.todosUpdated,
+        removed: 0,
+        errors: syncResult.errors,
+      };
+    } finally { writeDb.close(); }
+  }
+
   async syncTodoAccount(accountId: string): Promise<TodoSyncResult> {
     const todosCap = this.capabilityRegistry.getCapability('todos');
     if (!todosCap) throw new Error('Todos capability not initialized');
@@ -6074,6 +6674,306 @@ export class PopeyeRuntimeService {
       }
 
       return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  // --- People facade ---
+
+  private peopleReadDb: BetterSqlite3.Database | null = null;
+  private peopleServiceCache: PeopleService | null = null;
+
+  private getPeopleReadDb(): BetterSqlite3.Database | null {
+    if (this.peopleReadDb) return this.peopleReadDb;
+    const cap = this.capabilityRegistry.getCapability('people');
+    if (!cap) return null;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    if (!existsSync(dbPath)) return null;
+    this.peopleReadDb = new BetterSqlite3(dbPath, { readonly: true });
+    return this.peopleReadDb;
+  }
+
+  private getPeopleServiceFacade(): PeopleService | null {
+    if (this.peopleServiceCache) return this.peopleServiceCache;
+    const db = this.getPeopleReadDb();
+    if (!db) return null;
+    this.peopleServiceCache = new PeopleService(db as unknown as CapabilityContext['appDb']);
+    return this.peopleServiceCache;
+  }
+
+  private invalidatePeopleFacade(): void {
+    if (this.peopleReadDb) {
+      this.peopleReadDb.close();
+      this.peopleReadDb = null;
+    }
+    this.peopleServiceCache = null;
+  }
+
+  listPeople(): PersonListItem[] {
+    return this.getPeopleServiceFacade()?.listPeople() ?? [];
+  }
+
+  getPerson(id: string): PersonRecord | null {
+    return this.getPeopleServiceFacade()?.getPerson(id) ?? null;
+  }
+
+  searchPeople(query: PersonSearchQuery): { query: string; results: PersonSearchResult[] } {
+    const svc = this.getPeopleServiceFacade();
+    if (!svc) {
+      return { query: query.query, results: [] };
+    }
+    return svc.searchPeople(query.query, query.limit);
+  }
+
+  updatePerson(id: string, input: PersonUpdateInput): PersonRecord | null {
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) throw new Error('People capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      const updated = svc.updatePerson(id, input);
+      this.invalidatePeopleFacade();
+      return updated;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  mergePeople(input: PersonMergeInput): PersonRecord {
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) throw new Error('People capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      const merged = svc.mergePeople(input);
+      this.invalidatePeopleFacade();
+      this.recordSecurityAudit({
+        code: 'people_merged',
+        severity: 'info',
+        message: 'People graph merge completed',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          sourcePersonId: input.sourcePersonId,
+          targetPersonId: input.targetPersonId,
+          requestedBy: input.requestedBy,
+        },
+      });
+      return merged;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  splitPerson(personId: string, input: PersonSplitInput): PersonRecord {
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) throw new Error('People capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      const split = svc.splitPerson(personId, input);
+      this.invalidatePeopleFacade();
+      this.recordSecurityAudit({
+        code: 'people_split',
+        severity: 'info',
+        message: 'People graph split completed',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          sourcePersonId: personId,
+          targetPersonId: split.id,
+          requestedBy: input.requestedBy,
+        },
+      });
+      return split;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  attachPersonIdentity(input: PersonIdentityAttachInput): PersonRecord {
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) throw new Error('People capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      const updated = svc.attachIdentity(input);
+      this.invalidatePeopleFacade();
+      return updated;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  detachPersonIdentity(identityId: string, input: PersonIdentityDetachInput): PersonRecord {
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) throw new Error('People capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      const detached = svc.detachIdentity(identityId, input.requestedBy);
+      this.invalidatePeopleFacade();
+      return detached;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  listPersonMergeEvents(personId?: string): PersonMergeEventRecord[] {
+    return this.getPeopleServiceFacade()?.listMergeEvents(personId) ?? [];
+  }
+
+  getPersonMergeSuggestions(): PersonMergeSuggestion[] {
+    return this.getPeopleServiceFacade()?.getMergeSuggestions() ?? [];
+  }
+
+  getPersonActivityRollups(personId: string): PersonActivityRollup[] {
+    return this.getPeopleServiceFacade()?.getActivityRollups(personId) ?? [];
+  }
+
+  private refreshPeopleProjectionForEmailAccount(service: EmailService, accountId: string): void {
+    const account = service.getAccount(accountId);
+    if (!account) return;
+    const seeds: PersonProjectionSeed[] = [{
+      provider: 'email',
+      externalId: account.emailAddress,
+      displayName: account.displayName,
+      email: account.emailAddress,
+      activitySummary: 'email',
+    }];
+    for (const sender of service.getTopSenders(accountId, 50)) {
+      const email = normalizeEmail(sender.fromAddress);
+      if (!email) continue;
+      seeds.push({
+        provider: 'email',
+        externalId: email,
+        displayName: sender.fromAddress,
+        email,
+        activitySummary: 'email',
+      });
+    }
+    this.projectPeopleSeeds(seeds);
+  }
+
+  private refreshPeopleProjectionForCalendarAccount(service: CalendarService, accountId: string): void {
+    const account = service.getAccount(accountId);
+    if (!account) return;
+    const seeds: PersonProjectionSeed[] = [{
+      provider: 'calendar',
+      externalId: account.calendarEmail,
+      displayName: account.displayName,
+      email: account.calendarEmail,
+      activitySummary: 'calendar',
+    }];
+    for (const event of service.listEvents(accountId, { limit: 200 })) {
+      const organizer = normalizeEmail(event.organizer);
+      if (organizer) {
+        seeds.push({
+          provider: 'calendar',
+          externalId: organizer,
+          displayName: organizer,
+          email: organizer,
+          activitySummary: 'calendar',
+        });
+      }
+      for (const attendee of event.attendees) {
+        const email = normalizeEmail(attendee);
+        if (!email) continue;
+        seeds.push({
+          provider: 'calendar',
+          externalId: email,
+          displayName: attendee,
+          email,
+          activitySummary: 'calendar',
+        });
+      }
+    }
+    this.projectPeopleSeeds(seeds);
+  }
+
+  private refreshPeopleProjectionForGithubAccount(service: GithubService, accountId: string): void {
+    const account = service.getAccount(accountId);
+    if (!account) return;
+    const seeds: PersonProjectionSeed[] = [{
+      provider: 'github',
+      externalId: account.githubUsername,
+      displayName: account.displayName,
+      handle: account.githubUsername,
+      activitySummary: 'github',
+    }];
+    for (const repo of service.listRepos(accountId, { limit: 200 })) {
+      seeds.push({
+        provider: 'github',
+        externalId: repo.owner,
+        displayName: repo.owner,
+        handle: repo.owner,
+        activitySummary: 'github',
+      });
+    }
+    for (const pr of service.listPullRequests(accountId, { limit: 200 })) {
+      seeds.push({
+        provider: 'github',
+        externalId: pr.author,
+        displayName: pr.author,
+        handle: pr.author,
+        activitySummary: 'github',
+      });
+      for (const reviewer of pr.requestedReviewers) {
+        seeds.push({
+          provider: 'github',
+          externalId: reviewer,
+          displayName: reviewer,
+          handle: reviewer,
+          activitySummary: 'github',
+        });
+      }
+    }
+    for (const issue of service.listIssues(accountId, { limit: 200 })) {
+      seeds.push({
+        provider: 'github',
+        externalId: issue.author,
+        displayName: issue.author,
+        handle: issue.author,
+        activitySummary: 'github',
+      });
+      for (const assignee of issue.assignees) {
+        seeds.push({
+          provider: 'github',
+          externalId: assignee,
+          displayName: assignee,
+          handle: assignee,
+          activitySummary: 'github',
+        });
+      }
+    }
+    this.projectPeopleSeeds(seeds);
+  }
+
+  private projectPeopleSeeds(seeds: PersonProjectionSeed[]): void {
+    const deduped = new Map<string, PersonProjectionSeed>();
+    for (const seed of seeds) {
+      const key = `${seed.provider}:${seed.externalId}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, seed);
+      }
+    }
+    if (deduped.size === 0) return;
+    const peopleCap = this.capabilityRegistry.getCapability('people');
+    if (!peopleCap) return;
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
+      for (const seed of deduped.values()) {
+        svc.projectSeed(seed);
+      }
+      this.invalidatePeopleFacade();
     } finally {
       writeDb.close();
     }

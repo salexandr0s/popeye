@@ -191,8 +191,8 @@ The web inspector now exposes dedicated operator pages for:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include additive `policy`, `health`, and `sync` rollups. |
-| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, or `github`. Returns an `authorizationUrl` plus session metadata. Invalid provider config or connection mismatch fails closed. |
+| GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include additive `policy`, `health`, `sync`, and typed `resourceRules` read models. |
+| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, or `github`. Returns an `authorizationUrl` plus session metadata. Optional `connectionId` turns the same route into a reconnect / reauthorize flow. Invalid provider config or connection mismatch fails closed. |
 | GET | `/v1/connections/oauth/sessions/:id` | Read the current OAuth session state (`pending`, `completed`, `failed`, `expired`). Returns 404 if not found. |
 | GET | `/v1/connections/oauth/callback` | Loopback-only OAuth callback endpoint used by the browser connect flow. Returns a simple success/failure HTML page instead of JSON. |
 | POST | `/v1/connections` | Create a connection. Invalid provider/domain combinations or missing secret refs fail closed with `400 { error: "invalid_connection" }`. |
@@ -208,8 +208,11 @@ Connection rollups are additive read models:
 
 - `policy`: readiness and secret-policy posture
 - `health`: auth/provider health, last check time, last provider error,
-  diagnostics
+  diagnostics, and operator remediation (`reauthorize`, `reconnect`,
+  `scope_fix`, or `secret_fix`) when degraded
 - `sync`: last attempt/success, sync status, cursor kind/presence, lag summary
+- `resourceRules`: typed write-target policy for provider resources such as
+  calendars and GitHub repos
 
 ### Email
 
@@ -226,11 +229,15 @@ Connection rollups are additive read models:
 | POST | `/v1/email/digest` | Generate a digest. Body: `{ accountId? }`. |
 | GET | `/v1/email/providers` | List email providers currently available in the runtime. Blessed UX uses direct Gmail; legacy provider detections remain informational. |
 | POST | `/v1/email/drafts` | Create a Gmail draft. Body uses `EmailDraftCreateInputSchema`. Returns `409 { error: "email_draft_requires_approval" }` when policy requires approval. |
-| PATCH | `/v1/email/drafts/:id` | Update a Gmail draft. Body uses `EmailDraftUpdateInputSchema`. Returns the same approval error shape as draft creation. |
+| PATCH | `/v1/email/drafts/:id` | Update a Gmail draft. Body uses `EmailDraftUpdateInputSchema`. Returns the same approval error shape as draft creation and fails closed when the draft cannot be mapped back to an owning account. |
 
 Email writes in this tranche are intentionally conservative: draft create/update
 only, no send. Non-allowlisted resources fail closed before approval
 evaluation.
+
+Draft ownership is now persisted locally. Popeye records `draftId -> accountId ->
+connectionId` so updates resolve deterministically across multiple Gmail
+accounts instead of assuming a single mailbox.
 
 ### GitHub
 
@@ -269,6 +276,43 @@ on allowlisted repos and mark notifications read.
 
 Calendar writes are restricted to create/update on explicitly allowlisted
 calendars. Deletes remain out of scope for this tranche.
+
+### Todos
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/todos/accounts` | List registered todo accounts. |
+| GET | `/v1/todos/items` | List synced todo items. Optional query: `accountId`, `projectId`, `status`, `limit`. |
+| GET | `/v1/todos/items/:id` | Read one todo item. Returns 404 if not found. |
+| GET | `/v1/todos/search` | Search synced todo items. Query params: `query`, optional `accountId`, `projectId`, `limit`. |
+| GET | `/v1/todos/digest` | Read the latest digest for one account. Optional query: `accountId`. |
+| POST | `/v1/todos/accounts` | Register a todo account manually. |
+| POST | `/v1/todos/connect` | Blessed Todoist connect flow. Body uses `TodoistConnectInputSchema`; the runtime stores the token in the secret store, creates or updates the connection, and auto-registers the matching account. |
+| POST | `/v1/todos/items` | Create a todo item. Body uses `TodoCreateInputSchema`. |
+| POST | `/v1/todos/items/:id/complete` | Complete a todo item. Returns 404 if not found. |
+| POST | `/v1/todos/sync` | Trigger a sync for one todo account. Body: `{ accountId }`. |
+
+Todoist is now the blessed todo provider path. The older local-only path remains
+available as an experimental fallback and is not part of the polished connect
+flow.
+
+### People
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/people` | List people in the canonical local graph. |
+| GET | `/v1/people/search` | Search the graph. Query params: `query`, optional `limit`. |
+| GET | `/v1/people/:id` | Read one person record with identities, contact methods, and policy metadata. Returns 404 if not found. |
+| PATCH | `/v1/people/:id` | Apply bounded manual edits such as display name, pronouns, tags, notes, routing, and approval notes. |
+| POST | `/v1/people/merge` | Merge one person into another. Body uses `PersonMergeInputSchema`. |
+| POST | `/v1/people/:id/split` | Split selected identities into a new person. Body uses `PersonSplitInputSchema`. |
+| POST | `/v1/people/identities/attach` | Attach an identity record to an existing person. Body uses `PersonIdentityAttachInputSchema`. |
+| POST | `/v1/people/identities/:id/detach` | Detach one identity from its current person. Body uses `PersonIdentityDetachInputSchema`. |
+
+People is a derived-first local identity graph. Gmail, Calendar, and GitHub sync
+data project into canonical people records after successful syncs. Exact
+normalized email and GitHub identity matches auto-merge; display-name-only
+matches do not.
 
 ### File roots
 

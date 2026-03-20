@@ -156,7 +156,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   email: {
     accounts: { desc: 'List email accounts', usage: 'pop email accounts [--json]' },
-    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail [--read-write] | --proton | --gmail-experimental' },
+    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail [--read-write] [--reconnect <connectionId>] | --proton | --gmail-experimental' },
     sync: { desc: 'Trigger email sync', usage: 'pop email sync [accountId]' },
     threads: { desc: 'List email threads', usage: 'pop email threads [--unread] [--limit <n>] [--json]' },
     search: { desc: 'Search email', usage: 'pop email search <query> [--limit <n>] [--json]' },
@@ -164,7 +164,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     providers: { desc: 'Show available email providers', usage: 'pop email providers [--json]' },
   },
   github: {
-    connect: { desc: 'Connect GitHub via browser OAuth', usage: 'pop github connect [--read-write]' },
+    connect: { desc: 'Connect GitHub via browser OAuth', usage: 'pop github connect [--read-write] [--reconnect <connectionId>]' },
     accounts: { desc: 'List GitHub accounts', usage: 'pop github accounts [--json]' },
     sync: { desc: 'Trigger GitHub sync', usage: 'pop github sync [accountId]' },
     repos: { desc: 'List synced repos', usage: 'pop github repos [--limit <n>] [--json]' },
@@ -175,7 +175,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     digest: { desc: 'Show GitHub digest', usage: 'pop github digest [--json]' },
   },
   calendar: {
-    connect: { desc: 'Connect Google Calendar via browser OAuth', usage: 'pop calendar connect [--read-write]' },
+    connect: { desc: 'Connect Google Calendar via browser OAuth', usage: 'pop calendar connect [--read-write] [--reconnect <connectionId>]' },
     accounts: { desc: 'List calendar accounts', usage: 'pop calendar accounts [--json]' },
     sync: { desc: 'Trigger calendar sync', usage: 'pop calendar sync [accountId]' },
     events: { desc: 'List calendar events', usage: 'pop calendar events [--today] [--upcoming] [--limit <n>] [--json]' },
@@ -184,12 +184,36 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     digest: { desc: 'Show calendar digest', usage: 'pop calendar digest [--json]' },
   },
   todo: {
+    connect: { desc: 'Connect Todoist with a manual API token', usage: 'pop todo connect [--label <name>] [--display-name <name>] [--read-only]' },
     accounts: { desc: 'List todo accounts', usage: 'pop todo accounts [--json]' },
+    sync: { desc: 'Trigger todo sync', usage: 'pop todo sync [accountId] [--json]' },
     list: { desc: 'List todos', usage: 'pop todo list [--overdue] [--priority 1-4] [--project <name>] [--limit <n>] [--json]' },
     add: { desc: 'Add a todo', usage: 'pop todo add <title> [--priority 1-4] [--due YYYY-MM-DD] [--project <name>]' },
     complete: { desc: 'Complete a todo', usage: 'pop todo complete <id>' },
+    reprioritize: { desc: 'Reprioritize a todo', usage: 'pop todo reprioritize <id> <priority>' },
+    reschedule: { desc: 'Reschedule a todo', usage: 'pop todo reschedule <id> <dueDate>' },
+    move: { desc: 'Move a todo to a project', usage: 'pop todo move <id> <projectName>' },
+    reconcile: { desc: 'Reconcile todos with provider', usage: 'pop todo reconcile [accountId]' },
+    projects: { desc: 'List todo projects', usage: 'pop todo projects [accountId]' },
     search: { desc: 'Search todos', usage: 'pop todo search <query> [--limit <n>] [--json]' },
     digest: { desc: 'Show todo digest', usage: 'pop todo digest [--json]' },
+  },
+  connection: {
+    rules: { desc: 'List resource rules for a connection', usage: 'pop connection rules <id>' },
+    'add-rule': { desc: 'Add a resource rule', usage: 'pop connection add-rule <id> --type <type> --id <resourceId> --name <name> [--write]' },
+    'remove-rule': { desc: 'Remove a resource rule', usage: 'pop connection remove-rule <id> --type <type> --id <resourceId>' },
+    diagnostics: { desc: 'Show connection diagnostics', usage: 'pop connection diagnostics <id>' },
+    reconnect: { desc: 'Reconnect a connection', usage: 'pop connection reconnect <id> [--action <reauthorize|reconnect|scope_fix|secret_fix>]' },
+  },
+  people: {
+    list: { desc: 'List people in the canonical identity graph', usage: 'pop people list [--json]' },
+    search: { desc: 'Search people', usage: 'pop people search <query> [--limit <n>] [--json]' },
+    show: { desc: 'Show one person', usage: 'pop people show <personId> [--json]' },
+    edit: { desc: 'Edit a person profile', usage: 'pop people edit <personId> [--display-name <name>] [--pronouns <value>] [--tags <comma,separated>] [--notes <text>]' },
+    merge: { desc: 'Merge one person into another', usage: 'pop people merge <sourcePersonId> <targetPersonId>' },
+    split: { desc: 'Split identities into a new person', usage: 'pop people split <personId> <identityId> [identityId...]' },
+    attach: { desc: 'Attach an identity to a person', usage: 'pop people attach <personId> --provider <email|calendar|github> --external-id <value> [--display-name <name>] [--handle <value>]' },
+    detach: { desc: 'Detach an identity into a new person', usage: 'pop people detach <identityId>' },
   },
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
@@ -268,6 +292,12 @@ function requireArg(value: string | undefined, label: string): asserts value is 
     if (sub) console.error(`Usage: ${sub.usage}`);
     process.exit(1);
   }
+}
+
+function getFlagValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  if (index < 0) return undefined;
+  return process.argv[index + 1];
 }
 
 function formatRun(run: RunRecord, envelope?: ExecutionEnvelopeResponse | null): string {
@@ -519,12 +549,14 @@ async function runOAuthConnectFlow(
     providerKind: 'gmail' | 'google_calendar' | 'github';
     mode: 'read_only' | 'read_write';
     syncIntervalSeconds?: number;
+    connectionId?: string;
   },
 ): Promise<void> {
   const session = await client.startOAuthConnection({
     providerKind: input.providerKind,
     mode: input.mode,
     syncIntervalSeconds: input.syncIntervalSeconds ?? 900,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
   });
 
   const opened = await openBrowserUrl(session.authorizationUrl);
@@ -543,7 +575,7 @@ async function runOAuthConnectFlow(
       continue;
     }
     if (latest.status === 'completed') {
-      console.info(`${input.providerKind} connected.`);
+      console.info(input.connectionId ? `${input.providerKind} reconnected.` : `${input.providerKind} connected.`);
       if (latest.connectionId) console.info(`  Connection: ${latest.connectionId}`);
       if (latest.accountId) console.info(`  Account:    ${latest.accountId}`);
       return;
@@ -1465,6 +1497,7 @@ async function main(): Promise<void> {
     const isGmailExperimental = process.argv.includes('--gmail-experimental');
     const isProton = process.argv.includes('--proton');
     const mode = process.argv.includes('--read-write') ? 'read_write' : 'read_only';
+    const reconnectId = getFlagValue('--reconnect');
     if (!isGmail && !isGmailExperimental && !isProton) {
       console.error('Usage: pop email connect --gmail [--read-write] | --proton | --gmail-experimental');
       process.exit(1);
@@ -1476,6 +1509,7 @@ async function main(): Promise<void> {
         providerKind: 'gmail',
         mode,
         syncIntervalSeconds: 900,
+        ...(reconnectId ? { connectionId: reconnectId } : {}),
       });
       console.info('Run "pop email sync" to fetch your inbox.');
     } else if (isGmailExperimental) {
@@ -1621,10 +1655,12 @@ async function main(): Promise<void> {
 
   if (command === 'github' && subcommand === 'connect') {
     const client = await requireDaemonClient(config);
+    const reconnectId = getFlagValue('--reconnect');
     await runOAuthConnectFlow(client, {
       providerKind: 'github',
       mode: process.argv.includes('--read-write') ? 'read_write' : 'read_only',
       syncIntervalSeconds: 900,
+      ...(reconnectId ? { connectionId: reconnectId } : {}),
     });
     console.info('Run "pop github sync" to fetch repos, PRs, issues, and notifications.');
     return;
@@ -1791,10 +1827,12 @@ async function main(): Promise<void> {
 
   if (command === 'calendar' && subcommand === 'connect') {
     const client = await requireDaemonClient(config);
+    const reconnectId = getFlagValue('--reconnect');
     await runOAuthConnectFlow(client, {
       providerKind: 'google_calendar',
       mode: process.argv.includes('--read-write') ? 'read_write' : 'read_only',
       syncIntervalSeconds: 900,
+      ...(reconnectId ? { connectionId: reconnectId } : {}),
     });
     console.info('Run "pop calendar sync" to fetch upcoming events.');
     return;
@@ -1920,6 +1958,38 @@ async function main(): Promise<void> {
 
   // --- Todo commands ---
 
+  if (command === 'todo' && subcommand === 'connect') {
+    const client = await requireDaemonClient(config);
+    const readline = await import('node:readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (prompt: string): Promise<string> => new Promise((resolveQuestion) => rl.question(prompt, resolveQuestion));
+    const displayName = getFlagValue('--display-name') ?? 'Todoist';
+    const label = getFlagValue('--label') ?? 'Todoist';
+    const mode = process.argv.includes('--read-only') ? 'read_only' : 'read_write';
+    const apiToken = (await ask('Todoist API token: ')).trim();
+    rl.close();
+    if (!apiToken) {
+      console.error('A Todoist API token is required.');
+      process.exit(1);
+    }
+    const result = await client.connectTodoist({
+      apiToken,
+      displayName,
+      label,
+      mode,
+      syncIntervalSeconds: 900,
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info('Connected Todoist.');
+      console.info(`  Connection: ${result.connectionId}`);
+      console.info(`  Account:    ${result.account.id} (${result.account.displayName})`);
+      console.info('Run "pop todo sync" to fetch projects and tasks.');
+    }
+    return;
+  }
+
   if (command === 'todo' && subcommand === 'accounts') {
     const client = await requireDaemonClient(config);
     const accounts = await client.listTodoAccounts();
@@ -1932,6 +2002,27 @@ async function main(): Promise<void> {
         for (const acct of accounts) {
           console.info(`  ${acct.id}  ${acct.displayName.padEnd(25)} ${acct.providerKind.padEnd(10)} todos: ${acct.todoCount}  last sync: ${acct.lastSyncAt ?? 'never'}`);
         }
+      }
+    }
+    return;
+  }
+
+  if (command === 'todo' && subcommand === 'sync') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listTodoAccounts();
+    if (accounts.length === 0) {
+      console.error('No todo accounts registered. Run "pop todo connect" first.');
+      process.exit(1);
+    }
+    const targetId = arg1 ?? accounts[0]!.id;
+    const result = await client.syncTodoAccount(targetId);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info(`  Synced: ${result.todosSynced} new, ${result.todosUpdated} updated`);
+      if (result.errors.length > 0) {
+        console.info(`  Errors: ${result.errors.length}`);
+        for (const error of result.errors.slice(0, 5)) console.info(`    - ${error}`);
       }
     }
     return;
@@ -2039,6 +2130,147 @@ async function main(): Promise<void> {
       console.info('No todo digest available. Sync first with the daemon running.');
     } else {
       console.info(digest.summaryMarkdown);
+    }
+    return;
+  }
+
+  // --- People commands ---
+
+  if (command === 'people' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const people = await client.listPeople();
+    if (jsonFlag) {
+      console.info(JSON.stringify(people, null, 2));
+    } else if (people.length === 0) {
+      console.info('No people projected yet. Sync email, calendar, or GitHub first.');
+    } else {
+      for (const person of people) {
+        console.info(`  ${person.id}  ${person.displayName}  ${person.canonicalEmail ?? person.githubLogin ?? ''}`.trimEnd());
+      }
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'search' && arg1) {
+    const client = await requireDaemonClient(config);
+    const limit = Number.parseInt(getFlagValue('--limit') ?? '20', 10);
+    const response = await client.searchPeople(arg1, { limit });
+    if (jsonFlag) {
+      console.info(JSON.stringify(response, null, 2));
+    } else if (response.results.length === 0) {
+      console.info('No matching people found.');
+    } else {
+      for (const result of response.results) {
+        console.info(`  ${result.personId}  ${result.displayName}  ${result.canonicalEmail ?? result.githubLogin ?? ''}`.trimEnd());
+      }
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'show' && arg1) {
+    const client = await requireDaemonClient(config);
+    const person = await client.getPerson(arg1);
+    if (jsonFlag) {
+      console.info(JSON.stringify(person, null, 2));
+    } else {
+      console.info(`Person ${person.id}`);
+      console.info(`  Name:          ${person.displayName}`);
+      console.info(`  Email:         ${person.canonicalEmail ?? '(none)'}`);
+      console.info(`  GitHub:        ${person.githubLogin ?? '(none)'}`);
+      console.info(`  Pronouns:      ${person.pronouns ?? '(none)'}`);
+      console.info(`  Tags:          ${person.tags.length > 0 ? person.tags.join(', ') : '(none)'}`);
+      console.info(`  Identities:    ${person.identityCount}`);
+      console.info(`  Contacts:      ${person.contactMethodCount}`);
+      console.info(`  Activity:      ${person.activitySummary || '(none)'}`);
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'edit' && arg1) {
+    const client = await requireDaemonClient(config);
+    const displayName = getFlagValue('--display-name');
+    const pronouns = getFlagValue('--pronouns');
+    const tagsFlag = getFlagValue('--tags');
+    const notes = getFlagValue('--notes');
+    const updated = await client.updatePerson(arg1, {
+      ...(displayName ? { displayName } : {}),
+      ...(pronouns !== undefined ? { pronouns } : {}),
+      ...(tagsFlag !== undefined ? { tags: tagsFlag.split(',').map((value) => value.trim()).filter(Boolean) } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(updated, null, 2));
+    } else {
+      console.info(`Updated ${updated.id}: ${updated.displayName}`);
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'merge' && arg1 && _arg2) {
+    const client = await requireDaemonClient(config);
+    const merged = await client.mergePeople({
+      sourcePersonId: arg1,
+      targetPersonId: _arg2,
+      requestedBy: 'cli',
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(merged, null, 2));
+    } else {
+      console.info(`Merged into ${merged.id}: ${merged.displayName}`);
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'attach' && arg1) {
+    const provider = getFlagValue('--provider');
+    const externalId = getFlagValue('--external-id');
+    if (!provider || !externalId || !['email', 'calendar', 'github'].includes(provider)) {
+      console.error('Usage: pop people attach <personId> --provider <email|calendar|github> --external-id <value> [--display-name <name>] [--handle <value>]');
+      process.exit(1);
+    }
+    const client = await requireDaemonClient(config);
+    const attached = await client.attachPersonIdentity({
+      personId: arg1,
+      provider: provider as 'email' | 'calendar' | 'github',
+      externalId,
+      displayName: getFlagValue('--display-name') ?? null,
+      handle: getFlagValue('--handle') ?? null,
+      requestedBy: 'cli',
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(attached, null, 2));
+    } else {
+      console.info(`Attached identity to ${attached.id}: ${attached.displayName}`);
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'detach' && arg1) {
+    const client = await requireDaemonClient(config);
+    const detached = await client.detachPersonIdentity(arg1, { requestedBy: 'cli' });
+    if (jsonFlag) {
+      console.info(JSON.stringify(detached, null, 2));
+    } else {
+      console.info(`Detached into ${detached.id}: ${detached.displayName}`);
+    }
+    return;
+  }
+
+  if (command === 'people' && subcommand === 'split' && arg1) {
+    const identityIds = positionalArgs.slice(5);
+    if (identityIds.length === 0) {
+      console.error('Usage: pop people split <personId> <identityId> [identityId...]');
+      process.exit(1);
+    }
+    const client = await requireDaemonClient(config);
+    const split = await client.splitPerson(arg1, {
+      identityIds,
+      requestedBy: 'cli',
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(split, null, 2));
+    } else {
+      console.info(`Split into ${split.id}: ${split.displayName}`);
     }
     return;
   }

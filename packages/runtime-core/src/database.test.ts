@@ -812,6 +812,7 @@ describe('openRuntimeDatabases', () => {
           '015-execution-envelopes',
           '016-policy-automation',
           '017-provider-oauth-and-connection-rollups',
+          '018-connection-resource-rules',
         ]);
 
         const memMigrations = databases.memory

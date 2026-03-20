@@ -551,6 +551,12 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at);',
     ],
   },
+  {
+    id: '018-connection-resource-rules',
+    statements: [
+      "ALTER TABLE connections ADD COLUMN resource_rules_json TEXT NOT NULL DEFAULT '[]';",
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

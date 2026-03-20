@@ -89,6 +89,12 @@ import {
   type AutomationGrantCreateRequest,
   type ConnectionRecord,
   ConnectionRecordSchema,
+  type ConnectionResourceRule,
+  ConnectionResourceRuleSchema,
+  ConnectionDiagnosticsResponseSchema,
+  type ConnectionDiagnosticsResponse,
+  type ConnectionResourceRuleCreateInput,
+  type ConnectionRemediationAction,
   type ConnectionCreateInput,
   type ConnectionUpdateInput,
   type OAuthConnectStartRequestApi,
@@ -172,11 +178,35 @@ import {
   type TodoAccountRegistrationInput,
   type TodoItemRecord,
   TodoItemRecordSchema,
+  type TodoProjectRecord,
+  TodoProjectRecordSchema,
   type TodoDigestRecord,
   TodoDigestRecordSchema,
   TodoSearchResultSchema,
   type TodoSearchResult,
   type TodoCreateInput,
+  type TodoistConnectInput,
+  type TodoistConnectResult,
+  TodoReconcileResultSchema,
+  type TodoReconcileResult,
+  type PersonActivityRollup,
+  PersonActivityRollupSchema,
+  type PersonListItem,
+  type PersonMergeEventRecord,
+  PersonMergeEventRecordSchema,
+  type PersonMergeSuggestion,
+  PersonMergeSuggestionSchema,
+  type PersonRecord,
+  type PersonSearchResult,
+  type PersonUpdateInput,
+  type PersonMergeInput,
+  type PersonSplitInput,
+  type PersonIdentityAttachInput,
+  type PersonIdentityDetachInput,
+  PersonRecordSchema,
+  type FileWriteIntentCreateInput,
+  type FileWriteIntentRecord,
+  FileWriteIntentRecordSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -1074,12 +1104,153 @@ export class PopeyeApiClient {
     return this.post('/v1/todos/accounts', input, TodoAccountRecordSchema);
   }
 
+  async connectTodoist(input: TodoistConnectInput): Promise<TodoistConnectResult> {
+    const schema = z.object({
+      connectionId: z.string(),
+      account: TodoAccountRecordSchema,
+    });
+    return this.post('/v1/todos/connect', input, schema);
+  }
+
   async createTodo(input: TodoCreateInput): Promise<TodoItemRecord> {
     return this.post('/v1/todos/items', input, TodoItemRecordSchema);
   }
 
+  async syncTodoAccount(accountId: string): Promise<{ accountId: string; todosSynced: number; todosUpdated: number; errors: string[] }> {
+    const schema = z.object({
+      accountId: z.string(),
+      todosSynced: z.number().int(),
+      todosUpdated: z.number().int(),
+      errors: z.array(z.string()),
+    });
+    return this.post('/v1/todos/sync', { accountId }, schema);
+  }
+
   async completeTodo(id: string): Promise<TodoItemRecord> {
     return this.post(`/v1/todos/items/${encodeURIComponent(id)}/complete`, {}, TodoItemRecordSchema);
+  }
+
+  async reprioritizeTodo(id: string, priority: number): Promise<TodoItemRecord> {
+    return this.post(`/v1/todos/items/${encodeURIComponent(id)}/reprioritize`, { priority }, TodoItemRecordSchema);
+  }
+
+  async rescheduleTodo(id: string, dueDate: string, dueTime?: string | null): Promise<TodoItemRecord> {
+    return this.post(`/v1/todos/items/${encodeURIComponent(id)}/reschedule`, { dueDate, dueTime }, TodoItemRecordSchema);
+  }
+
+  async moveTodo(id: string, projectName: string): Promise<TodoItemRecord> {
+    return this.post(`/v1/todos/items/${encodeURIComponent(id)}/move`, { projectName }, TodoItemRecordSchema);
+  }
+
+  async reconcileTodos(accountId: string): Promise<TodoReconcileResult> {
+    return this.post('/v1/todos/reconcile', { accountId }, TodoReconcileResultSchema);
+  }
+
+  async listTodoProjects(accountId: string): Promise<TodoProjectRecord[]> {
+    return this.getArray(`/v1/todos/projects${this.buildQuery({ accountId })}`, TodoProjectRecordSchema);
+  }
+
+  // --- Connection resource-rules, diagnostics, reconnect ---
+
+  async listConnectionResourceRules(connectionId: string): Promise<ConnectionResourceRule[]> {
+    return this.getArray(`/v1/connections/${encodeURIComponent(connectionId)}/resource-rules`, ConnectionResourceRuleSchema);
+  }
+
+  async addConnectionResourceRule(connectionId: string, rule: ConnectionResourceRuleCreateInput): Promise<ConnectionRecord> {
+    return this.post(`/v1/connections/${encodeURIComponent(connectionId)}/resource-rules`, rule, ConnectionRecordSchema);
+  }
+
+  async removeConnectionResourceRule(connectionId: string, resourceType: string, resourceId: string): Promise<ConnectionRecord> {
+    await this.ensureCsrfToken();
+    const response = await fetch(`${this.baseUrl}/v1/connections/${encodeURIComponent(connectionId)}/resource-rules`, {
+      method: 'DELETE',
+      headers: this.mutationHeaders(),
+      body: JSON.stringify({ resourceType, resourceId }),
+    });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
+    const data: unknown = await response.json();
+    return ConnectionRecordSchema.parse(data);
+  }
+
+  async getConnectionDiagnostics(connectionId: string): Promise<ConnectionDiagnosticsResponse> {
+    return this.get(`/v1/connections/${encodeURIComponent(connectionId)}/diagnostics`, ConnectionDiagnosticsResponseSchema);
+  }
+
+  async reconnectConnection(connectionId: string, action: ConnectionRemediationAction): Promise<ConnectionRecord> {
+    return this.post(`/v1/connections/${encodeURIComponent(connectionId)}/reconnect`, { action }, ConnectionRecordSchema);
+  }
+
+  async listPeople(): Promise<PersonListItem[]> {
+    return this.getArray('/v1/people', PersonRecordSchema);
+  }
+
+  async getPerson(id: string): Promise<PersonRecord> {
+    return this.get(`/v1/people/${encodeURIComponent(id)}`, PersonRecordSchema);
+  }
+
+  async searchPeople(query: string, options?: { limit?: number }): Promise<{ query: string; results: PersonSearchResult[] }> {
+    const params = this.buildQuery({ query, limit: options?.limit });
+    const schema = z.object({
+      query: z.string(),
+      results: z.array(z.object({
+        personId: z.string(),
+        displayName: z.string(),
+        canonicalEmail: z.string().nullable(),
+        githubLogin: z.string().nullable(),
+        score: z.number(),
+      })),
+    });
+    return this.get(`/v1/people/search${params}`, schema);
+  }
+
+  async updatePerson(id: string, input: PersonUpdateInput): Promise<PersonRecord> {
+    return this.patch(`/v1/people/${encodeURIComponent(id)}`, input, PersonRecordSchema);
+  }
+
+  async mergePeople(input: PersonMergeInput): Promise<PersonRecord> {
+    return this.post('/v1/people/merge', input, PersonRecordSchema);
+  }
+
+  async splitPerson(id: string, input: PersonSplitInput): Promise<PersonRecord> {
+    return this.post(`/v1/people/${encodeURIComponent(id)}/split`, input, PersonRecordSchema);
+  }
+
+  async attachPersonIdentity(input: PersonIdentityAttachInput): Promise<PersonRecord> {
+    return this.post('/v1/people/identities/attach', input, PersonRecordSchema);
+  }
+
+  async detachPersonIdentity(identityId: string, input: PersonIdentityDetachInput): Promise<PersonRecord> {
+    return this.post(`/v1/people/identities/${encodeURIComponent(identityId)}/detach`, input, PersonRecordSchema);
+  }
+
+  async listPersonMergeEvents(personId: string): Promise<PersonMergeEventRecord[]> {
+    return this.getArray(`/v1/people/${encodeURIComponent(personId)}/merge-events`, PersonMergeEventRecordSchema);
+  }
+
+  async getPersonMergeSuggestions(): Promise<PersonMergeSuggestion[]> {
+    return this.getArray('/v1/people/merge-suggestions', PersonMergeSuggestionSchema);
+  }
+
+  async getPersonActivityRollups(personId: string): Promise<PersonActivityRollup[]> {
+    return this.getArray(`/v1/people/${encodeURIComponent(personId)}/activity`, PersonActivityRollupSchema);
+  }
+
+  // --- File write-intents ---
+
+  async createFileWriteIntent(input: FileWriteIntentCreateInput): Promise<FileWriteIntentRecord> {
+    return this.post('/v1/files/write-intents', input, FileWriteIntentRecordSchema);
+  }
+
+  async listFileWriteIntents(options?: { rootId?: string; status?: string }): Promise<FileWriteIntentRecord[]> {
+    return this.getArray(`/v1/files/write-intents${this.buildQuery(options ?? {})}`, FileWriteIntentRecordSchema);
+  }
+
+  async getFileWriteIntent(id: string): Promise<FileWriteIntentRecord> {
+    return this.get(`/v1/files/write-intents/${encodeURIComponent(id)}`, FileWriteIntentRecordSchema);
+  }
+
+  async reviewFileWriteIntent(id: string, input: { action: 'apply' | 'reject'; reason?: string }): Promise<FileWriteIntentRecord> {
+    return this.post(`/v1/files/write-intents/${encodeURIComponent(id)}/review`, input, FileWriteIntentRecordSchema);
   }
 
   subscribeEvents(callback: (event: { event: string; data: string }) => void): () => void {

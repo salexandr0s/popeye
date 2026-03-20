@@ -1,7 +1,15 @@
 import { useMemo, useState } from 'react';
-import type { OAuthSessionResponse } from '@popeye/contracts';
+import type { OAuthSessionResponse, ConnectionResourceRule } from '@popeye/contracts';
 import { useApi } from '../api/provider';
-import { useCalendarAccounts, useConnections, useEmailAccounts, useGithubAccounts } from '../api/hooks';
+import {
+  useCalendarAccounts,
+  useConnectionDiagnostics,
+  useConnectionResourceRules,
+  useConnections,
+  useEmailAccounts,
+  useGithubAccounts,
+  useTodoAccounts,
+} from '../api/hooks';
 import { PageHeader } from '../components/page-header';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
@@ -12,7 +20,7 @@ import { Card } from '../components/card';
 
 type OAuthSessionRecord = OAuthSessionResponse;
 
-const MANUAL_SYNC_DOMAINS = new Set(['email', 'calendar', 'github']);
+const MANUAL_SYNC_DOMAINS = new Set(['email', 'calendar', 'github', 'todos']);
 
 export function Connections() {
   const api = useApi();
@@ -20,22 +28,38 @@ export function Connections() {
   const emailAccounts = useEmailAccounts();
   const calendarAccounts = useCalendarAccounts();
   const githubAccounts = useGithubAccounts();
+  const todoAccounts = useTodoAccounts();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [todoistToken, setTodoistToken] = useState('');
+  const [todoistLabel, setTodoistLabel] = useState('Todoist');
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [ruleType, setRuleType] = useState<string>('resource');
+  const [ruleId, setRuleId] = useState('');
+  const [ruleName, setRuleName] = useState('');
+  const [ruleWrite, setRuleWrite] = useState(false);
 
   const accountIdsByConnection = useMemo(() => {
     const map = new Map<string, string>();
     for (const account of emailAccounts.data ?? []) map.set(account.connectionId, account.id);
     for (const account of calendarAccounts.data ?? []) map.set(account.connectionId, account.id);
     for (const account of githubAccounts.data ?? []) map.set(account.connectionId, account.id);
+    for (const account of todoAccounts.data ?? []) {
+      if (account.connectionId) {
+        map.set(account.connectionId, account.id);
+      }
+    }
     return map;
-  }, [calendarAccounts.data, emailAccounts.data, githubAccounts.data]);
+  }, [calendarAccounts.data, emailAccounts.data, githubAccounts.data, todoAccounts.data]);
 
-  if (connections.loading || emailAccounts.loading || calendarAccounts.loading || githubAccounts.loading) {
+  const resourceRules = useConnectionResourceRules(selectedConnectionId ?? '');
+  const diagnostics = useConnectionDiagnostics(selectedConnectionId ?? '');
+
+  if (connections.loading || emailAccounts.loading || calendarAccounts.loading || githubAccounts.loading || todoAccounts.loading) {
     return <Loading />;
   }
 
-  const loadError = connections.error ?? emailAccounts.error ?? calendarAccounts.error ?? githubAccounts.error;
+  const loadError = connections.error ?? emailAccounts.error ?? calendarAccounts.error ?? githubAccounts.error ?? todoAccounts.error;
   if (loadError) {
     return <ErrorDisplay message={loadError} />;
   }
@@ -47,6 +71,7 @@ export function Connections() {
     emailAccounts.refetch();
     calendarAccounts.refetch();
     githubAccounts.refetch();
+    todoAccounts.refetch();
   };
 
   const pollOAuthSession = async (sessionId: string): Promise<void> => {
@@ -65,19 +90,40 @@ export function Connections() {
     throw new Error('OAuth connection timed out');
   };
 
-  const handleConnect = async (providerKind: 'gmail' | 'google_calendar' | 'github') => {
+  const handleConnect = async (providerKind: 'gmail' | 'google_calendar' | 'github', connectionId?: string) => {
     try {
-      setBusyKey(`connect:${providerKind}`);
+      setBusyKey(connectionId ? `reconnect:${connectionId}` : `connect:${providerKind}`);
       setActionError(null);
       const session = await api.post<OAuthSessionRecord>('/v1/connections/oauth/start', {
         providerKind,
         mode: 'read_only',
         syncIntervalSeconds: 900,
+        ...(connectionId ? { connectionId } : {}),
       });
       window.open(session.authorizationUrl, '_blank', 'noopener,noreferrer');
       await pollOAuthSession(session.id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Connection failed');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const handleTodoistConnect = async () => {
+    try {
+      setBusyKey('connect:todoist');
+      setActionError(null);
+      await api.post('/v1/todos/connect', {
+        apiToken: todoistToken,
+        label: todoistLabel,
+        displayName: todoistLabel,
+        mode: 'read_write',
+        syncIntervalSeconds: 900,
+      });
+      setTodoistToken('');
+      refetchAll();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Todoist connection failed');
     } finally {
       setBusyKey(null);
     }
@@ -112,7 +158,9 @@ export function Connections() {
       ? '/v1/email/sync'
       : domain === 'calendar'
         ? '/v1/calendar/sync'
-        : '/v1/github/sync';
+        : domain === 'github'
+          ? '/v1/github/sync'
+          : '/v1/todos/sync';
 
     try {
       setBusyKey(`sync:${connectionId}`);
@@ -121,6 +169,66 @@ export function Connections() {
       refetchAll();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const selectedConnection = items.find((item) => item.id === selectedConnectionId) ?? null;
+
+  const handleAddRule = async () => {
+    if (!selectedConnectionId || !ruleId.trim() || !ruleName.trim()) return;
+    try {
+      setBusyKey('add-rule');
+      setActionError(null);
+      await api.post(`/v1/connections/${encodeURIComponent(selectedConnectionId)}/resource-rules`, {
+        resourceType: ruleType,
+        resourceId: ruleId.trim(),
+        displayName: ruleName.trim(),
+        writeAllowed: ruleWrite,
+      });
+      setRuleId('');
+      setRuleName('');
+      setRuleWrite(false);
+      resourceRules.refetch();
+      refetchAll();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Add rule failed');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const handleRemoveRule = async (rule: ConnectionResourceRule) => {
+    if (!selectedConnectionId) return;
+    try {
+      setBusyKey(`remove-rule:${rule.resourceType}:${rule.resourceId}`);
+      setActionError(null);
+      await api.post(`/v1/connections/${encodeURIComponent(selectedConnectionId)}/resource-rules/delete`, {
+        resourceType: rule.resourceType,
+        resourceId: rule.resourceId,
+      });
+      resourceRules.refetch();
+      refetchAll();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Remove rule failed');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const handleReconnect = async () => {
+    if (!selectedConnectionId) return;
+    try {
+      setBusyKey('reconnect-diag');
+      setActionError(null);
+      await api.post(`/v1/connections/${encodeURIComponent(selectedConnectionId)}/reconnect`, {
+        action: 'reconnect',
+      });
+      diagnostics.refetch();
+      refetchAll();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Reconnect failed');
     } finally {
       setBusyKey(null);
     }
@@ -163,6 +271,11 @@ export function Connections() {
           <p className="mt-[6px] text-[12px] text-[var(--color-fg-muted)]">
             auth: {row.health?.authState ?? 'unknown'}
           </p>
+          {row.health?.remediation ? (
+            <p className="mt-[6px] text-[12px] text-[var(--color-fg-muted)]">
+              next: {row.health.remediation.action}
+            </p>
+          ) : null}
         </div>
       ),
     },
@@ -192,6 +305,17 @@ export function Connections() {
             >
               {busyKey === `sync:${row.id}` ? 'Syncing…' : 'Sync'}
             </button>
+          ) : null}
+          {row.providerKind === 'gmail' || row.providerKind === 'google_calendar' || row.providerKind === 'github' ? (
+            row.health?.remediation ? (
+              <button
+                className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
+                onClick={() => void handleConnect(row.providerKind, row.id)}
+                type="button"
+              >
+                {busyKey === `reconnect:${row.id}` ? 'Opening…' : 'Reconnect'}
+              </button>
+            ) : null
           ) : null}
           <button
             className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
@@ -254,6 +378,29 @@ export function Connections() {
             {busyKey === 'connect:github' ? 'Connecting GitHub…' : 'Connect GitHub'}
           </button>
         </div>
+        <div className="mt-[20px] grid gap-[12px] md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <input
+            className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
+            onChange={(event) => setTodoistLabel(event.target.value)}
+            placeholder="Todoist label"
+            value={todoistLabel}
+          />
+          <input
+            className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
+            onChange={(event) => setTodoistToken(event.target.value)}
+            placeholder="Todoist API token"
+            type="password"
+            value={todoistToken}
+          />
+          <button
+            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
+            disabled={todoistToken.trim().length === 0}
+            onClick={() => void handleTodoistConnect()}
+            type="button"
+          >
+            {busyKey === 'connect:todoist' ? 'Connecting Todoist…' : 'Connect Todoist'}
+          </button>
+        </div>
       </div>
 
       {actionError ? (
@@ -268,8 +415,131 @@ export function Connections() {
           description="Start with one of the blessed browser OAuth flows above."
         />
       ) : (
-        <DataTable columns={columns} data={items} keyFn={(row) => row.id} />
+        <DataTable
+          columns={columns}
+          data={items}
+          keyFn={(row) => row.id}
+          onRowClick={(row) => setSelectedConnectionId(row.id === selectedConnectionId ? null : row.id)}
+        />
       )}
+
+      {selectedConnection ? (
+        <div className="mt-[24px] grid gap-[24px] md:grid-cols-2">
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
+            <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Resource Rules</h2>
+            <p className="mt-[4px] text-[14px] text-[var(--color-fg-muted)]">
+              Scoped resources for {selectedConnection.label}
+            </p>
+            <div className="mt-[16px] space-y-[8px]">
+              {(resourceRules.data ?? selectedConnection.resourceRules ?? []).length === 0 ? (
+                <p className="text-[14px] text-[var(--color-fg-muted)]">No resource rules configured.</p>
+              ) : (resourceRules.data ?? selectedConnection.resourceRules ?? []).map((rule) => (
+                <div key={`${rule.resourceType}:${rule.resourceId}`} className="flex items-center justify-between rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px]">
+                  <div>
+                    <p className="font-medium">{rule.displayName}</p>
+                    <p className="mt-[4px] text-[12px] text-[var(--color-fg-muted)]">
+                      {rule.resourceType} / {rule.resourceId}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-[8px]">
+                    {rule.writeAllowed ? (
+                      <Badge state="ready" />
+                    ) : (
+                      <span className="text-[12px] text-[var(--color-fg-muted)]">read-only</span>
+                    )}
+                    <button
+                      className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-[10px] py-[6px] text-[12px] font-medium"
+                      onClick={() => void handleRemoveRule(rule)}
+                      type="button"
+                    >
+                      {busyKey === `remove-rule:${rule.resourceType}:${rule.resourceId}` ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-[16px] grid gap-[12px]">
+              <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Add Rule</p>
+              <select
+                className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
+                onChange={(event) => setRuleType(event.target.value)}
+                value={ruleType}
+              >
+                <option value="resource">resource</option>
+                <option value="mailbox">mailbox</option>
+                <option value="calendar">calendar</option>
+                <option value="repo">repo</option>
+                <option value="project">project</option>
+              </select>
+              <input
+                className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
+                onChange={(event) => setRuleId(event.target.value)}
+                placeholder="Resource ID"
+                value={ruleId}
+              />
+              <input
+                className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
+                onChange={(event) => setRuleName(event.target.value)}
+                placeholder="Display name"
+                value={ruleName}
+              />
+              <label className="flex items-center gap-[8px] text-[13px]">
+                <input
+                  checked={ruleWrite}
+                  onChange={(event) => setRuleWrite(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>Write allowed</span>
+              </label>
+              <button
+                className="w-fit rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
+                disabled={!ruleId.trim() || !ruleName.trim()}
+                onClick={() => void handleAddRule()}
+                type="button"
+              >
+                {busyKey === 'add-rule' ? 'Adding…' : 'Add Rule'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
+            <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Diagnostics</h2>
+            <p className="mt-[4px] text-[14px] text-[var(--color-fg-muted)]">
+              Health and sync details for {selectedConnection.label}
+            </p>
+            <div className="mt-[16px] space-y-[12px]">
+              <div>
+                <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Health</p>
+                <div className="mt-[8px]">
+                  <Badge state={diagnostics.data?.health?.status ?? selectedConnection.health?.status ?? 'unknown'} />
+                </div>
+              </div>
+              <div>
+                <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Sync Status</p>
+                <p className="mt-[8px] text-[14px]">
+                  {diagnostics.data?.sync?.status ?? selectedConnection.sync?.status ?? 'idle'}
+                </p>
+                <p className="mt-[4px] text-[12px] text-[var(--color-fg-muted)]">
+                  {diagnostics.data?.sync?.lagSummary ?? selectedConnection.sync?.lagSummary ?? 'No sync summary'}
+                </p>
+              </div>
+              {diagnostics.data?.humanSummary ? (
+                <div>
+                  <p className="text-[12px] uppercase tracking-[0.12em] text-[var(--color-fg-muted)]">Summary</p>
+                  <p className="mt-[8px] text-[14px]">{diagnostics.data.humanSummary}</p>
+                </div>
+              ) : null}
+              <button
+                className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
+                onClick={() => void handleReconnect()}
+                type="button"
+              >
+                {busyKey === 'reconnect-diag' ? 'Reconnecting…' : 'Reconnect'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

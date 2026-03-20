@@ -17,15 +17,16 @@ import {
   AutomationGrantRecordSchema,
   AutomationGrantCreateInputSchema,
 } from './approval.js';
-import { ConnectionRecordSchema } from './connection.js';
+import { ConnectionRecordSchema, ConnectionResourceRuleSchema, ConnectionResourceRuleCreateInputSchema, ConnectionResourceRuleDeleteInputSchema, ConnectionDiagnosticsResponseSchema, ConnectionReconnectRequestSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
-import { VaultKindSchema, VaultRecordSchema } from './vault.js';
+import { VaultKindSchema, VaultRecordSchema, VaultBackupManifestSchema, VaultRestoreResultSchema, VaultBackupVerifyResultSchema } from './vault.js';
 import { OAuthConnectStartRequestSchema, OAuthSessionRecordSchema } from './oauth.js';
-import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
+import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema, FileWriteIntentRecordSchema, FileWriteIntentCreateInputSchema, FileWriteIntentReviewInputSchema } from './file-roots.js';
 import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema, EmailDraftCreateInputSchema, EmailDraftRecordSchema, EmailDraftUpdateInputSchema } from './email.js';
 import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema, GithubCommentCreateInputSchema, GithubCommentRecordSchema, GithubNotificationMarkReadInputSchema } from './github.js';
 import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema, CalendarEventCreateInputSchema, CalendarEventUpdateInputSchema } from './calendar.js';
-import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema } from './todos.js';
+import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoistConnectResultSchema, TodoReprioritizeInputSchema, TodoRescheduleInputSchema, TodoMoveInputSchema, TodoReconcileResultSchema } from './todos.js';
+import { PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonListItemSchema, PersonMergeInputSchema, PersonRecordSchema, PersonSearchQuerySchema, PersonSearchResultSchema, PersonSplitInputSchema, PersonUpdateInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema } from './people.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -287,6 +288,23 @@ export type AutomationGrantCreateRequest = z.infer<typeof AutomationGrantCreateR
 export const ConnectionListResponseSchema = z.array(ConnectionRecordSchema);
 export type ConnectionListResponse = z.infer<typeof ConnectionListResponseSchema>;
 
+export const ConnectionResourceRuleListResponseSchema = z.array(ConnectionResourceRuleSchema);
+export type ConnectionResourceRuleListResponse = z.infer<typeof ConnectionResourceRuleListResponseSchema>;
+
+export const ConnectionResourceRuleCreateRequestSchema = ConnectionResourceRuleCreateInputSchema;
+export type ConnectionResourceRuleCreateRequest = z.infer<typeof ConnectionResourceRuleCreateRequestSchema>;
+
+export const ConnectionResourceRuleDeleteRequestSchema = ConnectionResourceRuleDeleteInputSchema;
+export type ConnectionResourceRuleDeleteRequest = z.infer<typeof ConnectionResourceRuleDeleteRequestSchema>;
+
+export const ConnectionDiagnosticsApiResponseSchema = ConnectionDiagnosticsResponseSchema;
+export type ConnectionDiagnosticsApiResponse = z.infer<typeof ConnectionDiagnosticsApiResponseSchema>;
+
+export const ConnectionReconnectApiRequestSchema = ConnectionReconnectRequestSchema;
+export type ConnectionReconnectApiRequest = z.infer<typeof ConnectionReconnectApiRequestSchema>;
+
+export { ConnectionResourceRuleSchema, ConnectionResourceRuleCreateInputSchema, ConnectionResourceRuleDeleteInputSchema, ConnectionDiagnosticsResponseSchema, ConnectionReconnectRequestSchema };
+
 export const OAuthConnectStartRequestApiSchema = OAuthConnectStartRequestSchema;
 export type OAuthConnectStartRequestApi = z.infer<typeof OAuthConnectStartRequestApiSchema>;
 
@@ -318,6 +336,17 @@ export const VaultOpenRequestSchema = z.object({
   approvalId: z.string().min(1),
 });
 export type VaultOpenRequest = z.infer<typeof VaultOpenRequestSchema>;
+
+export const VaultBackupResponseSchema = VaultBackupManifestSchema;
+export type VaultBackupResponse = z.infer<typeof VaultBackupResponseSchema>;
+
+export const VaultRestoreResponseSchema = VaultRestoreResultSchema;
+export type VaultRestoreResponse = z.infer<typeof VaultRestoreResponseSchema>;
+
+export const VaultBackupVerifyResponseSchema = VaultBackupVerifyResultSchema;
+export type VaultBackupVerifyResponse = z.infer<typeof VaultBackupVerifyResponseSchema>;
+
+export { VaultBackupManifestSchema, VaultRestoreResultSchema, VaultBackupVerifyResultSchema };
 
 export const ContextReleasePreviewRequestSchema = z.object({
   domain: DomainKindSchema,
@@ -369,7 +398,21 @@ export type FileSearchApiResponse = z.infer<typeof FileSearchApiResponseSchema>;
 export const FileReindexResponseSchema = FileIndexResultSchema;
 export type FileReindexResponse = z.infer<typeof FileReindexResponseSchema>;
 
-export { FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema };
+// --- File write-intent API schemas ---
+
+export const FileWriteIntentListResponseSchema = z.array(FileWriteIntentRecordSchema);
+export type FileWriteIntentListResponse = z.infer<typeof FileWriteIntentListResponseSchema>;
+
+export const FileWriteIntentResponseSchema = FileWriteIntentRecordSchema;
+export type FileWriteIntentResponse = z.infer<typeof FileWriteIntentResponseSchema>;
+
+export const FileWriteIntentCreateRequestSchema = FileWriteIntentCreateInputSchema;
+export type FileWriteIntentCreateRequest = z.infer<typeof FileWriteIntentCreateRequestSchema>;
+
+export const FileWriteIntentReviewRequestSchema = FileWriteIntentReviewInputSchema;
+export type FileWriteIntentReviewRequest = z.infer<typeof FileWriteIntentReviewRequestSchema>;
+
+export { FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema, FileWriteIntentRecordSchema, FileWriteIntentCreateInputSchema, FileWriteIntentReviewInputSchema };
 
 // --- Email API schemas ---
 
@@ -541,4 +584,122 @@ export type TodoSyncResponse = z.infer<typeof TodoSyncResponseSchema>;
 export const TodoCreateRequestSchema = TodoCreateInputSchema;
 export type TodoCreateRequest = z.infer<typeof TodoCreateRequestSchema>;
 
-export { TodoAccountRegistrationInputSchema, TodoAccountRecordSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema };
+export const TodoistConnectRequestSchema = TodoistConnectInputSchema;
+export type TodoistConnectRequest = z.infer<typeof TodoistConnectRequestSchema>;
+
+export const TodoistConnectResponseSchema = TodoistConnectResultSchema;
+export type TodoistConnectResponse = z.infer<typeof TodoistConnectResponseSchema>;
+
+export const TodoReprioritizeRequestSchema = TodoReprioritizeInputSchema;
+export type TodoReprioritizeRequest = z.infer<typeof TodoReprioritizeRequestSchema>;
+
+export const TodoRescheduleRequestSchema = TodoRescheduleInputSchema;
+export type TodoRescheduleRequest = z.infer<typeof TodoRescheduleRequestSchema>;
+
+export const TodoMoveRequestSchema = TodoMoveInputSchema;
+export type TodoMoveRequest = z.infer<typeof TodoMoveRequestSchema>;
+
+export const TodoReconcileResponseSchema = TodoReconcileResultSchema;
+export type TodoReconcileResponse = z.infer<typeof TodoReconcileResponseSchema>;
+
+export { TodoAccountRegistrationInputSchema, TodoAccountRecordSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoistConnectResultSchema, TodoReprioritizeInputSchema, TodoRescheduleInputSchema, TodoMoveInputSchema, TodoReconcileResultSchema };
+
+// --- People API schemas ---
+
+export const PersonListResponseSchema = z.array(PersonListItemSchema);
+export type PersonListResponse = z.infer<typeof PersonListResponseSchema>;
+
+export const PersonResponseSchema = PersonRecordSchema;
+export type PersonResponse = z.infer<typeof PersonResponseSchema>;
+
+export const PersonSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(PersonSearchResultSchema),
+});
+export type PersonSearchApiResponse = z.infer<typeof PersonSearchApiResponseSchema>;
+
+export const PersonUpdateRequestSchema = PersonUpdateInputSchema;
+export type PersonUpdateRequest = z.infer<typeof PersonUpdateRequestSchema>;
+
+export const PersonMergeRequestSchema = PersonMergeInputSchema;
+export type PersonMergeRequest = z.infer<typeof PersonMergeRequestSchema>;
+
+export const PersonSplitRequestSchema = PersonSplitInputSchema;
+export type PersonSplitRequest = z.infer<typeof PersonSplitRequestSchema>;
+
+export const PersonIdentityAttachRequestSchema = PersonIdentityAttachInputSchema;
+export type PersonIdentityAttachRequest = z.infer<typeof PersonIdentityAttachRequestSchema>;
+
+export const PersonIdentityDetachRequestSchema = PersonIdentityDetachInputSchema;
+export type PersonIdentityDetachRequest = z.infer<typeof PersonIdentityDetachRequestSchema>;
+
+export const PersonMergeEventListResponseSchema = z.array(PersonMergeEventRecordSchema);
+export type PersonMergeEventListResponse = z.infer<typeof PersonMergeEventListResponseSchema>;
+
+export const PersonMergeSuggestionListResponseSchema = z.array(PersonMergeSuggestionSchema);
+export type PersonMergeSuggestionListResponse = z.infer<typeof PersonMergeSuggestionListResponseSchema>;
+
+export const PersonActivityRollupListResponseSchema = z.array(PersonActivityRollupSchema);
+export type PersonActivityRollupListResponse = z.infer<typeof PersonActivityRollupListResponseSchema>;
+
+export { PersonListItemSchema, PersonRecordSchema, PersonSearchQuerySchema, PersonSearchResultSchema, PersonUpdateInputSchema, PersonMergeInputSchema, PersonSplitInputSchema, PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema };
+
+// --- Finance API schemas ---
+
+import { FinanceImportRecordSchema, FinanceTransactionRecordSchema, FinanceDocumentRecordSchema, FinanceDigestRecordSchema, FinanceSearchResultSchema, FinanceAnomalyFlagSchema, FinanceReminderCandidateSchema } from './finance.js';
+
+export const FinanceImportListResponseSchema = z.array(FinanceImportRecordSchema);
+export type FinanceImportListResponse = z.infer<typeof FinanceImportListResponseSchema>;
+
+export const FinanceTransactionListResponseSchema = z.array(FinanceTransactionRecordSchema);
+export type FinanceTransactionListResponse = z.infer<typeof FinanceTransactionListResponseSchema>;
+
+export const FinanceDocumentListResponseSchema = z.array(FinanceDocumentRecordSchema);
+export type FinanceDocumentListResponse = z.infer<typeof FinanceDocumentListResponseSchema>;
+
+export const FinanceDigestResponseSchema = FinanceDigestRecordSchema;
+export type FinanceDigestResponse = z.infer<typeof FinanceDigestResponseSchema>;
+
+export const FinanceSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(FinanceSearchResultSchema),
+});
+export type FinanceSearchApiResponse = z.infer<typeof FinanceSearchApiResponseSchema>;
+
+export const FinanceAnomalyListResponseSchema = z.array(FinanceAnomalyFlagSchema);
+export type FinanceAnomalyListResponse = z.infer<typeof FinanceAnomalyListResponseSchema>;
+
+export const FinanceReminderListResponseSchema = z.array(FinanceReminderCandidateSchema);
+export type FinanceReminderListResponse = z.infer<typeof FinanceReminderListResponseSchema>;
+
+export { FinanceImportRecordSchema, FinanceTransactionRecordSchema, FinanceDocumentRecordSchema, FinanceDigestRecordSchema, FinanceSearchResultSchema, FinanceAnomalyFlagSchema, FinanceReminderCandidateSchema };
+
+// --- Medical API schemas ---
+
+import { MedicalImportRecordSchema, MedicalAppointmentRecordSchema, MedicalMedicationRecordSchema, MedicalDocumentRecordSchema, MedicalDigestRecordSchema, MedicalSearchResultSchema, MedicalReminderCandidateSchema } from './medical.js';
+
+export const MedicalImportListResponseSchema = z.array(MedicalImportRecordSchema);
+export type MedicalImportListResponse = z.infer<typeof MedicalImportListResponseSchema>;
+
+export const MedicalAppointmentListResponseSchema = z.array(MedicalAppointmentRecordSchema);
+export type MedicalAppointmentListResponse = z.infer<typeof MedicalAppointmentListResponseSchema>;
+
+export const MedicalMedicationListResponseSchema = z.array(MedicalMedicationRecordSchema);
+export type MedicalMedicationListResponse = z.infer<typeof MedicalMedicationListResponseSchema>;
+
+export const MedicalDocumentListResponseSchema = z.array(MedicalDocumentRecordSchema);
+export type MedicalDocumentListResponse = z.infer<typeof MedicalDocumentListResponseSchema>;
+
+export const MedicalDigestResponseSchema = MedicalDigestRecordSchema;
+export type MedicalDigestResponse = z.infer<typeof MedicalDigestResponseSchema>;
+
+export const MedicalSearchApiResponseSchema = z.object({
+  query: z.string(),
+  results: z.array(MedicalSearchResultSchema),
+});
+export type MedicalSearchApiResponse = z.infer<typeof MedicalSearchApiResponseSchema>;
+
+export const MedicalReminderListResponseSchema = z.array(MedicalReminderCandidateSchema);
+export type MedicalReminderListResponse = z.infer<typeof MedicalReminderListResponseSchema>;
+
+export { MedicalImportRecordSchema, MedicalAppointmentRecordSchema, MedicalMedicationRecordSchema, MedicalDocumentRecordSchema, MedicalDigestRecordSchema, MedicalSearchResultSchema, MedicalReminderCandidateSchema };

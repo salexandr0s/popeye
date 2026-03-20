@@ -51,6 +51,12 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/connections/oauth/callback` | HTML success/failure page |
 | POST | `/v1/connections` | `ConnectionRecordSchema` (req: `ConnectionCreateInputSchema`) |
 | PATCH | `/v1/connections/:id` | `ConnectionRecordSchema` (req: `ConnectionUpdateInputSchema`) |
+| DELETE | `/v1/connections/:id` | `ConnectionRecordSchema` |
+| GET | `/v1/connections/:id/resource-rules` | `ConnectionResourceRuleSchema[]` |
+| POST | `/v1/connections/:id/resource-rules` | `ConnectionRecordSchema` (req: `ConnectionResourceRuleCreateInputSchema`) |
+| DELETE | `/v1/connections/:id/resource-rules` | `ConnectionRecordSchema` (req: `ConnectionResourceRuleDeleteInputSchema`) |
+| GET | `/v1/connections/:id/diagnostics` | `ConnectionDiagnosticsResponseSchema` |
+| POST | `/v1/connections/:id/reconnect` | `ConnectionRecordSchema` (req: `ConnectionReconnectRequestSchema`) |
 | GET | `/v1/email/accounts` | `EmailAccountRecordSchema[]` |
 | GET | `/v1/email/threads` | `EmailThreadRecordSchema[]` |
 | GET | `/v1/email/threads/:id` | `EmailThreadRecordSchema` |
@@ -85,6 +91,32 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/calendar/sync` | `CalendarSyncResultSchema` |
 | POST | `/v1/calendar/events` | `CalendarEventRecordSchema` (req: `CalendarEventCreateInputSchema`) |
 | PATCH | `/v1/calendar/events/:id` | `CalendarEventRecordSchema` (req: `CalendarEventUpdateInputSchema`) |
+| GET | `/v1/todos/accounts` | `TodoAccountRecordSchema[]` |
+| GET | `/v1/todos/items` | `TodoItemRecordSchema[]` |
+| GET | `/v1/todos/items/:id` | `TodoItemRecordSchema` |
+| GET | `/v1/todos/search?query=...` | `{ query, results: TodoSearchResultSchema[] }` |
+| GET | `/v1/todos/digest` | `TodoDigestRecordSchema \| null` |
+| POST | `/v1/todos/accounts` | `TodoAccountRecordSchema` (req: `TodoAccountRegistrationInputSchema`) |
+| POST | `/v1/todos/connect` | `TodoistConnectResponseSchema` (req: `TodoistConnectRequestSchema`) |
+| POST | `/v1/todos/items` | `TodoItemRecordSchema` (req: `TodoCreateInputSchema`) |
+| POST | `/v1/todos/sync` | `TodoSyncResponseSchema` |
+| POST | `/v1/todos/items/:id/complete` | `TodoItemRecordSchema` |
+| POST | `/v1/todos/items/:id/reprioritize` | `TodoItemRecordSchema` (req: `{ priority }`) |
+| POST | `/v1/todos/items/:id/reschedule` | `TodoItemRecordSchema` (req: `{ dueDate, dueTime? }`) |
+| POST | `/v1/todos/items/:id/move` | `TodoItemRecordSchema` (req: `{ projectName }`) |
+| POST | `/v1/todos/reconcile` | `TodoReconcileResultSchema` (req: `{ accountId }`) |
+| GET | `/v1/todos/projects?accountId=...` | `TodoProjectRecordSchema[]` |
+| GET | `/v1/people` | `PersonListResponseSchema` |
+| GET | `/v1/people/search?query=...` | `PersonSearchApiResponseSchema` |
+| GET | `/v1/people/:id` | `PersonResponseSchema` |
+| PATCH | `/v1/people/:id` | `PersonResponseSchema` (req: `PersonUpdateRequestSchema`) |
+| POST | `/v1/people/merge` | `PersonResponseSchema` (req: `PersonMergeRequestSchema`) |
+| POST | `/v1/people/:id/split` | `PersonResponseSchema` (req: `PersonSplitRequestSchema`) |
+| POST | `/v1/people/identities/attach` | `PersonResponseSchema` (req: `PersonIdentityAttachRequestSchema`) |
+| POST | `/v1/people/identities/:id/detach` | `PersonResponseSchema` (req: `PersonIdentityDetachRequestSchema`) |
+| GET | `/v1/people/:id/merge-events` | `PersonMergeEventRecordSchema[]` |
+| GET | `/v1/people/merge-suggestions` | `PersonMergeSuggestionSchema[]` |
+| GET | `/v1/people/:id/activity` | `PersonActivityRollupSchema[]` |
 | GET | `/v1/vaults` | `VaultListResponseSchema` |
 | POST | `/v1/vaults` | `VaultResponseSchema` (req: `VaultCreateRequestSchema`) |
 | GET | `/v1/vaults/:id` | `VaultResponseSchema` |
@@ -98,6 +130,10 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/files/search?query=...` | `FileSearchResponseSchema` |
 | GET | `/v1/files/documents/:id` | `FileDocumentRecordSchema` |
 | POST | `/v1/files/roots/:id/reindex` | `FileIndexResultSchema` |
+| POST | `/v1/files/write-intents` | `FileWriteIntentRecordSchema` (req: `FileWriteIntentCreateInputSchema`) |
+| GET | `/v1/files/write-intents` | `FileWriteIntentRecordSchema[]` |
+| GET | `/v1/files/write-intents/:id` | `FileWriteIntentRecordSchema` |
+| POST | `/v1/files/write-intents/:id/review` | `FileWriteIntentRecordSchema` (req: `FileWriteIntentReviewInputSchema`) |
 | GET | `/v1/events/stream` | SSE `text/event-stream` |
 | POST | `/v1/messages/ingest` | `MessageIngressResponseSchema` (req: `IngestMessageInputSchema`) |
 | GET | `/v1/messages/:id` | `MessageRecordSchema` |
@@ -171,17 +207,34 @@ Behavior notes:
 - Connection reads also include additive `health` and `sync` rollups so
   operators can inspect auth state, last provider error, cursor kind/presence,
   and sync lag without reading capability stores directly.
+- Connection reads also include additive `resourceRules` and `health.remediation`
+  data so calendar and GitHub write targets, reconnect posture, and stale
+  credential recovery are operator-visible without inferring policy from legacy
+  allowlist strings.
 - `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`,
   and `GET /v1/connections/oauth/callback` are the blessed browser-OAuth
   surfaces for Gmail, Google Calendar, and GitHub.
 - The callback route returns HTML rather than JSON because it is intended for
   the browser popup/tab flow.
+- `POST /v1/connections/oauth/start` also accepts an existing `connectionId` for
+  reconnect / reauthorize flows instead of requiring operators to create a new
+  connection.
 - Blessed browser OAuth completion auto-registers the matching email, calendar,
   or GitHub account; separate `POST /v1/*/accounts` calls are no longer part of
   the happy path for those domains.
+- `POST /v1/todos/connect` is the blessed Todoist connect path. It stores the
+  manual API token in the secret store, creates or updates the connection, and
+  auto-registers the matching todo account.
+- `GET /v1/people`, `GET /v1/people/search`, and the People mutation routes are
+  the canonical operator surfaces for the local derived-first identity graph
+  built from Gmail, Calendar, and GitHub sync data.
 - Email, calendar, and GitHub reads/searches/digests continue to fail closed
   with domain-specific `400` errors when their backing connection policy is
   disabled or invalid.
+- Email draft records now persist `accountId` and `connectionId` ownership so
+  draft updates resolve deterministically across multiple Gmail accounts.
+  Legacy or unmapped drafts fail closed with an explicit account-resolution
+  error rather than assuming a single connected mailbox.
 - Email drafts, calendar event create/update, GitHub comments, and GitHub
   notification mark-read are evaluator-backed write flows:
   - non-allowlisted resources fail closed before approval evaluation

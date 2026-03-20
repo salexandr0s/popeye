@@ -237,6 +237,18 @@ importers:
         specifier: ^10.0.1
         version: 10.2.4
 
+  packages/cap-finance:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+
   packages/cap-github:
     dependencies:
       '@popeye/contracts':
@@ -251,6 +263,30 @@ importers:
       zod:
         specifier: ^3.24.2
         version: 3.25.76
+
+  packages/cap-medical:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+
+  packages/cap-people:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@popeye/observability':
+        specifier: workspace:*
+        version: link:../observability
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
 
   packages/cap-todos:
     dependencies:
@@ -362,6 +398,9 @@ importers:
       '@popeye/cap-github':
         specifier: workspace:*
         version: link:../cap-github
+      '@popeye/cap-people':
+        specifier: workspace:*
+        version: link:../cap-people
       '@popeye/cap-todos':
         specifier: workspace:*
         version: link:../cap-todos

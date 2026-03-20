@@ -15,6 +15,7 @@ export * from './approval-service.js';
 export * from './vault-manager.js';
 export * from './context-release-service.js';
 export * from './capability-registry.js';
+export * from './migration-manager.js';
 
 // Backward-compat re-exports from domain packages
 export { evaluateCriticalFileMutation } from '@popeye/workspace';

@@ -120,6 +120,7 @@ export type EmailSyncResult = z.infer<typeof EmailSyncResultSchema>;
 export const EmailDraftRecordSchema = z.object({
   id: z.string(),
   accountId: z.string(),
+  connectionId: z.string(),
   providerDraftId: z.string(),
   providerMessageId: z.string().nullable().default(null),
   to: z.array(z.string()).default([]),
@@ -140,6 +141,7 @@ export const EmailDraftCreateInputSchema = z.object({
 export type EmailDraftCreateInput = z.infer<typeof EmailDraftCreateInputSchema>;
 
 export const EmailDraftUpdateInputSchema = z.object({
+  accountId: z.string().min(1).optional(),
   to: z.array(z.string().email()).optional(),
   cc: z.array(z.string().email()).optional(),
   subject: z.string().min(1).optional(),

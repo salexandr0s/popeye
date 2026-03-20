@@ -47,6 +47,9 @@
     },
     {
       "path": "../cap-todos/tsconfig.build.json"
+    },
+    {
+      "path": "../cap-people/tsconfig.build.json"
     }
   ]
 }

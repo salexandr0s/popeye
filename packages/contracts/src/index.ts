@@ -28,3 +28,6 @@ export * from './email.js';
 export * from './github.js';
 export * from './calendar.js';
 export * from './todos.js';
+export * from './people.js';
+export * from './finance.js';
+export * from './medical.js';

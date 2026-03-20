@@ -21,6 +21,8 @@ const navItems: NavItem[] = [
   { label: 'Email', to: '/email' },
   { label: 'Calendar', to: '/calendar' },
   { label: 'GitHub', to: '/github' },
+  { label: 'People', to: '/people' },
+  { label: 'Todos', to: '/todos' },
   { label: 'Vaults', to: '/vaults' },
   { label: 'Security Policy', to: '/security-policy' },
   { label: 'Memory', to: '/memory' },

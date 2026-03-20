@@ -27,10 +27,14 @@ export const ContextReleaseDecisionSchema = z.object({
 });
 export type ContextReleaseDecision = z.infer<typeof ContextReleaseDecisionSchema>;
 
+export const ContextReleaseFidelityLevelSchema = z.enum(['summary', 'excerpt', 'full']);
+export type ContextReleaseFidelityLevel = z.infer<typeof ContextReleaseFidelityLevelSchema>;
+
 export const ContextReleasePreviewSchema = z.object({
   domain: DomainKindSchema,
   sourceRef: z.string(),
   releaseLevel: ContextReleasePolicySchema,
+  fidelityLevel: ContextReleaseFidelityLevelSchema.default('summary'),
   previewText: z.string(),
   tokenEstimate: z.number().int().nonnegative(),
   requiresApproval: z.boolean(),

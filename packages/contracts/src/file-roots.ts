@@ -103,3 +103,46 @@ export const FileIndexResultSchema = z.object({
   errors: z.array(z.string()),
 });
 export type FileIndexResult = z.infer<typeof FileIndexResultSchema>;
+
+// --- Write Posture ---
+
+export const FileWritePostureSchema = z.enum(['read_only', 'agent_owned', 'review_required']);
+export type FileWritePosture = z.infer<typeof FileWritePostureSchema>;
+
+// --- Write Intent ---
+
+export const FileWriteIntentStatusSchema = z.enum(['pending', 'applied', 'rejected']);
+export type FileWriteIntentStatus = z.infer<typeof FileWriteIntentStatusSchema>;
+
+export const FileWriteIntentTypeSchema = z.enum(['create', 'update', 'delete']);
+export type FileWriteIntentType = z.infer<typeof FileWriteIntentTypeSchema>;
+
+export const FileWriteIntentRecordSchema = z.object({
+  id: z.string(),
+  fileRootId: z.string(),
+  filePath: z.string(),
+  intentType: FileWriteIntentTypeSchema,
+  diffPreview: z.string().default(''),
+  status: FileWriteIntentStatusSchema.default('pending'),
+  runId: z.string().nullable().default(null),
+  approvalId: z.string().nullable().default(null),
+  receiptId: z.string().nullable().default(null),
+  createdAt: z.string(),
+  reviewedAt: z.string().nullable().default(null),
+});
+export type FileWriteIntentRecord = z.infer<typeof FileWriteIntentRecordSchema>;
+
+export const FileWriteIntentCreateInputSchema = z.object({
+  fileRootId: z.string().min(1),
+  filePath: z.string().min(1),
+  intentType: FileWriteIntentTypeSchema,
+  diffPreview: z.string().default(''),
+  runId: z.string().nullable().optional(),
+});
+export type FileWriteIntentCreateInput = z.infer<typeof FileWriteIntentCreateInputSchema>;
+
+export const FileWriteIntentReviewInputSchema = z.object({
+  action: z.enum(['apply', 'reject']),
+  reason: z.string().optional(),
+});
+export type FileWriteIntentReviewInput = z.infer<typeof FileWriteIntentReviewInputSchema>;

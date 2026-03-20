@@ -1938,6 +1938,51 @@
               },
               "default": []
             },
+            "resourceRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "resourceType": {
+                    "type": "string",
+                    "enum": [
+                      "resource",
+                      "mailbox",
+                      "calendar",
+                      "repo",
+                      "project"
+                    ]
+                  },
+                  "resourceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "writeAllowed": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "resourceType",
+                  "resourceId",
+                  "displayName",
+                  "createdAt",
+                  "updatedAt"
+                ],
+                "additionalProperties": false
+              },
+              "default": []
+            },
             "lastSyncAt": {
               "type": [
                 "string",
@@ -2066,6 +2111,40 @@
                     "$ref": "#/definitions/ConnectionRecord/properties/policy/properties/diagnostics/items"
                   },
                   "default": []
+                },
+                "remediation": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "reauthorize",
+                            "reconnect",
+                            "scope_fix",
+                            "secret_fix"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "message",
+                        "updatedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
                 }
               },
               "additionalProperties": false
@@ -2203,6 +2282,15 @@
                 "excerpt",
                 "full"
               ]
+            },
+            "fidelityLevel": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "excerpt",
+                "full"
+              ],
+              "default": "summary"
             },
             "previewText": {
               "type": "string"

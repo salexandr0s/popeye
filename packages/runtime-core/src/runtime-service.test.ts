@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 
 import type { AppConfig, ReceiptRecord } from '../../contracts/src/index.ts';
+import { EmailService } from '../../cap-email/src/index.ts';
 import { GithubService } from '../../cap-github/src/index.ts';
 import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../engine-pi/src/index.ts';
 import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
@@ -491,6 +492,215 @@ describe('PopeyeRuntimeService', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+  });
+
+  it('surfaces typed resource rules and remediation guidance on degraded connections', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-connection-health-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const github = runtime.createConnection({
+      domain: 'github',
+      providerKind: 'github',
+      label: 'GitHub',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+      resourceRules: [{
+        resourceType: 'repo',
+        resourceId: 'openai/popeye',
+        displayName: 'openai/popeye',
+        writeAllowed: true,
+      }],
+    });
+
+    const todoist = runtime.createConnection({
+      domain: 'todos',
+      providerKind: 'todoist',
+      label: 'Todoist',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+      resourceRules: [],
+    });
+
+    const connections = runtime.listConnections();
+    const githubConnection = connections.find((connection) => connection.id === github.id);
+    const todoistConnection = connections.find((connection) => connection.id === todoist.id);
+
+    expect(githubConnection).toMatchObject({
+      resourceRules: [
+        expect.objectContaining({
+          resourceType: 'repo',
+          resourceId: 'openai/popeye',
+          writeAllowed: true,
+        }),
+      ],
+      health: {
+        remediation: expect.objectContaining({
+          action: 'reconnect',
+        }),
+      },
+    });
+    expect(todoistConnection?.health?.remediation).toMatchObject({
+      action: 'secret_fix',
+    });
+
+    await runtime.close();
+  });
+
+  it('connects Todoist through the blessed secret-backed flow', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-todoist-connect-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const result = runtime.connectTodoist({
+      apiToken: 'todoist-token-123',
+      label: 'Todoist',
+      displayName: 'Primary Todoist',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+    });
+
+    expect(result.account.displayName).toBe('Primary Todoist');
+    const connection = runtime.listConnections('todos').find((entry) => entry.id === result.connectionId);
+    expect(connection).toMatchObject({
+      providerKind: 'todoist',
+      mode: 'read_write',
+      health: {
+        status: 'healthy',
+        authState: 'configured',
+      },
+      sync: {
+        status: 'idle',
+        cursorKind: 'since',
+      },
+    });
+    expect(connection?.secretRefId).toBeTruthy();
+    expect(runtime.listTodoAccounts()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: result.account.id,
+          connectionId: result.connectionId,
+          providerKind: 'todoist',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('updates email drafts using persisted draft-to-account mappings across multiple accounts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-email-drafts-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const alphaConnection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Alpha Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: ['alpha@example.com'],
+      resourceRules: [{
+        resourceType: 'mailbox',
+        resourceId: 'alpha@example.com',
+        displayName: 'alpha@example.com',
+        writeAllowed: true,
+      }],
+    });
+    const betaConnection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Beta Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: ['beta@example.com'],
+      resourceRules: [{
+        resourceType: 'mailbox',
+        resourceId: 'beta@example.com',
+        displayName: 'beta@example.com',
+        writeAllowed: true,
+      }],
+    });
+
+    runtime.registerEmailAccount({
+      connectionId: alphaConnection.id,
+      emailAddress: 'alpha@example.com',
+      displayName: 'Alpha',
+    });
+    const betaAccount = runtime.registerEmailAccount({
+      connectionId: betaConnection.id,
+      emailAddress: 'beta@example.com',
+      displayName: 'Beta',
+    });
+
+    const emailDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'email.db'));
+    const emailService = new EmailService(emailDb as never);
+    emailService.upsertDraft({
+      accountId: betaAccount.id,
+      connectionId: betaConnection.id,
+      providerDraftId: 'draft-beta',
+      providerMessageId: null,
+      to: ['recipient@example.com'],
+      cc: [],
+      subject: 'Before update',
+      bodyPreview: 'Initial preview',
+    });
+    emailDb.close();
+
+    runtime.createStandingApproval({
+      scope: 'external_write',
+      domain: 'email',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'email_draft',
+      createdBy: 'test',
+    });
+
+    (runtime as any).resolveEmailAdapterForConnection = async (connectionId: string) => ({
+      adapter: {
+        updateDraft: async (draftId: string) => ({
+          draftId,
+          messageId: 'message-beta',
+          to: ['recipient@example.com'],
+          cc: [],
+          subject: 'Updated subject',
+          bodyPreview: 'Updated preview',
+          updatedAt: '2026-03-20T10:15:00.000Z',
+        }),
+      },
+      account: {
+        id: betaAccount.id,
+        connectionId,
+        emailAddress: 'beta@example.com',
+      },
+    });
+
+    const updated = await runtime.updateEmailDraft('draft-beta', {
+      subject: 'Updated subject',
+      body: 'Updated body',
+    });
+    expect(updated).toMatchObject({
+      accountId: betaAccount.id,
+      connectionId: betaConnection.id,
+      providerDraftId: 'draft-beta',
+      providerMessageId: 'message-beta',
+      subject: 'Updated subject',
+    });
+
+    await expect(runtime.updateEmailDraft('unknown-draft', {
+      subject: 'No mapping',
+      body: 'No mapping',
+    })).rejects.toThrow('is not mapped to an account');
 
     await runtime.close();
   });

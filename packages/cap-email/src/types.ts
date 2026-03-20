@@ -58,6 +58,20 @@ export interface EmailDigestRow {
   generated_at: string;
 }
 
+export interface EmailDraftRow {
+  id: string;
+  account_id: string;
+  connection_id: string;
+  provider_draft_id: string;
+  provider_message_id: string | null;
+  to_addresses: string;
+  cc_addresses: string;
+  subject: string;
+  body_preview: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type EmailCapabilityDb = CapabilityContext['appDb'];
 
 // --- Typed DB helpers ---

@@ -3,13 +3,14 @@ import { randomUUID } from 'node:crypto';
 import type {
   EmailAccountRecord,
   EmailAccountRegistrationInput,
+  EmailDraftRecord,
   EmailThreadRecord,
   EmailMessageRecord,
   EmailDigestRecord,
 } from '@popeye/contracts';
 import { nowIso } from '@popeye/contracts';
 
-import type { EmailCapabilityDb, EmailAccountRow, EmailThreadRow, EmailMessageRow, EmailDigestRow } from './types.js';
+import type { EmailCapabilityDb, EmailAccountRow, EmailThreadRow, EmailMessageRow, EmailDigestRow, EmailDraftRow } from './types.js';
 import { prepareGet, prepareAll, prepareRun } from './types.js';
 
 // --- Row mappers ---
@@ -88,6 +89,21 @@ function mapDigestRow(row: EmailDigestRow): EmailDigestRecord {
     highSignalCount: row.high_signal_count,
     summaryMarkdown: row.summary_markdown,
     generatedAt: row.generated_at,
+  };
+}
+
+function mapDraftRow(row: EmailDraftRow): EmailDraftRecord {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    connectionId: row.connection_id,
+    providerDraftId: row.provider_draft_id,
+    providerMessageId: row.provider_message_id,
+    to: parseJsonArray(row.to_addresses),
+    cc: parseJsonArray(row.cc_addresses),
+    subject: row.subject,
+    bodyPreview: row.body_preview,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -298,6 +314,72 @@ export class EmailService {
   getDigest(id: string): EmailDigestRecord | null {
     const row = prepareGet<EmailDigestRow>(this.db, 'SELECT * FROM email_digests WHERE id = ?')(id);
     return row ? mapDigestRow(row) : null;
+  }
+
+  // --- Drafts ---
+
+  getDraft(id: string): EmailDraftRecord | null {
+    const row = prepareGet<EmailDraftRow>(this.db, 'SELECT * FROM email_drafts WHERE id = ?')(id);
+    return row ? mapDraftRow(row) : null;
+  }
+
+  getDraftByProviderDraftId(providerDraftId: string): EmailDraftRecord | null {
+    const row = prepareGet<EmailDraftRow>(this.db, 'SELECT * FROM email_drafts WHERE provider_draft_id = ?')(providerDraftId);
+    return row ? mapDraftRow(row) : null;
+  }
+
+  upsertDraft(input: {
+    accountId: string;
+    connectionId: string;
+    providerDraftId: string;
+    providerMessageId: string | null;
+    to: string[];
+    cc: string[];
+    subject: string;
+    bodyPreview: string;
+  }): EmailDraftRecord {
+    const now = nowIso();
+    const existing = this.getDraftByProviderDraftId(input.providerDraftId);
+    if (existing) {
+      prepareRun(this.db,
+        `UPDATE email_drafts
+         SET account_id = ?, connection_id = ?, provider_message_id = ?, to_addresses = ?, cc_addresses = ?,
+             subject = ?, body_preview = ?, updated_at = ?
+         WHERE id = ?`,
+      )(
+        input.accountId,
+        input.connectionId,
+        input.providerMessageId,
+        JSON.stringify(input.to),
+        JSON.stringify(input.cc),
+        input.subject,
+        input.bodyPreview,
+        now,
+        existing.id,
+      );
+      return this.getDraft(existing.id)!;
+    }
+
+    const id = randomUUID();
+    prepareRun(this.db,
+      `INSERT INTO email_drafts (
+         id, account_id, connection_id, provider_draft_id, provider_message_id,
+         to_addresses, cc_addresses, subject, body_preview, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )(
+      id,
+      input.accountId,
+      input.connectionId,
+      input.providerDraftId,
+      input.providerMessageId,
+      JSON.stringify(input.to),
+      JSON.stringify(input.cc),
+      input.subject,
+      input.bodyPreview,
+      now,
+      now,
+    );
+    return this.getDraft(id)!;
   }
 
   getLatestDigest(accountId: string): EmailDigestRecord | null {

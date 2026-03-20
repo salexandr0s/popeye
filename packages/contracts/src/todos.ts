@@ -27,6 +27,21 @@ export const TodoAccountRegistrationInputSchema = z.object({
 });
 export type TodoAccountRegistrationInput = z.infer<typeof TodoAccountRegistrationInputSchema>;
 
+export const TodoistConnectInputSchema = z.object({
+  apiToken: z.string().min(1),
+  displayName: z.string().min(1).default('Todoist'),
+  label: z.string().min(1).default('Todoist'),
+  mode: z.enum(['read_only', 'read_write']).default('read_write'),
+  syncIntervalSeconds: z.number().int().positive().default(900),
+});
+export type TodoistConnectInput = z.infer<typeof TodoistConnectInputSchema>;
+
+export const TodoistConnectResultSchema = z.object({
+  connectionId: z.string(),
+  account: TodoAccountRecordSchema,
+});
+export type TodoistConnectResult = z.infer<typeof TodoistConnectResultSchema>;
+
 // --- Todo Item Record ---
 
 export const TodoStatusSchema = z.enum(['pending', 'completed', 'cancelled']);
@@ -138,3 +153,38 @@ export const TodoUpdateInputSchema = z.object({
   projectName: z.string().nullable().optional(),
 });
 export type TodoUpdateInput = z.infer<typeof TodoUpdateInputSchema>;
+
+// --- Todo mutation inputs ---
+
+export const TodoReprioritizeInputSchema = z.object({
+  todoId: z.string().min(1),
+  priority: z.number().int().min(1).max(4),
+});
+export type TodoReprioritizeInput = z.infer<typeof TodoReprioritizeInputSchema>;
+
+export const TodoRescheduleInputSchema = z.object({
+  todoId: z.string().min(1),
+  dueDate: z.string().min(1),
+  dueTime: z.string().nullable().optional(),
+});
+export type TodoRescheduleInput = z.infer<typeof TodoRescheduleInputSchema>;
+
+export const TodoMoveInputSchema = z.object({
+  todoId: z.string().min(1),
+  projectName: z.string().min(1),
+});
+export type TodoMoveInput = z.infer<typeof TodoMoveInputSchema>;
+
+export const TodoReconcileResultSchema = z.object({
+  accountId: z.string(),
+  added: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+  errors: z.array(z.string()),
+});
+export type TodoReconcileResult = z.infer<typeof TodoReconcileResultSchema>;
+
+export const TodoProjectListQuerySchema = z.object({
+  accountId: z.string().min(1),
+});
+export type TodoProjectListQuery = z.infer<typeof TodoProjectListQuerySchema>;

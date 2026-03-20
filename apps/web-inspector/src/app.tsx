@@ -22,6 +22,8 @@ import { Connections } from './views/connections';
 import { Email } from './views/email';
 import { Calendar } from './views/calendar';
 import { Github } from './views/github';
+import { People } from './views/people';
+import { Todos } from './views/todos';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -66,6 +68,8 @@ export function App() {
               <Route path="email" element={<Email />} />
               <Route path="calendar" element={<Calendar />} />
               <Route path="github" element={<Github />} />
+              <Route path="people" element={<People />} />
+              <Route path="todos" element={<Todos />} />
               <Route path="vaults" element={<Vaults />} />
               <Route path="security-policy" element={<SecurityPolicy />} />
               <Route path="memory" element={<MemorySearch />} />

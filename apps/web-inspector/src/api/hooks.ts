@@ -9,7 +9,9 @@ import type {
   AutomationGrantRecord,
   CalendarAccountRecord,
   CalendarEventRecord,
+  ConnectionDiagnosticsResponse,
   ConnectionRecord,
+  ConnectionResourceRule,
   DaemonStatusResponse,
   EmailAccountRecord,
   EmailDigestRecord,
@@ -18,6 +20,7 @@ import type {
   GithubDigestRecord,
   GithubNotificationRecord,
   GithubSearchResult,
+  PersonRecord,
   EngineCapabilitiesResponse,
   ExecutionEnvelopeResponse,
   SecurityPolicyResponse,
@@ -36,6 +39,8 @@ import type {
   MemorySearchResponse,
   CompiledInstructionBundle,
   StandingApprovalRecord,
+  TodoAccountRecord,
+  TodoProjectRecord,
   VaultRecord,
 } from '@popeye/contracts';
 
@@ -48,7 +53,9 @@ export type {
   AutomationGrantRecord,
   CalendarAccountRecord,
   CalendarEventRecord,
+  ConnectionDiagnosticsResponse,
   ConnectionRecord,
+  ConnectionResourceRule,
   EmailAccountRecord,
   EmailDigestRecord,
   EmailSearchResult,
@@ -56,8 +63,11 @@ export type {
   GithubDigestRecord,
   GithubNotificationRecord,
   GithubSearchResult,
+  PersonRecord,
   SecurityPolicyResponse,
   StandingApprovalRecord,
+  TodoAccountRecord,
+  TodoProjectRecord,
   VaultRecord,
 };
 export type InstructionBundle = CompiledInstructionBundle;
@@ -335,4 +345,30 @@ export function useGithubAccounts() {
 
 export function useCalendarAccounts() {
   return usePolling<CalendarAccountRecord[]>('/v1/calendar/accounts', 5000);
+}
+
+export function useTodoAccounts() {
+  return usePolling<TodoAccountRecord[]>('/v1/todos/accounts', 5000);
+}
+
+export function usePeople() {
+  return usePolling<PersonRecord[]>('/v1/people', 5000);
+}
+
+export function useConnectionResourceRules(connectionId: string) {
+  return useFetch<ConnectionResourceRule[]>(
+    connectionId ? `/v1/connections/${encodeURIComponent(connectionId)}/resource-rules` : null,
+  );
+}
+
+export function useConnectionDiagnostics(connectionId: string) {
+  return useFetch<ConnectionDiagnosticsResponse>(
+    connectionId ? `/v1/connections/${encodeURIComponent(connectionId)}/diagnostics` : null,
+  );
+}
+
+export function useTodoProjects(accountId: string) {
+  return useFetch<TodoProjectRecord[]>(
+    accountId ? `/v1/todos/projects?accountId=${encodeURIComponent(accountId)}` : null,
+  );
 }

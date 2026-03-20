@@ -118,6 +118,11 @@ export class TodoService {
     return row ? mapAccountRow(row) : null;
   }
 
+  getAccountByConnection(connectionId: string): TodoAccountRecord | null {
+    const row = prepareGet<TodoAccountRow>(this.db, 'SELECT * FROM todo_accounts WHERE connection_id = ?')(connectionId);
+    return row ? mapAccountRow(row) : null;
+  }
+
   listAccounts(): TodoAccountRecord[] {
     const rows = prepareAll<TodoAccountRow>(this.db, 'SELECT * FROM todo_accounts ORDER BY display_name')();
     return rows.map(mapAccountRow);
@@ -446,5 +451,22 @@ export class TodoService {
       "SELECT * FROM todo_items WHERE account_id = ? AND priority = ? AND status = 'pending' ORDER BY due_date ASC NULLS LAST",
     )(accountId, priority);
     return rows.map(mapItemRow);
+  }
+
+  reprioritizeItem(id: string, priority: number): TodoItemRecord | null {
+    return this.updateItem(id, { priority });
+  }
+
+  rescheduleItem(id: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
+    return this.updateItem(id, { dueDate, dueTime: dueTime ?? undefined });
+  }
+
+  moveItem(id: string, projectName: string): TodoItemRecord | null {
+    return this.updateItem(id, { projectName });
+  }
+
+  listAllProjects(): TodoProjectRecord[] {
+    const rows = prepareAll<TodoProjectRow>(this.db, 'SELECT * FROM todo_projects ORDER BY name')();
+    return rows.map(mapProjectRow);
   }
 }

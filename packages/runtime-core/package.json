@@ -20,6 +20,7 @@
     "@popeye/cap-github": "workspace:*",
     "@popeye/cap-calendar": "workspace:*",
     "@popeye/cap-todos": "workspace:*",
+    "@popeye/cap-people": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "safe-regex2": "^4.0.0"
   },

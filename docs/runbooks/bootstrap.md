@@ -119,9 +119,11 @@ pop pi smoke
 pop email connect --gmail
 pop calendar connect
 pop github connect
+pop todo connect
 ```
 
 These commands open browser OAuth for the blessed direct-provider paths. The
+Todoist flow uses a manual API token and stores it in the secret store. The
 legacy CLI-backed adapters remain available only as experimental fallbacks.
 
 ### 15. Verify generated contracts

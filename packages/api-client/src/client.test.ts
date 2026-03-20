@@ -2,8 +2,10 @@ import { chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
+import { PeopleService } from '../../cap-people/src/index.ts';
 import { createControlApi } from '@popeye/control-api';
 import { createRuntimeService, initAuthStore, readAuthStore } from '@popeye/runtime-core';
 import type { AppConfig } from '@popeye/contracts';
@@ -95,6 +97,85 @@ describe('PopeyeApiClient', () => {
     expect(result.task.prompt).toBe('hello world');
     expect(result.task.profileId).toBe('default');
     expect(result.job).toBeNull();
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('connects Todoist and manages people through the API client', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-people-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    await (runtime as any).capabilityInitPromise;
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+    const todoist = await client.connectTodoist({
+      apiToken: 'todoist-client-token',
+      label: 'Todoist',
+      displayName: 'Client Todoist',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+    });
+    expect(todoist.account.displayName).toBe('Client Todoist');
+
+    const peopleDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'people.db'));
+    const peopleService = new PeopleService(peopleDb as never);
+    const projected = peopleService.projectSeed({
+      provider: 'email',
+      externalId: 'client@example.com',
+      displayName: 'Client Person',
+      email: 'client@example.com',
+    });
+    peopleDb.close();
+
+    const listed = await client.listPeople();
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: projected.id,
+          canonicalEmail: 'client@example.com',
+        }),
+      ]),
+    );
+
+    const searched = await client.searchPeople('client@example.com', { limit: 10 });
+    expect(searched.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ personId: projected.id }),
+      ]),
+    );
+
+    const updated = await client.updatePerson(projected.id, {
+      notes: 'Managed through the API client',
+      tags: ['vip'],
+    });
+    expect(updated).toMatchObject({
+      id: projected.id,
+      notes: 'Managed through the API client',
+      tags: ['vip'],
+    });
+
+    const attached = await client.attachPersonIdentity({
+      personId: projected.id,
+      provider: 'github',
+      externalId: 'client-gh',
+      handle: 'client-gh',
+      requestedBy: 'api-client-test',
+    });
+    const githubIdentity = attached.identities.find((identity) => identity.provider === 'github');
+    expect(githubIdentity).toBeTruthy();
+
+    const detached = await client.detachPersonIdentity(githubIdentity!.id, {
+      requestedBy: 'api-client-test',
+    });
+    expect(detached.id).not.toBe(projected.id);
+    expect(detached.githubLogin).toBe('client-gh');
 
     await runtime.close();
     await app.close();

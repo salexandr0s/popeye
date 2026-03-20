@@ -110,5 +110,25 @@ export function getEmailMigrations(): EmailMigration[] {
         END;`,
       ],
     },
+    {
+      id: 'email-006-drafts',
+      statements: [
+        `CREATE TABLE IF NOT EXISTS email_drafts (
+          id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL REFERENCES email_accounts(id),
+          connection_id TEXT NOT NULL,
+          provider_draft_id TEXT NOT NULL,
+          provider_message_id TEXT,
+          to_addresses TEXT NOT NULL DEFAULT '[]',
+          cc_addresses TEXT NOT NULL DEFAULT '[]',
+          subject TEXT NOT NULL DEFAULT '',
+          body_preview TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`,
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_email_drafts_provider_draft ON email_drafts(provider_draft_id);',
+        'CREATE INDEX IF NOT EXISTS idx_email_drafts_account ON email_drafts(account_id);',
+      ],
+    },
   ];
 }

@@ -10,6 +10,9 @@ const hooks = vi.hoisted(() => ({
   useEmailAccounts: vi.fn(),
   useCalendarAccounts: vi.fn(),
   useGithubAccounts: vi.fn(),
+  useTodoAccounts: vi.fn(),
+  useConnectionResourceRules: vi.fn(),
+  useConnectionDiagnostics: vi.fn(),
 }));
 
 const api = vi.hoisted(() => ({
@@ -35,6 +38,14 @@ function makeConnection(overrides: Record<string, unknown> = {}) {
     syncIntervalSeconds: 900,
     allowedScopes: ['https://www.googleapis.com/auth/gmail.readonly'],
     allowedResources: ['operator@example.com'],
+    resourceRules: [{
+      resourceType: 'mailbox',
+      resourceId: 'operator@example.com',
+      displayName: 'operator@example.com',
+      writeAllowed: true,
+      createdAt: '2026-03-20T10:00:00.000Z',
+      updatedAt: '2026-03-20T10:00:00.000Z',
+    }],
     lastSyncAt: null,
     lastSyncStatus: null,
     createdAt: '2026-03-20T10:00:00.000Z',
@@ -44,6 +55,7 @@ function makeConnection(overrides: Record<string, unknown> = {}) {
       secretStatus: 'configured',
       mutatingRequiresApproval: true,
       diagnostics: [],
+      remediation: null,
     },
     health: {
       status: 'healthy',
@@ -93,6 +105,9 @@ describe('Connections', () => {
     hooks.useEmailAccounts.mockReturnValue(makeResult([]));
     hooks.useCalendarAccounts.mockReturnValue(makeResult([]));
     hooks.useGithubAccounts.mockReturnValue(makeResult([]));
+    hooks.useTodoAccounts.mockReturnValue(makeResult([]));
+    hooks.useConnectionResourceRules.mockReturnValue(makeResult([]));
+    hooks.useConnectionDiagnostics.mockReturnValue(makeResult(null));
     vi.spyOn(window, 'open').mockImplementation(() => null);
   });
 
@@ -120,6 +135,7 @@ describe('Connections', () => {
     hooks.useEmailAccounts.mockReturnValue(makeResult([], { refetch: refetchEmail }));
     hooks.useCalendarAccounts.mockReturnValue(makeResult([], { refetch: refetchCalendar }));
     hooks.useGithubAccounts.mockReturnValue(makeResult([], { refetch: refetchGithub }));
+    hooks.useTodoAccounts.mockReturnValue(makeResult([], { refetch: vi.fn() }));
 
     api.post.mockResolvedValueOnce({
       id: 'oauth-session-1',
@@ -200,12 +216,20 @@ describe('Connections', () => {
         displayName: 'Operator',
       },
     ]));
+    hooks.useTodoAccounts.mockReturnValue(makeResult([
+      {
+        id: 'todo-account-1',
+        connectionId: 'connection-2',
+        providerKind: 'todoist',
+        displayName: 'Todoist',
+      },
+    ]));
     api.post.mockResolvedValueOnce({ accountId: 'email-account-1', synced: 0, updated: 0, errors: [] });
 
     renderConnections();
 
-    expect(screen.getAllByRole('button', { name: 'Sync' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Sync' }));
+    expect(screen.getAllByRole('button', { name: 'Sync' })).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync' })[0]!);
 
     await act(async () => {
       await Promise.resolve();

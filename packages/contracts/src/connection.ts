@@ -40,6 +40,40 @@ export type ConnectionAuthState = z.infer<typeof ConnectionAuthStateSchema>;
 export const ConnectionCursorKindSchema = z.enum(['none', 'history_id', 'sync_token', 'since']);
 export type ConnectionCursorKind = z.infer<typeof ConnectionCursorKindSchema>;
 
+export const ConnectionResourceTypeSchema = z.enum([
+  'resource',
+  'mailbox',
+  'calendar',
+  'repo',
+  'project',
+]);
+export type ConnectionResourceType = z.infer<typeof ConnectionResourceTypeSchema>;
+
+export const ConnectionResourceRuleSchema = z.object({
+  resourceType: ConnectionResourceTypeSchema,
+  resourceId: z.string().min(1),
+  displayName: z.string().min(1),
+  writeAllowed: z.boolean().default(false),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ConnectionResourceRule = z.infer<typeof ConnectionResourceRuleSchema>;
+
+export const ConnectionRemediationActionSchema = z.enum([
+  'reauthorize',
+  'reconnect',
+  'scope_fix',
+  'secret_fix',
+]);
+export type ConnectionRemediationAction = z.infer<typeof ConnectionRemediationActionSchema>;
+
+export const ConnectionRemediationSchema = z.object({
+  action: ConnectionRemediationActionSchema,
+  message: z.string(),
+  updatedAt: z.string(),
+});
+export type ConnectionRemediation = z.infer<typeof ConnectionRemediationSchema>;
+
 export const ConnectionPolicySummarySchema = z.object({
   status: ConnectionReadinessStatusSchema.default('ready'),
   secretStatus: ConnectionSecretStatusSchema.default('not_required'),
@@ -54,6 +88,7 @@ export const ConnectionHealthSummarySchema = z.object({
   checkedAt: z.string().nullable().default(null),
   lastError: z.string().nullable().default(null),
   diagnostics: z.array(ConnectionPolicyDiagnosticSchema).default([]),
+  remediation: ConnectionRemediationSchema.nullable().default(null),
 });
 export type ConnectionHealthSummary = z.infer<typeof ConnectionHealthSummarySchema>;
 
@@ -78,6 +113,7 @@ export const ConnectionRecordSchema = z.object({
   syncIntervalSeconds: z.number().int().positive().default(900),
   allowedScopes: z.array(z.string()).default([]),
   allowedResources: z.array(z.string()).default([]),
+  resourceRules: z.array(ConnectionResourceRuleSchema).default([]),
   lastSyncAt: z.string().nullable().default(null),
   lastSyncStatus: ConnectionSyncStatusSchema.nullable().default(null),
   policy: ConnectionPolicySummarySchema.optional(),
@@ -97,8 +133,14 @@ export const ConnectionCreateInputSchema = z.object({
   syncIntervalSeconds: z.number().int().positive().default(900),
   allowedScopes: z.array(z.string()).default([]),
   allowedResources: z.array(z.string()).default([]),
+  resourceRules: z.array(
+    ConnectionResourceRuleSchema.omit({
+      createdAt: true,
+      updatedAt: true,
+    }),
+  ).default([]),
 });
-export type ConnectionCreateInput = z.infer<typeof ConnectionCreateInputSchema>;
+export type ConnectionCreateInput = z.input<typeof ConnectionCreateInputSchema>;
 
 export const ConnectionUpdateInputSchema = z.object({
   label: z.string().min(1).optional(),
@@ -108,5 +150,46 @@ export const ConnectionUpdateInputSchema = z.object({
   syncIntervalSeconds: z.number().int().positive().optional(),
   allowedScopes: z.array(z.string()).optional(),
   allowedResources: z.array(z.string()).optional(),
+  resourceRules: z.array(
+    ConnectionResourceRuleSchema.omit({
+      createdAt: true,
+      updatedAt: true,
+    }),
+  ).optional(),
 });
-export type ConnectionUpdateInput = z.infer<typeof ConnectionUpdateInputSchema>;
+export type ConnectionUpdateInput = z.input<typeof ConnectionUpdateInputSchema>;
+
+// --- Resource-Rule CRUD inputs ---
+
+export const ConnectionResourceRuleCreateInputSchema = ConnectionResourceRuleSchema.omit({
+  createdAt: true,
+  updatedAt: true,
+});
+export type ConnectionResourceRuleCreateInput = z.infer<typeof ConnectionResourceRuleCreateInputSchema>;
+
+export const ConnectionResourceRuleDeleteInputSchema = z.object({
+  resourceType: ConnectionResourceTypeSchema,
+  resourceId: z.string().min(1),
+});
+export type ConnectionResourceRuleDeleteInput = z.infer<typeof ConnectionResourceRuleDeleteInputSchema>;
+
+// --- Diagnostics & Reconnect ---
+
+export const ConnectionDiagnosticsResponseSchema = z.object({
+  connectionId: z.string(),
+  label: z.string(),
+  providerKind: ConnectionProviderKindSchema,
+  domain: z.string(),
+  enabled: z.boolean(),
+  health: ConnectionHealthSummarySchema,
+  sync: ConnectionSyncSummarySchema,
+  policy: ConnectionPolicySummarySchema,
+  remediation: ConnectionRemediationSchema.nullable(),
+  humanSummary: z.string(),
+});
+export type ConnectionDiagnosticsResponse = z.infer<typeof ConnectionDiagnosticsResponseSchema>;
+
+export const ConnectionReconnectRequestSchema = z.object({
+  action: ConnectionRemediationActionSchema,
+});
+export type ConnectionReconnectRequest = z.infer<typeof ConnectionReconnectRequestSchema>;

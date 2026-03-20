@@ -20,6 +20,7 @@ import {
   CalendarEventCreateInputSchema,
   CalendarEventUpdateInputSchema,
   TodoAccountRegistrationInputSchema,
+  TodoistConnectInputSchema,
   type DomainKind,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
@@ -37,6 +38,16 @@ import {
   RunStateSchema,
   TaskCreateInputSchema,
   TodoCreateInputSchema,
+  ConnectionResourceRuleCreateInputSchema,
+  ConnectionResourceRuleDeleteInputSchema,
+  ConnectionReconnectRequestSchema,
+  FileWriteIntentCreateInputSchema,
+  FileWriteIntentReviewInputSchema,
+  PersonIdentityAttachInputSchema,
+  PersonIdentityDetachInputSchema,
+  PersonMergeInputSchema,
+  PersonSplitInputSchema,
+  PersonUpdateInputSchema,
   TelegramDeliveryRecordSchema,
   TelegramDeliveryResolutionRecordSchema,
   TelegramDeliveryResolutionRequestSchema,
@@ -1358,6 +1369,46 @@ export async function createControlApi(
     return { ok: true };
   });
 
+  // --- Connection resource-rule routes ---
+
+  app.get('/v1/connections/:id/resource-rules', async (request) => {
+    const id = parseIdParam(request.params);
+    return dependencies.runtime.listConnectionResourceRules(id);
+  });
+
+  app.post('/v1/connections/:id/resource-rules', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = ConnectionResourceRuleCreateInputSchema.parse(request.body);
+    const result = dependencies.runtime.addConnectionResourceRule(id, body);
+    if (!result) return reply.code(404).send({ error: 'connection not found' });
+    return result;
+  });
+
+  app.delete('/v1/connections/:id/resource-rules', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = ConnectionResourceRuleDeleteInputSchema.parse(request.body);
+    const result = dependencies.runtime.removeConnectionResourceRule(id, body.resourceType, body.resourceId);
+    if (!result) return reply.code(404).send({ error: 'connection not found' });
+    return result;
+  });
+
+  // --- Connection diagnostics & reconnect ---
+
+  app.get('/v1/connections/:id/diagnostics', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const result = dependencies.runtime.getConnectionDiagnostics(id);
+    if (!result) return reply.code(404).send({ error: 'connection not found' });
+    return result;
+  });
+
+  app.post('/v1/connections/:id/reconnect', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = ConnectionReconnectRequestSchema.parse(request.body);
+    const result = dependencies.runtime.reconnectConnection(id, body.action);
+    if (!result) return reply.code(404).send({ error: 'connection not found' });
+    return result;
+  });
+
   app.post('/v1/context-release/preview', async (request) => {
     const body = ContextReleasePreviewRequestSchema.parse(request.body);
     return dependencies.runtime.previewContextRelease(body);
@@ -2078,6 +2129,18 @@ export async function createControlApi(
     }
   });
 
+  app.post('/v1/todos/connect', async (request, reply) => {
+    const body = TodoistConnectInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.connectTodoist(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todoist_connection', details: error.message });
+      }
+      throw error;
+    }
+  });
+
   app.post('/v1/todos/sync', async (request, reply) => {
     const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
     try {
@@ -2085,6 +2148,217 @@ export async function createControlApi(
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_todo_sync', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/todos/items/:id/reprioritize', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ priority: z.number().int().min(1).max(4) }).parse(request.body);
+    try {
+      const result = dependencies.runtime.reprioritizeTodo(id, body.priority);
+      if (!result) return reply.code(404).send({ error: 'todo not found' });
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/todos/items/:id/reschedule', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ dueDate: z.string().min(1), dueTime: z.string().nullable().optional() }).parse(request.body);
+    try {
+      const result = dependencies.runtime.rescheduleTodo(id, body.dueDate, body.dueTime);
+      if (!result) return reply.code(404).send({ error: 'todo not found' });
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/todos/items/:id/move', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ projectName: z.string().min(1) }).parse(request.body);
+    try {
+      const result = dependencies.runtime.moveTodo(id, body.projectName);
+      if (!result) return reply.code(404).send({ error: 'todo not found' });
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/todos/reconcile', async (request, reply) => {
+    const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
+    try {
+      return dependencies.runtime.reconcileTodos(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_reconcile', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/todos/projects', async (request, reply) => {
+    const query = z.object({ accountId: z.string().min(1) }).parse(request.query);
+    try {
+      return dependencies.runtime.listTodoProjects(query.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  // --- People routes ---
+
+  app.get('/v1/people', async () => {
+    return dependencies.runtime.listPeople();
+  });
+
+  app.get('/v1/people/search', async (request) => {
+    const query = z.object({
+      query: z.string().min(1).max(1000),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.searchPeople({
+      query: query.query,
+      limit: query.limit ?? 20,
+    });
+  });
+
+  app.get('/v1/people/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const person = dependencies.runtime.getPerson(id);
+    if (!person) return reply.code(404).send({ error: 'person not found' });
+    return person;
+  });
+
+  app.patch('/v1/people/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PersonUpdateInputSchema.parse(request.body);
+    const person = dependencies.runtime.updatePerson(id, body);
+    if (!person) return reply.code(404).send({ error: 'person not found' });
+    return person;
+  });
+
+  app.post('/v1/people/merge', async (request, reply) => {
+    const body = PersonMergeInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.mergePeople(body);
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({ error: 'invalid_people_merge', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/people/:id/split', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PersonSplitInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.splitPerson(id, body);
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({ error: 'invalid_people_split', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/people/identities/attach', async (request, reply) => {
+    const body = PersonIdentityAttachInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.attachPersonIdentity(body);
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({ error: 'invalid_people_identity', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/people/identities/:id/detach', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PersonIdentityDetachInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.detachPersonIdentity(id, body);
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({ error: 'invalid_people_identity', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  // --- People merge events, suggestions, activity ---
+
+  app.get('/v1/people/:id/merge-events', async (request) => {
+    const id = parseIdParam(request.params);
+    return dependencies.runtime.listPersonMergeEvents(id);
+  });
+
+  app.get('/v1/people/merge-suggestions', async () => {
+    return dependencies.runtime.getPersonMergeSuggestions();
+  });
+
+  app.get('/v1/people/:id/activity', async (request) => {
+    const id = parseIdParam(request.params);
+    return dependencies.runtime.getPersonActivityRollups(id);
+  });
+
+  // --- File write-intent routes ---
+
+  app.post('/v1/files/write-intents', async (request, reply) => {
+    const body = FileWriteIntentCreateInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.createFileWriteIntent(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_write_intent', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/files/write-intents', async (request) => {
+    const query = z.object({
+      rootId: z.string().optional(),
+      status: z.enum(['pending', 'applied', 'rejected']).optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listFileWriteIntents(query.rootId, query.status);
+  });
+
+  app.get('/v1/files/write-intents/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const intent = dependencies.runtime.getFileWriteIntent(id);
+    if (!intent) return reply.code(404).send({ error: 'write intent not found' });
+    return intent;
+  });
+
+  app.post('/v1/files/write-intents/:id/review', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = FileWriteIntentReviewInputSchema.parse(request.body);
+    try {
+      const result = dependencies.runtime.reviewFileWriteIntent(id, body);
+      if (!result) return reply.code(404).send({ error: 'write intent not found' });
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_review', details: error.message });
       }
       throw error;
     }

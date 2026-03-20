@@ -32,7 +32,7 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~70 routes)
+## Endpoints (~80 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
@@ -50,6 +50,8 @@ New platform implementation.
 | Email          | `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/digest`, `GET /v1/email/search`, `POST /v1/email/accounts`, `POST /v1/email/sync`, `POST /v1/email/digest`, `GET /v1/email/providers`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` |
 | Calendar       | `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability`, `POST /v1/calendar/accounts`, `POST /v1/calendar/sync`, `POST /v1/calendar/events`, `PATCH /v1/calendar/events/:id` |
 | GitHub         | `GET /v1/github/accounts`, `GET /v1/github/repos`, `GET /v1/github/prs`, `GET /v1/github/prs/:id`, `GET /v1/github/issues`, `GET /v1/github/issues/:id`, `GET /v1/github/notifications`, `GET /v1/github/digest`, `GET /v1/github/search`, `POST /v1/github/sync`, `POST /v1/github/comments`, `POST /v1/github/notifications/mark-read` |
+| Todos          | `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `POST /v1/todos/accounts`, `POST /v1/todos/connect`, `POST /v1/todos/items`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/sync` |
+| People         | `GET /v1/people`, `GET /v1/people/search`, `GET /v1/people/:id`, `PATCH /v1/people/:id`, `POST /v1/people/merge`, `POST /v1/people/:id/split`, `POST /v1/people/identities/attach`, `POST /v1/people/identities/:id/detach` |
 | File roots     | `GET /v1/files/roots`, `POST /v1/files/roots`, `GET /v1/files/roots/:id`, `PATCH /v1/files/roots/:id`, `DELETE /v1/files/roots/:id`, `GET /v1/files/search`, `GET /v1/files/documents/:id`, `POST /v1/files/roots/:id/reindex` |
 | Memory         | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit`, `POST /v1/memory/maintenance`, `POST /v1/memory/:id/promote/propose`, `POST /v1/memory/:id/promote/execute` |
 | Messages       | `POST /v1/messages/ingest`, `GET /v1/messages/:id`           |
@@ -120,10 +122,15 @@ Promotion routes are covered by contract and behavior tests in
   inspector and CLI can show stale credentials, provider failures, cursor
   presence, and last-success information without reading capability stores
   directly.
+- Connection reads also include typed `resourceRules` and operator-visible
+  `health.remediation` guidance so reconnect posture and write-target policy do
+  not depend on legacy allowlist strings.
 - Browser OAuth is the blessed connect path for Gmail, Google Calendar, and
   GitHub. The callback route remains loopback-only and does not require the
   long-lived bearer token, but it still completes through the runtime and
   never persists provider secrets in logs or receipts.
+- The same OAuth start route also handles reconnect and reauthorize flows when
+  an existing `connectionId` is supplied.
 - Invalid provider/domain combinations fail closed with
   `400 { error: "invalid_connection" }`.
 - File-root registration rejects runtime-managed directories with
@@ -139,6 +146,12 @@ Promotion routes are covered by contract and behavior tests in
   Gmail drafts, Google Calendar event create/update, GitHub comments, and
   GitHub notification mark-read all enforce allowlists plus approval/grant
   policy before the provider call runs.
+- Todoist now has a first-class `POST /v1/todos/connect` route for the blessed
+  manual-token connect flow; the runtime stores the token in the secret store
+  and auto-registers the matching account.
+- People now has first-class list/search/detail/edit/merge/split/attach/detach
+  routes backed by the local derived-first identity graph built from Gmail,
+  Calendar, and GitHub sync data.
 
 ### Receipt observability
 

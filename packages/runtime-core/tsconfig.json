@@ -48,6 +48,9 @@
     },
     {
       "path": "../cap-todos"
+    },
+    {
+      "path": "../cap-people"
     }
   ],
   "exclude": [
