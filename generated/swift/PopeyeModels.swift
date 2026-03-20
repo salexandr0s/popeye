@@ -60,15 +60,15 @@ public enum MessageIngressDecisionCode: String, Codable, Sendable {
 public struct TaskRecord: Codable, Sendable {
     public let id: String
     public let workspaceId: String
-    public let projectId: String?
-    public let profileId: String?
+    public let projectId: String
+    public let profileId: String
     public let title: String
     public let prompt: String
     public let source: String
-    public let status: String?
-    public let retryPolicy: JSONObject
+    public let status: String
+    public let retryPolicy: String
     public let sideEffectProfile: String
-    public let coalesceKey: String?
+    public let coalesceKey: String
     public let createdAt: String
 }
 
@@ -77,9 +77,9 @@ public struct JobRecord: Codable, Sendable {
     public let taskId: String
     public let workspaceId: String
     public let status: String
-    public let retryCount: Int
+    public let retryCount: String
     public let availableAt: String
-    public let lastRunId: String?
+    public let lastRunId: String
     public let createdAt: String
     public let updatedAt: String
 }
@@ -89,13 +89,13 @@ public struct RunRecord: Codable, Sendable {
     public let jobId: String
     public let taskId: String
     public let workspaceId: String
-    public let profileId: String?
+    public let profileId: String
     public let sessionRootId: String
-    public let engineSessionRef: String?
+    public let engineSessionRef: String
     public let state: String
     public let startedAt: String
-    public let finishedAt: String?
-    public let error: String?
+    public let finishedAt: String
+    public let error: String
 }
 
 public struct RunEventRecord: Codable, Sendable {
@@ -115,21 +115,21 @@ public struct ReceiptRecord: Codable, Sendable {
     public let status: String
     public let summary: String
     public let details: String
-    public let usage: JSONObject
-    public let runtime: JSONObject?
+    public let usage: String
+    public let runtime: String
     public let createdAt: String
 }
 
 public struct InterventionRecord: Codable, Sendable {
     public let id: String
     public let code: String
-    public let runId: String?
+    public let runId: String
     public let status: String
     public let reason: String
     public let createdAt: String
-    public let resolvedAt: String?
-    public let updatedAt: String?
-    public let resolutionNote: String?
+    public let resolvedAt: String
+    public let updatedAt: String
+    public let resolutionNote: String
 }
 
 public struct MessageRecord: Codable, Sendable {
@@ -137,22 +137,22 @@ public struct MessageRecord: Codable, Sendable {
     public let source: String
     public let senderId: String
     public let body: String
-    public let accepted: Bool
-    public let relatedRunId: String?
+    public let accepted: String
+    public let relatedRunId: String
     public let createdAt: String
 }
 
 public struct MessageIngressResponse: Codable, Sendable {
-    public let accepted: Bool
-    public let duplicate: Bool
-    public let httpStatus: Int
+    public let accepted: String
+    public let duplicate: String
+    public let httpStatus: String
     public let decisionCode: String
     public let decisionReason: String
-    public let message: JSONObject?
-    public let taskId: String?
-    public let jobId: String?
-    public let runId: String?
-    public let telegramDelivery: JSONObject?
+    public let message: String
+    public let taskId: String
+    public let jobId: String
+    public let runId: String
+    public let telegramDelivery: String
 }
 
 public struct JobLeaseRecord: Codable, Sendable {
@@ -165,52 +165,52 @@ public struct JobLeaseRecord: Codable, Sendable {
 public struct UsageMetrics: Codable, Sendable {
     public let provider: String
     public let model: String
-    public let tokensIn: Int
-    public let tokensOut: Int
-    public let estimatedCostUsd: Double
+    public let tokensIn: String
+    public let tokensOut: String
+    public let estimatedCostUsd: String
 }
 
 public struct UsageSummary: Codable, Sendable {
-    public let runs: Int
-    public let tokensIn: Int
-    public let tokensOut: Int
-    public let estimatedCostUsd: Double
+    public let runs: String
+    public let tokensIn: String
+    public let tokensOut: String
+    public let estimatedCostUsd: String
 }
 
 public struct SecurityAuditFinding: Codable, Sendable {
     public let code: String
     public let severity: String
     public let message: String
-    public let component: String?
-    public let timestamp: String?
-    public let details: [String: String]?
+    public let component: String
+    public let timestamp: String
+    public let details: String
 }
 
 public struct DaemonStatusResponse: Codable, Sendable {
-    public let ok: Bool
-    public let runningJobs: Int
-    public let queuedJobs: Int
-    public let openInterventions: Int
-    public let activeLeases: Int
+    public let ok: String
+    public let runningJobs: String
+    public let queuedJobs: String
+    public let openInterventions: String
+    public let activeLeases: String
     public let engineKind: String
-    public let schedulerRunning: Bool
+    public let schedulerRunning: String
     public let startedAt: String
-    public let lastShutdownAt: String?
+    public let lastShutdownAt: String
 }
 
 public struct SchedulerStatusResponse: Codable, Sendable {
-    public let running: Bool
-    public let activeLeases: Int
-    public let activeRuns: Int
-    public let nextHeartbeatDueAt: String?
+    public let running: String
+    public let activeLeases: String
+    public let activeRuns: String
+    public let nextHeartbeatDueAt: String
 }
 
 public struct DaemonStateRecord: Codable, Sendable {
-    public let schedulerRunning: Bool
-    public let activeWorkers: Int
-    public let lastSchedulerTickAt: String?
-    public let lastLeaseSweepAt: String?
-    public let lastShutdownAt: String?
+    public let schedulerRunning: String
+    public let activeWorkers: String
+    public let lastSchedulerTickAt: String
+    public let lastLeaseSweepAt: String
+    public let lastShutdownAt: String
 }
 
 public struct SseEventEnvelope: Codable, Sendable {
@@ -219,14 +219,14 @@ public struct SseEventEnvelope: Codable, Sendable {
 }
 
 public struct TaskCreateInput: Codable, Sendable {
-    public let workspaceId: String?
-    public let projectId: String?
-    public let profileId: String?
+    public let workspaceId: String
+    public let projectId: String
+    public let profileId: String
     public let title: String
     public let prompt: String
-    public let source: String?
-    public let coalesceKey: String?
-    public let autoEnqueue: Bool?
+    public let source: String
+    public let coalesceKey: String
+    public let autoEnqueue: String
 }
 
 public struct ApprovalRecord: Codable, Sendable {
@@ -234,31 +234,31 @@ public struct ApprovalRecord: Codable, Sendable {
     public let scope: String
     public let domain: String
     public let riskClass: String
-    public let actionKind: String?
-    public let resourceScope: String?
+    public let actionKind: String
+    public let resourceScope: String
     public let resourceType: String
     public let resourceId: String
     public let requestedBy: String
-    public let runId: String?
-    public let standingApprovalEligible: Bool?
-    public let automationGrantEligible: Bool?
-    public let interventionId: String?
-    public let payloadPreview: String?
-    public let idempotencyKey: String?
-    public let status: String?
-    public let resolvedBy: String?
-    public let resolvedByGrantId: String?
-    public let decisionReason: String?
-    public let expiresAt: String?
+    public let runId: String
+    public let standingApprovalEligible: String
+    public let automationGrantEligible: String
+    public let interventionId: String
+    public let payloadPreview: String
+    public let idempotencyKey: String
+    public let status: String
+    public let resolvedBy: String
+    public let resolvedByGrantId: String
+    public let decisionReason: String
+    public let expiresAt: String
     public let createdAt: String
-    public let resolvedAt: String?
+    public let resolvedAt: String
 }
 
 public struct SecurityPolicyResponse: Codable, Sendable {
-    public let domainPolicies: [JSONObject]
-    public let approvalRules: [JSONObject]
+    public let domainPolicies: String
+    public let approvalRules: String
     public let defaultRiskClass: String
-    public let actionDefaults: [JSONObject]
+    public let actionDefaults: String
 }
 
 public struct VaultRecord: Codable, Sendable {
@@ -266,9 +266,9 @@ public struct VaultRecord: Codable, Sendable {
     public let domain: String
     public let kind: String
     public let dbPath: String
-    public let encrypted: Bool?
-    public let encryptionKeyRef: String?
+    public let encrypted: String
+    public let encryptionKeyRef: String
     public let status: String
     public let createdAt: String
-    public let lastAccessedAt: String?
+    public let lastAccessedAt: String
 }
