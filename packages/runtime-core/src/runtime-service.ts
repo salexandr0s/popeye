@@ -11,7 +11,9 @@ import type {
   ApprovalResolveInput,
   CompiledInstructionBundle,
   ConnectionCreateInput,
+  ConnectionHealthSummary,
   ConnectionRecord,
+  ConnectionSyncSummary,
   ConnectionUpdateInput,
   ContextReleaseDecision,
   ContextReleasePreview,
@@ -56,6 +58,8 @@ import type {
   VaultRecord,
   WorkspaceRecord,
   WorkspaceRegistrationInput,
+  OAuthConnectStartRequest,
+  OAuthSessionRecord,
 } from '@popeye/contracts';
 import type {
   CapabilityContext,
@@ -75,22 +79,30 @@ import type {
   EmailSearchQuery,
   EmailSearchResult,
   EmailAccountRegistrationInput,
+  EmailDraftCreateInput,
+  EmailDraftRecord,
+  EmailDraftUpdateInput,
   EmailSyncResult,
   GithubAccountRecord,
+  GithubCommentCreateInput,
+  GithubCommentRecord,
   GithubRepoRecord,
   GithubPullRequestRecord,
   GithubIssueRecord,
+  GithubNotificationMarkReadInput,
   GithubNotificationRecord,
   GithubDigestRecord,
   GithubSearchQuery,
   GithubSearchResult,
   GithubSyncResult,
   CalendarAccountRecord,
+  CalendarEventCreateInput,
   CalendarEventRecord,
   CalendarDigestRecord,
   CalendarSearchQuery,
   CalendarSearchResult,
   CalendarAccountRegistrationInput,
+  CalendarEventUpdateInput,
   CalendarSyncResult,
   CalendarAvailabilitySlot,
   TodoAccountRecord,
@@ -104,6 +116,8 @@ import type {
 } from '@popeye/contracts';
 import {
   buildCanonicalRunReply,
+  ConnectionHealthSummarySchema,
+  ConnectionSyncSummarySchema,
   MemoryRecordSchema,
   RunEventRecordSchema,
   RunRecordSchema,
@@ -148,15 +162,16 @@ import { MemoryLifecycleService, type MemoryInsertInput } from './memory-lifecyc
 import { MessageIngestionService, MessageIngressError } from './message-ingestion.js';
 import { QueryService } from './query-service.js';
 import { SecretStore } from './secret-store.js';
+import { OAuthSessionService } from './oauth-session-service.js';
 import { ApprovalService } from './approval-service.js';
 import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
-import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, createAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
-import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GhCliAdapter } from '@popeye/cap-github';
-import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GcalcliAdapter } from '@popeye/cap-calendar';
+import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, createAdapter, GmailAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
+import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GithubApiAdapter } from '@popeye/cap-github';
+import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GoogleCalendarAdapter } from '@popeye/cap-calendar';
 import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
 import BetterSqlite3 from 'better-sqlite3';
 import {
@@ -171,6 +186,15 @@ import {
   resolveAgentMemoryScopeFilter,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
+import {
+  buildPkceChallenge,
+  buildPkceVerifier,
+  buildProviderAuthorizationUrl,
+  exchangeProviderAuthorizationCode,
+  getProviderScopes,
+  mapProviderToDomain,
+  type OAuthTokenPayload,
+} from './provider-oauth.js';
 
 import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
 import { z } from 'zod';
@@ -505,7 +529,13 @@ const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRecord['p
   medical: ['local'],
 };
 
-const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>(['proton', 'todoist']);
+const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>([
+  'gmail',
+  'google_calendar',
+  'github',
+  'proton',
+  'todoist',
+]);
 
 function providerRequiresSecret(providerKind: ConnectionRecord['providerKind']): boolean {
   return SECRET_REQUIRED_CONNECTION_PROVIDERS.has(providerKind);
@@ -650,9 +680,97 @@ function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
     lastSyncAt: (row['last_sync_at'] as string) ?? null,
     lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
     policy: undefined,
+    health: parseJsonColumn(row['health_json'], ConnectionHealthSummarySchema),
+    sync: parseJsonColumn(row['sync_json'], ConnectionSyncSummarySchema),
     createdAt: row['created_at'] as string,
     updatedAt: row['updated_at'] as string,
   };
+}
+
+interface StoredOAuthSecret {
+  accessToken: string;
+  refreshToken?: string | undefined;
+  tokenType?: string | undefined;
+  scopes: string[];
+  expiresAt?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function parseJsonColumn<T>(value: unknown, schema: z.ZodType<T>): T {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return schema.parse({});
+  }
+  try {
+    return schema.parse(JSON.parse(value));
+  } catch {
+    return schema.parse({});
+  }
+}
+
+function parseStoredOAuthSecret(value: string | null | undefined): StoredOAuthSecret | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (typeof parsed['accessToken'] !== 'string' || !Array.isArray(parsed['scopes'])) {
+      return null;
+    }
+    return {
+      accessToken: parsed['accessToken'],
+      refreshToken: typeof parsed['refreshToken'] === 'string' ? parsed['refreshToken'] : undefined,
+      tokenType: typeof parsed['tokenType'] === 'string' ? parsed['tokenType'] : undefined,
+      scopes: parsed['scopes'].filter((scope): scope is string => typeof scope === 'string'),
+      expiresAt: typeof parsed['expiresAt'] === 'string' ? parsed['expiresAt'] : undefined,
+      createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : nowIso(),
+      updatedAt: typeof parsed['updatedAt'] === 'string' ? parsed['updatedAt'] : nowIso(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function serializeStoredOAuthSecret(input: OAuthTokenPayload): string {
+  return JSON.stringify({
+    accessToken: input.accessToken,
+    ...(input.refreshToken ? { refreshToken: input.refreshToken } : {}),
+    ...(input.tokenType ? { tokenType: input.tokenType } : {}),
+    scopes: input.scopes,
+    ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  } satisfies StoredOAuthSecret);
+}
+
+function canRefreshStoredOAuthSecret(
+  providerKind: ConnectionRecord['providerKind'],
+  secret: StoredOAuthSecret | null,
+  config: AppConfig,
+): boolean {
+  if (!secret?.refreshToken) return false;
+  switch (providerKind) {
+    case 'gmail':
+    case 'google_calendar':
+      return Boolean(config.providerAuth.google.clientId && config.providerAuth.google.clientSecret);
+    default:
+      return false;
+  }
+}
+
+function connectionCursorKindForProvider(providerKind: ConnectionRecord['providerKind']): ConnectionSyncSummary['cursorKind'] {
+  switch (providerKind) {
+    case 'gmail':
+      return 'history_id';
+    case 'google_calendar':
+      return 'sync_token';
+    case 'github':
+      return 'since';
+    default:
+      return 'none';
+  }
+}
+
+function isExpiredIso(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.length > 0 && Date.parse(value) <= Date.now();
 }
 
 export class PopeyeRuntimeService {
@@ -695,6 +813,7 @@ export class PopeyeRuntimeService {
   private readonly taskManager: TaskManager;
   private readonly queryService: QueryService;
   private readonly secretStore: SecretStore;
+  private readonly oauthSessionService: OAuthSessionService;
   private readonly approvalService: ApprovalService;
   private readonly actionPolicyEvaluator: ActionPolicyEvaluator;
   private readonly vaultManager: VaultManager;
@@ -778,6 +897,7 @@ export class PopeyeRuntimeService {
       });
     };
     this.secretStore = new SecretStore(this.databases.app, this.log, this.databases.paths, auditCallback);
+    this.oauthSessionService = new OAuthSessionService(this.databases.app);
     this.approvalService = new ApprovalService(
       this.databases.app,
       this.log,
@@ -829,87 +949,7 @@ export class PopeyeRuntimeService {
       appDb: this.databases.app,
       memoryDb: this.databases.memory,
       log: this.log,
-      buildContext: () => ({
-        appDb: this.databases.app,
-        memoryDb: this.databases.memory,
-        paths: this.databases.paths,
-        config: config as unknown as Record<string, unknown>,
-        log: this.log,
-        auditCallback,
-        memoryInsert: (input) => {
-          const insertInput = {
-            description: input.description,
-            classification: input.classification,
-            sourceType: input.sourceType as MemoryInsertInput['sourceType'],
-            content: input.content,
-            confidence: input.confidence,
-            scope: input.scope,
-            ...(input.memoryType ? { memoryType: input.memoryType as MemoryInsertInput['memoryType'] } : {}),
-            ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}),
-            ...(input.sourceRefType ? { sourceRefType: input.sourceRefType } : {}),
-            ...(input.domain ? { domain: input.domain as MemoryInsertInput['domain'] } : {}),
-            ...(input.contextReleasePolicy ? { contextReleasePolicy: input.contextReleasePolicy as MemoryInsertInput['contextReleasePolicy'] } : {}),
-            ...(input.dedupKey ? { dedupKey: input.dedupKey } : {}),
-          } satisfies MemoryInsertInput;
-          const result = this.memoryLifecycle.insertMemory(insertInput);
-          return {
-            memoryId: result.memoryId,
-            embedded: result.embedded,
-            ...(result.rejected !== undefined ? { rejected: result.rejected } : {}),
-            ...(result.rejectionReason !== undefined ? { rejectionReason: result.rejectionReason } : {}),
-          };
-        },
-        approvalRequest: (input) => this.requestApproval(input),
-        actionApprovalRequest: (input) => this.requestActionApproval(input),
-        contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
-        events: this.events,
-        resolveEmailAdapter: async (connectionId: string) => {
-          let connection: ConnectionRecord;
-          try {
-            connection = this.requireConnectionForOperation({
-              connectionId,
-              purpose: 'email_adapter_resolve',
-              expectedDomain: 'email',
-              allowedProviderKinds: ['gmail', 'proton'],
-              requireSecret: false,
-            });
-          } catch {
-            return null;
-          }
-
-          const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-          const readDb = new BetterSqlite3(dbPath, { readonly: true });
-          try {
-            const svc = new EmailService(readDb as unknown as CapabilityContext['appDb']);
-            const account = svc.getAccountByConnection(connectionId);
-            if (!account) return null;
-
-            let adapter: EmailProviderAdapter;
-            if (connection.providerKind === 'gmail') {
-              adapter = createAdapter('gmail');
-            } else if (connection.providerKind === 'proton') {
-              if (this.requireConnectionForOperation({
-                connectionId,
-                purpose: 'email_adapter_resolve',
-                expectedDomain: 'email',
-                allowedProviderKinds: ['proton'],
-                requireSecret: true,
-              }).policy?.secretStatus !== 'configured') {
-                return null;
-              }
-              const password = this.secretStore.getSecretValue(connection.secretRefId!);
-              if (!password) return null;
-              adapter = createAdapter('proton', { username: account.emailAddress, password });
-            } else {
-              return null;
-            }
-
-            return { adapter, account: { id: account.id, connectionId, emailAddress: account.emailAddress } };
-          } finally {
-            readDb.close();
-          }
-        },
-      }),
+      buildContext: () => this.buildCapabilityContext(),
     });
 
     // Register built-in capabilities
@@ -1565,6 +1605,335 @@ export class PopeyeRuntimeService {
 
   validateBrowserSession(sessionId: string): BrowserSessionValidationResult {
     return validateRuntimeBrowserSession(this.databases.app, sessionId);
+  }
+
+  startOAuthConnectSession(input: OAuthConnectStartRequest): OAuthSessionRecord {
+    this.oauthSessionService.expirePendingSessions();
+
+    const domain = mapProviderToDomain(input.providerKind);
+    if (input.connectionId) {
+      const existing = this.getConnection(input.connectionId);
+      if (!existing) {
+        throw new RuntimeNotFoundError(`Connection ${input.connectionId} not found`);
+      }
+      if (existing.providerKind !== input.providerKind || existing.domain !== domain) {
+        throw new RuntimeValidationError(`Connection ${input.connectionId} does not match ${input.providerKind}`);
+      }
+    }
+
+    const id = randomUUID();
+    const stateToken = `oauth_${id}_${buildPkceVerifier()}`;
+    const pkceVerifier = buildPkceVerifier();
+    const redirectUri = this.getOAuthRedirectUri();
+    const authorizationUrl = buildProviderAuthorizationUrl({
+      providerKind: input.providerKind,
+      config: this.config,
+      redirectUri,
+      state: stateToken,
+      codeChallenge: buildPkceChallenge(pkceVerifier),
+    });
+
+    return this.oauthSessionService.createSession({
+      id,
+      providerKind: input.providerKind,
+      domain,
+      connectionMode: input.mode,
+      syncIntervalSeconds: input.syncIntervalSeconds,
+      connectionId: input.connectionId ?? null,
+      stateToken,
+      pkceVerifier,
+      redirectUri,
+      authorizationUrl,
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    });
+  }
+
+  getOAuthSession(id: string): OAuthSessionRecord | null {
+    this.oauthSessionService.expirePendingSessions();
+    return this.oauthSessionService.getSession(id);
+  }
+
+  async completeOAuthConnectCallback(input: {
+    code?: string | undefined;
+    state?: string | undefined;
+    error?: string | undefined;
+    errorDescription?: string | undefined;
+  }): Promise<OAuthSessionRecord> {
+    this.oauthSessionService.expirePendingSessions();
+
+    if (!input.state) {
+      throw new RuntimeValidationError('Missing OAuth state');
+    }
+    const session = this.oauthSessionService.getByStateToken(input.state);
+    if (!session) {
+      throw new RuntimeNotFoundError('OAuth session not found');
+    }
+    if (session.status !== 'pending') {
+      return this.oauthSessionService.getSession(session.id)!;
+    }
+    if (Date.parse(session.expiresAt) <= Date.now()) {
+      return this.oauthSessionService.failSession(session.id, 'OAuth session expired', 'expired')!;
+    }
+    if (input.error) {
+      return this.oauthSessionService.failSession(
+        session.id,
+        input.errorDescription ? `${input.error}: ${input.errorDescription}` : input.error,
+      )!;
+    }
+    if (!input.code) {
+      return this.oauthSessionService.failSession(session.id, 'OAuth callback did not include an authorization code')!;
+    }
+
+    try {
+      const tokenPayload = await exchangeProviderAuthorizationCode({
+        providerKind: session.providerKind,
+        config: this.config,
+        code: input.code,
+        redirectUri: session.redirectUri,
+        codeVerifier: session.pkceVerifier,
+      });
+      const completed = await this.completeProviderSession(session, tokenPayload);
+      return completed;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.oauthSessionService.failSession(session.id, message);
+      if (session.connectionId) {
+        this.updateConnectionRollups({
+          connectionId: session.connectionId,
+          health: {
+            status: 'reauth_required',
+            authState: 'stale',
+            checkedAt: nowIso(),
+            lastError: message,
+          },
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async completeProviderSession(
+    session: ReturnType<OAuthSessionService['getSessionInternal']> extends infer T ? NonNullable<T> : never,
+    tokenPayload: OAuthTokenPayload,
+  ): Promise<OAuthSessionRecord> {
+    switch (session.providerKind) {
+      case 'gmail':
+        return this.completeGmailSession(session, tokenPayload);
+      case 'google_calendar':
+        return this.completeGoogleCalendarSession(session, tokenPayload);
+      case 'github':
+        return this.completeGithubSession(session, tokenPayload);
+    }
+  }
+
+  private createOrUpdateConnectedConnection(input: {
+    session: ReturnType<OAuthSessionService['getSessionInternal']> extends infer T ? NonNullable<T> : never;
+    providerKind: ConnectionRecord['providerKind'];
+    domain: DomainKind;
+    label: string;
+    allowedResources: string[];
+    scopes: string[];
+  }): ConnectionRecord {
+    if (input.session.connectionId) {
+      const updated = this.updateConnection(input.session.connectionId, {
+        label: input.label,
+        mode: input.session.connectionMode,
+        syncIntervalSeconds: input.session.syncIntervalSeconds,
+        allowedScopes: input.scopes,
+        allowedResources: input.allowedResources,
+      });
+      if (!updated) {
+        throw new RuntimeNotFoundError(`Connection ${input.session.connectionId} not found`);
+      }
+      return updated;
+    }
+
+    return this.createConnection({
+      domain: input.domain,
+      providerKind: input.providerKind,
+      label: input.label,
+      mode: input.session.connectionMode,
+      secretRefId: null,
+      syncIntervalSeconds: input.session.syncIntervalSeconds,
+      allowedScopes: input.scopes,
+      allowedResources: input.allowedResources,
+    });
+  }
+
+  private async completeGmailSession(
+    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
+    tokenPayload: OAuthTokenPayload,
+  ): Promise<OAuthSessionRecord> {
+    const adapter = new GmailAdapter({
+      accessToken: tokenPayload.accessToken,
+      refreshToken: tokenPayload.refreshToken,
+      clientId: this.config.providerAuth.google.clientId,
+      clientSecret: this.config.providerAuth.google.clientSecret,
+    });
+    const profile = await adapter.getProfile();
+    const connection = this.createOrUpdateConnectedConnection({
+      session,
+      providerKind: 'gmail',
+      domain: 'email',
+      label: `Gmail (${profile.emailAddress})`,
+      allowedResources: [profile.emailAddress],
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('gmail'),
+    });
+    const secretRef = this.storeOAuthSecret(connection.id, 'gmail', tokenPayload, connection.secretRefId);
+    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    let accountId: string;
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      accountId = svc.getAccountByConnection(connection.id)?.id
+        ?? svc.registerAccount({
+          connectionId: connection.id,
+          emailAddress: profile.emailAddress,
+          displayName: profile.emailAddress.split('@')[0] ?? profile.emailAddress,
+        }).id;
+    } finally {
+      writeDb.close();
+    }
+
+    this.updateConnectionRollups({
+      connectionId: connected.id,
+      health: {
+        status: 'healthy',
+        authState: 'configured',
+        checkedAt: nowIso(),
+        lastError: null,
+        diagnostics: [],
+      },
+      sync: {
+        status: 'idle',
+        cursorKind: connectionCursorKindForProvider(connected.providerKind),
+        cursorPresent: false,
+        lagSummary: 'Awaiting first sync',
+      },
+    });
+
+    return this.oauthSessionService.completeSession(session.id, {
+      connectionId: connected.id,
+      accountId,
+    })!;
+  }
+
+  private async completeGoogleCalendarSession(
+    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
+    tokenPayload: OAuthTokenPayload,
+  ): Promise<OAuthSessionRecord> {
+    const adapter = new GoogleCalendarAdapter({
+      accessToken: tokenPayload.accessToken,
+      refreshToken: tokenPayload.refreshToken,
+      clientId: this.config.providerAuth.google.clientId,
+      clientSecret: this.config.providerAuth.google.clientSecret,
+    });
+    const profile = await adapter.getProfile();
+    const connection = this.createOrUpdateConnectedConnection({
+      session,
+      providerKind: 'google_calendar',
+      domain: 'calendar',
+      label: `Google Calendar (${profile.email})`,
+      allowedResources: [profile.email],
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_calendar'),
+    });
+    const secretRef = this.storeOAuthSecret(connection.id, 'google_calendar', tokenPayload, connection.secretRefId);
+    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    let accountId: string;
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      accountId = svc.getAccountByConnection(connection.id)?.id
+        ?? svc.registerAccount({
+          connectionId: connection.id,
+          calendarEmail: profile.email,
+          displayName: profile.email.split('@')[0] ?? profile.email,
+          timeZone: profile.timeZone,
+        }).id;
+    } finally {
+      writeDb.close();
+    }
+
+    this.updateConnectionRollups({
+      connectionId: connected.id,
+      health: {
+        status: 'healthy',
+        authState: 'configured',
+        checkedAt: nowIso(),
+        lastError: null,
+        diagnostics: [],
+      },
+      sync: {
+        status: 'idle',
+        cursorKind: connectionCursorKindForProvider(connected.providerKind),
+        cursorPresent: false,
+        lagSummary: 'Awaiting first sync',
+      },
+    });
+
+    return this.oauthSessionService.completeSession(session.id, {
+      connectionId: connected.id,
+      accountId,
+    })!;
+  }
+
+  private async completeGithubSession(
+    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
+    tokenPayload: OAuthTokenPayload,
+  ): Promise<OAuthSessionRecord> {
+    const adapter = new GithubApiAdapter({ accessToken: tokenPayload.accessToken });
+    const profile = await adapter.getProfile();
+    const connection = this.createOrUpdateConnectedConnection({
+      session,
+      providerKind: 'github',
+      domain: 'github',
+      label: `GitHub (${profile.username})`,
+      allowedResources: [],
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('github'),
+    });
+    const secretRef = this.storeOAuthSecret(connection.id, 'github', tokenPayload, connection.secretRefId);
+    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    let accountId: string;
+    try {
+      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
+      accountId = svc.getAccountByConnection(connection.id)?.id
+        ?? svc.registerAccount({
+          connectionId: connection.id,
+          githubUsername: profile.username,
+          displayName: profile.name,
+        }).id;
+    } finally {
+      writeDb.close();
+    }
+
+    this.updateConnectionRollups({
+      connectionId: connected.id,
+      health: {
+        status: 'healthy',
+        authState: 'configured',
+        checkedAt: nowIso(),
+        lastError: null,
+        diagnostics: [],
+      },
+      sync: {
+        status: 'idle',
+        cursorKind: connectionCursorKindForProvider(connected.providerKind),
+        cursorPresent: false,
+        lagSummary: 'Awaiting first sync',
+      },
+    });
+
+    return this.oauthSessionService.completeSession(session.id, {
+      connectionId: connected.id,
+      accountId,
+    })!;
   }
 
   // --- Delegated: MessageIngestion ---
@@ -2434,8 +2803,14 @@ export class PopeyeRuntimeService {
     };
   }
 
-  private buildConnectionPolicySummary(connection: ConnectionRecord): NonNullable<ConnectionRecord['policy']> {
+  private buildConnectionPolicySummary(connection: ConnectionRecord): {
+    policy: NonNullable<ConnectionRecord['policy']>;
+    health: ConnectionHealthSummary;
+    sync: ConnectionSyncSummary;
+  } {
     const diagnostics: NonNullable<ConnectionRecord['policy']>['diagnostics'] = [];
+    const storedHealth = ConnectionHealthSummarySchema.parse(connection.health ?? {});
+    const storedSync = ConnectionSyncSummarySchema.parse(connection.sync ?? {});
 
     if (!isProviderAllowedForDomain(connection.domain, connection.providerKind)) {
       diagnostics.push({
@@ -2483,7 +2858,36 @@ export class PopeyeRuntimeService {
       });
     }
 
+    let authState: ConnectionHealthSummary['authState'] = providerRequiresSecret(connection.providerKind) ? 'configured' : 'not_required';
+    if (providerRequiresSecret(connection.providerKind)) {
+      if (!connection.secretRefId) {
+        authState = 'missing';
+      } else if (!this.secretStore.hasSecret(connection.secretRefId)) {
+        authState = 'stale';
+      } else {
+        const secret = parseStoredOAuthSecret(this.secretStore.getSecretValue(connection.secretRefId));
+        if (secret?.expiresAt && isExpiredIso(secret.expiresAt) && !canRefreshStoredOAuthSecret(connection.providerKind, secret, this.config)) {
+          authState = 'expired';
+        } else if (storedHealth.authState === 'revoked') {
+          authState = 'revoked';
+        } else if (storedHealth.authState === 'invalid_scopes') {
+          authState = 'invalid_scopes';
+        }
+      }
+    }
+
+    const mergedHealthDiagnostics = [...storedHealth.diagnostics, ...diagnostics];
+    const healthStatus: ConnectionHealthSummary['status'] =
+      ['expired', 'revoked', 'invalid_scopes'].includes(authState)
+        ? 'reauth_required'
+        : authState === 'missing' || authState === 'stale'
+          ? 'error'
+          : storedHealth.lastError
+            ? 'degraded'
+            : 'healthy';
+
     return {
+      policy: {
       status: !connection.enabled
         ? 'disabled'
         : diagnostics.some((diagnostic) => diagnostic.severity === 'error')
@@ -2492,19 +2896,219 @@ export class PopeyeRuntimeService {
       secretStatus,
       mutatingRequiresApproval: connection.mode === 'read_write',
       diagnostics,
+      },
+      health: {
+        status: healthStatus,
+        authState,
+        checkedAt: storedHealth.checkedAt,
+        lastError: storedHealth.lastError,
+        diagnostics: mergedHealthDiagnostics,
+      },
+      sync: storedSync,
     };
   }
 
   private withConnectionPolicy(connection: ConnectionRecord): ConnectionRecord {
+    const summary = this.buildConnectionPolicySummary(connection);
     return {
       ...connection,
-      policy: this.buildConnectionPolicySummary(connection),
+      policy: summary.policy,
+      health: summary.health,
+      sync: summary.sync,
     };
   }
 
   private getConnectionRow(id: string): ConnectionRecord | null {
     const row = this.databases.app.prepare('SELECT * FROM connections WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return row ? mapConnectionRow(row) : null;
+  }
+
+  private updateConnectionRollups(input: {
+    connectionId: string;
+    health?: Partial<ConnectionHealthSummary> | undefined;
+    sync?: Partial<ConnectionSyncSummary> | undefined;
+  }): ConnectionRecord | null {
+    const existing = this.getConnectionRow(input.connectionId);
+    if (!existing) return null;
+
+    const nextHealth = ConnectionHealthSummarySchema.parse({
+      ...(existing.health ?? {}),
+      ...(input.health ?? {}),
+    });
+    const nextSync = ConnectionSyncSummarySchema.parse({
+      ...(existing.sync ?? {}),
+      ...(input.sync ?? {}),
+    });
+
+    const lastSyncAt = nextSync.lastSuccessAt ?? existing.lastSyncAt;
+    const lastSyncStatus = nextSync.status === 'idle' ? existing.lastSyncStatus : nextSync.status;
+
+    this.databases.app.prepare(
+      `UPDATE connections
+       SET health_json = ?, sync_json = ?, last_sync_at = ?, last_sync_status = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(
+      JSON.stringify(nextHealth),
+      JSON.stringify(nextSync),
+      lastSyncAt,
+      lastSyncStatus === 'idle' ? null : lastSyncStatus,
+      nowIso(),
+      input.connectionId,
+    );
+    return this.getConnection(input.connectionId);
+  }
+
+  private getOAuthRedirectUri(): string {
+    return `http://${this.config.security.bindHost}:${this.config.security.bindPort}/v1/connections/oauth/callback`;
+  }
+
+  private getConnectionOAuthSecret(connection: ConnectionRecord): StoredOAuthSecret | null {
+    if (!connection.secretRefId) return null;
+    return parseStoredOAuthSecret(this.secretStore.getSecretValue(connection.secretRefId));
+  }
+
+  private storeOAuthSecret(connectionId: string | null, providerKind: ConnectionRecord['providerKind'], payload: OAuthTokenPayload, existingSecretRefId?: string | null): SecretRefRecord {
+    const serialized = serializeStoredOAuthSecret(payload);
+    if (existingSecretRefId) {
+      const rotated = this.secretStore.rotateSecret(existingSecretRefId, serialized);
+      if (rotated) {
+        return rotated;
+      }
+    }
+    return this.secretStore.setSecret({
+      provider: 'keychain',
+      key: `${providerKind}-oauth`,
+      value: serialized,
+      ...(connectionId ? { connectionId } : {}),
+      description: `${providerKind} OAuth credentials`,
+      ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+    });
+  }
+
+  private async resolveEmailAdapterForConnection(connectionId: string): Promise<{
+    adapter: EmailProviderAdapter;
+    account: { id: string; connectionId: string; emailAddress: string };
+  } | null> {
+    let connection: ConnectionRecord;
+    try {
+      connection = this.requireConnectionForOperation({
+        connectionId,
+        purpose: 'email_adapter_resolve',
+        expectedDomain: 'email',
+        allowedProviderKinds: ['gmail', 'proton'],
+        requireSecret: false,
+      });
+    } catch {
+      return null;
+    }
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const readDb = new BetterSqlite3(dbPath, { readonly: true });
+    try {
+      const svc = new EmailService(readDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccountByConnection(connectionId);
+      if (!account) return null;
+
+      let adapter: EmailProviderAdapter;
+      if (connection.providerKind === 'gmail') {
+        const secret = this.getConnectionOAuthSecret(connection);
+        if (!secret) return null;
+        adapter = new GmailAdapter({
+          accessToken: secret.accessToken,
+          refreshToken: secret.refreshToken,
+          clientId: this.config.providerAuth.google.clientId,
+          clientSecret: this.config.providerAuth.google.clientSecret,
+        });
+      } else {
+        if (this.requireConnectionForOperation({
+          connectionId,
+          purpose: 'email_adapter_resolve',
+          expectedDomain: 'email',
+          allowedProviderKinds: ['proton'],
+          requireSecret: true,
+        }).policy?.secretStatus !== 'configured') {
+          return null;
+        }
+        const password = this.secretStore.getSecretValue(connection.secretRefId!);
+        if (!password) return null;
+        adapter = createAdapter('proton', { username: account.emailAddress, password });
+      }
+
+      return { adapter, account: { id: account.id, connectionId, emailAddress: account.emailAddress } };
+    } finally {
+      readDb.close();
+    }
+  }
+
+  private async resolveCalendarAdapterForConnection(connectionId: string): Promise<{
+    adapter: GoogleCalendarAdapter;
+    account: { id: string; connectionId: string; calendarEmail: string };
+  } | null> {
+    try {
+      this.requireConnectionForOperation({
+        connectionId,
+        purpose: 'calendar_adapter_resolve',
+        expectedDomain: 'calendar',
+        allowedProviderKinds: ['google_calendar'],
+        requireSecret: true,
+      });
+    } catch {
+      return null;
+    }
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const readDb = new BetterSqlite3(dbPath, { readonly: true });
+    try {
+      const svc = new CalendarService(readDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccountByConnection(connectionId);
+      if (!account) return null;
+      const connection = this.getConnection(connectionId);
+      if (!connection) return null;
+      const secret = this.getConnectionOAuthSecret(connection);
+      if (!secret) return null;
+      const adapter = new GoogleCalendarAdapter({
+        accessToken: secret.accessToken,
+        refreshToken: secret.refreshToken,
+        clientId: this.config.providerAuth.google.clientId,
+        clientSecret: this.config.providerAuth.google.clientSecret,
+      });
+      return { adapter, account: { id: account.id, connectionId, calendarEmail: account.calendarEmail } };
+    } finally {
+      readDb.close();
+    }
+  }
+
+  private async resolveGithubAdapterForConnection(connectionId: string): Promise<{
+    adapter: GithubApiAdapter;
+    account: { id: string; connectionId: string; githubUsername: string };
+  } | null> {
+    try {
+      this.requireConnectionForOperation({
+        connectionId,
+        purpose: 'github_adapter_resolve',
+        expectedDomain: 'github',
+        allowedProviderKinds: ['github'],
+        requireSecret: true,
+      });
+    } catch {
+      return null;
+    }
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const readDb = new BetterSqlite3(dbPath, { readonly: true });
+    try {
+      const svc = new GithubService(readDb as unknown as CapabilityContext['appDb']);
+      const account = svc.getAccountByConnection(connectionId);
+      if (!account) return null;
+      const connection = this.getConnection(connectionId);
+      if (!connection) return null;
+      const secret = this.getConnectionOAuthSecret(connection);
+      if (!secret) return null;
+      const adapter = new GithubApiAdapter({ accessToken: secret.accessToken });
+      return { adapter, account: { id: account.id, connectionId, githubUsername: account.githubUsername } };
+    } finally {
+      readDb.close();
+    }
   }
 
   private validateConnectionMutation(input: {
@@ -2629,6 +3233,19 @@ export class PopeyeRuntimeService {
         ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
       });
     }
+    if (['expired', 'revoked', 'invalid_scopes'].includes(connection.health?.authState ?? '')) {
+      return this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose: input.purpose,
+        reasonCode: 'reauth_required',
+        message: `Connection ${connection.id} requires credential reauthorization`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.jobId !== undefined ? { jobId: input.jobId } : {}),
+        ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
+      });
+    }
     return connection;
   }
 
@@ -2687,6 +3304,98 @@ export class PopeyeRuntimeService {
       requireSecret: false,
     });
     return { account, connection };
+  }
+
+  private invalidateEmailFacade(): void {
+    if (this.emailReadDb) {
+      this.emailReadDb.close();
+      this.emailReadDb = null;
+    }
+    this.emailServiceCache = null;
+    this.emailSearchCache = null;
+  }
+
+  private invalidateCalendarFacade(): void {
+    if (this.calendarReadDb) {
+      this.calendarReadDb.close();
+      this.calendarReadDb = null;
+    }
+    this.calendarServiceCache = null;
+    this.calendarSearchCache = null;
+  }
+
+  private invalidateGithubFacade(): void {
+    if (this.githubReadDb) {
+      this.githubReadDb.close();
+      this.githubReadDb = null;
+    }
+    this.githubServiceCache = null;
+    this.githubSearchCache = null;
+  }
+
+  private classifyConnectionFailure(message: string): Pick<ConnectionHealthSummary, 'status' | 'authState'> {
+    const lowered = message.toLowerCase();
+    if (
+      lowered.includes('invalid scope')
+      || lowered.includes('insufficient')
+      || lowered.includes('scope')
+    ) {
+      return { status: 'reauth_required', authState: 'invalid_scopes' };
+    }
+    if (lowered.includes('revoked')) {
+      return { status: 'reauth_required', authState: 'revoked' };
+    }
+    if (
+      lowered.includes('401')
+      || lowered.includes('unauthorized')
+      || lowered.includes('invalid_grant')
+      || lowered.includes('expired')
+      || lowered.includes('token refresh failed')
+    ) {
+      return { status: 'reauth_required', authState: 'expired' };
+    }
+    return { status: 'error', authState: 'configured' };
+  }
+
+  private requireReadWriteConnection(connection: ConnectionRecord, purpose: string): void {
+    if (connection.mode !== 'read_write') {
+      this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose,
+        reasonCode: 'connection_read_only',
+        message: `Connection ${connection.id} is read-only and cannot perform ${purpose}`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+      });
+    }
+  }
+
+  private requireAllowlistedConnectionResource(connection: ConnectionRecord, purpose: string, resourceType: string, resourceId: string): void {
+    if (!connection.allowedResources.includes(resourceId)) {
+      this.denyConnectionOperation({
+        connectionId: connection.id,
+        purpose,
+        reasonCode: 'resource_not_allowlisted',
+        message: `Connection ${connection.id} is not allowlisted for ${resourceType} ${resourceId}`,
+        domain: connection.domain,
+        providerKind: connection.providerKind,
+      });
+    }
+  }
+
+  private requireApprovedExternalWrite(input: ActionApprovalRequestInput): ApprovalRecord {
+    const approval = this.requestActionApproval(input);
+    if (approval.status === 'approved') {
+      return approval;
+    }
+    if (approval.status === 'denied') {
+      throw new RuntimeValidationError(
+        `External write denied for ${input.resourceType} ${input.resourceId}. Approval ${approval.id} is denied.`,
+      );
+    }
+    throw new RuntimeConflictError(
+      `External write requires approval for ${input.resourceType} ${input.resourceId}. Approval ${approval.id} is ${approval.status}.`,
+    );
   }
 
   private requireTodoAccountForOperation(
@@ -4173,22 +4882,92 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account } = this.requireGithubAccountForOperation(svc, accountId, 'github_sync');
-
-      const adapter = new GhCliAdapter();
-      const ctx = this.buildCapabilityContext();
-      const syncService = new GithubSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, adapter);
-
-      // Invalidate readonly cache
-      if (this.githubReadDb) {
-        this.githubReadDb.close();
-        this.githubReadDb = null;
-        this.githubServiceCache = null;
-        this.githubSearchCache = null;
+      const { account, connection } = this.requireGithubAccountForOperation(svc, accountId, 'github_sync');
+      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
+      if (!resolved) {
+        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve a GitHub adapter`);
       }
 
+      const attemptAt = nowIso();
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: {
+          checkedAt: attemptAt,
+        },
+        sync: {
+          lastAttemptAt: attemptAt,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+        },
+      });
+
+      const ctx = this.buildCapabilityContext();
+      const syncService = new GithubSyncService(svc, ctx);
+      const result = await syncService.syncAccount(account, resolved.adapter);
+      const refreshedAccount = svc.getAccount(account.id) ?? account;
+      const successCount = result.reposSynced + result.prsSynced + result.issuesSynced + result.notificationsSynced;
+      const syncStatus = result.errors.length === 0
+        ? 'success'
+        : successCount > 0
+          ? 'partial'
+          : 'failed';
+      const failureSummary = result.errors[0] ?? null;
+      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
+      const successAt = syncStatus === 'failed' ? null : nowIso();
+
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: failureSummary
+          ? {
+            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
+            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
+            checkedAt: nowIso(),
+            lastError: failureSummary,
+          }
+          : {
+            status: 'healthy',
+            authState: 'configured',
+            checkedAt: nowIso(),
+            lastError: null,
+          },
+        sync: {
+          ...(successAt ? { lastSuccessAt: successAt } : {}),
+          status: syncStatus,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+          cursorPresent: Boolean(refreshedAccount.syncCursorSince),
+          lagSummary: refreshedAccount.syncCursorSince
+            ? `Cursor checkpoint stored at ${refreshedAccount.syncCursorSince}`
+            : 'Awaiting first notification checkpoint',
+        },
+      });
+
+      this.invalidateGithubFacade();
+
       return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = this.classifyConnectionFailure(message);
+      const account = this.listGithubAccounts().find((entry) => entry.id === accountId) ?? null;
+      if (account) {
+        this.updateConnectionRollups({
+          connectionId: account.connectionId,
+          health: {
+            status: failure.status,
+            authState: failure.authState,
+            checkedAt: nowIso(),
+            lastError: message,
+          },
+          sync: {
+            lastAttemptAt: nowIso(),
+            status: 'failed',
+            cursorKind: 'since',
+            lagSummary: 'Sync failed before a checkpoint could be updated',
+          },
+        });
+      }
+      throw error;
     } finally {
       writeDb.close();
     }
@@ -4220,15 +4999,146 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      // Invalidate readonly cache
-      if (this.githubReadDb) {
-        this.githubReadDb.close();
-        this.githubReadDb = null;
-        this.githubServiceCache = null;
-        this.githubSearchCache = null;
-      }
+      this.invalidateGithubFacade();
 
       return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async createGithubComment(input: GithubCommentCreateInput): Promise<GithubCommentRecord> {
+    const githubCap = this.capabilityRegistry.getCapability('github');
+    if (!githubCap) throw new Error('GitHub capability not initialized');
+
+    const repoParts = input.repoFullName.split('/');
+    if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
+      throw new RuntimeValidationError(`Invalid GitHub repo full name: ${input.repoFullName}`);
+    }
+    const [owner, repo] = repoParts;
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
+      const { account, connection } = this.requireGithubAccountForOperation(svc, input.accountId, 'github_comment_create');
+      this.requireReadWriteConnection(connection, 'github_comment_create');
+      this.requireAllowlistedConnectionResource(connection, 'github_comment_create', 'repo', input.repoFullName);
+
+      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
+      if (!resolved?.adapter.createIssueComment) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support GitHub comments`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'github',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'github_repo',
+        resourceId: input.repoFullName,
+        requestedBy: 'github_comment_create',
+        payloadPreview: `Comment on ${input.repoFullName}#${input.issueNumber}: ${input.body.slice(0, 240)}`,
+      });
+
+      const comment = await resolved.adapter.createIssueComment(owner, repo, input.issueNumber, input.body);
+      this.recordSecurityAudit({
+        code: 'github_comment_created',
+        severity: 'info',
+        message: 'GitHub comment created',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          repoFullName: input.repoFullName,
+          issueNumber: String(input.issueNumber),
+          providerCommentId: comment.id,
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return {
+        id: comment.id,
+        accountId: account.id,
+        repoFullName: input.repoFullName,
+        issueNumber: input.issueNumber,
+        bodyPreview: comment.bodyPreview,
+        htmlUrl: comment.htmlUrl,
+        createdAt: comment.createdAt,
+      };
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async markGithubNotificationRead(input: GithubNotificationMarkReadInput): Promise<GithubNotificationRecord> {
+    const githubCap = this.capabilityRegistry.getCapability('github');
+    if (!githubCap) throw new Error('GitHub capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
+      const notification = svc.getNotification(input.notificationId);
+      if (!notification) {
+        throw new RuntimeNotFoundError(`GitHub notification ${input.notificationId} not found`);
+      }
+      const { account, connection } = this.requireGithubAccountForOperation(
+        svc,
+        notification.accountId,
+        'github_notification_mark_read',
+      );
+      this.requireReadWriteConnection(connection, 'github_notification_mark_read');
+      this.requireAllowlistedConnectionResource(
+        connection,
+        'github_notification_mark_read',
+        'repo',
+        notification.repoFullName,
+      );
+
+      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
+      if (!resolved?.adapter.markNotificationRead) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support notification mutations`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'github',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'github_notification',
+        resourceId: notification.githubNotificationId,
+        requestedBy: 'github_notification_mark_read',
+        payloadPreview: `Mark GitHub notification as read: ${notification.subjectTitle}`,
+      });
+
+      await resolved.adapter.markNotificationRead(notification.githubNotificationId);
+      const updated = svc.markNotificationRead(notification.id);
+      const record = updated ?? { ...notification, isUnread: false, updatedAt: nowIso() };
+      this.invalidateGithubFacade();
+
+      this.recordSecurityAudit({
+        code: 'github_notification_marked_read',
+        severity: 'info',
+        message: 'GitHub notification marked as read',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          notificationId: notification.id,
+          providerNotificationId: notification.githubNotificationId,
+          repoFullName: notification.repoFullName,
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return record;
     } finally {
       writeDb.close();
     }
@@ -4268,45 +5178,93 @@ export class PopeyeRuntimeService {
     try {
       const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
       const { account, connection } = this.requireEmailAccountForOperation(svc, accountId, 'email_sync');
-
-      // Resolve credentials based on provider
-      let adapter: EmailProviderAdapter;
-      if (connection.providerKind === 'gmail') {
-        // gws manages its own auth
-        adapter = createAdapter('gmail');
-      } else if (connection.providerKind === 'proton') {
-        this.requireConnectionForOperation({
-          connectionId: connection.id,
-          purpose: 'email_sync',
-          expectedDomain: 'email',
-          allowedProviderKinds: ['proton'],
-          requireSecret: true,
-        });
-        const password = this.secretStore.getSecretValue(connection.secretRefId!);
-        if (!password) {
-          throw new RuntimeValidationError('Failed to retrieve Proton Bridge password from SecretStore');
-        }
-        adapter = createAdapter('proton', {
-          username: account.emailAddress,
-          password,
-        });
-      } else {
-        throw new Error(`Unsupported email provider: ${connection.providerKind}`);
+      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
+      if (!resolved) {
+        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve an email adapter`);
       }
+
+      const attemptAt = nowIso();
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: {
+          checkedAt: attemptAt,
+        },
+        sync: {
+          lastAttemptAt: attemptAt,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+        },
+      });
 
       const ctx = this.buildCapabilityContext();
       const syncService = new EmailSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, adapter);
+      const result = await syncService.syncAccount(account, resolved.adapter);
+      const refreshedAccount = svc.getAccount(account.id) ?? account;
+      const successCount = result.synced + result.updated;
+      const syncStatus = result.errors.length === 0
+        ? 'success'
+        : successCount > 0
+          ? 'partial'
+          : 'failed';
+      const failureSummary = result.errors[0] ?? null;
+      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
+      const successAt = syncStatus === 'failed' ? null : nowIso();
 
-      // Invalidate readonly cache so facade reflects new data
-      if (this.emailReadDb) {
-        this.emailReadDb.close();
-        this.emailReadDb = null;
-        this.emailServiceCache = null;
-        this.emailSearchCache = null;
-      }
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: failureSummary
+          ? {
+            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
+            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
+            checkedAt: nowIso(),
+            lastError: failureSummary,
+          }
+          : {
+            status: 'healthy',
+            authState: 'configured',
+            checkedAt: nowIso(),
+            lastError: null,
+          },
+        sync: {
+          ...(successAt ? { lastSuccessAt: successAt } : {}),
+          status: syncStatus,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+          cursorPresent: Boolean(refreshedAccount.syncCursorHistoryId || refreshedAccount.syncCursorPageToken),
+          lagSummary: refreshedAccount.syncCursorHistoryId
+            ? `History cursor stored at ${refreshedAccount.syncCursorHistoryId}`
+            : refreshedAccount.syncCursorPageToken
+              ? 'Pagination cursor stored during mailbox sync'
+              : 'Awaiting first sync cursor',
+        },
+      });
+
+      this.invalidateEmailFacade();
 
       return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = this.classifyConnectionFailure(message);
+      const account = this.listEmailAccounts().find((entry) => entry.id === accountId) ?? null;
+      if (account) {
+        this.updateConnectionRollups({
+          connectionId: account.connectionId,
+          health: {
+            status: failure.status,
+            authState: failure.authState,
+            checkedAt: nowIso(),
+            lastError: message,
+          },
+          sync: {
+            lastAttemptAt: nowIso(),
+            status: 'failed',
+            cursorKind: 'history_id',
+            lagSummary: 'Sync failed before a cursor could be updated',
+          },
+        });
+      }
+      throw error;
     } finally {
       writeDb.close();
     }
@@ -4338,15 +5296,149 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      // Invalidate readonly cache
-      if (this.emailReadDb) {
-        this.emailReadDb.close();
-        this.emailReadDb = null;
-        this.emailServiceCache = null;
-        this.emailSearchCache = null;
-      }
+      this.invalidateEmailFacade();
 
       return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async createEmailDraft(input: EmailDraftCreateInput): Promise<EmailDraftRecord> {
+    const emailCap = this.capabilityRegistry.getCapability('email');
+    if (!emailCap) throw new Error('Email capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      const { account, connection } = this.requireEmailAccountForOperation(svc, input.accountId, 'email_draft_create');
+      this.requireReadWriteConnection(connection, 'email_draft_create');
+      this.requireAllowlistedConnectionResource(connection, 'email_draft_create', 'mailbox', account.emailAddress);
+
+      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
+      if (!resolved?.adapter.createDraft) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support draft creation`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'email',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'email_mailbox',
+        resourceId: account.emailAddress,
+        requestedBy: 'email_draft_create',
+        payloadPreview: `Draft email to ${input.to.join(', ')}: ${input.subject}`,
+      });
+
+      const draft = await resolved.adapter.createDraft({
+        to: input.to,
+        cc: input.cc,
+        subject: input.subject,
+        body: input.body,
+      });
+
+      this.recordSecurityAudit({
+        code: 'email_draft_created',
+        severity: 'info',
+        message: 'Email draft created',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          mailbox: account.emailAddress,
+          providerDraftId: draft.draftId,
+          providerMessageId: draft.messageId ?? '',
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return {
+        id: draft.draftId,
+        accountId: account.id,
+        providerDraftId: draft.draftId,
+        providerMessageId: draft.messageId ?? null,
+        to: draft.to,
+        cc: draft.cc,
+        subject: draft.subject,
+        bodyPreview: draft.bodyPreview,
+        updatedAt: draft.updatedAt,
+      };
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async updateEmailDraft(id: string, input: EmailDraftUpdateInput): Promise<EmailDraftRecord> {
+    const emailCap = this.capabilityRegistry.getCapability('email');
+    if (!emailCap) throw new Error('Email capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
+      const accounts = svc.listAccounts();
+      if (accounts.length === 0) {
+        throw new RuntimeValidationError('No email account available for draft update');
+      }
+      if (accounts.length > 1) {
+        throw new RuntimeValidationError('Email draft updates require a single connected email account in this tranche');
+      }
+      const account = accounts[0]!;
+      const { connection } = this.requireEmailAccountForOperation(svc, account.id, 'email_draft_update');
+      this.requireReadWriteConnection(connection, 'email_draft_update');
+      this.requireAllowlistedConnectionResource(connection, 'email_draft_update', 'mailbox', account.emailAddress);
+
+      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
+      if (!resolved?.adapter.updateDraft) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support draft updates`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'email',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'email_draft',
+        resourceId: id,
+        requestedBy: 'email_draft_update',
+        payloadPreview: `Update email draft ${id}`,
+      });
+
+      const draft = await resolved.adapter.updateDraft(id, input);
+      this.recordSecurityAudit({
+        code: 'email_draft_updated',
+        severity: 'info',
+        message: 'Email draft updated',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          mailbox: account.emailAddress,
+          providerDraftId: draft.draftId,
+          providerMessageId: draft.messageId ?? '',
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return {
+        id: draft.draftId,
+        accountId: account.id,
+        providerDraftId: draft.draftId,
+        providerMessageId: draft.messageId ?? null,
+        to: draft.to,
+        cc: draft.cc,
+        subject: draft.subject,
+        bodyPreview: draft.bodyPreview,
+        updatedAt: draft.updatedAt,
+      };
     } finally {
       writeDb.close();
     }
@@ -4463,21 +5555,92 @@ export class PopeyeRuntimeService {
     const writeDb = new BetterSqlite3(dbPath);
     try {
       const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account } = this.requireCalendarAccountForOperation(svc, accountId, 'calendar_sync');
-
-      const adapter = new GcalcliAdapter();
-      const ctx = this.buildCapabilityContext();
-      const syncService = new CalendarSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, adapter);
-
-      if (this.calendarReadDb) {
-        this.calendarReadDb.close();
-        this.calendarReadDb = null;
-        this.calendarServiceCache = null;
-        this.calendarSearchCache = null;
+      const { account, connection } = this.requireCalendarAccountForOperation(svc, accountId, 'calendar_sync');
+      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
+      if (!resolved) {
+        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve a calendar adapter`);
       }
 
+      const attemptAt = nowIso();
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: {
+          checkedAt: attemptAt,
+        },
+        sync: {
+          lastAttemptAt: attemptAt,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+        },
+      });
+
+      const ctx = this.buildCapabilityContext();
+      const syncService = new CalendarSyncService(svc, ctx);
+      const result = await syncService.syncAccount(account, resolved.adapter);
+      const refreshedAccount = svc.getAccount(account.id) ?? account;
+      const successCount = result.eventsSynced + result.eventsUpdated;
+      const syncStatus = result.errors.length === 0
+        ? 'success'
+        : successCount > 0
+          ? 'partial'
+          : 'failed';
+      const failureSummary = result.errors[0] ?? null;
+      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
+      const successAt = syncStatus === 'failed' ? null : nowIso();
+
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: failureSummary
+          ? {
+            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
+            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
+            checkedAt: nowIso(),
+            lastError: failureSummary,
+          }
+          : {
+            status: 'healthy',
+            authState: 'configured',
+            checkedAt: nowIso(),
+            lastError: null,
+          },
+        sync: {
+          ...(successAt ? { lastSuccessAt: successAt } : {}),
+          status: syncStatus,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+          cursorPresent: Boolean(refreshedAccount.syncCursorSyncToken),
+          lagSummary: refreshedAccount.syncCursorSyncToken
+            ? 'Sync token stored for incremental calendar sync'
+            : 'Awaiting first calendar sync token',
+        },
+      });
+
+      this.invalidateCalendarFacade();
+
       return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = this.classifyConnectionFailure(message);
+      const account = this.listCalendarAccounts().find((entry) => entry.id === accountId) ?? null;
+      if (account) {
+        this.updateConnectionRollups({
+          connectionId: account.connectionId,
+          health: {
+            status: failure.status,
+            authState: failure.authState,
+            checkedAt: nowIso(),
+            lastError: message,
+          },
+          sync: {
+            lastAttemptAt: nowIso(),
+            status: 'failed',
+            cursorKind: 'sync_token',
+            lagSummary: 'Sync failed before a sync token could be updated',
+          },
+        });
+      }
+      throw error;
     } finally {
       writeDb.close();
     }
@@ -4509,14 +5672,163 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      if (this.calendarReadDb) {
-        this.calendarReadDb.close();
-        this.calendarReadDb = null;
-        this.calendarServiceCache = null;
-        this.calendarSearchCache = null;
-      }
+      this.invalidateCalendarFacade();
 
       return lastDigest;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async createCalendarEvent(input: CalendarEventCreateInput): Promise<CalendarEventRecord> {
+    const calCap = this.capabilityRegistry.getCapability('calendar');
+    if (!calCap) throw new Error('Calendar capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      const { account, connection } = this.requireCalendarAccountForOperation(svc, input.accountId, 'calendar_event_create');
+      this.requireReadWriteConnection(connection, 'calendar_event_create');
+      this.requireAllowlistedConnectionResource(connection, 'calendar_event_create', 'calendar', account.calendarEmail);
+
+      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
+      if (!resolved?.adapter.createEvent) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support calendar writes`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'calendar',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'calendar',
+        resourceId: account.calendarEmail,
+        requestedBy: 'calendar_event_create',
+        payloadPreview: `Create calendar event: ${input.title}`,
+      });
+
+      const event = await resolved.adapter.createEvent({
+        title: input.title,
+        description: input.description,
+        location: input.location,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        attendees: input.attendees,
+      });
+
+      const stored = svc.upsertEvent(account.id, {
+        googleEventId: event.eventId,
+        title: event.title,
+        description: event.description,
+        location: event.location,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        isAllDay: event.isAllDay,
+        status: event.status,
+        organizer: event.organizer,
+        attendees: event.attendees,
+        recurrenceRule: event.recurrenceRule,
+        htmlLink: event.htmlLink,
+        createdAtGoogle: event.createdAt,
+        updatedAtGoogle: event.updatedAt,
+      });
+      svc.updateEventCount(account.id);
+      this.invalidateCalendarFacade();
+
+      this.recordSecurityAudit({
+        code: 'calendar_event_created',
+        severity: 'info',
+        message: 'Calendar event created',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          calendarEmail: account.calendarEmail,
+          providerEventId: event.eventId,
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return stored;
+    } finally {
+      writeDb.close();
+    }
+  }
+
+  async updateCalendarEvent(id: string, input: CalendarEventUpdateInput): Promise<CalendarEventRecord> {
+    const calCap = this.capabilityRegistry.getCapability('calendar');
+    if (!calCap) throw new Error('Calendar capability not initialized');
+
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
+      const existing = svc.getEvent(id);
+      if (!existing) {
+        throw new RuntimeNotFoundError(`Calendar event ${id} not found`);
+      }
+      const { account, connection } = this.requireCalendarAccountForOperation(svc, existing.accountId, 'calendar_event_update');
+      this.requireReadWriteConnection(connection, 'calendar_event_update');
+      this.requireAllowlistedConnectionResource(connection, 'calendar_event_update', 'calendar', account.calendarEmail);
+
+      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
+      if (!resolved?.adapter.updateEvent) {
+        throw new RuntimeValidationError(`Connection ${connection.id} does not support calendar writes`);
+      }
+
+      const approval = this.requireApprovedExternalWrite({
+        scope: 'external_write',
+        domain: 'calendar',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'calendar_event',
+        resourceId: existing.googleEventId,
+        requestedBy: 'calendar_event_update',
+        payloadPreview: `Update calendar event: ${existing.title}`,
+      });
+
+      const event = await resolved.adapter.updateEvent(existing.googleEventId, input);
+      const stored = svc.upsertEvent(account.id, {
+        googleEventId: event.eventId,
+        title: event.title,
+        description: event.description,
+        location: event.location,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        isAllDay: event.isAllDay,
+        status: event.status,
+        organizer: event.organizer,
+        attendees: event.attendees,
+        recurrenceRule: event.recurrenceRule,
+        htmlLink: event.htmlLink,
+        createdAtGoogle: event.createdAt,
+        updatedAtGoogle: event.updatedAt,
+      });
+      svc.updateEventCount(account.id);
+      this.invalidateCalendarFacade();
+
+      this.recordSecurityAudit({
+        code: 'calendar_event_updated',
+        severity: 'info',
+        message: 'Calendar event updated',
+        component: 'runtime-core',
+        timestamp: nowIso(),
+        details: {
+          connectionId: connection.id,
+          accountId: account.id,
+          calendarEmail: account.calendarEmail,
+          providerEventId: event.eventId,
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+        },
+      });
+
+      return stored;
     } finally {
       writeDb.close();
     }
@@ -4815,6 +6127,9 @@ export class PopeyeRuntimeService {
       getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
       authorizeContextRelease: (input) => this.authorizeContextRelease(input),
       events: this.events,
+      resolveEmailAdapter: (connectionId) => this.resolveEmailAdapterForConnection(connectionId),
+      resolveCalendarAdapter: (connectionId) => this.resolveCalendarAdapterForConnection(connectionId),
+      resolveGithubAdapter: (connectionId) => this.resolveGithubAdapterForConnection(connectionId),
     };
   }
 }

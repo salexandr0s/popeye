@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
@@ -10,6 +10,7 @@ import {
   AutomationGrantRecordSchema,
   ConnectionRecordSchema,
   ContextReleasePreviewSchema,
+  OAuthSessionResponseSchema,
   SecurityPolicyResponseSchema,
   StandingApprovalRecordSchema,
   VaultRecordSchema,
@@ -33,6 +34,10 @@ function createTestEnv() {
     engine: { kind: 'fake', command: 'node', args: [] },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     approvalPolicy: { rules: [], defaultRiskClass: 'ask', pendingExpiryMinutes: 60 },
+    providerAuth: {
+      google: { clientId: 'google-client', clientSecret: 'google-secret' },
+      github: { clientId: 'github-client', clientSecret: 'github-secret' },
+    },
     vaults: { restrictedVaultDir: 'vaults', capabilityStoreDir: 'capabilities', backupEncryptedVaults: true },
   });
   const csrf = issueCsrfToken(readAuthStore(authFile));
@@ -132,6 +137,80 @@ describe('policy substrate API routes', () => {
     const response = await app.inject({ method: 'GET', url: '/v1/approvals/nonexistent', headers: authHeaders });
     expect(response.statusCode).toBe(404);
 
+    await runtime.close();
+    await app.close();
+  });
+
+  it('starts and completes a GitHub OAuth connection through the control API', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { runtime, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'gho_test_token',
+          scope: 'read:user,notifications,repo',
+          token_type: 'bearer',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          login: 'operator',
+          name: 'Operator',
+          avatar_url: 'https://example.com/avatar.png',
+        }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/connections/oauth/start',
+      headers: mutationHeaders,
+      payload: { providerKind: 'github', mode: 'read_only', syncIntervalSeconds: 900 },
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    const session = OAuthSessionResponseSchema.parse(startResponse.json());
+    expect(session.status).toBe('pending');
+    expect(session.authorizationUrl).toContain('https://github.com/login/oauth/authorize');
+
+    const internalSession = (runtime as any).oauthSessionService.getSessionInternal(session.id);
+    expect(internalSession?.stateToken).toBeTruthy();
+
+    const callbackResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/connections/oauth/callback?code=test-code&state=${encodeURIComponent(internalSession.stateToken)}`,
+    });
+
+    expect(callbackResponse.statusCode).toBe(200);
+    expect(callbackResponse.body).toContain('Connection Complete');
+    expect(callbackResponse.body).toContain('github is now connected');
+
+    const completed = runtime.getOAuthSession(session.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.connectionId).toBeTruthy();
+    expect(completed?.accountId).toBeTruthy();
+
+    const connection = runtime.getConnection(completed!.connectionId!);
+    expect(connection?.providerKind).toBe('github');
+    expect(connection?.health?.status).toBe('healthy');
+    expect(connection?.sync?.cursorKind).toBe('since');
+
+    expect(runtime.listGithubAccounts()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: completed?.accountId,
+          connectionId: completed?.connectionId,
+          githubUsername: 'operator',
+        }),
+      ]),
+    );
+
+    vi.unstubAllGlobals();
     await runtime.close();
     await app.close();
   });

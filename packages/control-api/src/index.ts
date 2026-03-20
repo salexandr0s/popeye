@@ -11,13 +11,20 @@ import {
   AutomationGrantCreateRequestSchema,
   ConnectionCreateInputSchema,
   ConnectionUpdateInputSchema,
+  OAuthConnectStartRequestSchema,
   ContextReleasePreviewRequestSchema,
   EmailAccountRegistrationInputSchema,
+  EmailDraftCreateInputSchema,
+  EmailDraftUpdateInputSchema,
   CalendarAccountRegistrationInputSchema,
+  CalendarEventCreateInputSchema,
+  CalendarEventUpdateInputSchema,
   TodoAccountRegistrationInputSchema,
   type DomainKind,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
+  GithubCommentCreateInputSchema,
+  GithubNotificationMarkReadInputSchema,
   MemoryImportInputSchema,
   AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
@@ -190,6 +197,65 @@ function readCookieValue(cookieHeader: string | undefined, name: string): string
     }
   }
   return undefined;
+}
+
+function renderOAuthCallbackPage(input: {
+  status: 'success' | 'error';
+  title: string;
+  body: string;
+}): string {
+  const accent = input.status === 'success' ? '#0b7a4b' : '#b42318';
+  const escapedTitle = escapeHtml(input.title);
+  const escapedBody = escapeHtml(input.body);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapedTitle}</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+        color: #111827;
+      }
+      main {
+        max-width: 560px;
+        margin: 64px auto;
+        padding: 32px;
+        background: #ffffff;
+        border: 1px solid #dbe3ef;
+        border-radius: 18px;
+        box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        color: ${accent};
+        font-size: 28px;
+      }
+      p {
+        margin: 0;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapedTitle}</h1>
+      <p>${escapedBody}</p>
+    </main>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 const ROLE_RANK: Record<AuthRole, number> = {
@@ -448,6 +514,9 @@ export async function createControlApi(
   app.addHook('preHandler', async (request, reply) => {
     const path = request.url.split('?')[0]!;
     if (!path.startsWith('/v1/')) {
+      return undefined;
+    }
+    if (path === '/v1/connections/oauth/callback') {
       return undefined;
     }
 
@@ -1195,6 +1264,65 @@ export async function createControlApi(
     return dependencies.runtime.listConnections(query.domain);
   });
 
+  app.post('/v1/connections/oauth/start', async (request, reply) => {
+    const body = OAuthConnectStartRequestSchema.parse(request.body);
+    try {
+      return dependencies.runtime.startOAuthConnectSession(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_oauth_connect_start', details: error.message });
+      }
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'oauth_connection_not_found', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/connections/oauth/sessions/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const session = dependencies.runtime.getOAuthSession(id);
+    if (!session) {
+      return reply.code(404).send({ error: 'oauth_session_not_found' });
+    }
+    return session;
+  });
+
+  app.get('/v1/connections/oauth/callback', async (request, reply) => {
+    const query = z.object({
+      code: z.string().optional(),
+      state: z.string().optional(),
+      error: z.string().optional(),
+      error_description: z.string().optional(),
+    }).parse(request.query);
+
+    try {
+      const session = await dependencies.runtime.completeOAuthConnectCallback({
+        code: query.code,
+        state: query.state,
+        error: query.error,
+        errorDescription: query.error_description,
+      });
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(renderOAuthCallbackPage({
+          status: 'success',
+          title: 'Connection Complete',
+          body: `${session.providerKind} is now connected. You can return to Popeye.`,
+        }));
+    } catch (error) {
+      const details = error instanceof Error ? error.message : 'OAuth callback failed';
+      return reply
+        .code(400)
+        .type('text/html; charset=utf-8')
+        .send(renderOAuthCallbackPage({
+          status: 'error',
+          title: 'Connection Failed',
+          body: details,
+        }));
+    }
+  });
+
   app.post('/v1/connections', async (request, reply) => {
     const body = ConnectionCreateInputSchema.parse(request.body);
     try {
@@ -1456,6 +1584,37 @@ export async function createControlApi(
     return detectAvailableProviders();
   });
 
+  app.post('/v1/email/drafts', async (request, reply) => {
+    const body = EmailDraftCreateInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.createEmailDraft(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_draft', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'email_draft_requires_approval', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.patch('/v1/email/drafts/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = EmailDraftUpdateInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.updateEmailDraft(id, body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_draft_update', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'email_draft_requires_approval', details: error.message });
+      }
+      throw error;
+    }
+  });
+
   // --- GitHub routes ---
 
   app.get('/v1/github/accounts', async () => {
@@ -1598,6 +1757,51 @@ export async function createControlApi(
     }
   });
 
+  app.post('/v1/github/sync', async (request, reply) => {
+    const body = z.object({ accountId: z.string().min(1) }).parse(request.body);
+    try {
+      return await dependencies.runtime.syncGithubAccount(body.accountId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_sync', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/github/comments', async (request, reply) => {
+    const body = GithubCommentCreateInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.createGithubComment(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_comment', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'github_comment_requires_approval', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/github/notifications/mark-read', async (request, reply) => {
+    const body = GithubNotificationMarkReadInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.markGithubNotificationRead(body);
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'github_notification_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_github_notification', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'github_notification_requires_approval', details: error.message });
+      }
+      throw error;
+    }
+  });
+
   // --- Calendar routes ---
 
   app.get('/v1/calendar/accounts', async () => {
@@ -1720,6 +1924,40 @@ export async function createControlApi(
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_calendar_sync', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/calendar/events', async (request, reply) => {
+    const body = CalendarEventCreateInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.createCalendarEvent(body);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_event', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'calendar_event_requires_approval', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.patch('/v1/calendar/events/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = CalendarEventUpdateInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.updateCalendarEvent(id, body);
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'calendar_event_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_calendar_event_update', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'calendar_event_requires_approval', details: error.message });
       }
       throw error;
     }

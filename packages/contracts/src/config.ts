@@ -59,6 +59,18 @@ export const EngineConfigSchema = z.object({
 });
 export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
+export const OAuthClientConfigSchema = z.object({
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+});
+export type OAuthClientConfig = z.infer<typeof OAuthClientConfigSchema>;
+
+export const ProviderAuthConfigSchema = z.object({
+  google: OAuthClientConfigSchema.partial().default({}),
+  github: OAuthClientConfigSchema.partial().default({}),
+});
+export type ProviderAuthConfig = z.infer<typeof ProviderAuthConfigSchema>;
+
 const DEFAULT_ENGINE_CONFIG = {
   kind: 'fake' as const,
   command: 'node',
@@ -171,6 +183,11 @@ const DEFAULT_VAULT_CONFIG = {
   backupEncryptedVaults: true,
 };
 
+const DEFAULT_PROVIDER_AUTH_CONFIG = {
+  google: {},
+  github: {},
+};
+
 export const AppConfigSchema = z.object({
   runtimeDataDir: z.string().min(1),
   authFile: z.string().min(1),
@@ -181,6 +198,7 @@ export const AppConfigSchema = z.object({
   memory: MemoryConfigSchema.default(DEFAULT_MEMORY_CONFIG),
   workspaces: z.array(WorkspaceConfigSchema).default(DEFAULT_WORKSPACES),
   approvalPolicy: ApprovalPolicyConfigSchema.default(DEFAULT_APPROVAL_POLICY_CONFIG),
+  providerAuth: ProviderAuthConfigSchema.default(DEFAULT_PROVIDER_AUTH_CONFIG),
   vaults: VaultConfigSchema.default(DEFAULT_VAULT_CONFIG),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

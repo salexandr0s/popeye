@@ -2019,6 +2019,105 @@
               },
               "additionalProperties": false
             },
+            "health": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "unknown",
+                    "healthy",
+                    "degraded",
+                    "reauth_required",
+                    "error"
+                  ],
+                  "default": "unknown"
+                },
+                "authState": {
+                  "type": "string",
+                  "enum": [
+                    "not_required",
+                    "configured",
+                    "missing",
+                    "stale",
+                    "expired",
+                    "revoked",
+                    "invalid_scopes"
+                  ],
+                  "default": "not_required"
+                },
+                "checkedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "lastError": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "diagnostics": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/ConnectionRecord/properties/policy/properties/diagnostics/items"
+                  },
+                  "default": []
+                }
+              },
+              "additionalProperties": false
+            },
+            "sync": {
+              "type": "object",
+              "properties": {
+                "lastAttemptAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "lastSuccessAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "idle",
+                    "success",
+                    "partial",
+                    "failed"
+                  ],
+                  "default": "idle"
+                },
+                "cursorKind": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "history_id",
+                    "sync_token",
+                    "since"
+                  ],
+                  "default": "none"
+                },
+                "cursorPresent": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "lagSummary": {
+                  "type": "string",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
+            },
             "createdAt": {
               "type": "string"
             },

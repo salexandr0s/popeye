@@ -10,6 +10,7 @@ import { GithubDigestService } from './github-digest.js';
 import { GithubSearchService } from './github-search.js';
 import { createGithubTools } from './tools.js';
 import { getGithubMigrations } from './migrations.js';
+import type { GithubProviderAdapter } from './providers/adapter-interface.js';
 
 export { GithubService } from './github-service.js';
 export { GithubSyncService } from './github-sync.js';
@@ -18,6 +19,7 @@ export { GithubSearchService } from './github-search.js';
 export { getGithubMigrations } from './migrations.js';
 export type { GithubProviderAdapter, NormalizedGithubRepo, NormalizedGithubPR, NormalizedGithubIssue, NormalizedGithubNotification, NormalizedGithubProfile } from './providers/adapter-interface.js';
 export { GhCliAdapter } from './providers/gh-cli-adapter.js';
+export { GithubApiAdapter, type GithubApiAdapterConfig } from './providers/github-api-adapter.js';
 
 const DEFAULT_SYNC_INTERVAL_MS = 15 * 60_000; // 15 minutes
 const DIGEST_INTERVAL_MS = 24 * 3600_000; // 24 hours
@@ -108,8 +110,16 @@ export function createGithubCapability(): CapabilityModule {
             const accounts = githubService.listAccounts();
             for (const account of accounts) {
               try {
-                const { GhCliAdapter } = await import('./providers/gh-cli-adapter.js');
-                const adapter = new GhCliAdapter();
+                if (!ctx.resolveGithubAdapter) {
+                  ctx.log.debug('GitHub sync timer tick — no adapter resolver configured');
+                  return;
+                }
+                const resolved = await ctx.resolveGithubAdapter(account.connectionId);
+                if (!resolved) {
+                  ctx.log.debug('GitHub sync timer — no adapter for account', { accountId: account.id });
+                  continue;
+                }
+                const adapter = resolved.adapter as GithubProviderAdapter;
                 await syncService.syncAccount(account, adapter);
                 ctx.log.info('GitHub sync timer completed', { accountId: account.id });
               } catch (err) {

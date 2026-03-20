@@ -51,22 +51,25 @@ function makeCtx(): CapabilityContext {
 function createFakeAdapter(): CalendarProviderAdapter {
   return {
     getProfile: async () => ({ email: 'test@example.com', timeZone: 'America/New_York' }),
-    listEvents: async () => [
-      {
-        eventId: 'evt-1', title: 'Team standup', description: 'Daily standup',
-        location: 'Room 101', startTime: '2025-01-15T09:00:00', endTime: '2025-01-15T09:30:00',
-        isAllDay: false, status: 'confirmed', organizer: 'alice@example.com',
-        attendees: ['bob@example.com'], recurrenceRule: null, htmlLink: null,
-        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
-      },
-      {
-        eventId: 'evt-2', title: 'Lunch', description: 'Team lunch',
-        location: 'Cafeteria', startTime: '2025-01-15T12:00:00', endTime: '2025-01-15T13:00:00',
-        isAllDay: false, status: 'confirmed', organizer: '',
-        attendees: [], recurrenceRule: null, htmlLink: null,
-        createdAt: null, updatedAt: null,
-      },
-    ],
+    listEvents: async () => ({
+      events: [
+        {
+          eventId: 'evt-1', title: 'Team standup', description: 'Daily standup',
+          location: 'Room 101', startTime: '2025-01-15T09:00:00', endTime: '2025-01-15T09:30:00',
+          isAllDay: false, status: 'confirmed', organizer: 'alice@example.com',
+          attendees: ['bob@example.com'], recurrenceRule: null, htmlLink: null,
+          createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+        },
+        {
+          eventId: 'evt-2', title: 'Lunch', description: 'Team lunch',
+          location: 'Cafeteria', startTime: '2025-01-15T12:00:00', endTime: '2025-01-15T13:00:00',
+          isAllDay: false, status: 'confirmed', organizer: '',
+          attendees: [], recurrenceRule: null, htmlLink: null,
+          createdAt: null, updatedAt: null,
+        },
+      ],
+      nextSyncToken: 'full-sync-token',
+    }),
     listEventsIncremental: async () => ({
       events: [
         {
@@ -165,16 +168,19 @@ describe('CalendarSyncService', () => {
 
     const adapter: CalendarProviderAdapter = {
       ...createFakeAdapter(),
-      listEvents: async () => [
-        {
-          eventId: 'evt-redact', title: 'Meeting about secret-token-abc123',
-          description: 'Discuss secret-token-def456 handling',
-          location: '', startTime: '2025-01-15T09:00:00', endTime: '2025-01-15T10:00:00',
-          isAllDay: false, status: 'confirmed', organizer: '',
-          attendees: [], recurrenceRule: null, htmlLink: null,
-          createdAt: null, updatedAt: null,
-        },
-      ],
+      listEvents: async () => ({
+        events: [
+          {
+            eventId: 'evt-redact', title: 'Meeting about secret-token-abc123',
+            description: 'Discuss secret-token-def456 handling',
+            location: '', startTime: '2025-01-15T09:00:00', endTime: '2025-01-15T10:00:00',
+            isAllDay: false, status: 'confirmed', organizer: '',
+            attendees: [], recurrenceRule: null, htmlLink: null,
+            createdAt: null, updatedAt: null,
+          },
+        ],
+        nextSyncToken: 'redacted-sync-token',
+      }),
     };
 
     await syncSvc.syncAccount(acct, adapter);

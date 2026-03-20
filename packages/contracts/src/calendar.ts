@@ -116,3 +116,25 @@ export const CalendarAvailabilityQuerySchema = z.object({
   slotMinutes: z.number().int().positive().default(30),
 });
 export type CalendarAvailabilityQuery = z.infer<typeof CalendarAvailabilityQuerySchema>;
+
+export const CalendarEventCreateInputSchema = z.object({
+  accountId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().default(''),
+  location: z.string().default(''),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+  attendees: z.array(z.string()).default([]),
+});
+export type CalendarEventCreateInput = z.infer<typeof CalendarEventCreateInputSchema>;
+
+export const CalendarEventUpdateInputSchema = z.object({
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  location: z.string().optional(),
+  startTime: z.string().optional(),
+  endTime: z.string().optional(),
+  attendees: z.array(z.string()).optional(),
+  status: CalendarEventStatusSchema.optional(),
+});
+export type CalendarEventUpdateInput = z.infer<typeof CalendarEventUpdateInputSchema>;

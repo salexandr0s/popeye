@@ -7,6 +7,10 @@ Step-by-step setup from a fresh macOS installation.
 - macOS (Apple Silicon or Intel)
 - Terminal access
 - API keys for configured providers
+- Google OAuth client credentials if you want the blessed Gmail / Google
+  Calendar browser connect flows
+- GitHub OAuth client credentials if you want the blessed GitHub browser
+  connect flow
 
 ## Steps
 
@@ -68,6 +72,10 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
 - `engine.piVersion` must match `../pi/packages/coding-agent/package.json`
 - if omitted, `runtimeDataDir` now defaults to `~/Library/Application Support/Popeye/`
 - if omitted, `authFile` now defaults to `<runtimeDataDir>/config/auth.json`
+- set `providerAuth.google.clientId` / `providerAuth.google.clientSecret` to
+  enable the blessed Gmail and Google Calendar browser-OAuth flows
+- set `providerAuth.github.clientId` / `providerAuth.github.clientSecret` to
+  enable the blessed GitHub browser-OAuth flow
 
 ### 8. Verify the Pi checkout and version pin
 
@@ -105,19 +113,30 @@ pop daemon health
 pop pi smoke
 ```
 
-### 14. Verify generated contracts
+### 14. Connect blessed providers (optional after the daemon is running)
+
+```bash
+pop email connect --gmail
+pop calendar connect
+pop github connect
+```
+
+These commands open browser OAuth for the blessed direct-provider paths. The
+legacy CLI-backed adapters remain available only as experimental fallbacks.
+
+### 15. Verify generated contracts
 
 ```bash
 pnpm verify:generated-artifacts
 ```
 
-### 15. Install as LaunchAgent (optional)
+### 16. Install as LaunchAgent (optional)
 
 ```bash
 pop daemon install && pop daemon load
 ```
 
-### 16. Verify
+### 17. Verify
 
 ```bash
 pop daemon status

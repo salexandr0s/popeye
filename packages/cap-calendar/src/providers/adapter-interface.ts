@@ -35,11 +35,35 @@ export interface CalendarProviderAdapter {
     timeMax?: string | undefined;
     maxResults?: number | undefined;
     syncToken?: string | undefined;
-  }): Promise<NormalizedCalendarEvent[]>;
+  }): Promise<{
+    events: NormalizedCalendarEvent[];
+    nextSyncToken: string | null;
+  }>;
 
   /** Incremental sync using a sync token. */
   listEventsIncremental(syncToken: string): Promise<{
     events: NormalizedCalendarEvent[];
     nextSyncToken: string | null;
   }>;
+
+  /** Create a calendar event on the authenticated user's primary calendar. */
+  createEvent?(input: {
+    title: string;
+    description?: string | undefined;
+    location?: string | undefined;
+    startTime: string;
+    endTime: string;
+    attendees?: string[] | undefined;
+  }): Promise<NormalizedCalendarEvent>;
+
+  /** Update an existing calendar event on the authenticated user's primary calendar. */
+  updateEvent?(eventId: string, input: {
+    title?: string | undefined;
+    description?: string | undefined;
+    location?: string | undefined;
+    startTime?: string | undefined;
+    endTime?: string | undefined;
+    attendees?: string[] | undefined;
+    status?: 'confirmed' | 'tentative' | 'cancelled' | undefined;
+  }): Promise<NormalizedCalendarEvent>;
 }

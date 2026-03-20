@@ -43,6 +43,10 @@
     "defaultRiskClass": "ask",
     "pendingExpiryMinutes": 60
   },
+  "providerAuth": {
+    "google": {},
+    "github": {}
+  },
   "vaults": {
     "restrictedVaultDir": "vaults",
     "capabilityStoreDir": "capabilities",

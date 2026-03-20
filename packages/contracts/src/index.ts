@@ -20,6 +20,7 @@ export * from './secret-store.js';
 export * from './vault.js';
 export * from './approval.js';
 export * from './connection.js';
+export * from './oauth.js';
 export * from './context-release.js';
 export * from './capability.js';
 export * from './file-roots.js';

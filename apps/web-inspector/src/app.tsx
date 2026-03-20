@@ -18,6 +18,10 @@ import { AutomationGrants } from './views/automation-grants';
 import { SecurityPolicy } from './views/security-policy';
 import { Usage } from './views/usage';
 import { Vaults } from './views/vaults';
+import { Connections } from './views/connections';
+import { Email } from './views/email';
+import { Calendar } from './views/calendar';
+import { Github } from './views/github';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -58,6 +62,10 @@ export function App() {
               <Route path="approvals" element={<Approvals />} />
               <Route path="standing-approvals" element={<StandingApprovals />} />
               <Route path="automation-grants" element={<AutomationGrants />} />
+              <Route path="connections" element={<Connections />} />
+              <Route path="email" element={<Email />} />
+              <Route path="calendar" element={<Calendar />} />
+              <Route path="github" element={<Github />} />
               <Route path="vaults" element={<Vaults />} />
               <Route path="security-policy" element={<SecurityPolicy />} />
               <Route path="memory" element={<MemorySearch />} />

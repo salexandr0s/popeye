@@ -44,6 +44,16 @@ export interface HistoryChange {
   newHistoryId: string;
 }
 
+export interface NormalizedDraft {
+  draftId: string;
+  messageId?: string | undefined;
+  to: string[];
+  cc: string[];
+  subject: string;
+  bodyPreview: string;
+  updatedAt: string;
+}
+
 // --- Adapter interface ---
 
 export interface EmailProviderAdapter {
@@ -68,4 +78,20 @@ export interface EmailProviderAdapter {
    * When absent, sync always does a full pass.
    */
   listHistory?(startHistoryId: string): Promise<HistoryChange>;
+
+  /** Create a provider draft without sending it. */
+  createDraft?(input: {
+    to: string[];
+    cc?: string[] | undefined;
+    subject: string;
+    body: string;
+  }): Promise<NormalizedDraft>;
+
+  /** Update an existing provider draft without sending it. */
+  updateDraft?(draftId: string, input: {
+    to?: string[] | undefined;
+    cc?: string[] | undefined;
+    subject?: string | undefined;
+    body?: string | undefined;
+  }): Promise<NormalizedDraft>;
 }

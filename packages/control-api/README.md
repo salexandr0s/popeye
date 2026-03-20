@@ -32,7 +32,7 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~50 routes)
+## Endpoints (~70 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
@@ -46,7 +46,10 @@ New platform implementation.
 | Receipts       | `GET /v1/receipts`, `GET /v1/receipts/:id`                   |
 | Instructions   | `GET /v1/instruction-previews/:scope`                        |
 | Interventions  | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve`|
-| Connections    | `GET /v1/connections`, `POST /v1/connections`, `PATCH /v1/connections/:id`, `DELETE /v1/connections/:id` |
+| Connections    | `GET /v1/connections`, `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`, `GET /v1/connections/oauth/callback`, `POST /v1/connections`, `PATCH /v1/connections/:id`, `DELETE /v1/connections/:id` |
+| Email          | `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/digest`, `GET /v1/email/search`, `POST /v1/email/accounts`, `POST /v1/email/sync`, `POST /v1/email/digest`, `GET /v1/email/providers`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` |
+| Calendar       | `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability`, `POST /v1/calendar/accounts`, `POST /v1/calendar/sync`, `POST /v1/calendar/events`, `PATCH /v1/calendar/events/:id` |
+| GitHub         | `GET /v1/github/accounts`, `GET /v1/github/repos`, `GET /v1/github/prs`, `GET /v1/github/prs/:id`, `GET /v1/github/issues`, `GET /v1/github/issues/:id`, `GET /v1/github/notifications`, `GET /v1/github/digest`, `GET /v1/github/search`, `POST /v1/github/sync`, `POST /v1/github/comments`, `POST /v1/github/notifications/mark-read` |
 | File roots     | `GET /v1/files/roots`, `POST /v1/files/roots`, `GET /v1/files/roots/:id`, `PATCH /v1/files/roots/:id`, `DELETE /v1/files/roots/:id`, `GET /v1/files/search`, `GET /v1/files/documents/:id`, `POST /v1/files/roots/:id/reindex` |
 | Memory         | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit`, `POST /v1/memory/maintenance`, `POST /v1/memory/:id/promote/propose`, `POST /v1/memory/:id/promote/execute` |
 | Messages       | `POST /v1/messages/ingest`, `GET /v1/messages/:id`           |
@@ -113,6 +116,14 @@ Promotion routes are covered by contract and behavior tests in
 
 - Connection reads include an additive `policy` summary with readiness,
   secret status, approval posture, and non-sensitive diagnostics.
+- Connection reads also include additive `health` and `sync` rollups so the
+  inspector and CLI can show stale credentials, provider failures, cursor
+  presence, and last-success information without reading capability stores
+  directly.
+- Browser OAuth is the blessed connect path for Gmail, Google Calendar, and
+  GitHub. The callback route remains loopback-only and does not require the
+  long-lived bearer token, but it still completes through the runtime and
+  never persists provider secrets in logs or receipts.
 - Invalid provider/domain combinations fail closed with
   `400 { error: "invalid_connection" }`.
 - File-root registration rejects runtime-managed directories with
@@ -124,6 +135,10 @@ Promotion routes are covered by contract and behavior tests in
 - Account-scoped capability reads/searches/digests route through centralized
   connection guards and fail closed with domain-specific `400` errors when the
   backing connection policy is invalid.
+- Provider mutations now route through the same evaluator-backed approval path:
+  Gmail drafts, Google Calendar event create/update, GitHub comments, and
+  GitHub notification mark-read all enforce allowlists plus approval/grant
+  policy before the provider call runs.
 
 ### Receipt observability
 

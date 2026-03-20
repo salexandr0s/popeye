@@ -523,6 +523,34 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_automation_grants_workspace ON automation_grants(workspace_id, project_id);',
     ],
   },
+  {
+    id: '017-provider-oauth-and-connection-rollups',
+    statements: [
+      "ALTER TABLE connections ADD COLUMN health_json TEXT NOT NULL DEFAULT '{}';",
+      "ALTER TABLE connections ADD COLUMN sync_json TEXT NOT NULL DEFAULT '{}';",
+      `CREATE TABLE IF NOT EXISTS oauth_sessions (
+        id TEXT PRIMARY KEY,
+        provider_kind TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        status TEXT NOT NULL,
+        connection_mode TEXT NOT NULL,
+        sync_interval_seconds INTEGER NOT NULL DEFAULT 900,
+        connection_id TEXT REFERENCES connections(id),
+        state_token TEXT NOT NULL,
+        pkce_verifier TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        authorization_url TEXT NOT NULL,
+        error TEXT,
+        account_id TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        completed_at TEXT
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_sessions_state ON oauth_sessions(state_token);',
+      'CREATE INDEX IF NOT EXISTS idx_oauth_sessions_status ON oauth_sessions(status);',
+      'CREATE INDEX IF NOT EXISTS idx_oauth_sessions_expires ON oauth_sessions(expires_at);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

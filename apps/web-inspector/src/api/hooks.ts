@@ -7,7 +7,17 @@ import type {
   ApprovalRecord,
   AgentProfileRecord,
   AutomationGrantRecord,
+  CalendarAccountRecord,
+  CalendarEventRecord,
+  ConnectionRecord,
   DaemonStatusResponse,
+  EmailAccountRecord,
+  EmailDigestRecord,
+  EmailSearchResult,
+  GithubAccountRecord,
+  GithubDigestRecord,
+  GithubNotificationRecord,
+  GithubSearchResult,
   EngineCapabilitiesResponse,
   ExecutionEnvelopeResponse,
   SecurityPolicyResponse,
@@ -33,7 +43,23 @@ import type {
 export type { RunRecord, RunEventRecord, JobRecord, TaskRecord, ReceiptRecord, InterventionRecord, SecurityAuditFinding };
 export type { MemorySearchResult, MemorySearchResponse };
 export type { AgentProfileRecord, EngineCapabilitiesResponse, ExecutionEnvelopeResponse };
-export type { ApprovalRecord, AutomationGrantRecord, SecurityPolicyResponse, StandingApprovalRecord, VaultRecord };
+export type {
+  ApprovalRecord,
+  AutomationGrantRecord,
+  CalendarAccountRecord,
+  CalendarEventRecord,
+  ConnectionRecord,
+  EmailAccountRecord,
+  EmailDigestRecord,
+  EmailSearchResult,
+  GithubAccountRecord,
+  GithubDigestRecord,
+  GithubNotificationRecord,
+  GithubSearchResult,
+  SecurityPolicyResponse,
+  StandingApprovalRecord,
+  VaultRecord,
+};
 export type InstructionBundle = CompiledInstructionBundle;
 
 interface PollingResult<T> {
@@ -292,4 +318,21 @@ export function useHealth() {
 
 export function useVaults() {
   return usePolling<VaultRecord[]>('/v1/vaults', 5000);
+}
+
+export function useConnections(domain?: string) {
+  const suffix = domain ? `?domain=${encodeURIComponent(domain)}` : '';
+  return usePolling<ConnectionRecord[]>(`/v1/connections${suffix}`, 5000);
+}
+
+export function useEmailAccounts() {
+  return usePolling<EmailAccountRecord[]>('/v1/email/accounts', 5000);
+}
+
+export function useGithubAccounts() {
+  return usePolling<GithubAccountRecord[]>('/v1/github/accounts', 5000);
+}
+
+export function useCalendarAccounts() {
+  return usePolling<CalendarAccountRecord[]>('/v1/calendar/accounts', 5000);
 }

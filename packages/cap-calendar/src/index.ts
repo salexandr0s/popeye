@@ -10,6 +10,7 @@ import { CalendarDigestService } from './calendar-digest.js';
 import { CalendarSearchService } from './calendar-search.js';
 import { createCalendarTools } from './tools.js';
 import { getCalendarMigrations } from './migrations.js';
+import type { CalendarProviderAdapter } from './providers/adapter-interface.js';
 
 export { CalendarService } from './calendar-service.js';
 export { CalendarSyncService } from './calendar-sync.js';
@@ -18,6 +19,7 @@ export { CalendarSearchService } from './calendar-search.js';
 export { getCalendarMigrations } from './migrations.js';
 export type { CalendarProviderAdapter, NormalizedCalendarEvent } from './providers/adapter-interface.js';
 export { GcalcliAdapter } from './providers/gcalcli-adapter.js';
+export { GoogleCalendarAdapter, type GoogleCalendarAdapterConfig } from './providers/google-calendar-adapter.js';
 
 const DEFAULT_SYNC_INTERVAL_MS = 15 * 60_000; // 15 minutes
 const DIGEST_INTERVAL_MS = 24 * 3600_000; // 24 hours
@@ -108,8 +110,16 @@ export function createCalendarCapability(): CapabilityModule {
             const accounts = calendarService.listAccounts();
             for (const account of accounts) {
               try {
-                const { GcalcliAdapter } = await import('./providers/gcalcli-adapter.js');
-                const adapter = new GcalcliAdapter();
+                if (!ctx.resolveCalendarAdapter) {
+                  ctx.log.debug('Calendar sync timer tick — no adapter resolver configured');
+                  return;
+                }
+                const resolved = await ctx.resolveCalendarAdapter(account.connectionId);
+                if (!resolved) {
+                  ctx.log.debug('Calendar sync timer — no adapter for account', { accountId: account.id });
+                  continue;
+                }
+                const adapter = resolved.adapter as CalendarProviderAdapter;
                 await syncService.syncAccount(account, adapter);
                 ctx.log.info('Calendar sync timer completed', { accountId: account.id });
               } catch (err) {

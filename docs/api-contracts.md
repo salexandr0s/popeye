@@ -46,8 +46,45 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/policies/automation-grants/:id/revoke` | `AutomationGrantRecordSchema` (req: `PolicyGrantRevokeRequestSchema`) |
 | GET | `/v1/security/policy` | `SecurityPolicyResponseSchema` |
 | GET | `/v1/connections` | `ConnectionListResponseSchema` |
+| POST | `/v1/connections/oauth/start` | `OAuthSessionResponseSchema` (req: `OAuthConnectStartRequestSchema`) |
+| GET | `/v1/connections/oauth/sessions/:id` | `OAuthSessionResponseSchema` |
+| GET | `/v1/connections/oauth/callback` | HTML success/failure page |
 | POST | `/v1/connections` | `ConnectionRecordSchema` (req: `ConnectionCreateInputSchema`) |
 | PATCH | `/v1/connections/:id` | `ConnectionRecordSchema` (req: `ConnectionUpdateInputSchema`) |
+| GET | `/v1/email/accounts` | `EmailAccountRecordSchema[]` |
+| GET | `/v1/email/threads` | `EmailThreadRecordSchema[]` |
+| GET | `/v1/email/threads/:id` | `EmailThreadRecordSchema` |
+| GET | `/v1/email/messages/:id` | `EmailMessageRecordSchema` |
+| GET | `/v1/email/digest` | `EmailDigestRecordSchema \| null` |
+| GET | `/v1/email/search?query=...` | `EmailSearchResultSchema[]` |
+| POST | `/v1/email/accounts` | `EmailAccountRecordSchema` (req: `EmailAccountRegistrationInputSchema`) |
+| POST | `/v1/email/sync` | `EmailSyncResultSchema` |
+| POST | `/v1/email/digest` | `EmailDigestRecordSchema` |
+| GET | `/v1/email/providers` | provider availability payload |
+| POST | `/v1/email/drafts` | `EmailDraftRecordSchema` (req: `EmailDraftCreateInputSchema`) |
+| PATCH | `/v1/email/drafts/:id` | `EmailDraftRecordSchema` (req: `EmailDraftUpdateInputSchema`) |
+| GET | `/v1/github/accounts` | `GithubAccountRecordSchema[]` |
+| GET | `/v1/github/repos` | `GithubRepoRecordSchema[]` |
+| GET | `/v1/github/prs` | `GithubPullRequestRecordSchema[]` |
+| GET | `/v1/github/prs/:id` | `GithubPullRequestRecordSchema` |
+| GET | `/v1/github/issues` | `GithubIssueRecordSchema[]` |
+| GET | `/v1/github/issues/:id` | `GithubIssueRecordSchema` |
+| GET | `/v1/github/notifications` | `GithubNotificationRecordSchema[]` |
+| GET | `/v1/github/digest` | `GithubDigestRecordSchema \| null` |
+| GET | `/v1/github/search?query=...` | `GithubSearchResultSchema[]` |
+| POST | `/v1/github/sync` | `GithubSyncResultSchema` |
+| POST | `/v1/github/comments` | `GithubCommentRecordSchema` (req: `GithubCommentCreateInputSchema`) |
+| POST | `/v1/github/notifications/mark-read` | `GithubNotificationRecordSchema` (req: `GithubNotificationMarkReadInputSchema`) |
+| GET | `/v1/calendar/accounts` | `CalendarAccountRecordSchema[]` |
+| GET | `/v1/calendar/events` | `CalendarEventRecordSchema[]` |
+| GET | `/v1/calendar/events/:id` | `CalendarEventRecordSchema` |
+| GET | `/v1/calendar/search?query=...` | `CalendarSearchResultSchema[]` |
+| GET | `/v1/calendar/digest` | `CalendarDigestRecordSchema \| null` |
+| GET | `/v1/calendar/availability` | `CalendarAvailabilitySlotSchema[]` |
+| POST | `/v1/calendar/accounts` | `CalendarAccountRecordSchema` (req: `CalendarAccountRegistrationInputSchema`) |
+| POST | `/v1/calendar/sync` | `CalendarSyncResultSchema` |
+| POST | `/v1/calendar/events` | `CalendarEventRecordSchema` (req: `CalendarEventCreateInputSchema`) |
+| PATCH | `/v1/calendar/events/:id` | `CalendarEventRecordSchema` (req: `CalendarEventUpdateInputSchema`) |
 | GET | `/v1/vaults` | `VaultListResponseSchema` |
 | POST | `/v1/vaults` | `VaultResponseSchema` (req: `VaultCreateRequestSchema`) |
 | GET | `/v1/vaults/:id` | `VaultResponseSchema` |
@@ -131,6 +168,26 @@ Behavior notes:
   the exact recall gate that was applied.
 - Connection reads include an additive `policy` summary with readiness,
   secret status, approval posture, and diagnostics.
+- Connection reads also include additive `health` and `sync` rollups so
+  operators can inspect auth state, last provider error, cursor kind/presence,
+  and sync lag without reading capability stores directly.
+- `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`,
+  and `GET /v1/connections/oauth/callback` are the blessed browser-OAuth
+  surfaces for Gmail, Google Calendar, and GitHub.
+- The callback route returns HTML rather than JSON because it is intended for
+  the browser popup/tab flow.
+- Blessed browser OAuth completion auto-registers the matching email, calendar,
+  or GitHub account; separate `POST /v1/*/accounts` calls are no longer part of
+  the happy path for those domains.
+- Email, calendar, and GitHub reads/searches/digests continue to fail closed
+  with domain-specific `400` errors when their backing connection policy is
+  disabled or invalid.
+- Email drafts, calendar event create/update, GitHub comments, and GitHub
+  notification mark-read are evaluator-backed write flows:
+  - non-allowlisted resources fail closed before approval evaluation
+  - approval-required cases return domain-specific `409` errors
+  - successful writes return the provider-normalized record and leave receipt /
+    audit evidence with approval or grant provenance
 - `POST /v1/connections` fails closed with `400 { error: "invalid_connection" }`
   for provider/domain mismatches or missing secret references.
 - `POST /v1/files/roots` fails closed with `400 { error: "invalid_file_root" }`

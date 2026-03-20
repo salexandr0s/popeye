@@ -23,6 +23,23 @@ export type ConnectionReadinessStatus = z.infer<typeof ConnectionReadinessStatus
 export const ConnectionSecretStatusSchema = z.enum(['not_required', 'configured', 'missing', 'stale']);
 export type ConnectionSecretStatus = z.infer<typeof ConnectionSecretStatusSchema>;
 
+export const ConnectionHealthStatusSchema = z.enum(['unknown', 'healthy', 'degraded', 'reauth_required', 'error']);
+export type ConnectionHealthStatus = z.infer<typeof ConnectionHealthStatusSchema>;
+
+export const ConnectionAuthStateSchema = z.enum([
+  'not_required',
+  'configured',
+  'missing',
+  'stale',
+  'expired',
+  'revoked',
+  'invalid_scopes',
+]);
+export type ConnectionAuthState = z.infer<typeof ConnectionAuthStateSchema>;
+
+export const ConnectionCursorKindSchema = z.enum(['none', 'history_id', 'sync_token', 'since']);
+export type ConnectionCursorKind = z.infer<typeof ConnectionCursorKindSchema>;
+
 export const ConnectionPolicySummarySchema = z.object({
   status: ConnectionReadinessStatusSchema.default('ready'),
   secretStatus: ConnectionSecretStatusSchema.default('not_required'),
@@ -30,6 +47,25 @@ export const ConnectionPolicySummarySchema = z.object({
   diagnostics: z.array(ConnectionPolicyDiagnosticSchema).default([]),
 });
 export type ConnectionPolicySummary = z.infer<typeof ConnectionPolicySummarySchema>;
+
+export const ConnectionHealthSummarySchema = z.object({
+  status: ConnectionHealthStatusSchema.default('unknown'),
+  authState: ConnectionAuthStateSchema.default('not_required'),
+  checkedAt: z.string().nullable().default(null),
+  lastError: z.string().nullable().default(null),
+  diagnostics: z.array(ConnectionPolicyDiagnosticSchema).default([]),
+});
+export type ConnectionHealthSummary = z.infer<typeof ConnectionHealthSummarySchema>;
+
+export const ConnectionSyncSummarySchema = z.object({
+  lastAttemptAt: z.string().nullable().default(null),
+  lastSuccessAt: z.string().nullable().default(null),
+  status: z.enum(['idle', 'success', 'partial', 'failed']).default('idle'),
+  cursorKind: ConnectionCursorKindSchema.default('none'),
+  cursorPresent: z.boolean().default(false),
+  lagSummary: z.string().default(''),
+});
+export type ConnectionSyncSummary = z.infer<typeof ConnectionSyncSummarySchema>;
 
 export const ConnectionRecordSchema = z.object({
   id: z.string(),
@@ -45,6 +81,8 @@ export const ConnectionRecordSchema = z.object({
   lastSyncAt: z.string().nullable().default(null),
   lastSyncStatus: ConnectionSyncStatusSchema.nullable().default(null),
   policy: ConnectionPolicySummarySchema.optional(),
+  health: ConnectionHealthSummarySchema.optional(),
+  sync: ConnectionSyncSummarySchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -173,6 +173,30 @@ export const GithubSyncResultSchema = z.object({
 });
 export type GithubSyncResult = z.infer<typeof GithubSyncResultSchema>;
 
+export const GithubCommentRecordSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  repoFullName: z.string(),
+  issueNumber: z.number().int().positive(),
+  bodyPreview: z.string(),
+  htmlUrl: z.string().nullable().default(null),
+  createdAt: z.string(),
+});
+export type GithubCommentRecord = z.infer<typeof GithubCommentRecordSchema>;
+
+export const GithubCommentCreateInputSchema = z.object({
+  accountId: z.string().min(1),
+  repoFullName: z.string().min(1),
+  issueNumber: z.number().int().positive(),
+  body: z.string().min(1),
+});
+export type GithubCommentCreateInput = z.infer<typeof GithubCommentCreateInputSchema>;
+
+export const GithubNotificationMarkReadInputSchema = z.object({
+  notificationId: z.string().min(1),
+});
+export type GithubNotificationMarkReadInput = z.infer<typeof GithubNotificationMarkReadInputSchema>;
+
 // --- GitHub Account Registration Input ---
 
 export const GithubAccountRegistrationInputSchema = z.object({

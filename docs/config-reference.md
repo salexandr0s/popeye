@@ -15,6 +15,25 @@ Example config: `config/example.json`
 
 ---
 
+## `providerAuth`
+
+OAuth client credentials for blessed browser connect flows. These values are
+used only for provider connectors; they are not part of Popeye's operator auth
+model.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `providerAuth.google.clientId` | `string` | No | unset | Google OAuth client ID used by the Gmail and Google Calendar browser connect flows. Required to start blessed Google connect sessions. |
+| `providerAuth.google.clientSecret` | `string` | No | unset | Google OAuth client secret used for token exchange and refresh-token handling. Required to complete blessed Google connect sessions. |
+| `providerAuth.github.clientId` | `string` | No | unset | GitHub OAuth client ID used by the direct GitHub browser connect flow. Required to start blessed GitHub connect sessions. |
+| `providerAuth.github.clientSecret` | `string` | No | unset | GitHub OAuth client secret used for token exchange. Required to complete blessed GitHub connect sessions. |
+
+If the relevant client credentials are not configured, the browser OAuth
+connect routes fail closed with validation errors rather than silently falling
+back to legacy CLI-backed adapters.
+
+---
+
 ## `security`
 
 Network and security configuration. All fields are validated at startup.

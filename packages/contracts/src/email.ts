@@ -117,6 +117,36 @@ export const EmailSyncResultSchema = z.object({
 });
 export type EmailSyncResult = z.infer<typeof EmailSyncResultSchema>;
 
+export const EmailDraftRecordSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  providerDraftId: z.string(),
+  providerMessageId: z.string().nullable().default(null),
+  to: z.array(z.string()).default([]),
+  cc: z.array(z.string()).default([]),
+  subject: z.string(),
+  bodyPreview: z.string().default(''),
+  updatedAt: z.string(),
+});
+export type EmailDraftRecord = z.infer<typeof EmailDraftRecordSchema>;
+
+export const EmailDraftCreateInputSchema = z.object({
+  accountId: z.string().min(1),
+  to: z.array(z.string().email()).default([]),
+  cc: z.array(z.string().email()).default([]),
+  subject: z.string().min(1),
+  body: z.string().default(''),
+});
+export type EmailDraftCreateInput = z.infer<typeof EmailDraftCreateInputSchema>;
+
+export const EmailDraftUpdateInputSchema = z.object({
+  to: z.array(z.string().email()).optional(),
+  cc: z.array(z.string().email()).optional(),
+  subject: z.string().min(1).optional(),
+  body: z.string().optional(),
+});
+export type EmailDraftUpdateInput = z.infer<typeof EmailDraftUpdateInputSchema>;
+
 // --- Email Account Registration Input ---
 
 export const EmailAccountRegistrationInputSchema = z.object({

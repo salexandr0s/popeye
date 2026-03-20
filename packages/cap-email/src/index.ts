@@ -20,6 +20,7 @@ export { getEmailMigrations } from './migrations.js';
 export type { EmailProviderAdapter, NormalizedThread, NormalizedMessage, ThreadListPage, HistoryChange } from './providers/adapter-interface.js';
 export { createAdapter, type AdapterCredentials } from './providers/create-adapter.js';
 export { GwsCliAdapter, type GwsCliAdapterConfig } from './providers/gws-adapter.js';
+export { GmailAdapter, type GmailAdapterConfig } from './providers/gmail-adapter.js';
 export { ProtonBridgeAdapter, type ProtonBridgeAdapterConfig } from './providers/proton-adapter.js';
 export { detectAvailableProviders, detectGws, detectProtonBridge, type ProviderDetectionResult } from './providers/detect.js';
 

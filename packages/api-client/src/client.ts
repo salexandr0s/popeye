@@ -91,6 +91,9 @@ import {
   ConnectionRecordSchema,
   type ConnectionCreateInput,
   type ConnectionUpdateInput,
+  type OAuthConnectStartRequestApi,
+  type OAuthSessionResponse,
+  OAuthSessionResponseSchema,
   type ContextReleasePreview,
   ContextReleasePreviewSchema,
   type SecurityPolicyResponse,
@@ -118,6 +121,10 @@ import {
   EmailMessageRecordSchema,
   type EmailDigestRecord,
   EmailDigestRecordSchema,
+  type EmailDraftCreateInput,
+  type EmailDraftRecord,
+  EmailDraftRecordSchema,
+  type EmailDraftUpdateInput,
   type EmailSearchResult,
   EmailSearchResultSchema,
   type EmailAccountRegistrationInput,
@@ -127,12 +134,16 @@ import {
   SecretRefRecordSchema,
   type GithubAccountRecord,
   GithubAccountRecordSchema,
+  type GithubCommentCreateInput,
+  type GithubCommentRecord,
+  GithubCommentRecordSchema,
   type GithubRepoRecord,
   GithubRepoRecordSchema,
   type GithubPullRequestRecord,
   GithubPullRequestRecordSchema,
   type GithubIssueRecord,
   GithubIssueRecordSchema,
+  type GithubNotificationMarkReadInput,
   type GithubNotificationRecord,
   GithubNotificationRecordSchema,
   type GithubDigestRecord,
@@ -144,6 +155,9 @@ import {
   type CalendarAccountRecord,
   CalendarAccountRecordSchema,
   type CalendarAccountRegistrationInput,
+  type CalendarSyncResult,
+  CalendarSyncResultSchema,
+  type CalendarEventCreateInput,
   type CalendarEventRecord,
   CalendarEventRecordSchema,
   type CalendarDigestRecord,
@@ -152,6 +166,7 @@ import {
   type CalendarSearchResult,
   CalendarAvailabilitySlotSchema,
   type CalendarAvailabilitySlot,
+  type CalendarEventUpdateInput,
   type TodoAccountRecord,
   TodoAccountRecordSchema,
   type TodoAccountRegistrationInput,
@@ -685,6 +700,14 @@ export class PopeyeApiClient {
     return this.getArray(`/v1/connections${this.buildQuery({ domain })}`, ConnectionRecordSchema);
   }
 
+  async startOAuthConnection(input: OAuthConnectStartRequestApi): Promise<OAuthSessionResponse> {
+    return this.post('/v1/connections/oauth/start', input, OAuthSessionResponseSchema);
+  }
+
+  async getOAuthConnectionSession(id: string): Promise<OAuthSessionResponse> {
+    return this.get(`/v1/connections/oauth/sessions/${encodeURIComponent(id)}`, OAuthSessionResponseSchema);
+  }
+
   async createConnection(input: ConnectionCreateInput): Promise<ConnectionRecord> {
     return this.post('/v1/connections', input, ConnectionRecordSchema);
   }
@@ -860,6 +883,14 @@ export class PopeyeApiClient {
     }
   }
 
+  async createEmailDraft(input: EmailDraftCreateInput): Promise<EmailDraftRecord> {
+    return this.post('/v1/email/drafts', input, EmailDraftRecordSchema);
+  }
+
+  async updateEmailDraft(id: string, input: EmailDraftUpdateInput): Promise<EmailDraftRecord> {
+    return this.patch(`/v1/email/drafts/${encodeURIComponent(id)}`, input, EmailDraftRecordSchema);
+  }
+
   async detectEmailProviders(): Promise<{ gws: { available: boolean }; protonBridge: { available: boolean } }> {
     const schema = z.object({
       gws: z.object({ available: z.boolean() }).passthrough(),
@@ -930,6 +961,14 @@ export class PopeyeApiClient {
     return this.post('/v1/github/sync', { accountId }, GithubSyncResultSchema);
   }
 
+  async createGithubComment(input: GithubCommentCreateInput): Promise<GithubCommentRecord> {
+    return this.post('/v1/github/comments', input, GithubCommentRecordSchema);
+  }
+
+  async markGithubNotificationRead(input: GithubNotificationMarkReadInput): Promise<GithubNotificationRecord> {
+    return this.post('/v1/github/notifications/mark-read', input, GithubNotificationRecordSchema);
+  }
+
   // --- Calendar ---
 
   async listCalendarAccounts(): Promise<CalendarAccountRecord[]> {
@@ -977,6 +1016,18 @@ export class PopeyeApiClient {
 
   async registerCalendarAccount(input: CalendarAccountRegistrationInput): Promise<CalendarAccountRecord> {
     return this.post('/v1/calendar/accounts', input, CalendarAccountRecordSchema);
+  }
+
+  async syncCalendarAccount(accountId: string): Promise<CalendarSyncResult> {
+    return this.post('/v1/calendar/sync', { accountId }, CalendarSyncResultSchema);
+  }
+
+  async createCalendarEvent(input: CalendarEventCreateInput): Promise<CalendarEventRecord> {
+    return this.post('/v1/calendar/events', input, CalendarEventRecordSchema);
+  }
+
+  async updateCalendarEvent(id: string, input: CalendarEventUpdateInput): Promise<CalendarEventRecord> {
+    return this.patch(`/v1/calendar/events/${encodeURIComponent(id)}`, input, CalendarEventRecordSchema);
   }
 
   // --- Todos ---

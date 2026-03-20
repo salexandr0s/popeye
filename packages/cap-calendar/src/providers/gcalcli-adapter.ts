@@ -93,7 +93,10 @@ export class GcalcliAdapter implements CalendarProviderAdapter {
     timeMax?: string | undefined;
     maxResults?: number | undefined;
     syncToken?: string | undefined;
-  }): Promise<NormalizedCalendarEvent[]> {
+  }): Promise<{
+    events: NormalizedCalendarEvent[];
+    nextSyncToken: string | null;
+  }> {
     const now = new Date();
     const defaultMin = new Date(now.getTime() - 30 * 24 * 3600_000).toISOString().slice(0, 10);
     const defaultMax = new Date(now.getTime() + 90 * 24 * 3600_000).toISOString().slice(0, 10);
@@ -112,7 +115,10 @@ export class GcalcliAdapter implements CalendarProviderAdapter {
       if (event) events.push(event);
     }
 
-    return events;
+    return {
+      events,
+      nextSyncToken: new Date().toISOString(),
+    };
   }
 
   async listEventsIncremental(syncToken: string): Promise<{
@@ -121,7 +127,7 @@ export class GcalcliAdapter implements CalendarProviderAdapter {
   }> {
     // gcalcli does not natively support sync tokens.
     // Treat syncToken as an ISO date and do a full list from that point.
-    const events = await this.listEvents({ timeMin: syncToken });
-    return { events, nextSyncToken: new Date().toISOString() };
+    const response = await this.listEvents({ timeMin: syncToken });
+    return { events: response.events, nextSyncToken: response.nextSyncToken };
   }
 }

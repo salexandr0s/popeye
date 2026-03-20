@@ -40,10 +40,12 @@ The control API binds to `127.0.0.1` only. No remote access, no TLS termination,
 
 ### Multi-tenant auth
 
-There is no multi-user identity system, no OAuth, and no tenant management.
-Popeye may use local role-scoped tokens (`operator`, `service`, `readonly`) for
-least-privilege access on the same machine, but that is not a multi-tenant auth
-system.
+There is no multi-user identity system, no tenant management, and no
+operator-login OAuth flow. Popeye may use local role-scoped tokens
+(`operator`, `service`, `readonly`) for least-privilege access on the same
+machine, and capability providers may use connector-specific OAuth for Gmail,
+Google Calendar, and GitHub, but that is connector auth rather than a
+multi-tenant identity system.
 
 ### Open registration
 

@@ -20,10 +20,11 @@ import {
 import { ConnectionRecordSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
 import { VaultKindSchema, VaultRecordSchema } from './vault.js';
+import { OAuthConnectStartRequestSchema, OAuthSessionRecordSchema } from './oauth.js';
 import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
-import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema } from './email.js';
-import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema } from './github.js';
-import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema } from './calendar.js';
+import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema, EmailDraftCreateInputSchema, EmailDraftRecordSchema, EmailDraftUpdateInputSchema } from './email.js';
+import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema, GithubCommentCreateInputSchema, GithubCommentRecordSchema, GithubNotificationMarkReadInputSchema } from './github.js';
+import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema, CalendarEventCreateInputSchema, CalendarEventUpdateInputSchema } from './calendar.js';
 import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoSyncResultSchema, TodoCreateInputSchema } from './todos.js';
 
 export const TaskCreateInputSchema = z.object({
@@ -286,6 +287,12 @@ export type AutomationGrantCreateRequest = z.infer<typeof AutomationGrantCreateR
 export const ConnectionListResponseSchema = z.array(ConnectionRecordSchema);
 export type ConnectionListResponse = z.infer<typeof ConnectionListResponseSchema>;
 
+export const OAuthConnectStartRequestApiSchema = OAuthConnectStartRequestSchema;
+export type OAuthConnectStartRequestApi = z.infer<typeof OAuthConnectStartRequestApiSchema>;
+
+export const OAuthSessionResponseSchema = OAuthSessionRecordSchema;
+export type OAuthSessionResponse = z.infer<typeof OAuthSessionResponseSchema>;
+
 export const SecurityPolicyResponseSchema = z.object({
   domainPolicies: z.array(DomainPolicySchema),
   approvalRules: z.array(ApprovalPolicyRuleSchema),
@@ -396,7 +403,16 @@ export type EmailSearchApiResponse = z.infer<typeof EmailSearchApiResponseSchema
 export const EmailSyncResponseSchema = EmailSyncResultSchema;
 export type EmailSyncResponse = z.infer<typeof EmailSyncResponseSchema>;
 
-export { EmailAccountRegistrationInputSchema, EmailAccountRecordSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema };
+export const EmailDraftCreateRequestSchema = EmailDraftCreateInputSchema;
+export type EmailDraftCreateRequest = z.infer<typeof EmailDraftCreateRequestSchema>;
+
+export const EmailDraftUpdateRequestSchema = EmailDraftUpdateInputSchema;
+export type EmailDraftUpdateRequest = z.infer<typeof EmailDraftUpdateRequestSchema>;
+
+export const EmailDraftResponseSchema = EmailDraftRecordSchema;
+export type EmailDraftResponse = z.infer<typeof EmailDraftResponseSchema>;
+
+export { EmailAccountRegistrationInputSchema, EmailAccountRecordSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema, EmailDraftCreateInputSchema, EmailDraftRecordSchema, EmailDraftUpdateInputSchema };
 
 // --- GitHub API schemas ---
 
@@ -439,7 +455,16 @@ export type GithubSearchApiResponse = z.infer<typeof GithubSearchApiResponseSche
 export const GithubSyncResponseSchema = GithubSyncResultSchema;
 export type GithubSyncResponse = z.infer<typeof GithubSyncResponseSchema>;
 
-export { GithubAccountRegistrationInputSchema, GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema };
+export const GithubCommentCreateRequestSchema = GithubCommentCreateInputSchema;
+export type GithubCommentCreateRequest = z.infer<typeof GithubCommentCreateRequestSchema>;
+
+export const GithubCommentResponseSchema = GithubCommentRecordSchema;
+export type GithubCommentResponse = z.infer<typeof GithubCommentResponseSchema>;
+
+export const GithubNotificationMarkReadRequestSchema = GithubNotificationMarkReadInputSchema;
+export type GithubNotificationMarkReadRequest = z.infer<typeof GithubNotificationMarkReadRequestSchema>;
+
+export { GithubAccountRegistrationInputSchema, GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema, GithubCommentCreateInputSchema, GithubCommentRecordSchema, GithubNotificationMarkReadInputSchema };
 
 // --- Calendar API schemas ---
 
@@ -473,7 +498,13 @@ export type CalendarSyncResponse = z.infer<typeof CalendarSyncResponseSchema>;
 export const CalendarAvailabilityResponseSchema = z.array(CalendarAvailabilitySlotSchema);
 export type CalendarAvailabilityResponse = z.infer<typeof CalendarAvailabilityResponseSchema>;
 
-export { CalendarAccountRegistrationInputSchema, CalendarAccountRecordSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema };
+export const CalendarEventCreateRequestSchema = CalendarEventCreateInputSchema;
+export type CalendarEventCreateRequest = z.infer<typeof CalendarEventCreateRequestSchema>;
+
+export const CalendarEventUpdateRequestSchema = CalendarEventUpdateInputSchema;
+export type CalendarEventUpdateRequest = z.infer<typeof CalendarEventUpdateRequestSchema>;
+
+export { CalendarAccountRegistrationInputSchema, CalendarAccountRecordSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema, CalendarEventCreateInputSchema, CalendarEventUpdateInputSchema };
 
 // --- Todos API schemas ---
 

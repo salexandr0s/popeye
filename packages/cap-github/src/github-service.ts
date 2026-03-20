@@ -485,6 +485,11 @@ export class GithubService {
     return rows.map(mapNotificationRow);
   }
 
+  getNotification(id: string): GithubNotificationRecord | null {
+    const row = prepareGet<GithubNotificationRow>(this.db, 'SELECT * FROM github_notifications WHERE id = ?')(id);
+    return row ? mapNotificationRow(row) : null;
+  }
+
   upsertNotification(accountId: string, data: {
     githubNotificationId: string;
     repoFullName: string;
@@ -532,6 +537,15 @@ export class GithubService {
     prepareRun(this.db,
       'UPDATE github_notifications SET is_unread = 0, updated_at = ? WHERE account_id = ? AND is_unread = 1',
     )(nowIso(), accountId);
+  }
+
+  markNotificationRead(id: string): GithubNotificationRecord | null {
+    const existing = this.getNotification(id);
+    if (!existing) return null;
+    prepareRun(this.db,
+      'UPDATE github_notifications SET is_unread = 0, updated_at = ? WHERE id = ?',
+    )(nowIso(), id);
+    return this.getNotification(id);
   }
 
   // --- Digests ---

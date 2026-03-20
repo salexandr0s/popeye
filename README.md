@@ -46,6 +46,8 @@ Today the repository contains the core pieces of the platform:
   and explicit route authorization
 - **CLI (`pop`)** for operator workflows
 - **web inspector** for runtime visibility
+- **blessed browser-OAuth connect flows** for Gmail, Google Calendar, and
+  GitHub
 - **structured memory system** with SQLite, FTS5, sqlite-vec, provenance, and
   promotion-managed curated memory
 - **capability packages** for files, email, calendar, GitHub, and todos
@@ -183,7 +185,8 @@ Popeye is under active development, but the architecture direction is stable:
 - Pi remains the engine boundary
 - the runtime remains local-first and operator-owned
 - the API remains loopback-only and authenticated
-- memory, policy, and capability expansion continue incrementally
+- Gmail, Google Calendar, and GitHub now have blessed direct-provider paths;
+  broader domain expansion continues incrementally
 - the web inspector remains the primary required GUI; the native macOS client
   is deferred for the current polished bar
 

@@ -10,6 +10,7 @@ import { BrowserUnlockModal } from './browser-unlock-modal';
 export interface ApiClient {
   get: <T>(path: string) => Promise<T>;
   post: <T>(path: string, body?: unknown) => Promise<T>;
+  patch: <T>(path: string, body?: unknown) => Promise<T>;
 }
 
 const ApiContext = createContext<ApiClient | null>(null);
@@ -38,6 +39,21 @@ export function ApiProvider({ children }: { children: ReactNode }) {
         const csrf = await ensureBrowserCsrfToken();
         const res = await fetch(path, {
           method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            ...baseHeaders(),
+            'x-popeye-csrf': csrf,
+            'sec-fetch-site': 'same-origin',
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json() as Promise<T>;
+      },
+      patch: async <T,>(path: string, body?: unknown): Promise<T> => {
+        const csrf = await ensureBrowserCsrfToken();
+        const res = await fetch(path, {
+          method: 'PATCH',
           credentials: 'same-origin',
           headers: {
             ...baseHeaders(),

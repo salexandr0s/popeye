@@ -99,4 +99,15 @@ export interface GithubProviderAdapter {
     all?: boolean | undefined;
     since?: string | undefined;
   }): Promise<NormalizedGithubNotification[]>;
+
+  /** Create an issue/PR comment. */
+  createIssueComment?(owner: string, repo: string, issueNumber: number, body: string): Promise<{
+    id: string;
+    bodyPreview: string;
+    htmlUrl: string | null;
+    createdAt: string;
+  }>;
+
+  /** Mark a notification thread as read. */
+  markNotificationRead?(notificationId: string): Promise<void>;
 }

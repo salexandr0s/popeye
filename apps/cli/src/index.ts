@@ -156,7 +156,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   email: {
     accounts: { desc: 'List email accounts', usage: 'pop email accounts [--json]' },
-    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail | --proton' },
+    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail [--read-write] | --proton | --gmail-experimental' },
     sync: { desc: 'Trigger email sync', usage: 'pop email sync [accountId]' },
     threads: { desc: 'List email threads', usage: 'pop email threads [--unread] [--limit <n>] [--json]' },
     search: { desc: 'Search email', usage: 'pop email search <query> [--limit <n>] [--json]' },
@@ -164,7 +164,9 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     providers: { desc: 'Show available email providers', usage: 'pop email providers [--json]' },
   },
   github: {
+    connect: { desc: 'Connect GitHub via browser OAuth', usage: 'pop github connect [--read-write]' },
     accounts: { desc: 'List GitHub accounts', usage: 'pop github accounts [--json]' },
+    sync: { desc: 'Trigger GitHub sync', usage: 'pop github sync [accountId]' },
     repos: { desc: 'List synced repos', usage: 'pop github repos [--limit <n>] [--json]' },
     prs: { desc: 'List pull requests', usage: 'pop github prs [--state open|closed|all] [--limit <n>] [--json]' },
     issues: { desc: 'List issues', usage: 'pop github issues [--assigned] [--state open|closed|all] [--limit <n>] [--json]' },
@@ -173,7 +175,9 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     digest: { desc: 'Show GitHub digest', usage: 'pop github digest [--json]' },
   },
   calendar: {
+    connect: { desc: 'Connect Google Calendar via browser OAuth', usage: 'pop calendar connect [--read-write]' },
     accounts: { desc: 'List calendar accounts', usage: 'pop calendar accounts [--json]' },
+    sync: { desc: 'Trigger calendar sync', usage: 'pop calendar sync [accountId]' },
     events: { desc: 'List calendar events', usage: 'pop calendar events [--today] [--upcoming] [--limit <n>] [--json]' },
     search: { desc: 'Search calendar events', usage: 'pop calendar search <query> [--limit <n>] [--json]' },
     availability: { desc: 'Show free slots', usage: 'pop calendar availability [--date YYYY-MM-DD] [--json]' },
@@ -481,6 +485,75 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
     process.exit(1);
   }
   return client;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function openBrowserUrl(url: string): Promise<boolean> {
+  const platform = process.platform;
+  const command = platform === 'darwin'
+    ? 'open'
+    : platform === 'win32'
+      ? 'cmd'
+      : 'xdg-open';
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
+
+  return await new Promise<boolean>((resolve) => {
+    const child = spawn(command, args, {
+      stdio: 'ignore',
+      detached: platform !== 'win32',
+    });
+    child.once('error', () => resolve(false));
+    child.once('spawn', () => {
+      child.unref();
+      resolve(true);
+    });
+  });
+}
+
+async function runOAuthConnectFlow(
+  client: PopeyeApiClient,
+  input: {
+    providerKind: 'gmail' | 'google_calendar' | 'github';
+    mode: 'read_only' | 'read_write';
+    syncIntervalSeconds?: number;
+  },
+): Promise<void> {
+  const session = await client.startOAuthConnection({
+    providerKind: input.providerKind,
+    mode: input.mode,
+    syncIntervalSeconds: input.syncIntervalSeconds ?? 900,
+  });
+
+  const opened = await openBrowserUrl(session.authorizationUrl);
+  console.info(`Starting ${input.providerKind} connection...`);
+  if (opened) {
+    console.info('Opened browser for OAuth approval.');
+  } else {
+    console.info('Open this URL in your browser:');
+    console.info(`  ${session.authorizationUrl}`);
+  }
+
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    await sleep(2000);
+    const latest = await client.getOAuthConnectionSession(session.id);
+    if (latest.status === 'pending') {
+      continue;
+    }
+    if (latest.status === 'completed') {
+      console.info(`${input.providerKind} connected.`);
+      if (latest.connectionId) console.info(`  Connection: ${latest.connectionId}`);
+      if (latest.accountId) console.info(`  Account:    ${latest.accountId}`);
+      return;
+    }
+    console.error(`${input.providerKind} connection failed: ${latest.error ?? latest.status}`);
+    process.exit(1);
+  }
+
+  console.error('OAuth connection timed out while waiting for callback completion.');
+  process.exit(1);
 }
 
 function isBundledMode(): boolean {
@@ -1389,14 +1462,23 @@ async function main(): Promise<void> {
 
   if (command === 'email' && subcommand === 'connect') {
     const isGmail = process.argv.includes('--gmail');
+    const isGmailExperimental = process.argv.includes('--gmail-experimental');
     const isProton = process.argv.includes('--proton');
-    if (!isGmail && !isProton) {
-      console.error('Usage: pop email connect --gmail | --proton');
+    const mode = process.argv.includes('--read-write') ? 'read_write' : 'read_only';
+    if (!isGmail && !isGmailExperimental && !isProton) {
+      console.error('Usage: pop email connect --gmail [--read-write] | --proton | --gmail-experimental');
       process.exit(1);
     }
     const client = await requireDaemonClient(config);
 
     if (isGmail) {
+      await runOAuthConnectFlow(client, {
+        providerKind: 'gmail',
+        mode,
+        syncIntervalSeconds: 900,
+      });
+      console.info('Run "pop email sync" to fetch your inbox.');
+    } else if (isGmailExperimental) {
       // Check gws is available
       const providers = await client.detectEmailProviders();
       if (!providers.gws.available) {
@@ -1445,7 +1527,7 @@ async function main(): Promise<void> {
         emailAddress,
         displayName: emailAddress.split('@')[0] ?? emailAddress,
       });
-      console.info(`Connected Gmail via gws CLI.`);
+      console.info('Connected Gmail via experimental gws CLI flow.');
       console.info(`  Connection: ${connection.id}`);
       console.info(`  Account:    ${account.id} (${emailAddress})`);
       console.info('Run "pop email sync" to fetch your inbox.');
@@ -1529,13 +1611,46 @@ async function main(): Promise<void> {
       console.info(JSON.stringify(providers, null, 2));
     } else {
       console.info('Email providers:');
-      console.info(`  Gmail (gws CLI):     ${providers.gws.available ? 'available' : 'not found'}`);
+      console.info(`  Gmail (gws CLI, experimental): ${providers.gws.available ? 'available' : 'not found'}`);
       console.info(`  Proton (Bridge):     ${providers.protonBridge.available ? 'running' : 'not detected'}`);
     }
     return;
   }
 
   // --- GitHub commands ---
+
+  if (command === 'github' && subcommand === 'connect') {
+    const client = await requireDaemonClient(config);
+    await runOAuthConnectFlow(client, {
+      providerKind: 'github',
+      mode: process.argv.includes('--read-write') ? 'read_write' : 'read_only',
+      syncIntervalSeconds: 900,
+    });
+    console.info('Run "pop github sync" to fetch repos, PRs, issues, and notifications.');
+    return;
+  }
+
+  if (command === 'github' && subcommand === 'sync') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listGithubAccounts();
+    if (accounts.length === 0) {
+      console.error('No GitHub accounts registered. Run "pop github connect" first.');
+      process.exit(1);
+    }
+    const targetId = arg1 ?? accounts[0]!.id;
+    console.info(`Syncing GitHub account ${targetId}...`);
+    const result = await client.syncGithubAccount(targetId);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info(`  Repos: ${result.reposSynced}  PRs: ${result.prsSynced}  Issues: ${result.issuesSynced}  Notifications: ${result.notificationsSynced}`);
+      if (result.errors.length > 0) {
+        console.info(`  Errors: ${result.errors.length}`);
+        for (const err of result.errors.slice(0, 5)) console.info(`    - ${err}`);
+      }
+    }
+    return;
+  }
 
   if (command === 'github' && subcommand === 'accounts') {
     const client = await requireDaemonClient(config);
@@ -1673,6 +1788,39 @@ async function main(): Promise<void> {
   }
 
   // --- Calendar commands ---
+
+  if (command === 'calendar' && subcommand === 'connect') {
+    const client = await requireDaemonClient(config);
+    await runOAuthConnectFlow(client, {
+      providerKind: 'google_calendar',
+      mode: process.argv.includes('--read-write') ? 'read_write' : 'read_only',
+      syncIntervalSeconds: 900,
+    });
+    console.info('Run "pop calendar sync" to fetch upcoming events.');
+    return;
+  }
+
+  if (command === 'calendar' && subcommand === 'sync') {
+    const client = await requireDaemonClient(config);
+    const accounts = await client.listCalendarAccounts();
+    if (accounts.length === 0) {
+      console.error('No calendar accounts registered. Run "pop calendar connect" first.');
+      process.exit(1);
+    }
+    const targetId = arg1 ?? accounts[0]!.id;
+    console.info(`Syncing calendar account ${targetId}...`);
+    const result = await client.syncCalendarAccount(targetId);
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info(`  Events: ${result.eventsSynced} new, ${result.eventsUpdated} updated`);
+      if (result.errors.length > 0) {
+        console.info(`  Errors: ${result.errors.length}`);
+        for (const err of result.errors.slice(0, 5)) console.info(`    - ${err}`);
+      }
+    }
+    return;
+  }
 
   if (command === 'calendar' && subcommand === 'accounts') {
     const client = await requireDaemonClient(config);

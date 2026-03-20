@@ -122,7 +122,7 @@ export class CalendarSyncService {
     const timeMin = new Date(now.getTime() - 30 * 24 * 3600_000).toISOString();
     const timeMax = new Date(now.getTime() + 90 * 24 * 3600_000).toISOString();
 
-    const events = await adapter.listEvents({ timeMin, timeMax });
+    const { events, nextSyncToken } = await adapter.listEvents({ timeMin, timeMax });
 
     for (const event of events) {
       try {
@@ -154,7 +154,7 @@ export class CalendarSyncService {
     }
 
     // Update sync cursor
-    this.calendarService.updateSyncCursor(account.id, new Date().toISOString());
+    this.calendarService.updateSyncCursor(account.id, nextSyncToken);
     this.calendarService.updateEventCount(account.id);
 
     return result;

@@ -191,10 +191,84 @@ The web inspector now exposes dedicated operator pages for:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include an additive `policy` summary (`status`, `secretStatus`, `mutatingRequiresApproval`, `diagnostics`). |
+| GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include additive `policy`, `health`, and `sync` rollups. |
+| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, or `github`. Returns an `authorizationUrl` plus session metadata. Invalid provider config or connection mismatch fails closed. |
+| GET | `/v1/connections/oauth/sessions/:id` | Read the current OAuth session state (`pending`, `completed`, `failed`, `expired`). Returns 404 if not found. |
+| GET | `/v1/connections/oauth/callback` | Loopback-only OAuth callback endpoint used by the browser connect flow. Returns a simple success/failure HTML page instead of JSON. |
 | POST | `/v1/connections` | Create a connection. Invalid provider/domain combinations or missing secret refs fail closed with `400 { error: "invalid_connection" }`. |
 | PATCH | `/v1/connections/:id` | Update a connection. Returns 404 if not found and `400 { error: "invalid_connection" }` for policy validation failures. |
 | DELETE | `/v1/connections/:id` | Delete a connection. Returns 404 if not found. |
+
+Blessed browser OAuth remains separate per domain: Gmail and Google Calendar
+share Google client credentials but become distinct Popeye connections. The
+runtime owns PKCE, state validation, token exchange, vault persistence,
+connection updates, and account auto-registration.
+
+Connection rollups are additive read models:
+
+- `policy`: readiness and secret-policy posture
+- `health`: auth/provider health, last check time, last provider error,
+  diagnostics
+- `sync`: last attempt/success, sync status, cursor kind/presence, lag summary
+
+### Email
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/email/accounts` | List registered email accounts. |
+| GET | `/v1/email/threads` | List threads for one account. Optional query: `accountId`, `limit`, `unreadOnly=true`. |
+| GET | `/v1/email/threads/:id` | Read one thread record. Returns 404 if not found. |
+| GET | `/v1/email/messages/:id` | Read one message record. Returns 404 if not found. |
+| GET | `/v1/email/digest` | Read the latest digest for one account. Optional query: `accountId`. |
+| GET | `/v1/email/search` | Search synced email threads. Query params: `query`, optional `accountId`, `limit`. |
+| POST | `/v1/email/accounts` | Register an email account manually. Blessed browser OAuth now auto-registers the happy path. |
+| POST | `/v1/email/sync` | Trigger a sync for one email account. Body: `{ accountId }`. |
+| POST | `/v1/email/digest` | Generate a digest. Body: `{ accountId? }`. |
+| GET | `/v1/email/providers` | List email providers currently available in the runtime. Blessed UX uses direct Gmail; legacy provider detections remain informational. |
+| POST | `/v1/email/drafts` | Create a Gmail draft. Body uses `EmailDraftCreateInputSchema`. Returns `409 { error: "email_draft_requires_approval" }` when policy requires approval. |
+| PATCH | `/v1/email/drafts/:id` | Update a Gmail draft. Body uses `EmailDraftUpdateInputSchema`. Returns the same approval error shape as draft creation. |
+
+Email writes in this tranche are intentionally conservative: draft create/update
+only, no send. Non-allowlisted resources fail closed before approval
+evaluation.
+
+### GitHub
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/github/accounts` | List registered GitHub accounts. |
+| GET | `/v1/github/repos` | List synced repos. Optional query: `accountId`, `limit`. |
+| GET | `/v1/github/prs` | List pull requests. Optional query: `accountId`, `state`, `limit`. |
+| GET | `/v1/github/prs/:id` | Read one pull request record. Returns 404 if not found. |
+| GET | `/v1/github/issues` | List issues. Optional query: `accountId`, `state`, `assigned=true`, `limit`. |
+| GET | `/v1/github/issues/:id` | Read one issue record. Returns 404 if not found. |
+| GET | `/v1/github/notifications` | List unread notifications. Optional query: `accountId`, `limit`. |
+| GET | `/v1/github/digest` | Read the latest digest for one account. Optional query: `accountId`. |
+| GET | `/v1/github/search` | Search PRs and issues. Query params: `query`, optional `accountId`, `entityType`, `limit`. |
+| POST | `/v1/github/sync` | Trigger a sync for one account. Body: `{ accountId }`. |
+| POST | `/v1/github/comments` | Add an issue or PR comment. Body uses `GithubCommentCreateInputSchema`. Returns `409 { error: "github_comment_requires_approval" }` when policy requires approval. |
+| POST | `/v1/github/notifications/mark-read` | Mark a notification read. Body uses `GithubNotificationMarkReadInputSchema`. Returns `404` if the notification is unknown and `409` when approval is required. |
+
+GitHub writes are restricted to low-risk actions in this tranche: add comments
+on allowlisted repos and mark notifications read.
+
+### Calendar
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/calendar/accounts` | List registered calendar accounts. |
+| GET | `/v1/calendar/events` | List synced events. Optional query: `accountId`, `dateFrom`, `dateTo`, `limit`. |
+| GET | `/v1/calendar/events/:id` | Read one event record. Returns 404 if not found. |
+| GET | `/v1/calendar/search` | Search synced events. Query params: `query`, optional `accountId`, `dateFrom`, `dateTo`, `limit`. |
+| GET | `/v1/calendar/digest` | Read the latest digest for one account. Optional query: `accountId`. |
+| GET | `/v1/calendar/availability` | Compute availability. Query params: `date`, optional `accountId`, `startHour`, `endHour`, `slotMinutes`. |
+| POST | `/v1/calendar/accounts` | Register a calendar account manually. Blessed browser OAuth now auto-registers the happy path. |
+| POST | `/v1/calendar/sync` | Trigger a sync for one account. Body: `{ accountId }`. |
+| POST | `/v1/calendar/events` | Create a calendar event. Body uses `CalendarEventCreateInputSchema`. Returns `409 { error: "calendar_event_requires_approval" }` when policy requires approval. |
+| PATCH | `/v1/calendar/events/:id` | Update a calendar event. Body uses `CalendarEventUpdateInputSchema`. Returns `404` if the event is unknown and `409` when approval is required. |
+
+Calendar writes are restricted to create/update on explicitly allowlisted
+calendars. Deletes remain out of scope for this tranche.
 
 ### File roots
 

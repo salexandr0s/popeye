@@ -102,6 +102,14 @@ export interface CapabilityContext {
     adapter: unknown;
     account: { id: string; connectionId: string; emailAddress: string };
   } | null>) | undefined;
+  readonly resolveCalendarAdapter?: ((connectionId: string) => Promise<{
+    adapter: unknown;
+    account: { id: string; connectionId: string; calendarEmail: string };
+  } | null>) | undefined;
+  readonly resolveGithubAdapter?: ((connectionId: string) => Promise<{
+    adapter: unknown;
+    account: { id: string; connectionId: string; githubUsername: string };
+  } | null>) | undefined;
 }
 
 // --- Capability Lifecycle ---

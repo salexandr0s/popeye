@@ -4,6 +4,7 @@ import type {
   GmailThreadListResponse,
   GmailMessage,
   GmailHistoryResponse,
+  GmailDraft,
 } from './gmail-types.js';
 import type {
   EmailProviderAdapter,
@@ -11,6 +12,7 @@ import type {
   NormalizedMessage,
   ThreadListPage,
   HistoryChange,
+  NormalizedDraft,
 } from './adapter-interface.js';
 import { normalizeGmailThread, normalizeGmailMessage } from './gmail-normalize.js';
 
@@ -116,12 +118,85 @@ export class GmailAdapter implements EmailProviderAdapter {
     return { changedThreadIds, newHistoryId: raw.historyId };
   }
 
+  async createDraft(input: {
+    to: string[];
+    cc?: string[] | undefined;
+    subject: string;
+    body: string;
+  }): Promise<NormalizedDraft> {
+    const response = await this.request<GmailDraft>('/drafts', 0, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: {
+          raw: buildDraftRawMessage(input),
+        },
+      }),
+    });
+
+    return {
+      draftId: response.id,
+      messageId: response.message.id,
+      to: input.to,
+      cc: input.cc ?? [],
+      subject: input.subject,
+      bodyPreview: input.body.slice(0, 500),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async updateDraft(draftId: string, input: {
+    to?: string[] | undefined;
+    cc?: string[] | undefined;
+    subject?: string | undefined;
+    body?: string | undefined;
+  }): Promise<NormalizedDraft> {
+    const existing = await this.request<GmailDraft>(
+      `/drafts/${encodeURIComponent(draftId)}?format=full`,
+    );
+    const existingMessage = normalizeGmailMessage(existing.message);
+    const merged = {
+      to: input.to ?? existingMessage.to,
+      cc: input.cc ?? existingMessage.cc,
+      subject: input.subject ?? existingMessage.subject,
+      body: input.body ?? existingMessage.bodyPreview,
+    };
+
+    const response = await this.request<GmailDraft>(`/drafts/${encodeURIComponent(draftId)}`, 0, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: draftId,
+        message: {
+          raw: buildDraftRawMessage(merged),
+        },
+      }),
+    });
+
+    return {
+      draftId: response.id,
+      messageId: response.message.id,
+      to: merged.to,
+      cc: merged.cc,
+      subject: merged.subject,
+      bodyPreview: merged.body.slice(0, 500),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   // --- Internal helpers ---
 
-  private async request<T>(path: string, retryCount = 0): Promise<T> {
+  private async request<T>(
+    path: string,
+    retryCount = 0,
+    init: RequestInit = {},
+  ): Promise<T> {
     const url = `${GMAIL_API_BASE}${path}`;
     const response = await fetch(url, {
+      method: init.method ?? 'GET',
       headers: { Authorization: `Bearer ${this.accessToken}` },
+      ...(init.headers ? { headers: { Authorization: `Bearer ${this.accessToken}`, ...(init.headers as Record<string, string>) } } : {}),
+      ...(init.body !== undefined ? { body: init.body } : {}),
     });
 
     if (response.status === 401 && retryCount === 0 && this.refreshToken) {
@@ -166,6 +241,28 @@ export class GmailAdapter implements EmailProviderAdapter {
     const data = await response.json() as { access_token: string };
     this.accessToken = data.access_token;
   }
+}
+
+function buildDraftRawMessage(input: {
+  to: string[];
+  cc?: string[] | undefined;
+  subject: string;
+  body: string;
+}): string {
+  const lines = [
+    `To: ${input.to.join(', ')}`,
+    ...(input.cc && input.cc.length > 0 ? [`Cc: ${input.cc.join(', ')}`] : []),
+    `Subject: ${input.subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'MIME-Version: 1.0',
+    '',
+    input.body,
+  ];
+  return Buffer.from(lines.join('\r\n'), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 }
 
 function sleep(ms: number): Promise<void> {

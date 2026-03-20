@@ -78,3 +78,8 @@ export interface GmailErrorResponse {
     errors?: Array<{ domain: string; reason: string; message: string }>;
   };
 }
+
+export interface GmailDraft {
+  id: string;
+  message: GmailMessage;
+}
