@@ -1,0 +1,4246 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "PopeyeContracts",
+  "schemas": {
+    "AuthExchangeRequest": {
+      "$ref": "#/definitions/AuthExchangeRequest",
+      "definitions": {
+        "AuthExchangeRequest": {
+          "type": "object",
+          "properties": {
+            "nonce": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "nonce"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "AuthExchangeResponse": {
+      "$ref": "#/definitions/AuthExchangeResponse",
+      "definitions": {
+        "AuthExchangeResponse": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "CsrfTokenResponse": {
+      "$ref": "#/definitions/CsrfTokenResponse",
+      "definitions": {
+        "CsrfTokenResponse": {
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "token"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "HealthResponse": {
+      "$ref": "#/definitions/HealthResponse",
+      "definitions": {
+        "HealthResponse": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "startedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok",
+            "startedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "DaemonStatusResponse": {
+      "$ref": "#/definitions/DaemonStatusResponse",
+      "definitions": {
+        "DaemonStatusResponse": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "runningJobs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "queuedJobs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "openInterventions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "activeLeases": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "engineKind": {
+              "type": "string",
+              "enum": [
+                "fake",
+                "pi"
+              ]
+            },
+            "schedulerRunning": {
+              "type": "boolean"
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "lastShutdownAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "runningJobs",
+            "queuedJobs",
+            "openInterventions",
+            "activeLeases",
+            "engineKind",
+            "schedulerRunning",
+            "startedAt",
+            "lastShutdownAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "SchedulerStatusResponse": {
+      "$ref": "#/definitions/SchedulerStatusResponse",
+      "definitions": {
+        "SchedulerStatusResponse": {
+          "type": "object",
+          "properties": {
+            "running": {
+              "type": "boolean"
+            },
+            "activeLeases": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "activeRuns": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nextHeartbeatDueAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "running",
+            "activeLeases",
+            "activeRuns",
+            "nextHeartbeatDueAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "DaemonStateRecord": {
+      "$ref": "#/definitions/DaemonStateRecord",
+      "definitions": {
+        "DaemonStateRecord": {
+          "type": "object",
+          "properties": {
+            "schedulerRunning": {
+              "type": "boolean"
+            },
+            "activeWorkers": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lastSchedulerTickAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastLeaseSweepAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastShutdownAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "schedulerRunning",
+            "activeWorkers",
+            "lastSchedulerTickAt",
+            "lastLeaseSweepAt",
+            "lastShutdownAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "EngineCapabilitiesResponse": {
+      "$ref": "#/definitions/EngineCapabilitiesResponse",
+      "definitions": {
+        "EngineCapabilitiesResponse": {
+          "type": "object",
+          "properties": {
+            "engineKind": {
+              "type": "string",
+              "enum": [
+                "fake",
+                "pi"
+              ]
+            },
+            "persistentSessionSupport": {
+              "type": "boolean"
+            },
+            "resumeBySessionRefSupport": {
+              "type": "boolean"
+            },
+            "hostToolMode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "native",
+                "bridge",
+                "native_with_fallback"
+              ]
+            },
+            "compactionEventSupport": {
+              "type": "boolean"
+            },
+            "cancellationMode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "cooperative",
+                "rpc_abort",
+                "rpc_abort_with_signal_fallback"
+              ]
+            },
+            "acceptedRequestMetadata": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "engineKind",
+            "persistentSessionSupport",
+            "resumeBySessionRefSupport",
+            "hostToolMode",
+            "compactionEventSupport",
+            "cancellationMode"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ExecutionEnvelopeResponse": {
+      "$ref": "#/definitions/ExecutionEnvelopeResponse",
+      "definitions": {
+        "ExecutionEnvelopeResponse": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "restricted",
+                "interactive",
+                "elevated"
+              ]
+            },
+            "modelPolicy": {
+              "type": "string"
+            },
+            "allowedRuntimeTools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "allowedCapabilityIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "memoryScope": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "project",
+                "global"
+              ]
+            },
+            "recallScope": {
+              "$ref": "#/definitions/ExecutionEnvelopeResponse/properties/memoryScope"
+            },
+            "filesystemPolicyClass": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "project",
+                "read_only_workspace",
+                "memory_only"
+              ]
+            },
+            "contextReleasePolicy": {
+              "type": "string",
+              "enum": [
+                "none",
+                "summary_only",
+                "excerpt",
+                "full"
+              ]
+            },
+            "readRoots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "writeRoots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "protectedPaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "scratchRoot": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "provenance": {
+              "type": "object",
+              "properties": {
+                "derivedAt": {
+                  "type": "string"
+                },
+                "engineKind": {
+                  "type": "string"
+                },
+                "sessionPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "dedicated",
+                    "ephemeral",
+                    "per_task"
+                  ]
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": []
+                }
+              },
+              "required": [
+                "derivedAt",
+                "engineKind",
+                "sessionPolicy"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "runId",
+            "taskId",
+            "profileId",
+            "workspaceId",
+            "mode",
+            "modelPolicy",
+            "memoryScope",
+            "recallScope",
+            "filesystemPolicyClass",
+            "contextReleasePolicy",
+            "scratchRoot",
+            "provenance"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TaskCreateInput": {
+      "$ref": "#/definitions/TaskCreateInput",
+      "definitions": {
+        "TaskCreateInput": {
+          "type": "object",
+          "properties": {
+            "workspaceId": {
+              "type": "string",
+              "default": "default"
+            },
+            "projectId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "profileId": {
+              "type": "string",
+              "default": "default"
+            },
+            "title": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "heartbeat",
+                "schedule",
+                "telegram",
+                "api"
+              ],
+              "default": "manual"
+            },
+            "coalesceKey": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "autoEnqueue": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "required": [
+            "title",
+            "prompt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TaskCreateResponse": {
+      "$ref": "#/definitions/TaskCreateResponse",
+      "definitions": {
+        "TaskCreateResponse": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "workspaceId": {
+                  "type": "string"
+                },
+                "projectId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "profileId": {
+                  "type": "string",
+                  "default": "default"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "heartbeat",
+                    "schedule",
+                    "telegram",
+                    "api"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "paused"
+                  ],
+                  "default": "active"
+                },
+                "retryPolicy": {
+                  "type": "object",
+                  "properties": {
+                    "maxAttempts": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "default": 3
+                    },
+                    "baseDelaySeconds": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "default": 5
+                    },
+                    "multiplier": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "default": 2
+                    },
+                    "maxDelaySeconds": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "default": 900
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "sideEffectProfile": {
+                  "type": "string",
+                  "enum": [
+                    "read_only",
+                    "external_side_effect"
+                  ]
+                },
+                "coalesceKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "workspaceId",
+                "projectId",
+                "title",
+                "prompt",
+                "source",
+                "retryPolicy",
+                "sideEffectProfile",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            },
+            "job": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "workspaceId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "leased",
+                        "running",
+                        "waiting_retry",
+                        "paused",
+                        "blocked_operator",
+                        "succeeded",
+                        "failed_final",
+                        "cancelled"
+                      ]
+                    },
+                    "retryCount": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "availableAt": {
+                      "type": "string"
+                    },
+                    "lastRunId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "taskId",
+                    "workspaceId",
+                    "status",
+                    "retryCount",
+                    "availableAt",
+                    "lastRunId",
+                    "createdAt",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "workspaceId": {
+                      "type": "string"
+                    },
+                    "profileId": {
+                      "type": "string",
+                      "default": "default"
+                    },
+                    "sessionRootId": {
+                      "type": "string"
+                    },
+                    "engineSessionRef": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "starting",
+                        "running",
+                        "succeeded",
+                        "failed_retryable",
+                        "failed_final",
+                        "cancelled",
+                        "abandoned"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "finishedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "jobId",
+                    "taskId",
+                    "workspaceId",
+                    "sessionRootId",
+                    "engineSessionRef",
+                    "state",
+                    "startedAt",
+                    "finishedAt",
+                    "error"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "task",
+            "job",
+            "run"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TaskRecord": {
+      "$ref": "#/definitions/TaskRecord",
+      "definitions": {
+        "TaskRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "profileId": {
+              "type": "string",
+              "default": "default"
+            },
+            "title": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "heartbeat",
+                "schedule",
+                "telegram",
+                "api"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "active",
+                "paused"
+              ],
+              "default": "active"
+            },
+            "retryPolicy": {
+              "type": "object",
+              "properties": {
+                "maxAttempts": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "default": 3
+                },
+                "baseDelaySeconds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "default": 5
+                },
+                "multiplier": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "default": 2
+                },
+                "maxDelaySeconds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "default": 900
+                }
+              },
+              "additionalProperties": false
+            },
+            "sideEffectProfile": {
+              "type": "string",
+              "enum": [
+                "read_only",
+                "external_side_effect"
+              ]
+            },
+            "coalesceKey": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "workspaceId",
+            "projectId",
+            "title",
+            "prompt",
+            "source",
+            "retryPolicy",
+            "sideEffectProfile",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "RunRecord": {
+      "$ref": "#/definitions/RunRecord",
+      "definitions": {
+        "RunRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string",
+              "default": "default"
+            },
+            "sessionRootId": {
+              "type": "string"
+            },
+            "engineSessionRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "starting",
+                "running",
+                "succeeded",
+                "failed_retryable",
+                "failed_final",
+                "cancelled",
+                "abandoned"
+              ]
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "finishedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "jobId",
+            "taskId",
+            "workspaceId",
+            "sessionRootId",
+            "engineSessionRef",
+            "state",
+            "startedAt",
+            "finishedAt",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "RunEventRecord": {
+      "$ref": "#/definitions/RunEventRecord",
+      "definitions": {
+        "RunEventRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "payload": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "runId",
+            "type",
+            "payload",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "RunReply": {
+      "$ref": "#/definitions/RunReply",
+      "definitions": {
+        "RunReply": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string"
+            },
+            "terminalStatus": {
+              "type": "string",
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled",
+                "abandoned"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "completed_output",
+                "assistant_message",
+                "receipt_fallback"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "runId",
+            "terminalStatus",
+            "source",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ReceiptRecord": {
+      "$ref": "#/definitions/ReceiptRecord",
+      "definitions": {
+        "ReceiptRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "jobId": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled",
+                "abandoned"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "details": {
+              "type": "string"
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string"
+                },
+                "tokensIn": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tokensOut": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "estimatedCostUsd": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "provider",
+                "model",
+                "tokensIn",
+                "tokensOut",
+                "estimatedCostUsd"
+              ],
+              "additionalProperties": false
+            },
+            "runtime": {
+              "type": "object",
+              "properties": {
+                "projectId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "profileId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "execution": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "restricted",
+                            "interactive",
+                            "elevated"
+                          ]
+                        },
+                        "memoryScope": {
+                          "type": "string",
+                          "enum": [
+                            "workspace",
+                            "project",
+                            "global"
+                          ]
+                        },
+                        "recallScope": {
+                          "$ref": "#/definitions/ReceiptRecord/properties/runtime/properties/execution/anyOf/0/properties/memoryScope"
+                        },
+                        "filesystemPolicyClass": {
+                          "type": "string",
+                          "enum": [
+                            "workspace",
+                            "project",
+                            "read_only_workspace",
+                            "memory_only"
+                          ]
+                        },
+                        "contextReleasePolicy": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "summary_only",
+                            "excerpt",
+                            "full"
+                          ]
+                        },
+                        "sessionPolicy": {
+                          "type": "string",
+                          "enum": [
+                            "dedicated",
+                            "ephemeral",
+                            "per_task"
+                          ]
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "default": []
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "memoryScope",
+                        "recallScope",
+                        "filesystemPolicyClass",
+                        "contextReleasePolicy",
+                        "sessionPolicy"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "contextReleases": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "totalReleases": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "totalTokenEstimate": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "byDomain": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "count": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "tokens": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "count",
+                              "tokens"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "totalReleases",
+                        "totalTokenEstimate",
+                        "byDomain"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
+                "timeline": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "run",
+                          "policy",
+                          "approval",
+                          "context_release",
+                          "warning"
+                        ]
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "info",
+                          "warn",
+                          "error"
+                        ]
+                      },
+                      "code": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "detail": {
+                        "type": "string",
+                        "default": ""
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "run_event",
+                          "security_audit",
+                          "approval",
+                          "context_release",
+                          "receipt"
+                        ]
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "default": {}
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "at",
+                      "kind",
+                      "severity",
+                      "code",
+                      "title",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "default": []
+                }
+              },
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "runId",
+            "jobId",
+            "taskId",
+            "workspaceId",
+            "status",
+            "summary",
+            "details",
+            "usage",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "SessionRootRecord": {
+      "$ref": "#/definitions/SessionRootRecord",
+      "definitions": {
+        "SessionRootRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "interactive_main",
+                "system_heartbeat",
+                "scheduled_task",
+                "recovery",
+                "telegram_user"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "scope",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "UsageSummary": {
+      "$ref": "#/definitions/UsageSummary",
+      "definitions": {
+        "UsageSummary": {
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tokensIn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tokensOut": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "estimatedCostUsd": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "runs",
+            "tokensIn",
+            "tokensOut",
+            "estimatedCostUsd"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "SecurityAuditResponse": {
+      "$ref": "#/definitions/SecurityAuditResponse",
+      "definitions": {
+        "SecurityAuditResponse": {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warn",
+                      "error"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "component": {
+                    "type": "string"
+                  },
+                  "timestamp": {
+                    "type": "string"
+                  },
+                  "details": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "code",
+                  "severity",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "findings"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "SecurityPolicyResponse": {
+      "$ref": "#/definitions/SecurityPolicyResponse",
+      "definitions": {
+        "SecurityPolicyResponse": {
+          "type": "object",
+          "properties": {
+            "domainPolicies": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "type": "string",
+                    "enum": [
+                      "general",
+                      "email",
+                      "calendar",
+                      "todos",
+                      "github",
+                      "files",
+                      "people",
+                      "finance",
+                      "medical"
+                    ]
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "enum": [
+                      "internal",
+                      "personal",
+                      "restricted"
+                    ]
+                  },
+                  "embeddingPolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "derived_only",
+                      "full"
+                    ]
+                  },
+                  "contextReleasePolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "summary",
+                      "excerpt",
+                      "full"
+                    ]
+                  }
+                },
+                "required": [
+                  "domain",
+                  "sensitivity",
+                  "embeddingPolicy",
+                  "contextReleasePolicy"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "approvalRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "secret_access",
+                      "vault_open",
+                      "context_release",
+                      "data_source_connect",
+                      "external_write"
+                    ]
+                  },
+                  "domain": {
+                    "$ref": "#/definitions/SecurityPolicyResponse/properties/domainPolicies/items/properties/domain"
+                  },
+                  "riskClass": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "ask",
+                      "deny"
+                    ]
+                  },
+                  "actionKinds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "search",
+                        "sync",
+                        "import",
+                        "digest",
+                        "classify",
+                        "triage",
+                        "draft",
+                        "connect",
+                        "release_context",
+                        "open_vault",
+                        "write",
+                        "send",
+                        "delete"
+                      ]
+                    },
+                    "default": []
+                  },
+                  "resourceScopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "global",
+                        "workspace",
+                        "project",
+                        "run",
+                        "connection",
+                        "resource"
+                      ]
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "scope",
+                  "domain",
+                  "riskClass"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "defaultRiskClass": {
+              "$ref": "#/definitions/SecurityPolicyResponse/properties/approvalRules/items/properties/riskClass"
+            },
+            "actionDefaults": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "$ref": "#/definitions/SecurityPolicyResponse/properties/approvalRules/items/properties/scope"
+                  },
+                  "domain": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/definitions/SecurityPolicyResponse/properties/domainPolicies/items/properties/domain"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "actionKind": {
+                    "$ref": "#/definitions/SecurityPolicyResponse/properties/approvalRules/items/properties/actionKinds/items"
+                  },
+                  "riskClass": {
+                    "$ref": "#/definitions/SecurityPolicyResponse/properties/approvalRules/items/properties/riskClass"
+                  },
+                  "standingApprovalEligible": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "automationGrantEligible": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scope",
+                  "actionKind",
+                  "riskClass",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "domainPolicies",
+            "approvalRules",
+            "defaultRiskClass",
+            "actionDefaults"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ApprovalRecord": {
+      "$ref": "#/definitions/ApprovalRecord",
+      "definitions": {
+        "ApprovalRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "secret_access",
+                "vault_open",
+                "context_release",
+                "data_source_connect",
+                "external_write"
+              ]
+            },
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "riskClass": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "ask",
+                "deny"
+              ]
+            },
+            "actionKind": {
+              "type": "string",
+              "enum": [
+                "read",
+                "search",
+                "sync",
+                "import",
+                "digest",
+                "classify",
+                "triage",
+                "draft",
+                "connect",
+                "release_context",
+                "open_vault",
+                "write",
+                "send",
+                "delete"
+              ],
+              "default": "read"
+            },
+            "resourceScope": {
+              "type": "string",
+              "enum": [
+                "global",
+                "workspace",
+                "project",
+                "run",
+                "connection",
+                "resource"
+              ],
+              "default": "resource"
+            },
+            "resourceType": {
+              "type": "string"
+            },
+            "resourceId": {
+              "type": "string"
+            },
+            "requestedBy": {
+              "type": "string"
+            },
+            "runId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "standingApprovalEligible": {
+              "type": "boolean",
+              "default": false
+            },
+            "automationGrantEligible": {
+              "type": "boolean",
+              "default": false
+            },
+            "interventionId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "payloadPreview": {
+              "type": "string",
+              "maxLength": 4000,
+              "default": ""
+            },
+            "idempotencyKey": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "denied",
+                "expired"
+              ],
+              "default": "pending"
+            },
+            "resolvedBy": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "operator",
+                    "policy",
+                    "standing_approval",
+                    "automation_grant",
+                    "expiry"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "resolvedByGrantId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "decisionReason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "expiresAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "resolvedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "domain",
+            "riskClass",
+            "resourceType",
+            "resourceId",
+            "requestedBy",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ApprovalResolveInput": {
+      "$ref": "#/definitions/ApprovalResolveInput",
+      "definitions": {
+        "ApprovalResolveInput": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "denied"
+              ]
+            },
+            "decisionReason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ConnectionRecord": {
+      "$ref": "#/definitions/ConnectionRecord",
+      "definitions": {
+        "ConnectionRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "providerKind": {
+              "type": "string",
+              "enum": [
+                "gmail",
+                "proton",
+                "google_calendar",
+                "github",
+                "todoist",
+                "local_fs",
+                "local"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "read_only",
+                "read_write"
+              ],
+              "default": "read_only"
+            },
+            "secretRefId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "syncIntervalSeconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "default": 900
+            },
+            "allowedScopes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "allowedResources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "lastSyncAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastSyncStatus": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "partial",
+                    "failed"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "policy": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "disabled",
+                    "incomplete"
+                  ],
+                  "default": "ready"
+                },
+                "secretStatus": {
+                  "type": "string",
+                  "enum": [
+                    "not_required",
+                    "configured",
+                    "missing",
+                    "stale"
+                  ],
+                  "default": "not_required"
+                },
+                "mutatingRequiresApproval": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "diagnostics": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "info",
+                          "warn",
+                          "error"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "severity",
+                      "message"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "default": []
+                }
+              },
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "domain",
+            "providerKind",
+            "label",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ContextReleasePreviewRequest": {
+      "$ref": "#/definitions/ContextReleasePreviewRequest",
+      "definitions": {
+        "ContextReleasePreviewRequest": {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "sourceRef": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "domain",
+            "sourceRef"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "ContextReleasePreviewResponse": {
+      "$ref": "#/definitions/ContextReleasePreviewResponse",
+      "definitions": {
+        "ContextReleasePreviewResponse": {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "sourceRef": {
+              "type": "string"
+            },
+            "releaseLevel": {
+              "type": "string",
+              "enum": [
+                "none",
+                "summary",
+                "excerpt",
+                "full"
+              ]
+            },
+            "previewText": {
+              "type": "string"
+            },
+            "tokenEstimate": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requiresApproval": {
+              "type": "boolean"
+            },
+            "redactionApplied": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "domain",
+            "sourceRef",
+            "releaseLevel",
+            "previewText",
+            "tokenEstimate",
+            "requiresApproval",
+            "redactionApplied"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VaultRecord": {
+      "$ref": "#/definitions/VaultRecord",
+      "definitions": {
+        "VaultRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "capability",
+                "restricted"
+              ]
+            },
+            "dbPath": {
+              "type": "string"
+            },
+            "encrypted": {
+              "type": "boolean",
+              "default": false
+            },
+            "encryptionKeyRef": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "closed",
+                "open",
+                "sealed"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "lastAccessedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "id",
+            "domain",
+            "kind",
+            "dbPath",
+            "status",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VaultCreateRequest": {
+      "$ref": "#/definitions/VaultCreateRequest",
+      "definitions": {
+        "VaultCreateRequest": {
+          "type": "object",
+          "properties": {
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "capability",
+                "restricted"
+              ]
+            }
+          },
+          "required": [
+            "domain",
+            "name"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "VaultOpenRequest": {
+      "$ref": "#/definitions/VaultOpenRequest",
+      "definitions": {
+        "VaultOpenRequest": {
+          "type": "object",
+          "properties": {
+            "approvalId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "approvalId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "WorkspaceListItem": {
+      "$ref": "#/definitions/WorkspaceListItem",
+      "definitions": {
+        "WorkspaceListItem": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "rootPath": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "MemoryRecord": {
+      "$ref": "#/definitions/MemoryRecord",
+      "definitions": {
+        "MemoryRecord": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "classification": {
+              "type": "string",
+              "enum": [
+                "secret",
+                "sensitive",
+                "internal",
+                "embeddable"
+              ]
+            },
+            "sourceType": {
+              "type": "string",
+              "enum": [
+                "receipt",
+                "telegram",
+                "daily_summary",
+                "curated_memory",
+                "workspace_doc",
+                "compaction_flush",
+                "capability_sync",
+                "context_release",
+                "file_doc"
+              ]
+            },
+            "content": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "scope": {
+              "type": "string",
+              "default": "workspace"
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "projectId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "sourceRunId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "sourceTimestamp": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "memoryType": {
+              "type": "string",
+              "enum": [
+                "episodic",
+                "semantic",
+                "procedural"
+              ],
+              "default": "episodic"
+            },
+            "dedupKey": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastReinforcedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "archivedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "durable": {
+              "type": "boolean",
+              "default": false
+            },
+            "domain": {
+              "type": "string",
+              "enum": [
+                "general",
+                "email",
+                "calendar",
+                "todos",
+                "github",
+                "files",
+                "people",
+                "finance",
+                "medical"
+              ],
+              "default": "general"
+            },
+            "contextReleasePolicy": {
+              "type": "string",
+              "enum": [
+                "none",
+                "summary",
+                "excerpt",
+                "full"
+              ],
+              "default": "full"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "classification",
+            "sourceType",
+            "content",
+            "confidence",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "MemorySearchResponse": {
+      "$ref": "#/definitions/MemorySearchResponse",
+      "definitions": {
+        "MemorySearchResponse": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "confidence": {
+                    "type": "number"
+                  },
+                  "effectiveConfidence": {
+                    "type": "number"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "workspaceId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": null
+                  },
+                  "projectId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "default": null
+                  },
+                  "sourceType": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "lastReinforcedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "score": {
+                    "type": "number"
+                  },
+                  "layer": {
+                    "type": "string",
+                    "enum": [
+                      "artifact",
+                      "fact",
+                      "synthesis",
+                      "curated"
+                    ]
+                  },
+                  "namespaceId": {
+                    "type": "string"
+                  },
+                  "occurredAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "validFrom": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "validTo": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidenceCount": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "revisionStatus": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "superseded"
+                    ]
+                  },
+                  "scoreBreakdown": {
+                    "type": "object",
+                    "properties": {
+                      "relevance": {
+                        "type": "number"
+                      },
+                      "recency": {
+                        "type": "number"
+                      },
+                      "confidence": {
+                        "type": "number"
+                      },
+                      "scopeMatch": {
+                        "type": "number"
+                      },
+                      "entityBoost": {
+                        "type": "number"
+                      },
+                      "temporalFit": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "relevance",
+                      "recency",
+                      "confidence",
+                      "scopeMatch"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "description",
+                  "content",
+                  "type",
+                  "confidence",
+                  "effectiveConfidence",
+                  "scope",
+                  "sourceType",
+                  "createdAt",
+                  "lastReinforcedAt",
+                  "score",
+                  "scoreBreakdown"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "query": {
+              "type": "string"
+            },
+            "totalCandidates": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "latencyMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "searchMode": {
+              "type": "string",
+              "enum": [
+                "hybrid",
+                "fts_only",
+                "vec_only"
+              ]
+            },
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "factual",
+                "temporal",
+                "procedural",
+                "exploratory"
+              ]
+            }
+          },
+          "required": [
+            "results",
+            "query",
+            "totalCandidates",
+            "latencyMs",
+            "searchMode"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "MemoryAuditResponse": {
+      "$ref": "#/definitions/MemoryAuditResponse",
+      "definitions": {
+        "MemoryAuditResponse": {
+          "type": "object",
+          "properties": {
+            "totalMemories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "activeMemories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "archivedMemories": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "byType": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "byScope": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "byClassification": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "averageConfidence": {
+              "type": "number",
+              "minimum": 0
+            },
+            "staleCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "consolidationsPerformed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lastDecayRunAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastConsolidationRunAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastDailySummaryAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "totalMemories",
+            "activeMemories",
+            "archivedMemories",
+            "byType",
+            "byScope",
+            "byClassification",
+            "averageConfidence",
+            "staleCount",
+            "consolidationsPerformed",
+            "lastDecayRunAt",
+            "lastConsolidationRunAt",
+            "lastDailySummaryAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "FileRootResponse": {
+      "$ref": "#/definitions/FileRootResponse",
+      "definitions": {
+        "FileRootResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "rootPath": {
+              "type": "string"
+            },
+            "permission": {
+              "type": "string",
+              "enum": [
+                "read",
+                "index",
+                "index_and_derive"
+              ]
+            },
+            "filePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [
+                "**/*.md",
+                "**/*.txt"
+              ]
+            },
+            "excludePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "maxFileSizeBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "default": 1048576
+            },
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "lastIndexedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastIndexedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "workspaceId",
+            "label",
+            "rootPath",
+            "permission",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "FileDocumentResponse": {
+      "$ref": "#/definitions/FileDocumentResponse",
+      "definitions": {
+        "FileDocumentResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "fileRootId": {
+              "type": "string"
+            },
+            "relativePath": {
+              "type": "string"
+            },
+            "contentHash": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memoryId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "fileRootId",
+            "relativePath",
+            "contentHash",
+            "sizeBytes",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "FileSearchApiResponse": {
+      "$ref": "#/definitions/FileSearchApiResponse",
+      "definitions": {
+        "FileSearchApiResponse": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "documentId": {
+                    "type": "string"
+                  },
+                  "fileRootId": {
+                    "type": "string"
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  },
+                  "memoryId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "score": {
+                    "type": "number"
+                  },
+                  "snippet": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "documentId",
+                  "fileRootId",
+                  "relativePath",
+                  "memoryId",
+                  "score",
+                  "snippet"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "totalCandidates": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "query",
+            "results",
+            "totalCandidates"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "EmailAccountResponse": {
+      "$ref": "#/definitions/EmailAccountResponse",
+      "definitions": {
+        "EmailAccountResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "connectionId": {
+              "type": "string"
+            },
+            "emailAddress": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "syncCursorPageToken": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "syncCursorHistoryId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastSyncAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "messageCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "connectionId",
+            "emailAddress",
+            "displayName",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "EmailThreadResponse": {
+      "$ref": "#/definitions/EmailThreadResponse",
+      "definitions": {
+        "EmailThreadResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "gmailThreadId": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "snippet": {
+              "type": "string"
+            },
+            "lastMessageAt": {
+              "type": "string"
+            },
+            "messageCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1
+            },
+            "labelIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "isUnread": {
+              "type": "boolean",
+              "default": false
+            },
+            "isStarred": {
+              "type": "boolean",
+              "default": false
+            },
+            "importance": {
+              "type": "string",
+              "enum": [
+                "low",
+                "normal",
+                "high",
+                "critical"
+              ],
+              "default": "normal"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "gmailThreadId",
+            "subject",
+            "snippet",
+            "lastMessageAt",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "EmailMessageResponse": {
+      "$ref": "#/definitions/EmailMessageResponse",
+      "definitions": {
+        "EmailMessageResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "gmailMessageId": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "cc": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "subject": {
+              "type": "string"
+            },
+            "snippet": {
+              "type": "string"
+            },
+            "bodyPreview": {
+              "type": "string",
+              "default": ""
+            },
+            "receivedAt": {
+              "type": "string"
+            },
+            "sizeEstimate": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "labelIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "threadId",
+            "accountId",
+            "gmailMessageId",
+            "from",
+            "subject",
+            "snippet",
+            "receivedAt",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "EmailDigestResponse": {
+      "$ref": "#/definitions/EmailDigestResponse",
+      "definitions": {
+        "EmailDigestResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "unreadCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "highSignalCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "summaryMarkdown": {
+              "type": "string"
+            },
+            "generatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "workspaceId",
+            "date",
+            "unreadCount",
+            "highSignalCount",
+            "summaryMarkdown",
+            "generatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubAccountResponse": {
+      "$ref": "#/definitions/GithubAccountResponse",
+      "definitions": {
+        "GithubAccountResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "connectionId": {
+              "type": "string"
+            },
+            "githubUsername": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "syncCursorSince": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastSyncAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "repoCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "connectionId",
+            "githubUsername",
+            "displayName",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubRepoResponse": {
+      "$ref": "#/definitions/GithubRepoResponse",
+      "definitions": {
+        "GithubRepoResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "githubRepoId": {
+              "type": "integer"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "fullName": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string",
+              "default": ""
+            },
+            "isPrivate": {
+              "type": "boolean",
+              "default": false
+            },
+            "isFork": {
+              "type": "boolean",
+              "default": false
+            },
+            "defaultBranch": {
+              "type": "string",
+              "default": "main"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "starsCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "openIssuesCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "lastPushedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "githubRepoId",
+            "owner",
+            "name",
+            "fullName",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubPullRequestResponse": {
+      "$ref": "#/definitions/GithubPullRequestResponse",
+      "definitions": {
+        "GithubPullRequestResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "repoId": {
+              "type": "string"
+            },
+            "githubPrNumber": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "bodyPreview": {
+              "type": "string",
+              "default": ""
+            },
+            "author": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "merged"
+              ]
+            },
+            "isDraft": {
+              "type": "boolean",
+              "default": false
+            },
+            "reviewDecision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "approved",
+                    "changes_requested",
+                    "review_required"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "ciStatus": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "success",
+                    "failure",
+                    "pending"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "headBranch": {
+              "type": "string"
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "additions": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "changedFiles": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "requestedReviewers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "createdAtGh": {
+              "type": "string"
+            },
+            "updatedAtGh": {
+              "type": "string"
+            },
+            "mergedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "repoId",
+            "githubPrNumber",
+            "title",
+            "author",
+            "state",
+            "headBranch",
+            "baseBranch",
+            "createdAtGh",
+            "updatedAtGh",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubIssueResponse": {
+      "$ref": "#/definitions/GithubIssueResponse",
+      "definitions": {
+        "GithubIssueResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "repoId": {
+              "type": "string"
+            },
+            "githubIssueNumber": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "bodyPreview": {
+              "type": "string",
+              "default": ""
+            },
+            "author": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "assignees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "milestone": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "isAssignedToMe": {
+              "type": "boolean",
+              "default": false
+            },
+            "isMentioned": {
+              "type": "boolean",
+              "default": false
+            },
+            "createdAtGh": {
+              "type": "string"
+            },
+            "updatedAtGh": {
+              "type": "string"
+            },
+            "closedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "repoId",
+            "githubIssueNumber",
+            "title",
+            "author",
+            "state",
+            "createdAtGh",
+            "updatedAtGh",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubNotificationResponse": {
+      "$ref": "#/definitions/GithubNotificationResponse",
+      "definitions": {
+        "GithubNotificationResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "githubNotificationId": {
+              "type": "string"
+            },
+            "repoFullName": {
+              "type": "string"
+            },
+            "subjectTitle": {
+              "type": "string"
+            },
+            "subjectType": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "isUnread": {
+              "type": "boolean",
+              "default": true
+            },
+            "updatedAtGh": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "githubNotificationId",
+            "repoFullName",
+            "subjectTitle",
+            "subjectType",
+            "reason",
+            "updatedAtGh",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "GithubDigestResponse": {
+      "$ref": "#/definitions/GithubDigestResponse",
+      "definitions": {
+        "GithubDigestResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "openPrsCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reviewRequestsCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "assignedIssuesCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unreadNotificationsCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "summaryMarkdown": {
+              "type": "string"
+            },
+            "generatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "workspaceId",
+            "date",
+            "openPrsCount",
+            "reviewRequestsCount",
+            "assignedIssuesCount",
+            "unreadNotificationsCount",
+            "summaryMarkdown",
+            "generatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "CalendarAccountResponse": {
+      "$ref": "#/definitions/CalendarAccountResponse",
+      "definitions": {
+        "CalendarAccountResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "connectionId": {
+              "type": "string"
+            },
+            "calendarEmail": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "timeZone": {
+              "type": "string"
+            },
+            "syncCursorSyncToken": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastSyncAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "eventCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "connectionId",
+            "calendarEmail",
+            "displayName",
+            "timeZone",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "CalendarEventResponse": {
+      "$ref": "#/definitions/CalendarEventResponse",
+      "definitions": {
+        "CalendarEventResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "googleEventId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string",
+              "default": ""
+            },
+            "location": {
+              "type": "string",
+              "default": ""
+            },
+            "startTime": {
+              "type": "string"
+            },
+            "endTime": {
+              "type": "string"
+            },
+            "isAllDay": {
+              "type": "boolean",
+              "default": false
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "confirmed",
+                "tentative",
+                "cancelled"
+              ],
+              "default": "confirmed"
+            },
+            "organizer": {
+              "type": "string",
+              "default": ""
+            },
+            "attendees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "recurrenceRule": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "htmlLink": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAtGoogle": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "updatedAtGoogle": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "googleEventId",
+            "title",
+            "startTime",
+            "endTime",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "CalendarDigestResponse": {
+      "$ref": "#/definitions/CalendarDigestResponse",
+      "definitions": {
+        "CalendarDigestResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "todayEventCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "upcomingCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "summaryMarkdown": {
+              "type": "string"
+            },
+            "generatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "workspaceId",
+            "date",
+            "todayEventCount",
+            "upcomingCount",
+            "summaryMarkdown",
+            "generatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "CalendarAvailabilitySlot": {
+      "$ref": "#/definitions/CalendarAvailabilitySlot",
+      "definitions": {
+        "CalendarAvailabilitySlot": {
+          "type": "object",
+          "properties": {
+            "startTime": {
+              "type": "string"
+            },
+            "endTime": {
+              "type": "string"
+            },
+            "durationMinutes": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": [
+            "startTime",
+            "endTime",
+            "durationMinutes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TodoAccountResponse": {
+      "$ref": "#/definitions/TodoAccountResponse",
+      "definitions": {
+        "TodoAccountResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "connectionId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "providerKind": {
+              "type": "string",
+              "enum": [
+                "local",
+                "todoist"
+              ]
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "syncCursorSince": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "lastSyncAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "todoCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "providerKind",
+            "displayName",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TodoItemResponse": {
+      "$ref": "#/definitions/TodoItemResponse",
+      "definitions": {
+        "TodoItemResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "externalId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "title": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string",
+              "default": ""
+            },
+            "priority": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4,
+              "default": 4
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "completed",
+                "cancelled"
+              ],
+              "default": "pending"
+            },
+            "dueDate": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "dueTime": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "projectName": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "parentId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "completedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAtExternal": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "updatedAtExternal": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "title",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TodoProjectResponse": {
+      "$ref": "#/definitions/TodoProjectResponse",
+      "definitions": {
+        "TodoProjectResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "externalId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "name": {
+              "type": "string"
+            },
+            "color": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "todoCount": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "name",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "TodoDigestResponse": {
+      "$ref": "#/definitions/TodoDigestResponse",
+      "definitions": {
+        "TodoDigestResponse": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "pendingCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "overdueCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "completedTodayCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "summaryMarkdown": {
+              "type": "string"
+            },
+            "generatedAt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "workspaceId",
+            "date",
+            "pendingCount",
+            "overdueCount",
+            "completedTodayCount",
+            "summaryMarkdown",
+            "generatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+}

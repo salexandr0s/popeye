@@ -2,6 +2,10 @@
 
 Date: 2026-03-16
 
+> Historical note: this roadmap predates the current repo-truth snapshot.
+> Use `docs/current-state-matrix.md` for what already exists and
+> `docs/fully-polished-release-gate.md` for the current acceptance bar.
+
 # Evidence legend
 
 - **VERIFIED IN CODE** — I directly inspected the repository tree and/or file contents and confirmed the statement in code.
@@ -14,7 +18,7 @@ Date: 2026-03-16
 
 **VERIFIED IN CODE** — Popeye already has a serious local runtime foundation: daemon lifecycle, control API, runtime orchestration, scheduler/task/job/run/receipt/intervention models, memory/search substrate, observability/redaction, workspace registry, Telegram thin bridge, and operator tooling.
 
-**VERIFIED IN CODE** — Popeye does **not** yet have the domain capability modules required to be the target always-on personal assistant. Email, calendar, todo, GitHub monitoring, contacts, finance, and medical support are not present as product modules in the current repo.
+**VERIFIED IN CODE** — Popeye does **not** yet have the fully polished domain product set required for the target always-on personal assistant. Capability packages exist for files, email, calendar, todos, and GitHub, but People, finance, and medical remain missing as first-class products and the existing general-domain packages remain short of the polished bar.
 
 **INFERRED** — The architecture is good enough to evolve into the target product **without a rewrite**, but only if the next work tightens:
 - approval/policy architecture,

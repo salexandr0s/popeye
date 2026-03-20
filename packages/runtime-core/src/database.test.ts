@@ -810,6 +810,7 @@ describe('openRuntimeDatabases', () => {
           '013-policy-substrate',
           '014-execution-profiles',
           '015-execution-envelopes',
+          '016-policy-automation',
         ]);
 
         const memMigrations = databases.memory

@@ -60,12 +60,14 @@ export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
 
 ### 7. Edit configuration
 
-Set `runtimeDataDir`, `authFile`, `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in config.
+Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in config.
 
 - `config/example.json` defaults `engine.kind` to `"fake"`; change it to `"pi"` before the first real-engine run
 - `engine.kind` should be `"pi"` when using the real engine
 - `engine.piPath` should usually stay `../pi`
 - `engine.piVersion` must match `../pi/packages/coding-agent/package.json`
+- if omitted, `runtimeDataDir` now defaults to `~/Library/Application Support/Popeye/`
+- if omitted, `authFile` now defaults to `<runtimeDataDir>/config/auth.json`
 
 ### 8. Verify the Pi checkout and version pin
 
@@ -91,22 +93,35 @@ pop daemon start
 pop security audit
 ```
 
-### 12. Run Pi smoke test
+### 12. Verify daemon health
+
+```bash
+pop daemon health
+```
+
+### 13. Run Pi smoke test
 
 ```bash
 pop pi smoke
 ```
 
-### 13. Install as LaunchAgent (optional)
+### 14. Verify generated contracts
+
+```bash
+pnpm verify:generated-artifacts
+```
+
+### 15. Install as LaunchAgent (optional)
 
 ```bash
 pop daemon install && pop daemon load
 ```
 
-### 14. Verify
+### 16. Verify
 
 ```bash
 pop daemon status
+pop daemon health
 ```
 
 ## Bundled install (alternative)
@@ -151,8 +166,8 @@ Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 | Daemon bundle | `apps/daemon/dist/index.js` |
 | Symlink | `/usr/local/bin/pop` (or custom prefix) |
 | Config | `~/Library/Application Support/Popeye/config.json` |
-| Runtime data | Configured via `runtimeDataDir` in config |
-| Auth store | Configured via `authFile` in config |
+| Runtime data | `~/Library/Application Support/Popeye/` by default, or configured via `runtimeDataDir` |
+| Auth store | `<runtimeDataDir>/config/auth.json` by default, or configured via `authFile` |
 
 ### After install
 
@@ -160,7 +175,7 @@ Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 # 1. Set config path in ~/.zprofile
 export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
 
-# 2. Edit config (set engine.kind, piPath, runtimeDataDir, etc.)
+# 2. Edit config (set engine.kind, piPath, and any non-default runtime paths)
 
 # 3. Initialize auth
 pop auth init

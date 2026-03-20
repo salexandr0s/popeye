@@ -83,6 +83,46 @@ const stateColors: Record<string, { dot: string; bg: string; text: string }> = {
     bg: 'bg-[var(--color-warning)]/10',
     text: 'text-[var(--color-warning)]',
   },
+  pending: {
+    dot: 'bg-[var(--color-warning)]',
+    bg: 'bg-[var(--color-warning)]/10',
+    text: 'text-[var(--color-warning)]',
+  },
+  approved: {
+    dot: 'bg-[var(--color-success)]',
+    bg: 'bg-[var(--color-success)]/10',
+    text: 'text-[var(--color-success)]',
+  },
+  active: {
+    dot: 'bg-[var(--color-success)]',
+    bg: 'bg-[var(--color-success)]/10',
+    text: 'text-[var(--color-success)]',
+  },
+  denied: {
+    dot: 'bg-[var(--color-danger)]',
+    bg: 'bg-[var(--color-danger)]/10',
+    text: 'text-[var(--color-danger)]',
+  },
+  revoked: {
+    dot: 'bg-[var(--color-danger)]',
+    bg: 'bg-[var(--color-danger)]/10',
+    text: 'text-[var(--color-danger)]',
+  },
+  expired: {
+    dot: 'bg-[var(--color-fg-muted)]',
+    bg: 'bg-[var(--color-fg-muted)]/10',
+    text: 'text-[var(--color-fg-muted)]',
+  },
+  closed: {
+    dot: 'bg-[var(--color-fg-muted)]',
+    bg: 'bg-[var(--color-fg-muted)]/10',
+    text: 'text-[var(--color-fg-muted)]',
+  },
+  sealed: {
+    dot: 'bg-[var(--color-danger)]',
+    bg: 'bg-[var(--color-danger)]/10',
+    text: 'text-[var(--color-danger)]',
+  },
   resolved: {
     dot: 'bg-[var(--color-success)]',
     bg: 'bg-[var(--color-success)]/10',

@@ -13,6 +13,7 @@
 - Restart launchd-managed daemon: `pop daemon restart`
 - Uninstall LaunchAgent plist: `pop daemon uninstall`
 - Inspect launchd status: `pop daemon status`
+- Inspect live daemon/API health: `pop daemon health`
 - Print LaunchAgent plist: `pop daemon plist`
 
 ## Startup behavior

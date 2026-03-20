@@ -12,6 +12,7 @@ const NON_PROJECT_PATTERNS = [
   '**/tsup.config.ts',
   'scripts/**/*.ts',
   'test/**/*.ts',
+  'generated/**/*.ts',
 ];
 
 export default [

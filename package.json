@@ -8,7 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "clean": "turbo run clean --concurrency=1 && rm -rf coverage .vitest-coverage",
-    "dev-verify": "pnpm lint && pnpm typecheck && pnpm verify:src-build-artifacts && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
+    "dev-verify": "pnpm lint && pnpm typecheck && pnpm verify:src-build-artifacts && pnpm verify:generated-artifacts && pnpm test && pnpm security:secrets && pnpm security:deps && pnpm security:sast",
     "lint": "eslint . --max-warnings=0",
     "security:deps": "pnpm audit --audit-level=high",
     "security:sast": "eslint . --max-warnings=0",
@@ -19,14 +19,21 @@
     "verify:pi-boundary": "node scripts/check-pi-boundary.mjs",
     "verify:pi-checkout": "node scripts/check-pi-checkout.mjs",
     "verify:src-build-artifacts": "node scripts/check-src-build-artifacts.mjs",
+    "verify:generated-artifacts": "tsx scripts/generate-swift-models.ts --check && tsx scripts/generate-typescript-models.ts --check && tsx scripts/export-json-schemas.ts --check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:swift": "tsx scripts/generate-swift-models.ts",
+    "generate:schemas": "tsx scripts/export-json-schemas.ts",
+    "generate:typescript": "tsx scripts/generate-typescript-models.ts",
+    "generate:contracts": "pnpm generate:swift && pnpm generate:typescript && pnpm generate:schemas",
     "pack:cli": "pnpm --filter @popeye/cli exec tsup",
     "pack:daemon": "pnpm --filter @popeye/daemon exec tsup",
-    "dev-verify:quick": "pnpm lint && pnpm typecheck && pnpm test",
+    "dev-verify:quick": "pnpm lint && pnpm typecheck && pnpm verify:generated-artifacts && pnpm test",
     "test:coverage": "node -e \"require('node:fs').mkdirSync('.vitest-coverage/.tmp',{recursive:true})\" && vitest run --coverage"
   },
   "pnpm": {
+    "overrides": {
+      "flatted": "^3.4.2"
+    },
     "onlyBuiltDependencies": ["better-sqlite3", "sqlite-vec", "esbuild"]
   },
   "devDependencies": {
@@ -51,6 +58,7 @@
     "turbo": "^2.5.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.24.6"
   }
 }

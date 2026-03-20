@@ -1,11 +1,33 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { AppConfigSchema, type AppConfig, type RuntimePaths } from '@popeye/contracts';
 
+export const DEFAULT_RUNTIME_DATA_DIR = join(homedir(), 'Library', 'Application Support', 'Popeye');
+
+export function defaultAuthFilePath(runtimeDataDir = DEFAULT_RUNTIME_DATA_DIR): string {
+  return join(runtimeDataDir, 'config', 'auth.json');
+}
+
 export function loadAppConfig(filePath: string): AppConfig {
   const raw = readFileSync(filePath, 'utf8');
-  return AppConfigSchema.parse(JSON.parse(raw));
+  const parsed = JSON.parse(raw) as unknown;
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const normalized = parsed as Record<string, unknown>;
+    const runtimeDataDir = typeof normalized['runtimeDataDir'] === 'string' && normalized['runtimeDataDir'].trim().length > 0
+      ? normalized['runtimeDataDir']
+      : DEFAULT_RUNTIME_DATA_DIR;
+    const authFile = typeof normalized['authFile'] === 'string' && normalized['authFile'].trim().length > 0
+      ? normalized['authFile']
+      : defaultAuthFilePath(runtimeDataDir);
+    return AppConfigSchema.parse({
+      ...normalized,
+      runtimeDataDir,
+      authFile,
+    });
+  }
+  return AppConfigSchema.parse(parsed);
 }
 
 export function deriveRuntimePaths(runtimeDataDir: string): RuntimePaths {

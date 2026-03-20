@@ -42,6 +42,7 @@ function makeCtx(db: Database.Database): CapabilityContext {
     auditCallback: vi.fn(),
     memoryInsert: vi.fn(() => ({ memoryId: 'mem-1', embedded: false })),
     approvalRequest: () => ({ id: 'test', status: 'pending' }),
+    actionApprovalRequest: () => ({ id: 'test', status: 'pending' }),
     contextReleaseRecord: () => ({ id: 'test' }),
     events: { emit: () => {} },
   };

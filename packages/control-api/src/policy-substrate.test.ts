@@ -7,9 +7,12 @@ import { z } from 'zod';
 
 import {
   ApprovalRecordSchema,
+  AutomationGrantRecordSchema,
   ConnectionRecordSchema,
   ContextReleasePreviewSchema,
   SecurityPolicyResponseSchema,
+  StandingApprovalRecordSchema,
+  VaultRecordSchema,
 } from '@popeye/contracts';
 import { createRuntimeService, initAuthStore, issueCsrfToken, readAuthStore } from '@popeye/runtime-core';
 
@@ -30,7 +33,7 @@ function createTestEnv() {
     engine: { kind: 'fake', command: 'node', args: [] },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     approvalPolicy: { rules: [], defaultRiskClass: 'ask', pendingExpiryMinutes: 60 },
-    vaults: { autoOpenOnRun: false, defaultKind: 'capability' },
+    vaults: { restrictedVaultDir: 'vaults', capabilityStoreDir: 'capabilities', backupEncryptedVaults: true },
   });
   const csrf = issueCsrfToken(readAuthStore(authFile));
   const authHeaders = { authorization: `Bearer ${store.current.token}` };
@@ -226,6 +229,90 @@ describe('policy substrate API routes', () => {
     await app.close();
   });
 
+  it('POST /v1/policies/standing-approvals creates and revokes a standing approval', async () => {
+    const { runtime, authHeaders, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/policies/standing-approvals',
+      headers: mutationHeaders,
+      payload: {
+        scope: 'external_write',
+        domain: 'todos',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        createdBy: 'test-operator',
+      },
+    });
+    expect(createResponse.statusCode).toBe(200);
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/policies/standing-approvals',
+      headers: authHeaders,
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const standing = z.array(StandingApprovalRecordSchema).parse(listResponse.json());
+    expect(standing.length).toBe(1);
+
+    const revokeResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/policies/standing-approvals/${standing[0]!.id}/revoke`,
+      headers: mutationHeaders,
+      payload: { revokedBy: 'test-operator' },
+    });
+    expect(revokeResponse.statusCode).toBe(200);
+    expect(revokeResponse.json()).toMatchObject({ status: 'revoked', revokedBy: 'test-operator' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/policies/automation-grants creates and revokes an automation grant', async () => {
+    const { runtime, authHeaders, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/policies/automation-grants',
+      headers: mutationHeaders,
+      payload: {
+        scope: 'external_write',
+        domain: 'todos',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        taskSources: ['schedule'],
+        createdBy: 'test-operator',
+      },
+    });
+    expect(createResponse.statusCode).toBe(200);
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/policies/automation-grants',
+      headers: authHeaders,
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const grants = z.array(AutomationGrantRecordSchema).parse(listResponse.json());
+    expect(grants).toHaveLength(1);
+    expect(grants[0]!.taskSources).toEqual(['schedule']);
+
+    const revokeResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/policies/automation-grants/${grants[0]!.id}/revoke`,
+      headers: mutationHeaders,
+      payload: { revokedBy: 'test-operator' },
+    });
+    expect(revokeResponse.statusCode).toBe(200);
+    expect(revokeResponse.json()).toMatchObject({ status: 'revoked', revokedBy: 'test-operator' });
+
+    await runtime.close();
+    await app.close();
+  });
+
   // --- Security policy ---
 
   it('GET /v1/security/policy returns domain policies and approval rules', async () => {
@@ -237,6 +324,120 @@ describe('policy substrate API routes', () => {
     const policy = SecurityPolicyResponseSchema.parse(response.json());
     expect(policy.domainPolicies.length).toBeGreaterThan(0);
     expect(Array.isArray(policy.approvalRules)).toBe(true);
+    expect(policy.defaultRiskClass).toBe('ask');
+    expect(policy.actionDefaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scope: 'external_write', actionKind: 'write', riskClass: 'ask' }),
+        expect.objectContaining({ scope: 'context_release', actionKind: 'release_context', riskClass: 'ask' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  // --- Vaults ---
+
+  it('POST /v1/vaults creates a vault and GET /v1/vaults lists it', async () => {
+    const { runtime, authHeaders, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/vaults',
+      headers: mutationHeaders,
+      payload: { domain: 'finance', name: 'household', kind: 'restricted' },
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = VaultRecordSchema.parse(createResponse.json());
+    expect(created.domain).toBe('finance');
+    expect(created.kind).toBe('restricted');
+
+    const listResponse = await app.inject({ method: 'GET', url: '/v1/vaults?domain=finance', headers: authHeaders });
+    expect(listResponse.statusCode).toBe(200);
+    const list = z.array(VaultRecordSchema).parse(listResponse.json());
+    expect(list).toEqual([expect.objectContaining({ id: created.id, domain: 'finance' })]);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/vaults/:id/open opens with approved approval and close/seal update status', async () => {
+    const { runtime, authHeaders, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const createdVault = VaultRecordSchema.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/vaults',
+      headers: mutationHeaders,
+      payload: { domain: 'general', name: 'ops' },
+    })).json());
+
+    const approval = ApprovalRecordSchema.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/approvals',
+      headers: mutationHeaders,
+      payload: { scope: 'vault_open', domain: 'general', riskClass: 'auto', resourceType: 'vault', resourceId: createdVault.id, requestedBy: 'agent' },
+    })).json());
+
+    const openResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/vaults/${createdVault.id}/open`,
+      headers: mutationHeaders,
+      payload: { approvalId: approval.id },
+    });
+    expect(openResponse.statusCode).toBe(200);
+    const opened = VaultRecordSchema.parse(openResponse.json());
+    expect(opened.status).toBe('open');
+
+    const closeResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/vaults/${createdVault.id}/close`,
+      headers: mutationHeaders,
+    });
+    expect(closeResponse.statusCode).toBe(200);
+    const closed = VaultRecordSchema.parse(closeResponse.json());
+    expect(closed.status).toBe('closed');
+
+    const sealResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/vaults/${createdVault.id}/seal`,
+      headers: mutationHeaders,
+    });
+    expect(sealResponse.statusCode).toBe(200);
+    const sealed = VaultRecordSchema.parse(sealResponse.json());
+    expect(sealed.status).toBe('sealed');
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/vaults/${createdVault.id}`,
+      headers: authHeaders,
+    });
+    expect(getResponse.statusCode).toBe(200);
+    expect(VaultRecordSchema.parse(getResponse.json()).status).toBe('sealed');
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/vaults/:id/open denies missing approvals', async () => {
+    const { runtime, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const createdVault = VaultRecordSchema.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/vaults',
+      headers: mutationHeaders,
+      payload: { domain: 'medical', name: 'records', kind: 'restricted' },
+    })).json());
+
+    const openResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/vaults/${createdVault.id}/open`,
+      headers: mutationHeaders,
+      payload: { approvalId: 'missing-approval' },
+    });
+    expect(openResponse.statusCode).toBe(403);
 
     await runtime.close();
     await app.close();

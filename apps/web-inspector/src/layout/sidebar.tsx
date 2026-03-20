@@ -14,6 +14,11 @@ const navItems: NavItem[] = [
   { label: 'Receipts', to: '/receipts' },
   { label: 'Instructions', to: '/instructions' },
   { label: 'Interventions', to: '/interventions' },
+  { label: 'Approvals', to: '/approvals' },
+  { label: 'Standing Approvals', to: '/standing-approvals' },
+  { label: 'Automation Grants', to: '/automation-grants' },
+  { label: 'Vaults', to: '/vaults' },
+  { label: 'Security Policy', to: '/security-policy' },
   { label: 'Memory', to: '/memory' },
   { label: 'Usage', to: '/usage' },
 ];

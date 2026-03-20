@@ -6,14 +6,16 @@ import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 
 import {
+  ApprovalRequestSchema,
   ApprovalResolveInputSchema,
+  AutomationGrantCreateRequestSchema,
   ConnectionCreateInputSchema,
   ConnectionUpdateInputSchema,
   ContextReleasePreviewRequestSchema,
   EmailAccountRegistrationInputSchema,
   CalendarAccountRegistrationInputSchema,
   TodoAccountRegistrationInputSchema,
-  DomainKindSchema,
+  type DomainKind,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
   MemoryImportInputSchema,
@@ -38,6 +40,10 @@ import {
   TelegramReplyDeliveryMarkSentRequestSchema,
   TelegramReplyDeliveryStateUpdateRequestSchema,
   TelegramSendAttemptRecordSchema,
+  PolicyGrantRevokeRequestSchema,
+  StandingApprovalCreateRequestSchema,
+  VaultCreateRequestSchema,
+  VaultOpenRequestSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -1053,22 +1059,19 @@ export async function createControlApi(
   // --- Policy substrate routes ---
 
   app.get('/v1/approvals', async (request) => {
-    const query = z.object({ scope: z.string().optional(), status: z.string().optional(), domain: z.string().optional() }).parse(request.query);
+    const query = z.object({
+      scope: z.string().optional(),
+      status: z.string().optional(),
+      domain: z.string().optional(),
+      actionKind: z.string().optional(),
+      runId: z.string().optional(),
+      resolvedBy: z.string().optional(),
+    }).parse(request.query);
     return dependencies.runtime.listApprovals(stripUndefined(query));
   });
 
   app.post('/v1/approvals', async (request) => {
-    const body = z.object({
-      scope: z.string(),
-      domain: DomainKindSchema,
-      riskClass: z.string(),
-      resourceType: z.string(),
-      resourceId: z.string(),
-      requestedBy: z.string(),
-      payloadPreview: z.string().optional(),
-      idempotencyKey: z.string().optional(),
-      expiresAt: z.string().optional(),
-    }).parse(request.body);
+    const body = ApprovalRequestSchema.parse(request.body);
     return dependencies.runtime.requestApproval(stripUndefined(body));
   });
 
@@ -1092,7 +1095,100 @@ export async function createControlApi(
     }
   });
 
+  app.get('/v1/policies/standing-approvals', async (request) => {
+    const query = z.object({
+      status: z.string().optional(),
+      domain: z.string().optional(),
+      actionKind: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listStandingApprovals(stripUndefined(query));
+  });
+
+  app.post('/v1/policies/standing-approvals', async (request) => {
+    const body = StandingApprovalCreateRequestSchema.parse(request.body);
+    return dependencies.runtime.createStandingApproval(body);
+  });
+
+  app.post('/v1/policies/standing-approvals/:id/revoke', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PolicyGrantRevokeRequestSchema.parse(request.body);
+    try {
+      return dependencies.runtime.revokeStandingApproval(id, body);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not found')) return reply.code(404).send({ error: msg });
+      throw err;
+    }
+  });
+
+  app.get('/v1/policies/automation-grants', async (request) => {
+    const query = z.object({
+      status: z.string().optional(),
+      domain: z.string().optional(),
+      actionKind: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.listAutomationGrants(stripUndefined(query));
+  });
+
+  app.post('/v1/policies/automation-grants', async (request) => {
+    const body = AutomationGrantCreateRequestSchema.parse(request.body);
+    return dependencies.runtime.createAutomationGrant(body);
+  });
+
+  app.post('/v1/policies/automation-grants/:id/revoke', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PolicyGrantRevokeRequestSchema.parse(request.body);
+    try {
+      return dependencies.runtime.revokeAutomationGrant(id, body);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not found')) return reply.code(404).send({ error: msg });
+      throw err;
+    }
+  });
+
   app.get('/v1/security/policy', async () => dependencies.runtime.getSecurityPolicy());
+
+  app.get('/v1/vaults', async (request) => {
+    const query = z.object({ domain: z.string().optional() }).parse(request.query);
+    return dependencies.runtime.listVaults(query.domain as DomainKind | undefined);
+  });
+
+  app.post('/v1/vaults', async (request) => {
+    const body = VaultCreateRequestSchema.parse(request.body);
+    return dependencies.runtime.createVault(body);
+  });
+
+  app.get('/v1/vaults/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const vault = dependencies.runtime.getVault(id);
+    if (!vault) return reply.code(404).send({ error: 'vault not found' });
+    return vault;
+  });
+
+  app.post('/v1/vaults/:id/open', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = VaultOpenRequestSchema.parse(request.body);
+    const vault = dependencies.runtime.getVault(id);
+    if (!vault) return reply.code(404).send({ error: 'vault not found' });
+    const opened = dependencies.runtime.openVault(id, body.approvalId);
+    if (!opened) return reply.code(403).send({ error: 'vault_open_denied' });
+    return dependencies.runtime.getVault(id);
+  });
+
+  app.post('/v1/vaults/:id/close', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const closed = dependencies.runtime.closeVault(id);
+    if (!closed) return reply.code(404).send({ error: 'vault not found' });
+    return dependencies.runtime.getVault(id);
+  });
+
+  app.post('/v1/vaults/:id/seal', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const sealed = dependencies.runtime.sealVault(id);
+    if (!sealed) return reply.code(404).send({ error: 'vault not found' });
+    return dependencies.runtime.getVault(id);
+  });
 
   app.get('/v1/connections', async (request) => {
     const query = z.object({ domain: z.string().optional() }).parse(request.query);

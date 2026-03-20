@@ -56,6 +56,7 @@ function makeCtx(db: Database.Database): CapabilityContext {
       return { memoryId: `mem-${inserted.length}`, embedded: false };
     },
     approvalRequest: () => ({ id: 'test', status: 'pending' }),
+    actionApprovalRequest: () => ({ id: 'test', status: 'pending' }),
     contextReleaseRecord: () => ({ id: 'test' }),
     events: { emit: () => {} },
     // Expose for assertions

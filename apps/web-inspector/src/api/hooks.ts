@@ -4,10 +4,13 @@ import { ensureBrowserSession } from './browser-session';
 export { resetBrowserBootstrapForTests } from './browser-session';
 
 import type {
+  ApprovalRecord,
   AgentProfileRecord,
+  AutomationGrantRecord,
   DaemonStatusResponse,
   EngineCapabilitiesResponse,
   ExecutionEnvelopeResponse,
+  SecurityPolicyResponse,
   RunRecord,
   RunEventRecord,
   JobRecord,
@@ -22,12 +25,15 @@ import type {
   MemorySearchResult,
   MemorySearchResponse,
   CompiledInstructionBundle,
+  StandingApprovalRecord,
+  VaultRecord,
 } from '@popeye/contracts';
 
 // Re-export contract types for view convenience
 export type { RunRecord, RunEventRecord, JobRecord, TaskRecord, ReceiptRecord, InterventionRecord, SecurityAuditFinding };
 export type { MemorySearchResult, MemorySearchResponse };
 export type { AgentProfileRecord, EngineCapabilitiesResponse, ExecutionEnvelopeResponse };
+export type { ApprovalRecord, AutomationGrantRecord, SecurityPolicyResponse, StandingApprovalRecord, VaultRecord };
 export type InstructionBundle = CompiledInstructionBundle;
 
 interface PollingResult<T> {
@@ -240,6 +246,18 @@ export function useInterventions() {
   return usePolling<InterventionRecord[]>('/v1/interventions', 5000);
 }
 
+export function useApprovals() {
+  return usePolling<ApprovalRecord[]>('/v1/approvals', 5000);
+}
+
+export function useStandingApprovals() {
+  return usePolling<StandingApprovalRecord[]>('/v1/policies/standing-approvals', 5000);
+}
+
+export function useAutomationGrants() {
+  return usePolling<AutomationGrantRecord[]>('/v1/policies/automation-grants', 5000);
+}
+
 export function useTasks() {
   return useFetch<TaskRecord[]>('/v1/tasks');
 }
@@ -264,6 +282,14 @@ export function useSecurityAudit() {
   return useFetch<SecurityAuditResponse>('/v1/security/audit');
 }
 
+export function useSecurityPolicy() {
+  return useFetch<SecurityPolicyResponse>('/v1/security/policy');
+}
+
 export function useHealth() {
   return usePolling<HealthResponse>('/v1/health', 10000);
+}
+
+export function useVaults() {
+  return usePolling<VaultRecord[]>('/v1/vaults', 5000);
 }

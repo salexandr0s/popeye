@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-03-13
+// Generated: 2026-03-20
 import Foundation
 
 // MARK: - Enums
@@ -52,6 +52,7 @@ public enum MessageIngressDecisionCode: String, Codable, Sendable {
     case telegramRateLimited = "telegram_rate_limited"
     case telegramPromptInjection = "telegram_prompt_injection"
     case telegramInvalidMessage = "telegram_invalid_message"
+    case promptInjectionQuarantined = "prompt_injection_quarantined"
 }
 
 // MARK: - Models
@@ -60,6 +61,7 @@ public struct TaskRecord: Codable, Sendable {
     public let id: String
     public let workspaceId: String
     public let projectId: String?
+    public let profileId: String?
     public let title: String
     public let prompt: String
     public let source: String
@@ -87,6 +89,7 @@ public struct RunRecord: Codable, Sendable {
     public let jobId: String
     public let taskId: String
     public let workspaceId: String
+    public let profileId: String?
     public let sessionRootId: String
     public let engineSessionRef: String?
     public let state: String
@@ -113,6 +116,7 @@ public struct ReceiptRecord: Codable, Sendable {
     public let summary: String
     public let details: String
     public let usage: JSONObject
+    public let runtime: JSONObject?
     public let createdAt: String
 }
 
@@ -124,6 +128,8 @@ public struct InterventionRecord: Codable, Sendable {
     public let reason: String
     public let createdAt: String
     public let resolvedAt: String?
+    public let updatedAt: String?
+    public let resolutionNote: String?
 }
 
 public struct MessageRecord: Codable, Sendable {
@@ -146,6 +152,7 @@ public struct MessageIngressResponse: Codable, Sendable {
     public let taskId: String?
     public let jobId: String?
     public let runId: String?
+    public let telegramDelivery: JSONObject?
 }
 
 public struct JobLeaseRecord: Codable, Sendable {
@@ -174,6 +181,9 @@ public struct SecurityAuditFinding: Codable, Sendable {
     public let code: String
     public let severity: String
     public let message: String
+    public let component: String?
+    public let timestamp: String?
+    public let details: [String: String]?
 }
 
 public struct DaemonStatusResponse: Codable, Sendable {
@@ -211,9 +221,54 @@ public struct SseEventEnvelope: Codable, Sendable {
 public struct TaskCreateInput: Codable, Sendable {
     public let workspaceId: String?
     public let projectId: String?
+    public let profileId: String?
     public let title: String
     public let prompt: String
     public let source: String?
     public let coalesceKey: String?
     public let autoEnqueue: Bool?
+}
+
+public struct ApprovalRecord: Codable, Sendable {
+    public let id: String
+    public let scope: String
+    public let domain: String
+    public let riskClass: String
+    public let actionKind: String?
+    public let resourceScope: String?
+    public let resourceType: String
+    public let resourceId: String
+    public let requestedBy: String
+    public let runId: String?
+    public let standingApprovalEligible: Bool?
+    public let automationGrantEligible: Bool?
+    public let interventionId: String?
+    public let payloadPreview: String?
+    public let idempotencyKey: String?
+    public let status: String?
+    public let resolvedBy: String?
+    public let resolvedByGrantId: String?
+    public let decisionReason: String?
+    public let expiresAt: String?
+    public let createdAt: String
+    public let resolvedAt: String?
+}
+
+public struct SecurityPolicyResponse: Codable, Sendable {
+    public let domainPolicies: [JSONObject]
+    public let approvalRules: [JSONObject]
+    public let defaultRiskClass: String
+    public let actionDefaults: [JSONObject]
+}
+
+public struct VaultRecord: Codable, Sendable {
+    public let id: String
+    public let domain: String
+    public let kind: String
+    public let dbPath: String
+    public let encrypted: Bool?
+    public let encryptionKeyRef: String?
+    public let status: String
+    public let createdAt: String
+    public let lastAccessedAt: String?
 }

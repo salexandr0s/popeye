@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type {
+  ActionApprovalRequestInput,
   AgentProfileRecord,
   AppConfig,
   ApprovalRecord,
@@ -148,6 +149,7 @@ import { MessageIngestionService, MessageIngressError } from './message-ingestio
 import { QueryService } from './query-service.js';
 import { SecretStore } from './secret-store.js';
 import { ApprovalService } from './approval-service.js';
+import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { CapabilityRegistry } from './capability-registry.js';
@@ -166,7 +168,6 @@ import {
 import {
   buildExecutionEnvelope,
   computeEffectiveContextReleaseLevel,
-  isRequestedContextReleaseAllowed,
   resolveAgentMemoryScopeFilter,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
@@ -695,6 +696,7 @@ export class PopeyeRuntimeService {
   private readonly queryService: QueryService;
   private readonly secretStore: SecretStore;
   private readonly approvalService: ApprovalService;
+  private readonly actionPolicyEvaluator: ActionPolicyEvaluator;
   private readonly vaultManager: VaultManager;
   private readonly contextReleaseService: ContextReleaseService;
   private readonly capabilityRegistry: CapabilityRegistry;
@@ -783,6 +785,7 @@ export class PopeyeRuntimeService {
       (event, data) => this.emit(event, data),
       { pendingExpiryMinutes: config.approvalPolicy?.pendingExpiryMinutes ?? 60 },
     );
+    this.actionPolicyEvaluator = new ActionPolicyEvaluator(config.approvalPolicy);
     this.vaultManager = new VaultManager(this.databases.app, this.log, this.databases.paths, auditCallback);
     this.contextReleaseService = new ContextReleaseService(this.databases.app, this.log, auditCallback);
 
@@ -857,6 +860,7 @@ export class PopeyeRuntimeService {
           };
         },
         approvalRequest: (input) => this.requestApproval(input),
+        actionApprovalRequest: (input) => this.requestActionApproval(input),
         contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
         events: this.events,
         resolveEmailAdapter: async (connectionId: string) => {
@@ -1135,15 +1139,17 @@ export class PopeyeRuntimeService {
     }
 
     const releases = this.contextReleaseService.listReleasesForRun(runId);
-    const approvalIds = new Set(
-      releases
-        .map((release) => release.approvalId)
-        .filter((value): value is string => typeof value === 'string' && value.length > 0),
-    );
+    const approvalsById = new Map<string, ApprovalRecord>();
+    for (const approval of this.approvalService.listApprovals({ runId })) {
+      approvalsById.set(approval.id, approval);
+    }
+    for (const release of releases) {
+      if (!release.approvalId) continue;
+      const approval = this.approvalService.getApproval(release.approvalId);
+      if (approval) approvalsById.set(approval.id, approval);
+    }
 
-    for (const approvalId of approvalIds) {
-      const approval = this.approvalService.getApproval(approvalId);
-      if (!approval) continue;
+    for (const approval of approvalsById.values()) {
       timeline.push({
         id: `approval:${approval.id}:requested`,
         at: approval.createdAt,
@@ -1151,12 +1157,17 @@ export class PopeyeRuntimeService {
         severity: approval.riskClass === 'deny' ? 'error' : 'info',
         code: 'approval_requested',
         title: 'Approval requested',
-        detail: `${approval.scope} · ${approval.resourceType}/${approval.resourceId}`,
+        detail: `${approval.scope} · ${approval.actionKind} · ${approval.resourceType}/${approval.resourceId}`,
         source: 'approval',
         metadata: buildTimelineMetadata({
           approvalId: approval.id,
           domain: approval.domain,
           riskClass: approval.riskClass,
+          actionKind: approval.actionKind,
+          resourceScope: approval.resourceScope,
+          runId: approval.runId ?? '',
+          standingApprovalEligible: approval.standingApprovalEligible,
+          automationGrantEligible: approval.automationGrantEligible,
           status: approval.status,
         }),
       });
@@ -1168,15 +1179,17 @@ export class PopeyeRuntimeService {
           severity: approval.status === 'approved' ? 'info' : approval.status === 'expired' ? 'warn' : 'error',
           code: `approval_${approval.status}`,
           title: `Approval ${approval.status}`,
-          detail: approval.decisionReason ?? `${approval.scope} decision recorded.`,
-          source: 'approval',
-          metadata: buildTimelineMetadata({
-            approvalId: approval.id,
-            resolvedBy: approval.resolvedBy ?? '',
-            domain: approval.domain,
-          }),
-        });
-      }
+        detail: approval.decisionReason ?? `${approval.scope} decision recorded.`,
+        source: 'approval',
+        metadata: buildTimelineMetadata({
+          approvalId: approval.id,
+          resolvedBy: approval.resolvedBy ?? '',
+          resolvedByGrantId: approval.resolvedByGrantId ?? '',
+          domain: approval.domain,
+          actionKind: approval.actionKind,
+        }),
+      });
+    }
     }
 
     for (const release of releases) {
@@ -1455,33 +1468,23 @@ export class PopeyeRuntimeService {
       };
     }
 
-    const domainPolicy = DOMAIN_POLICY_DEFAULTS[input.domain];
     const effectiveLevel = computeEffectiveContextReleaseLevel(
       envelope.contextReleasePolicy,
-      domainPolicy.contextReleasePolicy,
+      input.requestedLevel,
     );
+    const policy = this.actionPolicyEvaluator.evaluateContextRelease({
+      domain: input.domain,
+      requestedLevel: input.requestedLevel,
+      profileLimit: envelope.contextReleasePolicy,
+      resourceScope: 'resource',
+    });
 
-    if (effectiveLevel === 'none') {
+    if (policy.riskClass === 'deny') {
       return {
         outcome: 'deny',
         approvedLevel: null,
         approvalId: null,
-        reason: 'Context release is disabled by the execution profile.',
-        redactionApplied: false,
-      };
-    }
-
-    const overProfileLimit = !isRequestedContextReleaseAllowed(
-      envelope.contextReleasePolicy,
-      input.requestedLevel,
-    );
-    const requiresApproval = domainPolicy.sensitivity === 'restricted' || overProfileLimit;
-    if (!requiresApproval) {
-      return {
-        outcome: 'allow',
-        approvedLevel: input.requestedLevel,
-        approvalId: null,
-        reason: 'Context release allowed by profile policy.',
+        reason: policy.reason,
         redactionApplied: false,
       };
     }
@@ -1489,10 +1492,15 @@ export class PopeyeRuntimeService {
     const approval = this.requestApproval({
       scope: 'context_release',
       domain: input.domain,
-      riskClass: 'ask',
+      riskClass: policy.riskClass,
+      actionKind: 'release_context',
+      resourceScope: 'resource',
       resourceType: input.resourceType ?? 'context_release',
       resourceId: input.resourceId ?? input.sourceRef,
       requestedBy: input.requestedBy ?? 'context_release_gate',
+      runId: input.runId,
+      standingApprovalEligible: policy.standingApprovalEligible,
+      automationGrantEligible: policy.automationGrantEligible,
       payloadPreview: input.payloadPreview ?? input.sourceRef,
     });
 
@@ -1501,7 +1509,7 @@ export class PopeyeRuntimeService {
         outcome: 'allow',
         approvedLevel: input.requestedLevel,
         approvalId: approval.id,
-        reason: 'Context release approved.',
+        reason: approval.decisionReason ?? policy.reason,
         redactionApplied: false,
       };
     }
@@ -1510,7 +1518,7 @@ export class PopeyeRuntimeService {
       outcome: 'approval_required',
       approvedLevel: effectiveLevel,
       approvalId: approval.id,
-      reason: 'Context release requires approval.',
+      reason: policy.reason,
       redactionApplied: false,
     };
   }
@@ -2315,6 +2323,16 @@ export class PopeyeRuntimeService {
     return this.approvalService.requestApproval(input);
   }
 
+  requestActionApproval(input: ActionApprovalRequestInput): ApprovalRecord {
+    const policy = this.actionPolicyEvaluator.evaluateAction(input);
+    return this.approvalService.requestApproval({
+      ...input,
+      riskClass: policy.riskClass,
+      standingApprovalEligible: policy.standingApprovalEligible,
+      automationGrantEligible: policy.automationGrantEligible,
+    });
+  }
+
   resolveApproval(id: string, input: ApprovalResolveInput): ApprovalRecord {
     return this.approvalService.resolveApproval(id, input);
   }
@@ -2323,8 +2341,32 @@ export class PopeyeRuntimeService {
     return this.approvalService.getApproval(id);
   }
 
-  listApprovals(filter?: { scope?: string; status?: string; domain?: string }): ApprovalRecord[] {
+  listApprovals(filter?: { scope?: string; status?: string; domain?: string; actionKind?: string; runId?: string; resolvedBy?: string }): ApprovalRecord[] {
     return this.approvalService.listApprovals(filter);
+  }
+
+  createStandingApproval(input: Parameters<ApprovalService['createStandingApproval']>[0]) {
+    return this.approvalService.createStandingApproval(input);
+  }
+
+  listStandingApprovals(filter?: Parameters<ApprovalService['listStandingApprovals']>[0]) {
+    return this.approvalService.listStandingApprovals(filter);
+  }
+
+  revokeStandingApproval(id: string, input: Parameters<ApprovalService['revokeStandingApproval']>[1]) {
+    return this.approvalService.revokeStandingApproval(id, input);
+  }
+
+  createAutomationGrant(input: Parameters<ApprovalService['createAutomationGrant']>[0]) {
+    return this.approvalService.createAutomationGrant(input);
+  }
+
+  listAutomationGrants(filter?: Parameters<ApprovalService['listAutomationGrants']>[0]) {
+    return this.approvalService.listAutomationGrants(filter);
+  }
+
+  revokeAutomationGrant(id: string, input: Parameters<ApprovalService['revokeAutomationGrant']>[1]) {
+    return this.approvalService.revokeAutomationGrant(id, input);
   }
 
   // --- Delegated: VaultManager ---
@@ -2384,8 +2426,12 @@ export class PopeyeRuntimeService {
 
   getSecurityPolicy(): SecurityPolicyResponse {
     const domainPolicies = Object.values(DOMAIN_POLICY_DEFAULTS);
-    const approvalRules = this.config.approvalPolicy?.rules ?? [];
-    return { domainPolicies, approvalRules };
+    return {
+      domainPolicies,
+      approvalRules: this.actionPolicyEvaluator.listRules(),
+      defaultRiskClass: this.actionPolicyEvaluator.getDefaultRiskClass(),
+      actionDefaults: this.actionPolicyEvaluator.listActionDefaults(),
+    };
   }
 
   private buildConnectionPolicySummary(connection: ConnectionRecord): NonNullable<ConnectionRecord['policy']> {
@@ -4764,6 +4810,7 @@ export class PopeyeRuntimeService {
         };
       },
       approvalRequest: (input) => this.requestApproval(input),
+      actionApprovalRequest: (input) => this.requestActionApproval(input),
       contextReleaseRecord: (input) => this.contextReleaseService.recordRelease(input),
       getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
       authorizeContextRelease: (input) => this.authorizeContextRelease(input),

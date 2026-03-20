@@ -76,9 +76,17 @@ import {
   type WorkspaceListItem,
   WorkspaceListItemSchema,
   type IngestMessageInput,
+  type ApprovalRequest,
   type ApprovalRecord,
   ApprovalRecordSchema,
   type ApprovalResolveInput,
+  type StandingApprovalRecord,
+  StandingApprovalRecordSchema,
+  type StandingApprovalCreateRequest,
+  type PolicyGrantRevokeRequest,
+  type AutomationGrantRecord,
+  AutomationGrantRecordSchema,
+  type AutomationGrantCreateRequest,
   type ConnectionRecord,
   ConnectionRecordSchema,
   type ConnectionCreateInput,
@@ -88,6 +96,10 @@ import {
   type SecurityPolicyResponse,
   SecurityPolicyResponseSchema,
   type DomainKind,
+  type VaultCreateRequest,
+  VaultRecordSchema,
+  type VaultRecord,
+  type VaultOpenRequest,
   type FileRootRecord,
   FileRootRecordSchema,
   type FileRootRegistrationInput,
@@ -601,7 +613,7 @@ export class PopeyeApiClient {
 
   // --- Policy substrate client methods ---
 
-  async listApprovals(filter?: { scope?: string; status?: string; domain?: string }): Promise<ApprovalRecord[]> {
+  async listApprovals(filter?: { scope?: string; status?: string; domain?: string; actionKind?: string; runId?: string; resolvedBy?: string }): Promise<ApprovalRecord[]> {
     return this.getArray(`/v1/approvals${this.buildQuery(filter ?? {})}`, ApprovalRecordSchema);
   }
 
@@ -609,7 +621,7 @@ export class PopeyeApiClient {
     return this.get(`/v1/approvals/${encodeURIComponent(id)}`, ApprovalRecordSchema);
   }
 
-  async requestApproval(input: { scope: string; domain: DomainKind; riskClass: string; resourceType: string; resourceId: string; requestedBy: string; payloadPreview?: string; idempotencyKey?: string }): Promise<ApprovalRecord> {
+  async requestApproval(input: ApprovalRequest): Promise<ApprovalRecord> {
     return this.post('/v1/approvals', input, ApprovalRecordSchema);
   }
 
@@ -617,8 +629,56 @@ export class PopeyeApiClient {
     return this.post(`/v1/approvals/${encodeURIComponent(id)}/resolve`, input, ApprovalRecordSchema);
   }
 
+  async listStandingApprovals(filter?: { status?: string; domain?: string; actionKind?: string }): Promise<StandingApprovalRecord[]> {
+    return this.getArray(`/v1/policies/standing-approvals${this.buildQuery(filter ?? {})}`, StandingApprovalRecordSchema);
+  }
+
+  async createStandingApproval(input: StandingApprovalCreateRequest): Promise<StandingApprovalRecord> {
+    return this.post('/v1/policies/standing-approvals', input, StandingApprovalRecordSchema);
+  }
+
+  async revokeStandingApproval(id: string, input: PolicyGrantRevokeRequest): Promise<StandingApprovalRecord> {
+    return this.post(`/v1/policies/standing-approvals/${encodeURIComponent(id)}/revoke`, input, StandingApprovalRecordSchema);
+  }
+
+  async listAutomationGrants(filter?: { status?: string; domain?: string; actionKind?: string }): Promise<AutomationGrantRecord[]> {
+    return this.getArray(`/v1/policies/automation-grants${this.buildQuery(filter ?? {})}`, AutomationGrantRecordSchema);
+  }
+
+  async createAutomationGrant(input: AutomationGrantCreateRequest): Promise<AutomationGrantRecord> {
+    return this.post('/v1/policies/automation-grants', input, AutomationGrantRecordSchema);
+  }
+
+  async revokeAutomationGrant(id: string, input: PolicyGrantRevokeRequest): Promise<AutomationGrantRecord> {
+    return this.post(`/v1/policies/automation-grants/${encodeURIComponent(id)}/revoke`, input, AutomationGrantRecordSchema);
+  }
+
   async getSecurityPolicy(): Promise<SecurityPolicyResponse> {
     return this.get('/v1/security/policy', SecurityPolicyResponseSchema);
+  }
+
+  async listVaults(domain?: DomainKind): Promise<VaultRecord[]> {
+    return this.getArray(`/v1/vaults${this.buildQuery({ domain })}`, VaultRecordSchema);
+  }
+
+  async getVault(id: string): Promise<VaultRecord> {
+    return this.get(`/v1/vaults/${encodeURIComponent(id)}`, VaultRecordSchema);
+  }
+
+  async createVault(input: VaultCreateRequest): Promise<VaultRecord> {
+    return this.post('/v1/vaults', input, VaultRecordSchema);
+  }
+
+  async openVault(id: string, input: VaultOpenRequest): Promise<VaultRecord> {
+    return this.post(`/v1/vaults/${encodeURIComponent(id)}/open`, input, VaultRecordSchema);
+  }
+
+  async closeVault(id: string): Promise<VaultRecord> {
+    return this.post(`/v1/vaults/${encodeURIComponent(id)}/close`, {}, VaultRecordSchema);
+  }
+
+  async sealVault(id: string): Promise<VaultRecord> {
+    return this.post(`/v1/vaults/${encodeURIComponent(id)}/seal`, {}, VaultRecordSchema);
   }
 
   async listConnections(domain?: string): Promise<ConnectionRecord[]> {

@@ -10,8 +10,8 @@ Example config: `config/example.json`
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `runtimeDataDir` | `string` | Yes | -- | Absolute path to the runtime data directory. Houses state, logs, receipts, backups, and memory databases. |
-| `authFile` | `string` | Yes | -- | Absolute path to the auth store JSON file. Created by `initAuthStore` on first run. Stores rotating local bearer tokens for the configured roles. |
+| `runtimeDataDir` | `string` | No | `~/Library/Application Support/Popeye/` | Absolute path to the runtime data directory. Houses state, logs, receipts, backups, and memory databases. When omitted from the config file, Popeye now derives this macOS-first default before schema validation. |
+| `authFile` | `string` | No | `<runtimeDataDir>/config/auth.json` | Absolute path to the auth store JSON file. Created by `initAuthStore` on first run. Stores rotating local bearer tokens for the configured roles. When omitted, Popeye derives it from `runtimeDataDir`. |
 
 ---
 

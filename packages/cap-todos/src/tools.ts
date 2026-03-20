@@ -241,13 +241,15 @@ export function createTodoTools(
 
         // For external accounts, require approval
         if (account.providerKind !== 'local') {
-          const approval = ctx.approvalRequest({
+          const approval = ctx.actionApprovalRequest({
             scope: 'external_write',
             domain: 'todos',
-            riskClass: 'ask',
+            actionKind: 'write',
+            resourceScope: 'resource',
             resourceType: 'todo',
             resourceId: 'new',
             requestedBy: 'popeye_todo_add',
+            ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
             payloadPreview: `Create todo: "${parsed.title}"`,
           });
           if (approval.status !== 'approved') {
@@ -310,13 +312,15 @@ export function createTodoTools(
 
         // For external accounts, require approval
         if (account.providerKind !== 'local') {
-          const approval = ctx.approvalRequest({
+          const approval = ctx.actionApprovalRequest({
             scope: 'external_write',
             domain: 'todos',
-            riskClass: 'ask',
+            actionKind: 'write',
+            resourceScope: 'resource',
             resourceType: 'todo',
             resourceId: parsed.todoId,
             requestedBy: 'popeye_todo_complete',
+            ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
             payloadPreview: `Complete todo: "${item.title}"`,
           });
           if (approval.status !== 'approved') {

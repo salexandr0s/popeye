@@ -45,6 +45,37 @@ function setup() {
   return { databases, service, auditEvents, emittedEvents, dir };
 }
 
+function seedRunContext(appDb: ReturnType<typeof openRuntimeDatabases>['app'], input?: { workspaceId?: string; taskSource?: 'manual' | 'heartbeat' | 'schedule' | 'telegram' | 'api' }) {
+  const now = new Date().toISOString();
+  const workspaceId = input?.workspaceId ?? 'default';
+  const taskSource = input?.taskSource ?? 'schedule';
+  appDb.prepare('INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES (?, ?, ?)').run(workspaceId, 'Default workspace', now);
+  appDb.prepare('INSERT OR IGNORE INTO agent_profiles (id, name, created_at) VALUES (?, ?, ?)').run('default', 'Default profile', now);
+  appDb.prepare(
+    'INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(
+    'job-automation-task',
+    workspaceId,
+    null,
+    'default',
+    'automation task',
+    'do work',
+    taskSource,
+    'active',
+    JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 }),
+    'read_only',
+    null,
+    now,
+  );
+  appDb.prepare(
+    'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run('job-automation', 'job-automation-task', workspaceId, 'running', 0, now, 'run-automation', now, now);
+  appDb.prepare(
+    'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run('run-automation', 'job-automation', 'job-automation-task', workspaceId, 'default', 'session-automation', null, 'running', now, null, null);
+  return { runId: 'run-automation' };
+}
+
 describe('ApprovalService', () => {
   it('request creates pending approval', () => {
     const { databases, service } = setup();
@@ -425,6 +456,91 @@ describe('ApprovalService', () => {
       expect(() => {
         service.resolveApproval('non-existent', { decision: 'approved' });
       }).toThrow(/not found/);
+    } finally {
+      databases.app.close();
+      databases.memory.close();
+    }
+  });
+
+  it('standing approvals auto-resolve eligible approval requests', () => {
+    const { databases, service } = setup();
+    try {
+      const standing = service.createStandingApproval({
+        scope: 'external_write',
+        domain: 'todos',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        resourceId: null,
+        requestedBy: 'popeye_todo_add',
+        workspaceId: null,
+        projectId: null,
+        note: 'allow todo writes',
+        expiresAt: null,
+        createdBy: 'operator:test',
+      });
+
+      const approval = service.requestApproval({
+        scope: 'external_write',
+        domain: 'todos',
+        riskClass: 'ask',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        resourceId: 'new',
+        requestedBy: 'popeye_todo_add',
+        standingApprovalEligible: true,
+        automationGrantEligible: true,
+      });
+
+      expect(approval.status).toBe('approved');
+      expect(approval.resolvedBy).toBe('standing_approval');
+      expect(approval.resolvedByGrantId).toBe(standing.id);
+      expect(approval.decisionReason).toContain(standing.id);
+    } finally {
+      databases.app.close();
+      databases.memory.close();
+    }
+  });
+
+  it('automation grants auto-resolve eligible automated approvals', () => {
+    const { databases, service } = setup();
+    try {
+      const { runId } = seedRunContext(databases.app, { taskSource: 'schedule' });
+      const grant = service.createAutomationGrant({
+        scope: 'external_write',
+        domain: 'todos',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        resourceId: null,
+        requestedBy: 'popeye_todo_complete',
+        workspaceId: null,
+        projectId: null,
+        taskSources: ['schedule'],
+        note: 'allow scheduled todo writes',
+        expiresAt: null,
+        createdBy: 'operator:test',
+      });
+
+      const approval = service.requestApproval({
+        scope: 'external_write',
+        domain: 'todos',
+        riskClass: 'ask',
+        actionKind: 'write',
+        resourceScope: 'resource',
+        resourceType: 'todo',
+        resourceId: 'todo-1',
+        requestedBy: 'popeye_todo_complete',
+        runId,
+        standingApprovalEligible: false,
+        automationGrantEligible: true,
+      });
+
+      expect(approval.status).toBe('approved');
+      expect(approval.resolvedBy).toBe('automation_grant');
+      expect(approval.resolvedByGrantId).toBe(grant.id);
+      expect(approval.runId).toBe(runId);
     } finally {
       databases.app.close();
       databases.memory.close();

@@ -5,6 +5,11 @@
 **Method:** Automated agent research per phase, compiled into this report
 **Codebase health at audit time:** Lint clean, typecheck clean, 700 tests passing (1 skipped smoke test)
 
+> Historical audit note: this document captures repo truth as of 2026-03-14.
+> For the current canonical snapshot, use `docs/current-state-matrix.md`. The
+> specific gaps around default `runtimeDataDir`, `pop daemon health`, generated
+> contract artifacts, and CLI help have since been closed.
+
 ---
 
 ## Executive Summary
@@ -24,9 +29,11 @@ Popeye is substantially built. Phases 0 through 9 are delivered with only minor 
 | 7 -- Observability & security | **Mostly complete** | Receipts, security audit, redaction, interventions all working. No structured logger with correlation IDs. |
 | 8 -- API & control surface | **Complete** | ~50 versioned endpoints, SSE, auth, CSRF, Sec-Fetch-Site. TS client is hand-written not codegen. |
 | 9 -- First UI | **Mostly complete** | Web inspector delivered with 11 views + Command Center. Swift macOS client deferred (ADR 0008). |
-| 10 -- Polish & packaging | **Partially complete** | Backup/restore works. Security audit works. No packaging, no migration tooling, CLI lacks --help. |
+| 10 -- Polish & packaging | **Partially complete** | Backup/restore works. Security audit works. Packaging and migration tooling remain incomplete. |
 
-**Overall: ~90% of the build plan is delivered.** The remaining gaps are either intentional deferrals (Swift app), known limitations (sqlite-vec alpha), or Phase 10 polish work.
+**Overall: ~90% of the build plan was delivered at audit time.** Use
+`docs/current-state-matrix.md` and `docs/fully-polished-release-gate.md` for
+the current repo truth and the current definition of "done."
 
 ---
 
@@ -157,9 +164,9 @@ None for Phase 2 scope.
 
 ### Gaps
 
-1. **No auto-default for `runtimeDataDir`.** The CLAUDE.md resolves `~/Library/Application Support/Popeye/` as the path, but config requires an explicit value. Mitigated by the bootstrap runbook.
+1. **Fixed on 2026-03-20:** `runtimeDataDir` now defaults to `~/Library/Application Support/Popeye/` when omitted from the config file.
 2. **`pop daemon start` is foreground-only.** Background operation requires `pop daemon install && pop daemon load` (launchd). This is reasonable for macOS but worth noting.
-3. **No `pop daemon health` subcommand.** No CLI command pings the running daemon's HTTP health endpoint. `pop daemon status` checks launchd state, not API health.
+3. **Fixed on 2026-03-20:** `pop daemon health` now checks the running daemon's API/engine health.
 
 ---
 
@@ -374,8 +381,8 @@ None.
 
 ### Gaps
 
-1. **TypeScript client is hand-written, not auto-generated.** The buildplan said "Generated TypeScript client (auto-generated)." The actual client is comprehensive and well-tested but manually maintained.
-2. **No OpenAPI/JSON Schema export.** No formal OpenAPI spec. Swift models are generated from contracts, but there is no generic schema export.
+1. **TypeScript client is still hand-written, not auto-generated.** The buildplan said "Generated TypeScript client (auto-generated)." The actual client is comprehensive and well-tested but manually maintained.
+2. **Fixed on 2026-03-20:** generated contract artifacts now include a JSON Schema bundle plus generated TypeScript and Swift model bundles.
 3. **Swift client has no network layer.** `PopeyeModels.swift` contains only `Codable` structs/enums -- no API client class.
 
 ---
@@ -484,7 +491,7 @@ None.
 | High | No packaging/install flow (runs from monorepo checkout) | 10 |
 | ~~High~~ | ~~No automated workspace doc indexing into memory~~ — **Fixed** | 5 |
 | Medium | No migration helper tooling | 10 |
-| Medium | CLI lacks --help and subcommand help | 10 |
+| ~~Medium~~ | ~~CLI lacks --help and subcommand help~~ — **Fixed** | 10 |
 | Medium | TypeScript API client is hand-written, not codegen | 8 |
 | Medium | No full hybrid search integration test (FTS5 + vec combined) | 5 |
 | ~~Medium~~ | ~~ESLint type-aware rules disabled~~ — **Fixed** | 1 |

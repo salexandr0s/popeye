@@ -12,7 +12,12 @@ import { ReceiptDetail } from './views/receipt-detail';
 import { Instructions } from './views/instructions';
 import { Interventions } from './views/interventions';
 import { MemorySearch } from './views/memory-search';
+import { Approvals } from './views/approvals';
+import { StandingApprovals } from './views/standing-approvals';
+import { AutomationGrants } from './views/automation-grants';
+import { SecurityPolicy } from './views/security-policy';
 import { Usage } from './views/usage';
+import { Vaults } from './views/vaults';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -50,6 +55,11 @@ export function App() {
               <Route path="receipts/:id" element={<ReceiptDetail />} />
               <Route path="instructions" element={<Instructions />} />
               <Route path="interventions" element={<Interventions />} />
+              <Route path="approvals" element={<Approvals />} />
+              <Route path="standing-approvals" element={<StandingApprovals />} />
+              <Route path="automation-grants" element={<AutomationGrants />} />
+              <Route path="vaults" element={<Vaults />} />
+              <Route path="security-policy" element={<SecurityPolicy />} />
               <Route path="memory" element={<MemorySearch />} />
               <Route path="usage" element={<Usage />} />
             </Route>

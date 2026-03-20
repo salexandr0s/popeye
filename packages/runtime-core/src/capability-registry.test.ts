@@ -28,6 +28,7 @@ function makeDeps(): CapabilityRegistryDeps & { cleanup: () => void } {
       auditCallback: () => {},
       memoryInsert: () => ({ memoryId: 'test', embedded: false }),
       approvalRequest: () => ({ id: 'test', status: 'pending' }),
+      actionApprovalRequest: () => ({ id: 'test', status: 'pending' }),
       contextReleaseRecord: () => ({ id: 'test' }),
       events: { emit: () => {} },
     }),

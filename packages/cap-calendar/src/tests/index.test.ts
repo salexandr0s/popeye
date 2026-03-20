@@ -23,6 +23,7 @@ function makeCtx(tempDir: string): CapabilityContext {
     auditCallback: () => {},
     memoryInsert: () => ({ memoryId: 'mem-1', embedded: false }),
     approvalRequest: () => ({ id: 'test', status: 'pending' }),
+    actionApprovalRequest: () => ({ id: 'test', status: 'pending' }),
     contextReleaseRecord: () => ({ id: 'test' }),
     events: { emit: () => {} },
   };

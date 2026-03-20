@@ -3,6 +3,9 @@
 Date: 2026-03-16  
 Scope: `github.com/salexandr0s/popeye` repo-first/code-first audit for personal-assistant evolution
 
+> Historical note: this audit is no longer the canonical current-state source.
+> Use `docs/current-state-matrix.md` for repo truth as of 2026-03-20.
+
 # Evidence legend
 
 - **VERIFIED IN CODE** — I directly inspected the repository tree and/or file contents and confirmed the statement in code.
@@ -15,7 +18,7 @@ Scope: `github.com/salexandr0s/popeye` repo-first/code-first audit for personal-
 
 **VERIFIED IN CODE** — Popeye is not greenfield. The repo already contains a real local runtime foundation: a daemon app, a local control API, a runtime service, a scheduler/task/job/run model, receipts, interventions, memory services, observability/redaction, workspace registration/policy, a Telegram thin bridge, a web inspector, a CLI, CI, and a Pi engine adapter boundary.
 
-**VERIFIED IN CODE** — Popeye is also not yet the target personal assistant product. There are no email, calendar, GitHub, todo, contacts, finance, or medical capability packages or app modules in the repo tree. The codebase is a strong runtime/control-plane foundation, not yet an always-on assistant that can operate across those domains.
+**VERIFIED IN CODE** — Popeye is also not yet the target personal assistant product. Capability packages now exist for files, email, calendar, GitHub, and todos, but People, finance, and medical are still missing as first-class product modules and the existing general-domain integrations are not yet polished enough to count as the final assistant product.
 
 **INFERRED** — The architecture is directionally right for the intended end state. The strongest parts are the runtime/core package split, the control API boundary, local-first storage, auditable receipts, memory/search foundations, and interface replaceability.
 
@@ -155,7 +158,7 @@ I inspected the repo docs first, then the code tree and representative implement
 | Web inspector | **VERIFIED IN CODE — partial** | Real interface exists, but assistant-domain workflows are not there yet. |
 | Backup/restore | **VERIFIED IN CODE — partial** | Good checksum/restore baseline; restricted-vault backup posture is missing. |
 | macOS native app | **VERIFIED IN CODE — placeholder/deferred** | Deferred, not started as a real product surface. |
-| Email/calendar/todo/GitHub/people/finance/medical capabilities | **VERIFIED IN CODE — not built** | These are the main product gaps. |
+| Email/calendar/todo/GitHub/people/finance/medical capabilities | **VERIFIED IN CODE — mixed** | Files/email/calendar/todos/GitHub packages exist; People/finance/medical remain major product gaps. |
 
 
 ## What is solid today
@@ -319,11 +322,11 @@ These are central to the target product and are the largest current gap.
 
 | Doc claim | Reality | Assessment |
 |---|---|---|
-| `docs/phase-audit-2026-03-14.md` frames the repo as roughly “90% complete” | **VERIFIED IN CODE** the runtime substrate is mature, but the target assistant capabilities (email/calendar/todo/GitHub/people/finance/medical) are not present in code | **DOC CLAIM ONLY / overstated for target product** |
+| `docs/phase-audit-2026-03-14.md` frames the repo as roughly “90% complete” | **VERIFIED IN CODE** the runtime substrate is mature, existing capability packages cover files/email/calendar/todos/GitHub, and People/finance/medical plus release polish remain major gaps | **DOC CLAIM ONLY / overstated for target product** |
 | `docs/phase-audit-2026-03-14.md` references docs like `workspace-conventions.md` and `workspace-routing.md` | **VERIFIED IN CODE** I did not find those docs in the inspected `docs/` tree | **DOC CLAIM ONLY / stale** |
 | `packages/scheduler/README.md` says the package contains retry/backoff utilities | **VERIFIED IN CODE** the package also contains `TaskManager` and task/job orchestration behavior | **Doc drift** |
 | `apps/macos` as a future interface | **VERIFIED IN CODE** deferred/not started, despite broader repo maturity elsewhere | **Accurately documented as deferred** |
-| README/product copy references future browser/email/file capability | **VERIFIED IN CODE** those capabilities are mostly not present as product modules today | **Intent, not code truth** |
+| README/product copy references future browser/email/file capability | **VERIFIED IN CODE** browser, file, and several general-domain capabilities now exist, but polished operator workflows are still incomplete | **Intent mixed with current truth** |
 
 ## Architecture strengths
 
@@ -395,21 +398,20 @@ These are central to the target product and are the largest current gap.
 - **VERIFIED IN CODE / INFERRED** proactive scheduler behavior
 - **VERIFIED IN CODE** approval/intervention mechanism
 - **VERIFIED IN CODE** file/workspace safety
+- **VERIFIED IN CODE** email assistant capability
+- **VERIFIED IN CODE** calendar assistant capability
+- **VERIFIED IN CODE** todo assistant capability
+- **VERIFIED IN CODE** GitHub monitoring capability
 - **VERIFIED IN CODE / INFERRED** document indexing and daily-summary style memory lifecycle
 - **VERIFIED IN CODE / INFERRED** bounded autonomy
 - **VERIFIED IN CODE** web inspector/admin UI
 
 ### Not built
-- **VERIFIED IN CODE** email assistant capability
-- **VERIFIED IN CODE** calendar assistant capability
-- **VERIFIED IN CODE** todo assistant capability
-- **VERIFIED IN CODE** GitHub monitoring capability
 - **VERIFIED IN CODE** contact/people capability
 - **VERIFIED IN CODE** finance vault/domain
 - **VERIFIED IN CODE** medical vault/domain
-- **VERIFIED IN CODE** domain-based permissioning and trust levels
-- **VERIFIED IN CODE** structured approval policy by action type/domain
-- **VERIFIED IN CODE** restricted-domain encryption/vault architecture
+- **VERIFIED IN CODE** policy-driven autonomy with standing approvals and automation grants
+- **VERIFIED IN CODE** restricted-domain product workflows and encrypted backup posture
 
 ## Current-state conclusion
 

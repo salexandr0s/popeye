@@ -168,6 +168,8 @@ Notes:
 
 - [`docs/control-api.md`](docs/control-api.md) — control-plane routes and auth
 - [`docs/api-contracts.md`](docs/api-contracts.md) — contract behavior notes
+- [`docs/current-state-matrix.md`](docs/current-state-matrix.md) — canonical repo-truth snapshot
+- [`docs/fully-polished-release-gate.md`](docs/fully-polished-release-gate.md) — acceptance bar for the polished product state
 - [`docs/memory-model.md`](docs/memory-model.md) — memory architecture
 - [`docs/domain-model.md`](docs/domain-model.md) — runtime entities and
   relationships
@@ -182,6 +184,8 @@ Popeye is under active development, but the architecture direction is stable:
 - the runtime remains local-first and operator-owned
 - the API remains loopback-only and authenticated
 - memory, policy, and capability expansion continue incrementally
+- the web inspector remains the primary required GUI; the native macOS client
+  is deferred for the current polished bar
 
 The goal is not maximum surface area. The goal is a dependable personal agent
 that can stay on, stay inspectable, and become more useful over time without

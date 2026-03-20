@@ -5,9 +5,21 @@ import { MemorySourceTypeSchema, MemoryTypeSchema } from './memory.js';
 import { SecurityAuditFindingSchema } from './security.js';
 import { WorkspaceRecordSchema, DataClassificationSchema } from './config.js';
 import { DomainKindSchema, DomainPolicySchema } from './domain.js';
-import { ApprovalRecordSchema, ApprovalPolicyRuleSchema } from './approval.js';
+import {
+  ApprovalRecordSchema,
+  ApprovalRiskClassSchema,
+  ActionPolicyDefaultSchema,
+  ApprovalPolicyRuleSchema,
+  ApprovalRequestInputSchema,
+  StandingApprovalRecordSchema,
+  StandingApprovalCreateInputSchema,
+  PolicyGrantRevokeInputSchema,
+  AutomationGrantRecordSchema,
+  AutomationGrantCreateInputSchema,
+} from './approval.js';
 import { ConnectionRecordSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
+import { VaultKindSchema, VaultRecordSchema } from './vault.js';
 import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchQuerySchema, FileSearchResponseSchema, FileIndexResultSchema } from './file-roots.js';
 import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema } from './email.js';
 import { GithubAccountRecordSchema, GithubAccountRegistrationInputSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema } from './github.js';
@@ -253,14 +265,52 @@ export type MemoryImportResponse = z.infer<typeof MemoryImportResponseSchema>;
 export const ApprovalListResponseSchema = z.array(ApprovalRecordSchema);
 export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
 
+export const ApprovalRequestSchema = ApprovalRequestInputSchema;
+export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+
+export const StandingApprovalListResponseSchema = z.array(StandingApprovalRecordSchema);
+export type StandingApprovalListResponse = z.infer<typeof StandingApprovalListResponseSchema>;
+
+export const StandingApprovalCreateRequestSchema = StandingApprovalCreateInputSchema;
+export type StandingApprovalCreateRequest = z.infer<typeof StandingApprovalCreateRequestSchema>;
+
+export const PolicyGrantRevokeRequestSchema = PolicyGrantRevokeInputSchema;
+export type PolicyGrantRevokeRequest = z.infer<typeof PolicyGrantRevokeRequestSchema>;
+
+export const AutomationGrantListResponseSchema = z.array(AutomationGrantRecordSchema);
+export type AutomationGrantListResponse = z.infer<typeof AutomationGrantListResponseSchema>;
+
+export const AutomationGrantCreateRequestSchema = AutomationGrantCreateInputSchema;
+export type AutomationGrantCreateRequest = z.infer<typeof AutomationGrantCreateRequestSchema>;
+
 export const ConnectionListResponseSchema = z.array(ConnectionRecordSchema);
 export type ConnectionListResponse = z.infer<typeof ConnectionListResponseSchema>;
 
 export const SecurityPolicyResponseSchema = z.object({
   domainPolicies: z.array(DomainPolicySchema),
   approvalRules: z.array(ApprovalPolicyRuleSchema),
+  defaultRiskClass: ApprovalRiskClassSchema,
+  actionDefaults: z.array(ActionPolicyDefaultSchema),
 });
 export type SecurityPolicyResponse = z.infer<typeof SecurityPolicyResponseSchema>;
+
+export const VaultListResponseSchema = z.array(VaultRecordSchema);
+export type VaultListResponse = z.infer<typeof VaultListResponseSchema>;
+
+export const VaultCreateRequestSchema = z.object({
+  domain: DomainKindSchema,
+  name: z.string().min(1),
+  kind: VaultKindSchema.optional(),
+});
+export type VaultCreateRequest = z.infer<typeof VaultCreateRequestSchema>;
+
+export const VaultResponseSchema = VaultRecordSchema;
+export type VaultResponse = z.infer<typeof VaultResponseSchema>;
+
+export const VaultOpenRequestSchema = z.object({
+  approvalId: z.string().min(1),
+});
+export type VaultOpenRequest = z.infer<typeof VaultOpenRequestSchema>;
 
 export const ContextReleasePreviewRequestSchema = z.object({
   domain: DomainKindSchema,

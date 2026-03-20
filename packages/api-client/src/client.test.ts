@@ -100,6 +100,91 @@ describe('PopeyeApiClient', () => {
     await app.close();
   });
 
+  it('manages approvals, policy reads, and vault lifecycle through the API client', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-policy-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+    const approval = await client.requestApproval({
+      scope: 'vault_open',
+      domain: 'general',
+      riskClass: 'auto',
+      actionKind: 'open_vault',
+      resourceScope: 'resource',
+      resourceType: 'vault',
+      resourceId: 'vault-x',
+      requestedBy: 'agent',
+    });
+    expect(approval.status).toBe('approved');
+
+    const standing = await client.createStandingApproval({
+      scope: 'external_write',
+      domain: 'todos',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'todo',
+      createdBy: 'api-client-test',
+    });
+    expect(standing.status).toBe('active');
+
+    const standingList = await client.listStandingApprovals();
+    expect(standingList).toEqual([expect.objectContaining({ id: standing.id, actionKind: 'write' })]);
+
+    const revokedStanding = await client.revokeStandingApproval(standing.id, { revokedBy: 'api-client-test' });
+    expect(revokedStanding.status).toBe('revoked');
+
+    const grant = await client.createAutomationGrant({
+      scope: 'external_write',
+      domain: 'todos',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'todo',
+      taskSources: ['schedule'],
+      createdBy: 'api-client-test',
+    });
+    expect(grant.taskSources).toEqual(['schedule']);
+
+    const grants = await client.listAutomationGrants();
+    expect(grants).toEqual([expect.objectContaining({ id: grant.id, status: 'active' })]);
+
+    const revokedGrant = await client.revokeAutomationGrant(grant.id, { revokedBy: 'api-client-test' });
+    expect(revokedGrant.status).toBe('revoked');
+
+    const policy = await client.getSecurityPolicy();
+    expect(policy.domainPolicies.length).toBeGreaterThan(0);
+    expect(policy.defaultRiskClass).toBe('ask');
+    expect(policy.actionDefaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scope: 'external_write', actionKind: 'write', riskClass: 'ask' }),
+      ]),
+    );
+
+    const createdVault = await client.createVault({ domain: 'general', name: 'ops' });
+    expect(createdVault.status).toBe('closed');
+
+    const openedVault = await client.openVault(createdVault.id, { approvalId: approval.id });
+    expect(openedVault.status).toBe('open');
+
+    const closedVault = await client.closeVault(createdVault.id);
+    expect(closedVault.status).toBe('closed');
+
+    const sealedVault = await client.sealVault(createdVault.id);
+    expect(sealedVault.status).toBe('sealed');
+
+    const listedVaults = await client.listVaults();
+    expect(listedVaults).toEqual([expect.objectContaining({ id: createdVault.id, status: 'sealed' })]);
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('fetches a persisted run envelope through the API client', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-envelope-'));
     chmodSync(dir, 0o700);

@@ -11,6 +11,9 @@ export type RetryPolicy = z.infer<typeof RetryPolicySchema>;
 export const TaskSideEffectProfileSchema = z.enum(['read_only', 'external_side_effect']);
 export type TaskSideEffectProfile = z.infer<typeof TaskSideEffectProfileSchema>;
 
+export const TaskSourceSchema = z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']);
+export type TaskSource = z.infer<typeof TaskSourceSchema>;
+
 export const ExecutionProfileModeSchema = z.enum(['restricted', 'interactive', 'elevated']);
 export type ExecutionProfileMode = z.infer<typeof ExecutionProfileModeSchema>;
 
@@ -67,7 +70,7 @@ export const TaskRecordSchema = z.object({
   profileId: z.string().default('default'),
   title: z.string(),
   prompt: z.string(),
-  source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']),
+  source: TaskSourceSchema,
   status: z.enum(['active', 'paused']).default('active'),
   retryPolicy: RetryPolicySchema,
   sideEffectProfile: TaskSideEffectProfileSchema,

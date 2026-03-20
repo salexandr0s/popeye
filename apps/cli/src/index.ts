@@ -6,11 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiError, type PopeyeApiClient } from '@popeye/api-client';
 import type {
+  ApprovalRecord,
   AgentProfileRecord,
+  AutomationGrantRecord,
   AppConfig,
+  DomainKind,
   EngineCapabilitiesResponse,
   ExecutionEnvelopeResponse,
   RunRecord,
+  SecurityPolicyResponse,
+  StandingApprovalRecord,
+  VaultRecord,
 } from '@popeye/contracts';
 import { z } from 'zod';
 import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
@@ -52,6 +58,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   security: {
     audit: { desc: 'Run local security audit', usage: 'pop security audit' },
+    policy: { desc: 'Show domain policy and approval rules', usage: 'pop security policy' },
   },
   pi: {
     smoke: { desc: 'Run Pi engine compatibility check', usage: 'pop pi smoke' },
@@ -85,6 +92,30 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   interventions: {
     list: { desc: 'List open interventions', usage: 'pop interventions list' },
+  },
+  approvals: {
+    list: { desc: 'List approvals', usage: 'pop approvals list [--status <pending|approved|denied|expired>] [--domain <domain>] [--scope <scope>] [--action-kind <kind>] [--run-id <id>]' },
+    show: { desc: 'Show one approval', usage: 'pop approvals show <approvalId>' },
+    approve: { desc: 'Approve a pending approval', usage: 'pop approvals approve <approvalId> [reason]' },
+    deny: { desc: 'Deny a pending approval', usage: 'pop approvals deny <approvalId> [reason]' },
+  },
+  'standing-approvals': {
+    list: { desc: 'List standing approvals', usage: 'pop standing-approvals list [--status <active|revoked|expired>] [--domain <domain>] [--action-kind <kind>]' },
+    create: { desc: 'Create a standing approval', usage: 'pop standing-approvals create --scope <scope> --domain <domain> --action-kind <kind> --resource-type <type> [--resource-id <id>] [--resource-scope <scope>] [--requested-by <actor>] [--workspace-id <id>] [--project-id <id>] [--expires-at <iso>] [--note <text>] [--created-by <actor>]' },
+    revoke: { desc: 'Revoke a standing approval', usage: 'pop standing-approvals revoke <id> [--by <actor>]' },
+  },
+  'automation-grants': {
+    list: { desc: 'List automation grants', usage: 'pop automation-grants list [--status <active|revoked|expired>] [--domain <domain>] [--action-kind <kind>]' },
+    create: { desc: 'Create an automation grant', usage: 'pop automation-grants create --scope <scope> --domain <domain> --action-kind <kind> --resource-type <type> [--resource-id <id>] [--resource-scope <scope>] [--requested-by <actor>] [--workspace-id <id>] [--project-id <id>] [--task-sources <heartbeat,schedule>] [--expires-at <iso>] [--note <text>] [--created-by <actor>]' },
+    revoke: { desc: 'Revoke an automation grant', usage: 'pop automation-grants revoke <id> [--by <actor>]' },
+  },
+  vaults: {
+    list: { desc: 'List vaults', usage: 'pop vaults list [--domain <domain>] [--json]' },
+    show: { desc: 'Show one vault', usage: 'pop vaults show <vaultId>' },
+    create: { desc: 'Create a vault', usage: 'pop vaults create <domain> <name> [--restricted]' },
+    open: { desc: 'Open a vault using an approved approval', usage: 'pop vaults open <vaultId> <approvalId>' },
+    close: { desc: 'Close a vault', usage: 'pop vaults close <vaultId>' },
+    seal: { desc: 'Seal a vault', usage: 'pop vaults seal <vaultId>' },
   },
   recovery: {
     retry: { desc: 'Retry a failed run', usage: 'pop recovery retry <runId>' },
@@ -328,6 +359,121 @@ function formatProfile(profile: AgentProfileRecord): string {
   return lines.join('\n');
 }
 
+function formatApproval(approval: ApprovalRecord): string {
+  const lines = [
+    `Approval ${approval.id}`,
+    `  Scope:                ${approval.scope}`,
+    `  Domain:               ${approval.domain}`,
+    `  Status:               ${approval.status}`,
+    `  Risk class:           ${approval.riskClass}`,
+    `  Action kind:          ${approval.actionKind}`,
+    `  Resource scope:       ${approval.resourceScope}`,
+    `  Resource:             ${approval.resourceType}/${approval.resourceId}`,
+    `  Requested by:         ${approval.requestedBy}`,
+    `  Run:                  ${approval.runId ?? '(none)'}`,
+    `  Standing eligible:    ${approval.standingApprovalEligible ? 'yes' : 'no'}`,
+    `  Automation eligible:  ${approval.automationGrantEligible ? 'yes' : 'no'}`,
+    `  Created:              ${approval.createdAt}`,
+  ];
+  if (approval.expiresAt) lines.push(`  Expires:              ${approval.expiresAt}`);
+  if (approval.resolvedBy) lines.push(`  Resolved by:          ${approval.resolvedBy}`);
+  if (approval.resolvedByGrantId) lines.push(`  Resolution grant:     ${approval.resolvedByGrantId}`);
+  if (approval.decisionReason) lines.push(`  Decision reason:      ${approval.decisionReason}`);
+  return lines.join('\n');
+}
+
+function formatStandingApproval(record: StandingApprovalRecord): string {
+  const lines = [
+    `Standing Approval ${record.id}`,
+    `  Scope:                ${record.scope}`,
+    `  Domain:               ${record.domain}`,
+    `  Action kind:          ${record.actionKind}`,
+    `  Resource scope:       ${record.resourceScope}`,
+    `  Resource:             ${record.resourceType}/${record.resourceId ?? '*'}`,
+    `  Requested by:         ${record.requestedBy ?? '*'}`,
+    `  Workspace:            ${record.workspaceId ?? '*'}`,
+    `  Project:              ${record.projectId ?? '*'}`,
+    `  Status:               ${record.status}`,
+    `  Created by:           ${record.createdBy}`,
+    `  Created:              ${record.createdAt}`,
+  ];
+  if (record.note) lines.push(`  Note:                 ${record.note}`);
+  if (record.expiresAt) lines.push(`  Expires:              ${record.expiresAt}`);
+  if (record.revokedBy) lines.push(`  Revoked by:           ${record.revokedBy}`);
+  if (record.revokedAt) lines.push(`  Revoked at:           ${record.revokedAt}`);
+  return lines.join('\n');
+}
+
+function formatAutomationGrant(record: AutomationGrantRecord): string {
+  const lines = [
+    `Automation Grant ${record.id}`,
+    `  Scope:                ${record.scope}`,
+    `  Domain:               ${record.domain}`,
+    `  Action kind:          ${record.actionKind}`,
+    `  Resource scope:       ${record.resourceScope}`,
+    `  Resource:             ${record.resourceType}/${record.resourceId ?? '*'}`,
+    `  Requested by:         ${record.requestedBy ?? '*'}`,
+    `  Workspace:            ${record.workspaceId ?? '*'}`,
+    `  Project:              ${record.projectId ?? '*'}`,
+    `  Task sources:         ${record.taskSources.join(', ')}`,
+    `  Status:               ${record.status}`,
+    `  Created by:           ${record.createdBy}`,
+    `  Created:              ${record.createdAt}`,
+  ];
+  if (record.note) lines.push(`  Note:                 ${record.note}`);
+  if (record.expiresAt) lines.push(`  Expires:              ${record.expiresAt}`);
+  if (record.revokedBy) lines.push(`  Revoked by:           ${record.revokedBy}`);
+  if (record.revokedAt) lines.push(`  Revoked at:           ${record.revokedAt}`);
+  return lines.join('\n');
+}
+
+function formatVault(vault: VaultRecord): string {
+  const lines = [
+    `Vault ${vault.id}`,
+    `  Domain:               ${vault.domain}`,
+    `  Kind:                 ${vault.kind}`,
+    `  Status:               ${vault.status}`,
+    `  Encrypted:            ${vault.encrypted ? 'yes' : 'no'}`,
+    `  Path:                 ${vault.dbPath}`,
+    `  Created:              ${vault.createdAt}`,
+  ];
+  if (vault.lastAccessedAt) lines.push(`  Last accessed:        ${vault.lastAccessedAt}`);
+  return lines.join('\n');
+}
+
+function formatSecurityPolicy(policy: SecurityPolicyResponse): string {
+  const lines = [
+    'Security policy',
+    `  Default risk class:   ${policy.defaultRiskClass}`,
+    '',
+    'Domain policies:',
+  ];
+  for (const domainPolicy of policy.domainPolicies) {
+    lines.push(
+      `  ${domainPolicy.domain}: sensitivity=${domainPolicy.sensitivity}, embeddings=${domainPolicy.embeddingPolicy}, context=${domainPolicy.contextReleasePolicy}`,
+    );
+  }
+  lines.push('', 'Action defaults:');
+  if (policy.actionDefaults.length === 0) {
+    lines.push('  (no built-in defaults exposed)');
+  } else {
+    for (const actionDefault of policy.actionDefaults) {
+      lines.push(
+        `  ${actionDefault.scope} / ${actionDefault.domain ?? 'all'} / ${actionDefault.actionKind} -> ${actionDefault.riskClass} (standing=${actionDefault.standingApprovalEligible ? 'yes' : 'no'}, automation=${actionDefault.automationGrantEligible ? 'yes' : 'no'})`,
+      );
+    }
+  }
+  lines.push('', 'Approval rules:');
+  if (policy.approvalRules.length === 0) {
+    lines.push('  (no explicit rules configured)');
+  } else {
+    for (const rule of policy.approvalRules) {
+      lines.push(`  ${rule.scope} / ${rule.domain} -> ${rule.riskClass}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> {
   const client = await tryConnectDaemon(config);
   if (!client) {
@@ -392,6 +538,29 @@ function readRoleFlag(): 'operator' | 'service' | 'readonly' {
   );
 }
 
+function readFlagValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index !== -1 ? process.argv[index + 1] : undefined;
+}
+
+function requireFlag(flag: string): string {
+  const value = readFlagValue(flag);
+  if (!value) {
+    console.error(`Missing required flag: ${flag}`);
+    const subs = command ? COMMANDS[command] : undefined;
+    const sub = subs && subcommand ? subs[subcommand] : undefined;
+    if (sub) console.error(`Usage: ${sub.usage}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function readCsvFlag(flag: string): string[] | undefined {
+  const value = readFlagValue(flag);
+  if (!value) return undefined;
+  return value.split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
 async function main(): Promise<void> {
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile, readRoleFlag()), null, 2));
@@ -403,6 +572,16 @@ async function main(): Promise<void> {
   }
   if (command === 'security' && subcommand === 'audit') {
     console.info(JSON.stringify(runLocalSecurityAudit(config), null, 2));
+    return;
+  }
+  if (command === 'security' && subcommand === 'policy') {
+    const client = await requireDaemonClient(config);
+    const policy = await client.getSecurityPolicy();
+    if (jsonFlag) {
+      console.info(JSON.stringify(policy, null, 2));
+    } else {
+      console.info(formatSecurityPolicy(policy));
+    }
     return;
   }
   if (command === 'pi' && subcommand === 'smoke') {
@@ -693,6 +872,198 @@ async function main(): Promise<void> {
   if (command === 'interventions' && subcommand === 'list') {
     const client = await requireDaemonClient(config);
     console.info(JSON.stringify(await client.listInterventions(), null, 2));
+    return;
+  }
+  if (command === 'approvals' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const approvals = await client.listApprovals({
+      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
+      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
+      ...(readFlagValue('--scope') ? { scope: readFlagValue('--scope') } : {}),
+      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
+      ...(readFlagValue('--run-id') ? { runId: readFlagValue('--run-id') } : {}),
+      ...(readFlagValue('--resolved-by') ? { resolvedBy: readFlagValue('--resolved-by') } : {}),
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(approvals, null, 2));
+    } else if (approvals.length === 0) {
+      console.info('No approvals');
+    } else {
+      console.info(approvals.map(formatApproval).join('\n\n'));
+    }
+    return;
+  }
+  if (command === 'approvals' && subcommand === 'show') {
+    requireArg(arg1, 'approvalId');
+  }
+  if (command === 'approvals' && subcommand === 'show' && arg1) {
+    const client = await requireDaemonClient(config);
+    const approval = await client.getApproval(arg1);
+    console.info(jsonFlag ? JSON.stringify(approval, null, 2) : formatApproval(approval));
+    return;
+  }
+  if (command === 'approvals' && (subcommand === 'approve' || subcommand === 'deny')) {
+    requireArg(arg1, 'approvalId');
+  }
+  if (command === 'approvals' && (subcommand === 'approve' || subcommand === 'deny') && arg1) {
+    const client = await requireDaemonClient(config);
+    const decisionReason = positionalArgs.slice(5).join(' ').trim() || undefined;
+    const approval = await client.resolveApproval(arg1, {
+      decision: subcommand === 'approve' ? 'approved' : 'denied',
+      ...(decisionReason ? { decisionReason } : {}),
+    });
+    console.info(jsonFlag ? JSON.stringify(approval, null, 2) : formatApproval(approval));
+    return;
+  }
+  if (command === 'standing-approvals' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const records = await client.listStandingApprovals({
+      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
+      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
+      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(records, null, 2));
+    } else if (records.length === 0) {
+      console.info('No standing approvals');
+    } else {
+      console.info(records.map(formatStandingApproval).join('\n\n'));
+    }
+    return;
+  }
+  if (command === 'standing-approvals' && subcommand === 'create') {
+    const client = await requireDaemonClient(config);
+    const record = await client.createStandingApproval({
+      scope: requireFlag('--scope') as ApprovalRecord['scope'],
+      domain: requireFlag('--domain') as DomainKind,
+      actionKind: requireFlag('--action-kind') as StandingApprovalRecord['actionKind'],
+      resourceType: requireFlag('--resource-type'),
+      resourceScope: (readFlagValue('--resource-scope') ?? 'resource') as StandingApprovalRecord['resourceScope'],
+      resourceId: readFlagValue('--resource-id') ?? null,
+      requestedBy: readFlagValue('--requested-by') ?? null,
+      workspaceId: readFlagValue('--workspace-id') ?? null,
+      projectId: readFlagValue('--project-id') ?? null,
+      note: readFlagValue('--note') ?? '',
+      expiresAt: readFlagValue('--expires-at') ?? null,
+      createdBy: readFlagValue('--created-by') ?? 'cli:pop',
+    });
+    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatStandingApproval(record));
+    return;
+  }
+  if (command === 'standing-approvals' && subcommand === 'revoke') {
+    requireArg(arg1, 'standingApprovalId');
+  }
+  if (command === 'standing-approvals' && subcommand === 'revoke' && arg1) {
+    const client = await requireDaemonClient(config);
+    const record = await client.revokeStandingApproval(arg1, {
+      revokedBy: readFlagValue('--by') ?? 'cli:pop',
+    });
+    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatStandingApproval(record));
+    return;
+  }
+  if (command === 'automation-grants' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const records = await client.listAutomationGrants({
+      ...(readFlagValue('--status') ? { status: readFlagValue('--status') } : {}),
+      ...(readFlagValue('--domain') ? { domain: readFlagValue('--domain') } : {}),
+      ...(readFlagValue('--action-kind') ? { actionKind: readFlagValue('--action-kind') } : {}),
+    });
+    if (jsonFlag) {
+      console.info(JSON.stringify(records, null, 2));
+    } else if (records.length === 0) {
+      console.info('No automation grants');
+    } else {
+      console.info(records.map(formatAutomationGrant).join('\n\n'));
+    }
+    return;
+  }
+  if (command === 'automation-grants' && subcommand === 'create') {
+    const client = await requireDaemonClient(config);
+    const record = await client.createAutomationGrant({
+      scope: requireFlag('--scope') as ApprovalRecord['scope'],
+      domain: requireFlag('--domain') as DomainKind,
+      actionKind: requireFlag('--action-kind') as AutomationGrantRecord['actionKind'],
+      resourceType: requireFlag('--resource-type'),
+      resourceScope: (readFlagValue('--resource-scope') ?? 'resource') as AutomationGrantRecord['resourceScope'],
+      resourceId: readFlagValue('--resource-id') ?? null,
+      requestedBy: readFlagValue('--requested-by') ?? null,
+      workspaceId: readFlagValue('--workspace-id') ?? null,
+      projectId: readFlagValue('--project-id') ?? null,
+      taskSources: readCsvFlag('--task-sources') as AutomationGrantRecord['taskSources'] | undefined,
+      note: readFlagValue('--note') ?? '',
+      expiresAt: readFlagValue('--expires-at') ?? null,
+      createdBy: readFlagValue('--created-by') ?? 'cli:pop',
+    });
+    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatAutomationGrant(record));
+    return;
+  }
+  if (command === 'automation-grants' && subcommand === 'revoke') {
+    requireArg(arg1, 'automationGrantId');
+  }
+  if (command === 'automation-grants' && subcommand === 'revoke' && arg1) {
+    const client = await requireDaemonClient(config);
+    const record = await client.revokeAutomationGrant(arg1, {
+      revokedBy: readFlagValue('--by') ?? 'cli:pop',
+    });
+    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatAutomationGrant(record));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'list') {
+    const client = await requireDaemonClient(config);
+    const domainIndex = process.argv.indexOf('--domain');
+    const vaults = await client.listVaults(domainIndex !== -1 ? process.argv[domainIndex + 1] as DomainKind : undefined);
+    if (jsonFlag) {
+      console.info(JSON.stringify(vaults, null, 2));
+    } else if (vaults.length === 0) {
+      console.info('No vaults');
+    } else {
+      console.info(vaults.map(formatVault).join('\n\n'));
+    }
+    return;
+  }
+  if (command === 'vaults' && (subcommand === 'show' || subcommand === 'close' || subcommand === 'seal')) {
+    requireArg(arg1, 'vaultId');
+  }
+  if (command === 'vaults' && subcommand === 'show' && arg1) {
+    const client = await requireDaemonClient(config);
+    const vault = await client.getVault(arg1);
+    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'create') {
+    requireArg(arg1, 'domain');
+    requireArg(_arg2, 'name');
+  }
+  if (command === 'vaults' && subcommand === 'create' && arg1 && _arg2) {
+    const client = await requireDaemonClient(config);
+    const vault = await client.createVault({
+      domain: arg1 as DomainKind,
+      name: _arg2,
+      ...(process.argv.includes('--restricted') ? { kind: 'restricted' } : {}),
+    });
+    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'open') {
+    requireArg(arg1, 'vaultId');
+    requireArg(_arg2, 'approvalId');
+  }
+  if (command === 'vaults' && subcommand === 'open' && arg1 && _arg2) {
+    const client = await requireDaemonClient(config);
+    const vault = await client.openVault(arg1, { approvalId: _arg2 });
+    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'close' && arg1) {
+    const client = await requireDaemonClient(config);
+    const vault = await client.closeVault(arg1);
+    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
+    return;
+  }
+  if (command === 'vaults' && subcommand === 'seal' && arg1) {
+    const client = await requireDaemonClient(config);
+    const vault = await client.sealVault(arg1);
+    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
     return;
   }
   if (command === 'recovery' && subcommand === 'retry') {

@@ -4,6 +4,7 @@ import type { RuntimePaths } from './config.js';
 import type { ContextReleasePolicy } from './domain.js';
 import type { ContextReleaseAuthorization } from './context-release.js';
 import type { ExecutionEnvelope } from './execution.js';
+import type { ActionApprovalRequestInput, ActionKind, ActionResourceScope, ApprovalRiskClass, ApprovalScope } from './approval.js';
 
 // --- Capability Descriptor ---
 
@@ -57,14 +58,21 @@ export interface CapabilityContext {
     dedupKey?: string;
   }) => { memoryId: string; embedded: boolean; rejected?: boolean; rejectionReason?: string };
   readonly approvalRequest: (input: {
-    scope: string;
+    scope: ApprovalScope;
     domain: DomainKind;
-    riskClass: string;
+    riskClass: ApprovalRiskClass;
+    actionKind?: ActionKind;
+    resourceScope?: ActionResourceScope;
     resourceType: string;
     resourceId: string;
     requestedBy: string;
+    runId?: string;
+    standingApprovalEligible?: boolean;
+    automationGrantEligible?: boolean;
     payloadPreview?: string;
+    idempotencyKey?: string;
   }) => { id: string; status: string };
+  readonly actionApprovalRequest: (input: ActionApprovalRequestInput) => { id: string; status: string };
   readonly contextReleaseRecord: (input: {
     domain: DomainKind;
     sourceRef: string;

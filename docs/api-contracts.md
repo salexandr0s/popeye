@@ -34,9 +34,26 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` (`projectId` query optional; `400 { error: "invalid_context" }` on cross-workspace mismatch) |
 | GET | `/v1/interventions` | `InterventionRecordSchema[]` |
 | POST | `/v1/interventions/:id/resolve` | `InterventionRecordSchema` |
+| GET | `/v1/approvals` | `ApprovalListResponseSchema` |
+| POST | `/v1/approvals` | `ApprovalRecordSchema` (req: `ApprovalRequestSchema`) |
+| GET | `/v1/approvals/:id` | `ApprovalRecordSchema` |
+| POST | `/v1/approvals/:id/resolve` | `ApprovalRecordSchema` |
+| GET | `/v1/policies/standing-approvals` | `StandingApprovalListResponseSchema` |
+| POST | `/v1/policies/standing-approvals` | `StandingApprovalRecordSchema` (req: `StandingApprovalCreateRequestSchema`) |
+| POST | `/v1/policies/standing-approvals/:id/revoke` | `StandingApprovalRecordSchema` (req: `PolicyGrantRevokeRequestSchema`) |
+| GET | `/v1/policies/automation-grants` | `AutomationGrantListResponseSchema` |
+| POST | `/v1/policies/automation-grants` | `AutomationGrantRecordSchema` (req: `AutomationGrantCreateRequestSchema`) |
+| POST | `/v1/policies/automation-grants/:id/revoke` | `AutomationGrantRecordSchema` (req: `PolicyGrantRevokeRequestSchema`) |
+| GET | `/v1/security/policy` | `SecurityPolicyResponseSchema` |
 | GET | `/v1/connections` | `ConnectionListResponseSchema` |
 | POST | `/v1/connections` | `ConnectionRecordSchema` (req: `ConnectionCreateInputSchema`) |
 | PATCH | `/v1/connections/:id` | `ConnectionRecordSchema` (req: `ConnectionUpdateInputSchema`) |
+| GET | `/v1/vaults` | `VaultListResponseSchema` |
+| POST | `/v1/vaults` | `VaultResponseSchema` (req: `VaultCreateRequestSchema`) |
+| GET | `/v1/vaults/:id` | `VaultResponseSchema` |
+| POST | `/v1/vaults/:id/open` | `VaultResponseSchema` (req: `VaultOpenRequestSchema`) |
+| POST | `/v1/vaults/:id/close` | `VaultResponseSchema` |
+| POST | `/v1/vaults/:id/seal` | `VaultResponseSchema` |
 | GET | `/v1/files/roots` | `FileRootListResponseSchema` |
 | POST | `/v1/files/roots` | `FileRootResponseSchema` (req: `FileRootRegistrationInputSchema`) |
 | GET | `/v1/files/roots/:id` | `FileRootResponseSchema` |
@@ -58,7 +75,13 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/memory/:id/promote/propose` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionProposalRequestSchema`) |
 | POST | `/v1/memory/:id/promote/execute` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionExecuteRequestSchema`) |
 
-Generated clients: `@popeye/api-client` (TypeScript, Zod-validated) and `generated/swift/PopeyeModels.swift` (Codable structs).
+Generated contract artifacts:
+
+- `generated/typescript/PopeyeModels.ts`
+- `generated/swift/PopeyeModels.swift`
+- `generated/json-schema/popeye-contracts.json`
+
+These are verified by `pnpm verify:generated-artifacts`.
 
 Behavior notes:
 - `POST /v1/tasks` creates the task and may enqueue a job, but does not directly execute the run.
@@ -73,6 +96,30 @@ Behavior notes:
   releases, and terminal receipt outcomes.
 - `POST /v1/memory/:id/promote/propose` returns a review payload with `diff`, `approved: false`, and `promoted: false`.
 - `POST /v1/memory/:id/promote/execute` requires an approved proposal payload and writes the promoted markdown file inside the runtime memory directory.
+- Approval and vault routes are shared operator surfaces consumed by both CLI and
+  web inspector.
+- Approval records now carry structured action metadata (`actionKind`,
+  `resourceScope`, `runId`, standing/automation eligibility, and grant-backed
+  resolution IDs) so receipt timelines and operator UIs can explain why a
+  mutation ran unattended.
+- Runtime-owned capability integrations now use an evaluator-backed action
+  approval request contract internally. Capabilities provide action metadata,
+  while the runtime policy evaluator decides `riskClass`,
+  `standingApprovalEligible`, and `automationGrantEligible`.
+- `GET /v1/approvals` supports additive filters: `actionKind`, `runId`, and
+  `resolvedBy`.
+- `GET /v1/security/policy` is the canonical read model for domain-level
+  sensitivity plus effective approval posture. The response now includes:
+  - `defaultRiskClass` for the config fallback
+  - `actionDefaults` for the built-in evaluator matrix
+  - `approvalRules` for explicit config overrides in evaluation order
+- Policy evaluation precedence is:
+  - first matching `approvalRules` entry in config order
+  - then the built-in `actionDefaults` matrix
+  - then `defaultRiskClass`
+- `GET /v1/policies/standing-approvals` and
+  `GET /v1/policies/automation-grants` are the operator-facing autonomy policy
+  surfaces for policy-driven unattended writes.
 - Memory list/search/read responses include explicit `workspaceId` and `projectId`
   fields; the legacy `scope` string remains for compatibility/display.
 - Per-item memory read and promotion routes (`GET /v1/memory/:id`,

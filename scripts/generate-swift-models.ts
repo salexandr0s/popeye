@@ -5,11 +5,12 @@
  * Output: generated/swift/PopeyeModels.swift
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
 
 import {
+  ApprovalRecordSchema,
   DaemonStateRecordSchema,
   DaemonStatusResponseSchema,
   InterventionCodeSchema,
@@ -26,12 +27,14 @@ import {
   RunStateSchema,
   SchedulerStatusResponseSchema,
   SecurityAuditFindingSchema,
+  SecurityPolicyResponseSchema,
   SseEventEnvelopeSchema,
   TaskCreateInputSchema,
   TaskRecordSchema,
   TaskSideEffectProfileSchema,
   UsageMetricsSchema,
   UsageSummarySchema,
+  VaultRecordSchema,
 } from '@popeye/contracts';
 
 type ZodDef = z.ZodTypeDef;
@@ -172,6 +175,18 @@ const structs: Array<[string, z.ZodObject<z.ZodRawShape>]> = [
     'TaskCreateInput',
     TaskCreateInputSchema as z.ZodObject<z.ZodRawShape>,
   ],
+  [
+    'ApprovalRecord',
+    ApprovalRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'SecurityPolicyResponse',
+    SecurityPolicyResponseSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'VaultRecord',
+    VaultRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
 ];
 
 const output: string[] = [
@@ -197,8 +212,20 @@ for (const [name, schema] of structs) {
 }
 
 const outputPath = 'generated/swift/PopeyeModels.swift';
-mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, output.join('\n'));
-console.info(
-  `Generated ${outputPath} (${enums.length} enums, ${structs.length} structs)`,
-);
+const rendered = output.join('\n');
+const checkOnly = process.argv.includes('--check');
+const existing = existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : null;
+
+if (checkOnly) {
+  if (existing !== rendered) {
+    console.error(`Generated Swift models are out of date: ${outputPath}`);
+    process.exit(1);
+  }
+  console.info(`Verified ${outputPath}`);
+} else {
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, rendered);
+  console.info(
+    `Generated ${outputPath} (${enums.length} enums, ${structs.length} structs)`,
+  );
+}

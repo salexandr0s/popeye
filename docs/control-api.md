@@ -30,7 +30,8 @@ Routes are role-gated in addition to authentication:
   such as task creation, job enqueue/pause/resume, run retry/cancel, message
   ingest, and Telegram relay state updates
 - `operator` — everything, including browser-session minting, profiles, security
-  audit, memory maintenance/promotion, and other operator-only control surfaces
+  audit, approvals, security policy, vault access, memory maintenance/promotion,
+  and other operator-only control surfaces
 
 Routes default to `operator` unless explicitly downgraded.
 
@@ -130,6 +131,61 @@ Receipt reads may include an additive `runtime` section with:
 |--------|------|-------------|
 | GET | `/v1/interventions` | List all interventions |
 | POST | `/v1/interventions/:id/resolve` | Resolve an open intervention |
+
+### Approvals and policy
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/approvals` | List approval records. Optional query: `domain`, `scope`, `status`, `actionKind`, `runId`, `resolvedBy`. |
+| POST | `/v1/approvals` | Create a low-level approval request. Body uses `ApprovalRequestSchema`. This route stays stable for manual/operator use and tests even though runtime-owned capability flows now go through the central action policy evaluator first. |
+| GET | `/v1/approvals/:id` | Get one approval record. Returns 404 if not found. |
+| POST | `/v1/approvals/:id/resolve` | Resolve an existing approval with an operator decision. |
+| GET | `/v1/policies/standing-approvals` | List standing approvals. Optional query: `status`, `domain`, `actionKind`. |
+| POST | `/v1/policies/standing-approvals` | Create a standing approval record. |
+| POST | `/v1/policies/standing-approvals/:id/revoke` | Revoke a standing approval. |
+| GET | `/v1/policies/automation-grants` | List automation grants. Optional query: `status`, `domain`, `actionKind`. |
+| POST | `/v1/policies/automation-grants` | Create an automation grant. |
+| POST | `/v1/policies/automation-grants/:id/revoke` | Revoke an automation grant. |
+| GET | `/v1/security/policy` | Read the effective domain policies plus the central action-policy evaluator state (`defaultRiskClass`, built-in `actionDefaults`, and explicit `approvalRules`). |
+
+Approval and policy routes are operator-only. The resulting records are the
+canonical source for approval state rendered in CLI and web inspector views.
+Standing approvals and automation grants are the current autonomy substrate for
+policy-driven unattended writes; approval records expose the exact grant or
+policy path that resolved them.
+
+The runtime evaluates action policy in one place. Precedence is fixed:
+
+1. First matching configured `approvalRules` entry in config order
+2. Built-in action defaults
+3. `defaultRiskClass`
+
+The built-in defaults are intentionally opinionated:
+
+- `sync`, `import`, `digest`, `classify`, and `triage` auto-run by default
+- `write`, `send`, and `open_vault` default to `ask`
+- `connect`, `delete`, and `release_context` default to `ask` without grant eligibility
+- finance and medical `write` / `send` / `delete` default to `deny`
+- finance and medical context release always stays explicit-approval only
+
+The web inspector now exposes dedicated operator pages for:
+
+- `Approvals`
+- `Standing Approvals`
+- `Automation Grants`
+- `Security Policy`
+- `Vaults`
+
+### Vaults
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/vaults` | List vault records. Optional query: `domain`. |
+| POST | `/v1/vaults` | Create a capability or restricted vault. |
+| GET | `/v1/vaults/:id` | Get one vault record. Returns 404 if not found. |
+| POST | `/v1/vaults/:id/open` | Open a vault using an approved `approvalId`. Returns `403 { error: "vault_open_denied" }` when the approval gate is not satisfied. |
+| POST | `/v1/vaults/:id/close` | Close an open vault. Returns 404 if the vault does not exist. |
+| POST | `/v1/vaults/:id/seal` | Seal a vault. Returns 404 if the vault does not exist. |
 
 ### Connections
 

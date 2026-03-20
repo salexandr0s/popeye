@@ -294,6 +294,22 @@ describe('CLI help and discoverability', () => {
     expect(r.stdout).toContain('health');
   });
 
+  it('pop approvals --help prints approval subcommands', async () => {
+    const r = await runPop('approvals', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('list');
+    expect(r.stdout).toContain('approve');
+    expect(r.stdout).toContain('deny');
+  });
+
+  it('pop vaults --help prints vault subcommands', async () => {
+    const r = await runPop('vaults', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('create');
+    expect(r.stdout).toContain('open');
+    expect(r.stdout).toContain('seal');
+  });
+
   it('pop profile --help prints profile subcommands', async () => {
     const r = await runPop('profile', '--help');
     expect(r.code).toBe(0);

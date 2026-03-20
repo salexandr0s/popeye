@@ -153,6 +153,24 @@ describe('PopeyeRuntimeService', () => {
     const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
     const runId = terminal!.run!.id;
 
+    const approval = runtime.requestApproval({
+      scope: 'external_write',
+      domain: 'todos',
+      riskClass: 'ask',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'todo',
+      resourceId: 'todo-1',
+      requestedBy: 'timeline-test',
+      runId,
+      standingApprovalEligible: true,
+      automationGrantEligible: false,
+    });
+    runtime.resolveApproval(approval.id, {
+      decision: 'approved',
+      decisionReason: 'approved for timeline coverage',
+    });
+
     runtime.recordContextRelease({
       domain: 'files',
       sourceRef: 'workspace://notes.md',
@@ -191,11 +209,103 @@ describe('PopeyeRuntimeService', () => {
           source: 'context_release',
         }),
         expect.objectContaining({
+          code: 'approval_requested',
+          source: 'approval',
+          metadata: expect.objectContaining({
+            actionKind: 'write',
+          }),
+        }),
+        expect.objectContaining({
+          code: 'approval_approved',
+          source: 'approval',
+          metadata: expect.objectContaining({
+            resolvedBy: 'operator',
+          }),
+        }),
+        expect.objectContaining({
           code: 'receipt_succeeded',
           source: 'receipt',
         }),
       ]),
     );
+
+    await runtime.close();
+  });
+
+  it('uses the central action policy evaluator for action-backed approvals', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-action-policy-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const denied = runtime.requestActionApproval({
+      scope: 'external_write',
+      domain: 'finance',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'transaction',
+      resourceId: 'txn-1',
+      requestedBy: 'policy-test',
+    });
+
+    expect(denied.status).toBe('denied');
+    expect(denied.riskClass).toBe('deny');
+    expect(denied.resolvedBy).toBe('policy');
+
+    const pending = runtime.requestActionApproval({
+      scope: 'external_write',
+      domain: 'todos',
+      actionKind: 'write',
+      resourceScope: 'resource',
+      resourceType: 'todo',
+      resourceId: 'todo-1',
+      requestedBy: 'policy-test',
+    });
+
+    expect(pending.status).toBe('pending');
+    expect(pending.standingApprovalEligible).toBe(true);
+    expect(pending.automationGrantEligible).toBe(false);
+
+    await runtime.close();
+  });
+
+  it('routes context-release authorization through the central evaluator', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-context-policy-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'context policy',
+      prompt: 'need context release coverage',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    const runId = terminal!.run!.id;
+
+    const decision = runtime.authorizeContextRelease({
+      runId,
+      domain: 'files',
+      sourceRef: 'workspace://notes.md',
+      requestedLevel: 'summary',
+      resourceType: 'document',
+      resourceId: 'notes.md',
+      requestedBy: 'policy-test',
+      payloadPreview: 'Release workspace notes summary',
+    });
+
+    expect(decision.outcome).toBe('approval_required');
+    expect(decision.approvalId).toBeTruthy();
+
+    const approval = runtime.getApproval(decision.approvalId!);
+    expect(approval).toMatchObject({
+      scope: 'context_release',
+      actionKind: 'release_context',
+      riskClass: 'ask',
+      standingApprovalEligible: false,
+      automationGrantEligible: false,
+    });
 
     await runtime.close();
   });

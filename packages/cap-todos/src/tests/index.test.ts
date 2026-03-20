@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 import type { CapabilityContext } from '@popeye/contracts';
 import { createTodosCapability } from '../index.js';
+import { TodoService } from '../todo-service.js';
 
-function makeCtx(tempDir: string): CapabilityContext {
+function makeCtx(tempDir: string, overrides: Partial<CapabilityContext> = {}): CapabilityContext {
   return {
     appDb: {} as CapabilityContext['appDb'],
     memoryDb: {} as CapabilityContext['appDb'],
@@ -23,8 +24,10 @@ function makeCtx(tempDir: string): CapabilityContext {
     auditCallback: () => {},
     memoryInsert: () => ({ memoryId: 'mem-1', embedded: false }),
     approvalRequest: () => ({ id: 'test', status: 'pending' }),
+    actionApprovalRequest: () => ({ id: 'test', status: 'pending' }),
     contextReleaseRecord: () => ({ id: 'test' }),
     events: { emit: () => {} },
+    ...overrides,
   };
 }
 
@@ -133,5 +136,32 @@ describe('createTodosCapability', () => {
     await cap.shutdown();
     await cap.shutdown();
     expect(cap.healthCheck().healthy).toBe(false);
+  });
+
+  it('uses actionApprovalRequest for external todo writes', async () => {
+    const cap = createTodosCapability();
+    const actionApprovalRequest = vi.fn(() => ({ id: 'approval-1', status: 'approved' as const }));
+    const ctx = makeCtx(tempDir, { actionApprovalRequest });
+    await cap.initialize(ctx);
+
+    const db = new Database(join(tempDir, 'todos.db'));
+    const todoService = new TodoService(db as unknown as CapabilityContext['appDb']);
+    todoService.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'conn-1' });
+    db.close();
+
+    const tools = cap.getRuntimeTools!({ workspaceId: 'default', runId: 'run-1' });
+    const addTool = tools.find((tool) => tool.name === 'popeye_todo_add')!;
+    const result = await addTool.execute({ title: 'Ship evaluator-backed approvals' });
+
+    expect(result.content[0]!.text).toContain('Created todo');
+    expect(actionApprovalRequest).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'external_write',
+      domain: 'todos',
+      actionKind: 'write',
+      requestedBy: 'popeye_todo_add',
+      runId: 'run-1',
+    }));
+
+    await cap.shutdown();
   });
 });
