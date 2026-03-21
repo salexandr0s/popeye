@@ -52,7 +52,7 @@ test.describe('web inspector smoke', () => {
   for (const { link, url } of viewRoutes) {
     test(`navigates to ${link} view`, async ({ page }) => {
       await unlockInspector(page);
-      await page.getByRole('link', { name: link }).click();
+      await page.getByRole('link', { name: link, exact: true }).click();
       await expect(page).toHaveURL(url);
       // Verify the error boundary did not trigger
       await expect(page.getByText('Something went wrong')).toBeHidden({ timeout: 3_000 });
