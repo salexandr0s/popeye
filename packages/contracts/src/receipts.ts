@@ -21,6 +21,7 @@ const ReceiptContextReleaseDomainSummarySchema = z.object({
   count: z.number().int().nonnegative(),
   tokens: z.number().int().nonnegative(),
 });
+export type ReceiptContextReleaseDomainSummary = z.infer<typeof ReceiptContextReleaseDomainSummarySchema>;
 
 const ReceiptContextReleaseSummarySchema = z.object({
   totalReleases: z.number().int().nonnegative(),

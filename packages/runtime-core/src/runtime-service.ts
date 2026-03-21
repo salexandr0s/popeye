@@ -147,7 +147,6 @@ import type {
   MedicalSearchResult,
 } from '@popeye/contracts';
 import {
-  MemoryRecordSchema,
   RunReplySchema,
   TaskCreateInputSchema,
 } from '@popeye/contracts';
@@ -157,10 +156,7 @@ import {
   type EngineRunCompletion,
 } from '@popeye/engine-pi';
 import {
-  buildLocationCondition,
-  formatMemoryScope,
   MemorySearchService,
-  resolveMemoryLocationFilter,
   createDisabledEmbeddingClient,
   createOpenAIEmbeddingClient,
   createOpenAISummarizationClient,
@@ -186,20 +182,26 @@ import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { ReceiptBuilder } from './receipt-builder.js';
-import { RunExecutor } from './run-executor.js';
+import { RunExecutor, type RunExecutorDeps } from './run-executor.js';
 import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { ConnectionService, type ConnectionServiceDeps } from './connection-service.js';
+import { MemoryFacade } from './memory-facade.js';
+import { PeopleFacade } from './people-facade.js';
+import { EmailFacade } from './email-facade.js';
+import { GithubFacade } from './github-facade.js';
+import { CalendarFacade } from './calendar-facade.js';
+import { TodoFacade } from './todo-facade.js';
 import { OAuthConnectService } from './oauth-connect.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
-import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, type EmailProviderAdapter } from '@popeye/cap-email';
+import { createEmailCapability, EmailService, EmailSearchService, type EmailProviderAdapter } from '@popeye/cap-email';
 import type { GithubApiAdapter } from '@popeye/cap-github';
-import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService } from '@popeye/cap-github';
+import { createGithubCapability, GithubService, GithubSearchService } from '@popeye/cap-github';
 import type { GoogleCalendarAdapter } from '@popeye/cap-calendar';
-import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService } from '@popeye/cap-calendar';
-import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
-import { createPeopleCapability, PeopleService, type PersonProjectionSeed } from '@popeye/cap-people';
+import { createCalendarCapability, CalendarService, CalendarSearchService } from '@popeye/cap-calendar';
+import { createTodosCapability, TodoService, TodoSearchService } from '@popeye/cap-todos';
+import { createPeopleCapability, PeopleService } from '@popeye/cap-people';
 import { createFinanceCapability, FinanceService, FinanceSearchService } from '@popeye/cap-finance';
 import { createMedicalCapability, MedicalService, MedicalSearchService } from '@popeye/cap-medical';
 import BetterSqlite3 from 'better-sqlite3';
@@ -227,7 +229,6 @@ import {
   buildTimelineMetadata,
   canonicalizeLocalPath,
   classifyFailureFromMessage,
-  connectionCursorKindForProvider,
   IdRowSchema,
   isPathWithinRoot,
   isTerminalJobStatus,
@@ -239,8 +240,6 @@ import {
   mapRunEventTitle,
   mapRunRow,
   mapSecurityAuditKind,
-  MemoryListRowSchema,
-  normalizeEmail,
   parseCountRow,
   parseCreatedAt,
   parseRunEventPayload,
@@ -325,6 +324,12 @@ export class PopeyeRuntimeService {
   private readonly capabilityRegistry: CapabilityRegistry;
   private readonly connectionService: ConnectionService;
   private readonly oauthConnect: OAuthConnectService;
+  private readonly memoryOps: MemoryFacade;
+  private readonly peopleOps: PeopleFacade;
+  private readonly emailOps: EmailFacade;
+  private readonly githubOps: GithubFacade;
+  private readonly calendarOps: CalendarFacade;
+  private readonly todoOps: TodoFacade;
   private capabilityInitPromise: Promise<void> | null = null;
   private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -390,6 +395,16 @@ export class PopeyeRuntimeService {
       ? createOpenAISummarizationClient({})
       : createDisabledSummarizationClient();
     this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch, summarizationClient);
+
+    // Initialize memory facade
+    this.memoryOps = new MemoryFacade({
+      memoryDb: this.databases.memory,
+      memorySearch: this.memorySearch,
+      memoryLifecycle: this.memoryLifecycle,
+      redactionPatterns: config.security.redactionPatterns,
+      expandTokenCap: config.memory.expandTokenCap,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+    });
 
     // Try loading sqlite-vec (non-blocking)
     this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions, this.log).then((loaded) => {
@@ -540,6 +555,78 @@ export class PopeyeRuntimeService {
       this.capabilityRegistry, storesDir, 'people', 'people.db',
       (db) => new PeopleService(db),
     );
+    this.peopleOps = new PeopleFacade({
+      peopleFacade: this.peopleFacade,
+      capabilityRegistry: this.capabilityRegistry,
+      capabilityStoresDir: storesDir,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+    });
+    this.emailOps = new EmailFacade({
+      emailFacade: this.emailFacade,
+      capabilityRegistry: this.capabilityRegistry,
+      capabilityStoresDir: storesDir,
+      log: this.log,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      buildCapabilityContext: () => this.buildCapabilityContext(),
+      requireConnectionForOperation: (input) => this.requireConnectionForOperation(input),
+      requireEmailAccountForOperation: (svc, accountId, purpose) => this.requireEmailAccountForOperation(svc, accountId, purpose),
+      resolveEmailAdapterForConnection: (connectionId) => this.resolveEmailAdapterForConnection(connectionId),
+      updateConnectionRollups: (input) => this.updateConnectionRollups(input),
+      classifyConnectionFailure: (message) => this.classifyConnectionFailure(message),
+      requireReadWriteConnection: (connection, purpose) => this.requireReadWriteConnection(connection, purpose),
+      requireAllowlistedConnectionResource: (connection, purpose, resourceType, resourceId) => this.requireAllowlistedConnectionResource(connection, purpose, resourceType, resourceId),
+      requireApprovedExternalWrite: (input) => this.requireApprovedExternalWrite(input),
+      refreshPeopleProjectionForEmailAccount: (svc, accountId) => this.peopleOps.refreshPeopleProjectionForEmailAccount(svc, accountId),
+    });
+    this.githubOps = new GithubFacade({
+      githubFacade: this.githubFacade,
+      capabilityRegistry: this.capabilityRegistry,
+      capabilityStoresDir: storesDir,
+      log: this.log,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      buildCapabilityContext: () => this.buildCapabilityContext(),
+      requireGithubAccountForOperation: (svc, accountId, purpose) => this.requireGithubAccountForOperation(svc, accountId, purpose),
+      resolveGithubAdapterForConnection: (connectionId) => this.resolveGithubAdapterForConnection(connectionId),
+      updateConnectionRollups: (input) => this.updateConnectionRollups(input),
+      classifyConnectionFailure: (message) => this.classifyConnectionFailure(message),
+      requireReadWriteConnection: (connection, purpose) => this.requireReadWriteConnection(connection, purpose),
+      requireAllowlistedConnectionResource: (connection, purpose, resourceType, resourceId) => this.requireAllowlistedConnectionResource(connection, purpose, resourceType, resourceId),
+      requireApprovedExternalWrite: (input) => this.requireApprovedExternalWrite(input),
+      refreshPeopleProjectionForGithubAccount: (svc, accountId) => this.peopleOps.refreshPeopleProjectionForGithubAccount(svc, accountId),
+    });
+    this.calendarOps = new CalendarFacade({
+      calendarFacade: this.calendarFacade,
+      capabilityRegistry: this.capabilityRegistry,
+      capabilityStoresDir: storesDir,
+      log: this.log,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      buildCapabilityContext: () => this.buildCapabilityContext(),
+      requireConnectionForOperation: (input) => this.requireConnectionForOperation(input),
+      requireCalendarAccountForOperation: (svc, accountId, purpose) => this.requireCalendarAccountForOperation(svc, accountId, purpose),
+      resolveCalendarAdapterForConnection: (connectionId) => this.resolveCalendarAdapterForConnection(connectionId),
+      updateConnectionRollups: (input) => this.updateConnectionRollups(input),
+      classifyConnectionFailure: (message) => this.classifyConnectionFailure(message),
+      requireReadWriteConnection: (connection, purpose) => this.requireReadWriteConnection(connection, purpose),
+      requireAllowlistedConnectionResource: (connection, purpose, resourceType, resourceId) => this.requireAllowlistedConnectionResource(connection, purpose, resourceType, resourceId),
+      requireApprovedExternalWrite: (input) => this.requireApprovedExternalWrite(input),
+      refreshPeopleProjectionForCalendarAccount: (svc, accountId) => this.peopleOps.refreshPeopleProjectionForCalendarAccount(svc, accountId),
+    });
+    this.todoOps = new TodoFacade({
+      todosFacade: this.todosFacade,
+      capabilityRegistry: this.capabilityRegistry,
+      capabilityStoresDir: storesDir,
+      log: this.log,
+      buildCapabilityContext: () => this.buildCapabilityContext(),
+      requireConnectionForOperation: (input) => this.requireConnectionForOperation(input),
+      requireTodoAccountForOperation: (svc, accountId, purpose, options) => this.requireTodoAccountForOperation(svc, accountId, purpose, options),
+      updateConnectionRollups: (input) => this.updateConnectionRollups(input),
+      listConnections: (domain) => this.listConnections(domain),
+      createConnection: (input) => this.createConnection(input),
+      updateConnection: (id, input) => this.updateConnection(id, input),
+      setSecret: (input) => this.secretStore.setSecret(input),
+      rotateSecret: (id, newValue) => this.secretStore.rotateSecret(id, newValue),
+      getSecretValue: (id) => this.secretStore.getSecretValue(id),
+    });
     this.financeFacade = new CapabilityFacade(
       this.capabilityRegistry, storesDir, 'finance', 'finance.db',
       (db) => new FinanceService(db),
@@ -557,7 +644,8 @@ export class PopeyeRuntimeService {
     });
 
     this.runExecutor = new RunExecutor({
-      db: this.databases.app,
+      // better-sqlite3's Statement union type requires a structural cast here
+      db: this.databases.app as RunExecutorDeps['db'],
       config: this.config,
       log: this.log,
       getEngine: () => this.engine,
@@ -1480,25 +1568,7 @@ export class PopeyeRuntimeService {
   // --- Memory public API ---
 
   async searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse> {
-    return this.memorySearch.search({
-      query: query.query,
-      ...(query.scope !== undefined && { scope: query.scope }),
-      ...(query.workspaceId !== undefined && { workspaceId: query.workspaceId }),
-      ...(query.projectId !== undefined && { projectId: query.projectId }),
-      ...(query.includeGlobal !== undefined && { includeGlobal: query.includeGlobal }),
-      ...(query.memoryTypes !== undefined && { memoryTypes: query.memoryTypes }),
-      ...(query.layers !== undefined && { layers: query.layers }),
-      ...(query.namespaceIds !== undefined && { namespaceIds: query.namespaceIds }),
-      ...(query.tags !== undefined && { tags: query.tags }),
-      ...(query.minConfidence !== undefined && { minConfidence: query.minConfidence }),
-      ...(query.limit !== undefined && { limit: query.limit }),
-      ...(query.includeContent !== undefined && { includeContent: query.includeContent }),
-      ...(query.includeSuperseded !== undefined && { includeSuperseded: query.includeSuperseded }),
-      ...(query.occurredAfter !== undefined && { occurredAfter: query.occurredAfter }),
-      ...(query.occurredBefore !== undefined && { occurredBefore: query.occurredBefore }),
-      ...(query.domains !== undefined && { domains: query.domains }),
-      ...(query.consumerProfile !== undefined && { consumerProfile: query.consumerProfile }),
-    });
+    return this.memoryOps.searchMemory(query);
   }
 
   async explainMemoryRecall(input: {
@@ -1514,29 +1584,23 @@ export class PopeyeRuntimeService {
     tags?: string[];
     includeSuperseded?: boolean;
   }, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
-    return this.memorySearch.explainRecall(input, locationFilter);
+    return this.memoryOps.explainMemoryRecall(input, locationFilter);
   }
 
   getMemoryContent(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }): MemoryRecord | null {
-    const record = this.memorySearch.getMemoryContent(memoryId, locationFilter);
-    return record ? MemoryRecordSchema.parse(record) : null;
+    return this.memoryOps.getMemoryContent(memoryId, locationFilter);
   }
 
   getMemoryAudit(): MemoryAuditResponse {
-    return this.memoryLifecycle.getMemoryAudit();
+    return this.memoryOps.getMemoryAudit();
   }
 
   checkMemoryIntegrity(options?: { fix?: boolean }): IntegrityReport {
-    return this.memoryLifecycle.runIntegrityCheck(options);
+    return this.memoryOps.checkMemoryIntegrity(options);
   }
 
   insertMemory(input: MemoryInsertInput): MemoryRecord {
-    const result = this.memoryLifecycle.insertMemory(input);
-    const memory = this.getMemory(result.memoryId);
-    if (!memory) {
-      throw new Error(`Inserted memory ${result.memoryId} could not be loaded`);
-    }
-    return memory;
+    return this.memoryOps.insertMemory(input);
   }
 
   listMemories(options?: {
@@ -1547,59 +1611,11 @@ export class PopeyeRuntimeService {
     includeGlobal?: boolean;
     limit?: number;
   }): MemoryRecord[] {
-    const conditions: string[] = ['archived_at IS NULL'];
-    const params: unknown[] = [];
-    const locationFilter = resolveMemoryLocationFilter({
-      scope: options?.scope,
-      workspaceId: options?.workspaceId,
-      projectId: options?.projectId,
-      includeGlobal: options?.includeGlobal,
-    });
-    const scopeAliasOnly = options?.scope !== undefined && options?.workspaceId === undefined && options?.projectId === undefined;
-    if (options?.type) { conditions.push('memory_type = ?'); params.push(options.type); }
-    if (scopeAliasOnly && options?.scope) {
-      conditions.push('scope = ?');
-      params.push(options.scope);
-    } else if (locationFilter) {
-      const location = buildLocationCondition('', {
-        workspaceId: locationFilter.workspaceId,
-        projectId: locationFilter.projectId,
-        includeGlobal: locationFilter.includeGlobal,
-      });
-      if (location.sql) {
-        conditions.push(location.sql);
-        params.push(...location.params);
-      }
-    }
-    const limit = options?.limit ?? 50;
-    params.push(limit);
-    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
-    return z.array(MemoryListRowSchema)
-      .parse(this.databases.memory.prepare(sql).all(...params))
-      .map((row) =>
-        MemoryRecordSchema.parse({
-          id: row.id,
-          description: row.description,
-          classification: row.classification,
-          sourceType: row.source_type,
-          content: row.content,
-          confidence: row.confidence,
-          scope: row.scope,
-          workspaceId: row.workspace_id,
-          projectId: row.project_id,
-          sourceRunId: row.source_run_id,
-          sourceTimestamp: row.source_timestamp,
-          memoryType: row.memory_type ?? 'episodic',
-          dedupKey: row.dedup_key,
-          lastReinforcedAt: row.last_reinforced_at,
-          archivedAt: row.archived_at,
-          createdAt: row.created_at,
-        }),
-      );
+    return this.memoryOps.listMemories(options);
   }
 
   getMemory(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }): MemoryRecord | null {
-    return this.getMemoryContent(memoryId, locationFilter);
+    return this.memoryOps.getMemory(memoryId, locationFilter);
   }
 
   async budgetFitMemory(query: {
@@ -1615,22 +1631,19 @@ export class PopeyeRuntimeService {
     domains?: string[];
     consumerProfile?: string;
   }) {
-    return this.memorySearch.budgetFit(query);
+    return this.memoryOps.budgetFitMemory(query);
   }
 
   describeMemory(memoryId: string, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
-    return this.memorySearch.describeMemory(memoryId, locationFilter);
+    return this.memoryOps.describeMemory(memoryId, locationFilter);
   }
 
   expandMemory(memoryId: string, maxTokens?: number, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) {
-    const cap = maxTokens ?? this.config.memory.expandTokenCap;
-    return this.memorySearch.expandMemory(memoryId, cap, locationFilter);
+    return this.memoryOps.expandMemory(memoryId, maxTokens, locationFilter);
   }
 
   triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
-    const decay = this.memoryLifecycle.runConfidenceDecay();
-    const consolidation = this.memoryLifecycle.runConsolidation();
-    return { decayed: decay.decayed, archived: decay.archived, merged: consolidation.merged, deduped: consolidation.deduped };
+    return this.memoryOps.triggerMemoryMaintenance();
   }
 
   importMemory(input: {
@@ -1650,40 +1663,15 @@ export class PopeyeRuntimeService {
     sourceRunId?: string;
     sourceTimestamp?: string;
   }): { memoryId: string; embedded: boolean } {
-    const redactedContent = redactText(input.content, this.config.security.redactionPatterns).text;
-    const redactedDesc = redactText(input.description, this.config.security.redactionPatterns).text;
-    const scope = input.scope
-      ?? (input.workspaceId !== undefined || input.projectId !== undefined
-        ? formatMemoryScope({
-            workspaceId: input.workspaceId ?? null,
-            projectId: input.projectId ?? null,
-          })
-        : 'workspace');
-    return this.memoryLifecycle.insertMemory({
-      description: redactedDesc,
-      content: redactedContent,
-      sourceType: input.sourceType ?? 'curated_memory',
-      ...(input.memoryType !== undefined && { memoryType: input.memoryType }),
-      scope,
-      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
-      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
-      confidence: input.confidence ?? 0.8,
-      classification: input.classification ?? 'embeddable',
-      ...(input.domain !== undefined ? { domain: input.domain } : {}),
-      ...(input.tags !== undefined ? { tags: input.tags } : {}),
-      ...(input.durable !== undefined ? { durable: input.durable } : {}),
-      ...(input.dedupKey !== undefined ? { dedupKey: input.dedupKey } : {}),
-      ...(input.sourceRunId !== undefined ? { sourceRunId: input.sourceRunId } : {}),
-      ...(input.sourceTimestamp !== undefined ? { sourceTimestamp: input.sourceTimestamp } : {}),
-    });
+    return this.memoryOps.importMemory(input);
   }
 
   proposeMemoryPromotion(memoryId: string, targetPath: string) {
-    return this.memoryLifecycle.proposePromotion(memoryId, targetPath);
+    return this.memoryOps.proposeMemoryPromotion(memoryId, targetPath);
   }
 
   executeMemoryPromotion(request: { memoryId: string; targetPath: string; diff: string; approved: boolean; promoted: boolean }) {
-    return this.memoryLifecycle.executePromotion(request);
+    return this.memoryOps.executeMemoryPromotion(request);
   }
 
   // --- Delegated: SecretStore ---
@@ -2659,1751 +2647,261 @@ export class PopeyeRuntimeService {
   // --- Email facade ---
 
   listEmailAccounts(): EmailAccountRecord[] {
-    return this.emailFacade.getService()?.listAccounts() ?? [];
+    return this.emailOps.listEmailAccounts();
   }
 
   listEmailThreads(accountId: string, options?: { limit?: number | undefined; unreadOnly?: boolean | undefined }): EmailThreadRecord[] {
-    const svc = this.emailFacade.getService();
-    if (!svc) return [];
-    this.requireEmailAccountForOperation(svc, accountId, 'email_thread_list');
-    return svc.listThreads(accountId, options);
+    return this.emailOps.listEmailThreads(accountId, options);
   }
 
   getEmailThread(id: string): EmailThreadRecord | null {
-    const svc = this.emailFacade.getService();
-    if (!svc) return null;
-    const thread = svc.getThread(id);
-    if (!thread) return null;
-    try {
-      this.requireEmailAccountForOperation(svc, thread.accountId, 'email_thread_read');
-      return thread;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.emailOps.getEmailThread(id);
   }
 
   searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
-    const svc = this.emailFacade.getService();
-    if (query.accountId && svc) {
-      this.requireEmailAccountForOperation(svc, query.accountId, 'email_search');
-    }
-    return this.emailFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
+    return this.emailOps.searchEmail(query);
   }
 
   getEmailDigest(accountId: string): EmailDigestRecord | null {
-    const svc = this.emailFacade.getService();
-    if (!svc) return null;
-    this.requireEmailAccountForOperation(svc, accountId, 'email_digest_read');
-    return svc.getLatestDigest(accountId);
+    return this.emailOps.getEmailDigest(accountId);
   }
 
   getEmailMessage(id: string): EmailMessageRecord | null {
-    const svc = this.emailFacade.getService();
-    if (!svc) return null;
-    const message = svc.getMessage(id);
-    if (!message) return null;
-    try {
-      this.requireEmailAccountForOperation(svc, message.accountId, 'email_message_read');
-      return message;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.emailOps.getEmailMessage(id);
   }
 
-  // --- GitHub facade ---
+  // --- GitHub facade (delegated to GithubFacade) ---
 
   listGithubAccounts(): GithubAccountRecord[] {
-    return this.githubFacade.getService()?.listAccounts() ?? [];
+    return this.githubOps.listGithubAccounts();
   }
 
   listGithubRepos(accountId: string, options?: { limit?: number | undefined }): GithubRepoRecord[] {
-    const svc = this.githubFacade.getService();
-    if (!svc) return [];
-    this.requireGithubAccountForOperation(svc, accountId, 'github_repo_list');
-    return svc.listRepos(accountId, options);
+    return this.githubOps.listGithubRepos(accountId, options);
   }
 
   listGithubPullRequests(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; repoId?: string | undefined }): GithubPullRequestRecord[] {
-    const svc = this.githubFacade.getService();
-    if (!svc) return [];
-    this.requireGithubAccountForOperation(svc, accountId, 'github_pr_list');
-    return svc.listPullRequests(accountId, options);
+    return this.githubOps.listGithubPullRequests(accountId, options);
   }
 
   listGithubIssues(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; assignedOnly?: boolean | undefined }): GithubIssueRecord[] {
-    const svc = this.githubFacade.getService();
-    if (!svc) return [];
-    this.requireGithubAccountForOperation(svc, accountId, 'github_issue_list');
-    return svc.listIssues(accountId, options);
+    return this.githubOps.listGithubIssues(accountId, options);
   }
 
   listGithubNotifications(accountId: string, options?: { unreadOnly?: boolean | undefined; limit?: number | undefined }): GithubNotificationRecord[] {
-    const svc = this.githubFacade.getService();
-    if (!svc) return [];
-    this.requireGithubAccountForOperation(svc, accountId, 'github_notification_list');
-    return svc.listNotifications(accountId, options);
+    return this.githubOps.listGithubNotifications(accountId, options);
   }
 
   getGithubPullRequest(id: string): GithubPullRequestRecord | null {
-    const svc = this.githubFacade.getService();
-    if (!svc) return null;
-    const pullRequest = svc.getPullRequest(id);
-    if (!pullRequest) return null;
-    try {
-      this.requireGithubAccountForOperation(svc, pullRequest.accountId, 'github_pr_read');
-      return pullRequest;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.githubOps.getGithubPullRequest(id);
   }
 
   getGithubIssue(id: string): GithubIssueRecord | null {
-    const svc = this.githubFacade.getService();
-    if (!svc) return null;
-    const issue = svc.getIssue(id);
-    if (!issue) return null;
-    try {
-      this.requireGithubAccountForOperation(svc, issue.accountId, 'github_issue_read');
-      return issue;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.githubOps.getGithubIssue(id);
   }
 
   searchGithub(query: GithubSearchQuery): { query: string; results: GithubSearchResult[] } {
-    const svc = this.githubFacade.getService();
-    if (query.accountId && svc) {
-      this.requireGithubAccountForOperation(svc, query.accountId, 'github_search');
-    }
-    return this.githubFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
+    return this.githubOps.searchGithub(query);
   }
 
   getGithubDigest(accountId: string): GithubDigestRecord | null {
-    const svc = this.githubFacade.getService();
-    if (!svc) return null;
-    this.requireGithubAccountForOperation(svc, accountId, 'github_digest_read');
-    return svc.getLatestDigest(accountId);
+    return this.githubOps.getGithubDigest(accountId);
   }
 
-  // --- GitHub mutation methods ---
-
   async syncGithubAccount(accountId: string): Promise<GithubSyncResult> {
-    const githubCap = this.capabilityRegistry.getCapability('github');
-    if (!githubCap) throw new Error('GitHub capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireGithubAccountForOperation(svc, accountId, 'github_sync');
-      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
-      if (!resolved) {
-        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve a GitHub adapter`);
-      }
-
-      const attemptAt = nowIso();
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: {
-          checkedAt: attemptAt,
-        },
-        sync: {
-          lastAttemptAt: attemptAt,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-        },
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new GithubSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, resolved.adapter);
-      const refreshedAccount = svc.getAccount(account.id) ?? account;
-      const successCount = result.reposSynced + result.prsSynced + result.issuesSynced + result.notificationsSynced;
-      const syncStatus = result.errors.length === 0
-        ? 'success'
-        : successCount > 0
-          ? 'partial'
-          : 'failed';
-      const failureSummary = result.errors[0] ?? null;
-      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
-      const successAt = syncStatus === 'failed' ? null : nowIso();
-
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: failureSummary
-          ? {
-            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
-            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
-            checkedAt: nowIso(),
-            lastError: failureSummary,
-          }
-          : {
-            status: 'healthy',
-            authState: 'configured',
-            checkedAt: nowIso(),
-            lastError: null,
-          },
-        sync: {
-          ...(successAt ? { lastSuccessAt: successAt } : {}),
-          status: syncStatus,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-          cursorPresent: Boolean(refreshedAccount.syncCursorSince),
-          lagSummary: refreshedAccount.syncCursorSince
-            ? `Cursor checkpoint stored at ${refreshedAccount.syncCursorSince}`
-            : 'Awaiting first notification checkpoint',
-        },
-      });
-
-      this.githubFacade.invalidate();
-      try {
-        this.refreshPeopleProjectionForGithubAccount(svc, account.id);
-      } catch (error) {
-        this.log.warn('github people projection failed', {
-          accountId: account.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      return result;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = this.classifyConnectionFailure(message);
-      const account = this.listGithubAccounts().find((entry) => entry.id === accountId) ?? null;
-      if (account) {
-        this.updateConnectionRollups({
-          connectionId: account.connectionId,
-          health: {
-            status: failure.status,
-            authState: failure.authState,
-            checkedAt: nowIso(),
-            lastError: message,
-          },
-          sync: {
-            lastAttemptAt: nowIso(),
-            status: 'failed',
-            cursorKind: 'since',
-            lagSummary: 'Sync failed before a checkpoint could be updated',
-          },
-        });
-      }
-      throw error;
-    } finally {
-      writeDb.close();
-    }
+    return this.githubOps.syncGithubAccount(accountId);
   }
 
   triggerGithubDigest(accountId?: string): GithubDigestRecord | null {
-    const githubCap = this.capabilityRegistry.getCapability('github');
-    if (!githubCap) return null;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (candidateAccounts.length === 0) return null;
-      const accounts = candidateAccounts.map((account) => {
-        if (!account) {
-          throw new RuntimeValidationError(`GitHub account ${accountId} not found`);
-        }
-        return this.requireGithubAccountForOperation(svc, account.id, 'github_digest_generate').account;
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const digestService = new GithubDigestService(svc, ctx);
-
-      let lastDigest: GithubDigestRecord | null = null;
-      for (const account of accounts) {
-        if (!account) continue;
-        lastDigest = digestService.generateDigest(account);
-      }
-
-      this.githubFacade.invalidate();
-
-      return lastDigest;
-    } finally {
-      writeDb.close();
-    }
+    return this.githubOps.triggerGithubDigest(accountId);
   }
 
   async createGithubComment(input: GithubCommentCreateInput): Promise<GithubCommentRecord> {
-    const githubCap = this.capabilityRegistry.getCapability('github');
-    if (!githubCap) throw new Error('GitHub capability not initialized');
-
-    const repoParts = input.repoFullName.split('/');
-    if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
-      throw new RuntimeValidationError(`Invalid GitHub repo full name: ${input.repoFullName}`);
-    }
-    const [owner, repo] = repoParts;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireGithubAccountForOperation(svc, input.accountId, 'github_comment_create');
-      this.requireReadWriteConnection(connection, 'github_comment_create');
-      this.requireAllowlistedConnectionResource(connection, 'github_comment_create', 'repo', input.repoFullName);
-
-      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
-      if (!resolved?.adapter.createIssueComment) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support GitHub comments`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'github',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'github_repo',
-        resourceId: input.repoFullName,
-        requestedBy: 'github_comment_create',
-        payloadPreview: `Comment on ${input.repoFullName}#${input.issueNumber}: ${input.body.slice(0, 240)}`,
-      });
-
-      const comment = await resolved.adapter.createIssueComment(owner, repo, input.issueNumber, input.body);
-      this.recordSecurityAudit({
-        code: 'github_comment_created',
-        severity: 'info',
-        message: 'GitHub comment created',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          repoFullName: input.repoFullName,
-          issueNumber: String(input.issueNumber),
-          providerCommentId: comment.id,
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return {
-        id: comment.id,
-        accountId: account.id,
-        repoFullName: input.repoFullName,
-        issueNumber: input.issueNumber,
-        bodyPreview: comment.bodyPreview,
-        htmlUrl: comment.htmlUrl,
-        createdAt: comment.createdAt,
-      };
-    } finally {
-      writeDb.close();
-    }
+    return this.githubOps.createGithubComment(input);
   }
 
   async markGithubNotificationRead(input: GithubNotificationMarkReadInput): Promise<GithubNotificationRecord> {
-    const githubCap = this.capabilityRegistry.getCapability('github');
-    if (!githubCap) throw new Error('GitHub capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      const notification = svc.getNotification(input.notificationId);
-      if (!notification) {
-        throw new RuntimeNotFoundError(`GitHub notification ${input.notificationId} not found`);
-      }
-      const { account, connection } = this.requireGithubAccountForOperation(
-        svc,
-        notification.accountId,
-        'github_notification_mark_read',
-      );
-      this.requireReadWriteConnection(connection, 'github_notification_mark_read');
-      this.requireAllowlistedConnectionResource(
-        connection,
-        'github_notification_mark_read',
-        'repo',
-        notification.repoFullName,
-      );
-
-      const resolved = await this.resolveGithubAdapterForConnection(connection.id);
-      if (!resolved?.adapter.markNotificationRead) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support notification mutations`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'github',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'github_notification',
-        resourceId: notification.githubNotificationId,
-        requestedBy: 'github_notification_mark_read',
-        payloadPreview: `Mark GitHub notification as read: ${notification.subjectTitle}`,
-      });
-
-      await resolved.adapter.markNotificationRead(notification.githubNotificationId);
-      const updated = svc.markNotificationRead(notification.id);
-      const record = updated ?? { ...notification, isUnread: false, updatedAt: nowIso() };
-      this.githubFacade.invalidate();
-
-      this.recordSecurityAudit({
-        code: 'github_notification_marked_read',
-        severity: 'info',
-        message: 'GitHub notification marked as read',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          notificationId: notification.id,
-          providerNotificationId: notification.githubNotificationId,
-          repoFullName: notification.repoFullName,
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return record;
-    } finally {
-      writeDb.close();
-    }
+    return this.githubOps.markGithubNotificationRead(input);
   }
 
   // --- Email mutation methods ---
 
   registerEmailAccount(input: EmailAccountRegistrationInput): EmailAccountRecord {
-    this.requireConnectionForOperation({
-      connectionId: input.connectionId,
-      purpose: 'email_account_register',
-      expectedDomain: 'email',
-      allowedProviderKinds: ['gmail', 'proton'],
-      requireSecret: false,
-    });
-
-    // Use the write-capable email service from the capability
-    const emailCap = this.capabilityRegistry.getCapability('email');
-    if (!emailCap) throw new Error('Email capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      return svc.registerAccount(input);
-    } finally {
-      writeDb.close();
-    }
+    return this.emailOps.registerEmailAccount(input);
   }
 
   async syncEmailAccount(accountId: string): Promise<EmailSyncResult> {
-    const emailCap = this.capabilityRegistry.getCapability('email');
-    if (!emailCap) throw new Error('Email capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireEmailAccountForOperation(svc, accountId, 'email_sync');
-      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
-      if (!resolved) {
-        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve an email adapter`);
-      }
-
-      const attemptAt = nowIso();
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: {
-          checkedAt: attemptAt,
-        },
-        sync: {
-          lastAttemptAt: attemptAt,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-        },
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new EmailSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, resolved.adapter);
-      const refreshedAccount = svc.getAccount(account.id) ?? account;
-      const successCount = result.synced + result.updated;
-      const syncStatus = result.errors.length === 0
-        ? 'success'
-        : successCount > 0
-          ? 'partial'
-          : 'failed';
-      const failureSummary = result.errors[0] ?? null;
-      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
-      const successAt = syncStatus === 'failed' ? null : nowIso();
-
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: failureSummary
-          ? {
-            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
-            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
-            checkedAt: nowIso(),
-            lastError: failureSummary,
-          }
-          : {
-            status: 'healthy',
-            authState: 'configured',
-            checkedAt: nowIso(),
-            lastError: null,
-          },
-        sync: {
-          ...(successAt ? { lastSuccessAt: successAt } : {}),
-          status: syncStatus,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-          cursorPresent: Boolean(refreshedAccount.syncCursorHistoryId || refreshedAccount.syncCursorPageToken),
-          lagSummary: refreshedAccount.syncCursorHistoryId
-            ? `History cursor stored at ${refreshedAccount.syncCursorHistoryId}`
-            : refreshedAccount.syncCursorPageToken
-              ? 'Pagination cursor stored during mailbox sync'
-              : 'Awaiting first sync cursor',
-        },
-      });
-
-      this.emailFacade.invalidate();
-      try {
-        this.refreshPeopleProjectionForEmailAccount(svc, account.id);
-      } catch (error) {
-        this.log.warn('email people projection failed', {
-          accountId: account.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      return result;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = this.classifyConnectionFailure(message);
-      const account = this.listEmailAccounts().find((entry) => entry.id === accountId) ?? null;
-      if (account) {
-        this.updateConnectionRollups({
-          connectionId: account.connectionId,
-          health: {
-            status: failure.status,
-            authState: failure.authState,
-            checkedAt: nowIso(),
-            lastError: message,
-          },
-          sync: {
-            lastAttemptAt: nowIso(),
-            status: 'failed',
-            cursorKind: 'history_id',
-            lagSummary: 'Sync failed before a cursor could be updated',
-          },
-        });
-      }
-      throw error;
-    } finally {
-      writeDb.close();
-    }
+    return this.emailOps.syncEmailAccount(accountId);
   }
 
   triggerEmailDigest(accountId?: string): EmailDigestRecord | null {
-    const emailCap = this.capabilityRegistry.getCapability('email');
-    if (!emailCap) return null;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (candidateAccounts.length === 0) return null;
-      const accounts = candidateAccounts.map((account) => {
-        if (!account) {
-          throw new RuntimeValidationError(`Email account ${accountId} not found`);
-        }
-        return this.requireEmailAccountForOperation(svc, account.id, 'email_digest_generate').account;
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const digestService = new EmailDigestService(svc, ctx);
-
-      let lastDigest: EmailDigestRecord | null = null;
-      for (const account of accounts) {
-        if (!account) continue;
-        lastDigest = digestService.generateDigest(account);
-      }
-
-      this.emailFacade.invalidate();
-
-      return lastDigest;
-    } finally {
-      writeDb.close();
-    }
+    return this.emailOps.triggerEmailDigest(accountId);
   }
 
   async createEmailDraft(input: EmailDraftCreateInput): Promise<EmailDraftRecord> {
-    const emailCap = this.capabilityRegistry.getCapability('email');
-    if (!emailCap) throw new Error('Email capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireEmailAccountForOperation(svc, input.accountId, 'email_draft_create');
-      this.requireReadWriteConnection(connection, 'email_draft_create');
-      this.requireAllowlistedConnectionResource(connection, 'email_draft_create', 'mailbox', account.emailAddress);
-
-      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
-      if (!resolved?.adapter.createDraft) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support draft creation`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'email',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'email_mailbox',
-        resourceId: account.emailAddress,
-        requestedBy: 'email_draft_create',
-        payloadPreview: `Draft email to ${input.to.join(', ')}: ${input.subject}`,
-      });
-
-      const draft = await resolved.adapter.createDraft({
-        to: input.to,
-        cc: input.cc,
-        subject: input.subject,
-        body: input.body,
-      });
-      const stored = svc.upsertDraft({
-        accountId: account.id,
-        connectionId: connection.id,
-        providerDraftId: draft.draftId,
-        providerMessageId: draft.messageId ?? null,
-        to: draft.to,
-        cc: draft.cc,
-        subject: draft.subject,
-        bodyPreview: draft.bodyPreview,
-      });
-      this.emailFacade.invalidate();
-
-      this.recordSecurityAudit({
-        code: 'email_draft_created',
-        severity: 'info',
-        message: 'Email draft created',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          mailbox: account.emailAddress,
-          providerDraftId: draft.draftId,
-          providerMessageId: draft.messageId ?? '',
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return {
-        ...stored,
-        updatedAt: draft.updatedAt,
-      };
-    } finally {
-      writeDb.close();
-    }
+    return this.emailOps.createEmailDraft(input);
   }
 
   async updateEmailDraft(id: string, input: EmailDraftUpdateInput): Promise<EmailDraftRecord> {
-    const emailCap = this.capabilityRegistry.getCapability('email');
-    if (!emailCap) throw new Error('Email capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      const mappedDraft = svc.getDraftByProviderDraftId(id) ?? svc.getDraft(id);
-      let accountId = mappedDraft?.accountId ?? input.accountId ?? null;
-      if (!accountId) {
-        throw new RuntimeValidationError(
-          `Email draft ${id} is not mapped to an account. Provide accountId or recreate the draft through Popeye.`,
-        );
-      }
-      const account = svc.getAccount(accountId);
-      if (!account) {
-        throw new RuntimeValidationError(`Email draft ${id} resolves to unknown account ${accountId}`);
-      }
-      const { connection } = this.requireEmailAccountForOperation(svc, account.id, 'email_draft_update');
-      this.requireReadWriteConnection(connection, 'email_draft_update');
-      this.requireAllowlistedConnectionResource(connection, 'email_draft_update', 'mailbox', account.emailAddress);
-
-      const resolved = await this.resolveEmailAdapterForConnection(connection.id);
-      if (!resolved?.adapter.updateDraft) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support draft updates`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'email',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'email_draft',
-        resourceId: id,
-        requestedBy: 'email_draft_update',
-        payloadPreview: `Update email draft ${id}`,
-      });
-
-      const draft = await resolved.adapter.updateDraft(id, input);
-      const stored = svc.upsertDraft({
-        accountId: account.id,
-        connectionId: connection.id,
-        providerDraftId: draft.draftId,
-        providerMessageId: draft.messageId ?? null,
-        to: draft.to,
-        cc: draft.cc,
-        subject: draft.subject,
-        bodyPreview: draft.bodyPreview,
-      });
-      this.emailFacade.invalidate();
-      this.recordSecurityAudit({
-        code: 'email_draft_updated',
-        severity: 'info',
-        message: 'Email draft updated',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          mailbox: account.emailAddress,
-          providerDraftId: draft.draftId,
-          providerMessageId: draft.messageId ?? '',
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return {
-        ...stored,
-        updatedAt: draft.updatedAt,
-      };
-    } finally {
-      writeDb.close();
-    }
+    return this.emailOps.updateEmailDraft(id, input);
   }
 
-  // --- Calendar facade ---
+  // --- Calendar facade (delegated to CalendarFacade) ---
 
   listCalendarAccounts(): CalendarAccountRecord[] {
-    return this.calendarFacade.getService()?.listAccounts() ?? [];
+    return this.calendarOps.listCalendarAccounts();
   }
 
   listCalendarEvents(accountId: string, options?: { limit?: number | undefined; dateFrom?: string | undefined; dateTo?: string | undefined }): CalendarEventRecord[] {
-    const svc = this.calendarFacade.getService();
-    if (!svc) return [];
-    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_event_list');
-    return svc.listEvents(accountId, options);
+    return this.calendarOps.listCalendarEvents(accountId, options);
   }
 
   getCalendarEvent(id: string): CalendarEventRecord | null {
-    const svc = this.calendarFacade.getService();
-    if (!svc) return null;
-    const event = svc.getEvent(id);
-    if (!event) return null;
-    try {
-      this.requireCalendarAccountForOperation(svc, event.accountId, 'calendar_event_read');
-      return event;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.calendarOps.getCalendarEvent(id);
   }
 
   searchCalendar(query: CalendarSearchQuery): { query: string; results: CalendarSearchResult[] } {
-    const svc = this.calendarFacade.getService();
-    if (query.accountId && svc) {
-      this.requireCalendarAccountForOperation(svc, query.accountId, 'calendar_search');
-    }
-    return this.calendarFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
+    return this.calendarOps.searchCalendar(query);
   }
 
   getCalendarDigest(accountId: string): CalendarDigestRecord | null {
-    const svc = this.calendarFacade.getService();
-    if (!svc) return null;
-    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_digest_read');
-    return svc.getLatestDigest(accountId);
+    return this.calendarOps.getCalendarDigest(accountId);
   }
 
   getCalendarAvailability(accountId: string, date: string, startHour = 9, endHour = 17, slotMinutes = 30): CalendarAvailabilitySlot[] {
-    const svc = this.calendarFacade.getService();
-    if (!svc) return [];
-    this.requireCalendarAccountForOperation(svc, accountId, 'calendar_availability_read');
-    return svc.computeAvailability(accountId, date, startHour, endHour, slotMinutes);
+    return this.calendarOps.getCalendarAvailability(accountId, date, startHour, endHour, slotMinutes);
   }
 
   registerCalendarAccount(input: CalendarAccountRegistrationInput): CalendarAccountRecord {
-    this.requireConnectionForOperation({
-      connectionId: input.connectionId,
-      purpose: 'calendar_account_register',
-      expectedDomain: 'calendar',
-      allowedProviderKinds: ['google_calendar'],
-      requireSecret: false,
-    });
-
-    const calCap = this.capabilityRegistry.getCapability('calendar');
-    if (!calCap) throw new Error('Calendar capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      return svc.registerAccount(input);
-    } finally {
-      writeDb.close();
-    }
+    return this.calendarOps.registerCalendarAccount(input);
   }
 
   async syncCalendarAccount(accountId: string): Promise<CalendarSyncResult> {
-    const calCap = this.capabilityRegistry.getCapability('calendar');
-    if (!calCap) throw new Error('Calendar capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireCalendarAccountForOperation(svc, accountId, 'calendar_sync');
-      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
-      if (!resolved) {
-        throw new RuntimeValidationError(`Connection ${connection.id} could not resolve a calendar adapter`);
-      }
-
-      const attemptAt = nowIso();
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: {
-          checkedAt: attemptAt,
-        },
-        sync: {
-          lastAttemptAt: attemptAt,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-        },
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new CalendarSyncService(svc, ctx);
-      const result = await syncService.syncAccount(account, resolved.adapter);
-      const refreshedAccount = svc.getAccount(account.id) ?? account;
-      const successCount = result.eventsSynced + result.eventsUpdated;
-      const syncStatus = result.errors.length === 0
-        ? 'success'
-        : successCount > 0
-          ? 'partial'
-          : 'failed';
-      const failureSummary = result.errors[0] ?? null;
-      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
-      const successAt = syncStatus === 'failed' ? null : nowIso();
-
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: failureSummary
-          ? {
-            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
-            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
-            checkedAt: nowIso(),
-            lastError: failureSummary,
-          }
-          : {
-            status: 'healthy',
-            authState: 'configured',
-            checkedAt: nowIso(),
-            lastError: null,
-          },
-        sync: {
-          ...(successAt ? { lastSuccessAt: successAt } : {}),
-          status: syncStatus,
-          cursorKind: connectionCursorKindForProvider(connection.providerKind),
-          cursorPresent: Boolean(refreshedAccount.syncCursorSyncToken),
-          lagSummary: refreshedAccount.syncCursorSyncToken
-            ? 'Sync token stored for incremental calendar sync'
-            : 'Awaiting first calendar sync token',
-        },
-      });
-
-      this.calendarFacade.invalidate();
-      try {
-        this.refreshPeopleProjectionForCalendarAccount(svc, account.id);
-      } catch (error) {
-        this.log.warn('calendar people projection failed', {
-          accountId: account.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
-      return result;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = this.classifyConnectionFailure(message);
-      const account = this.listCalendarAccounts().find((entry) => entry.id === accountId) ?? null;
-      if (account) {
-        this.updateConnectionRollups({
-          connectionId: account.connectionId,
-          health: {
-            status: failure.status,
-            authState: failure.authState,
-            checkedAt: nowIso(),
-            lastError: message,
-          },
-          sync: {
-            lastAttemptAt: nowIso(),
-            status: 'failed',
-            cursorKind: 'sync_token',
-            lagSummary: 'Sync failed before a sync token could be updated',
-          },
-        });
-      }
-      throw error;
-    } finally {
-      writeDb.close();
-    }
+    return this.calendarOps.syncCalendarAccount(accountId);
   }
 
   triggerCalendarDigest(accountId?: string): CalendarDigestRecord | null {
-    const calCap = this.capabilityRegistry.getCapability('calendar');
-    if (!calCap) return null;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (candidateAccounts.length === 0) return null;
-      const accounts = candidateAccounts.map((account) => {
-        if (!account) {
-          throw new RuntimeValidationError(`Calendar account ${accountId} not found`);
-        }
-        return this.requireCalendarAccountForOperation(svc, account.id, 'calendar_digest_generate').account;
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const digestService = new CalendarDigestService(svc, ctx);
-
-      let lastDigest: CalendarDigestRecord | null = null;
-      for (const account of accounts) {
-        if (!account) continue;
-        lastDigest = digestService.generateDigest(account);
-      }
-
-      this.calendarFacade.invalidate();
-
-      return lastDigest;
-    } finally {
-      writeDb.close();
-    }
+    return this.calendarOps.triggerCalendarDigest(accountId);
   }
 
   async createCalendarEvent(input: CalendarEventCreateInput): Promise<CalendarEventRecord> {
-    const calCap = this.capabilityRegistry.getCapability('calendar');
-    if (!calCap) throw new Error('Calendar capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireCalendarAccountForOperation(svc, input.accountId, 'calendar_event_create');
-      this.requireReadWriteConnection(connection, 'calendar_event_create');
-      this.requireAllowlistedConnectionResource(connection, 'calendar_event_create', 'calendar', account.calendarEmail);
-
-      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
-      if (!resolved?.adapter.createEvent) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support calendar writes`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'calendar',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'calendar',
-        resourceId: account.calendarEmail,
-        requestedBy: 'calendar_event_create',
-        payloadPreview: `Create calendar event: ${input.title}`,
-      });
-
-      const event = await resolved.adapter.createEvent({
-        title: input.title,
-        description: input.description,
-        location: input.location,
-        startTime: input.startTime,
-        endTime: input.endTime,
-        attendees: input.attendees,
-      });
-
-      const stored = svc.upsertEvent(account.id, {
-        googleEventId: event.eventId,
-        title: event.title,
-        description: event.description,
-        location: event.location,
-        startTime: event.startTime,
-        endTime: event.endTime,
-        isAllDay: event.isAllDay,
-        status: event.status,
-        organizer: event.organizer,
-        attendees: event.attendees,
-        recurrenceRule: event.recurrenceRule,
-        htmlLink: event.htmlLink,
-        createdAtGoogle: event.createdAt,
-        updatedAtGoogle: event.updatedAt,
-      });
-      svc.updateEventCount(account.id);
-      this.calendarFacade.invalidate();
-
-      this.recordSecurityAudit({
-        code: 'calendar_event_created',
-        severity: 'info',
-        message: 'Calendar event created',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          calendarEmail: account.calendarEmail,
-          providerEventId: event.eventId,
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return stored;
-    } finally {
-      writeDb.close();
-    }
+    return this.calendarOps.createCalendarEvent(input);
   }
 
   async updateCalendarEvent(id: string, input: CalendarEventUpdateInput): Promise<CalendarEventRecord> {
-    const calCap = this.capabilityRegistry.getCapability('calendar');
-    if (!calCap) throw new Error('Calendar capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      const existing = svc.getEvent(id);
-      if (!existing) {
-        throw new RuntimeNotFoundError(`Calendar event ${id} not found`);
-      }
-      const { account, connection } = this.requireCalendarAccountForOperation(svc, existing.accountId, 'calendar_event_update');
-      this.requireReadWriteConnection(connection, 'calendar_event_update');
-      this.requireAllowlistedConnectionResource(connection, 'calendar_event_update', 'calendar', account.calendarEmail);
-
-      const resolved = await this.resolveCalendarAdapterForConnection(connection.id);
-      if (!resolved?.adapter.updateEvent) {
-        throw new RuntimeValidationError(`Connection ${connection.id} does not support calendar writes`);
-      }
-
-      const approval = this.requireApprovedExternalWrite({
-        scope: 'external_write',
-        domain: 'calendar',
-        actionKind: 'write',
-        resourceScope: 'resource',
-        resourceType: 'calendar_event',
-        resourceId: existing.googleEventId,
-        requestedBy: 'calendar_event_update',
-        payloadPreview: `Update calendar event: ${existing.title}`,
-      });
-
-      const event = await resolved.adapter.updateEvent(existing.googleEventId, input);
-      const stored = svc.upsertEvent(account.id, {
-        googleEventId: event.eventId,
-        title: event.title,
-        description: event.description,
-        location: event.location,
-        startTime: event.startTime,
-        endTime: event.endTime,
-        isAllDay: event.isAllDay,
-        status: event.status,
-        organizer: event.organizer,
-        attendees: event.attendees,
-        recurrenceRule: event.recurrenceRule,
-        htmlLink: event.htmlLink,
-        createdAtGoogle: event.createdAt,
-        updatedAtGoogle: event.updatedAt,
-      });
-      svc.updateEventCount(account.id);
-      this.calendarFacade.invalidate();
-
-      this.recordSecurityAudit({
-        code: 'calendar_event_updated',
-        severity: 'info',
-        message: 'Calendar event updated',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          connectionId: connection.id,
-          accountId: account.id,
-          calendarEmail: account.calendarEmail,
-          providerEventId: event.eventId,
-          approvalId: approval.id,
-          resolvedBy: approval.resolvedBy ?? '',
-          resolvedByGrantId: approval.resolvedByGrantId ?? '',
-        },
-      });
-
-      return stored;
-    } finally {
-      writeDb.close();
-    }
+    return this.calendarOps.updateCalendarEvent(id, input);
   }
 
-  // --- Todos facade ---
+  // --- Todos facade (delegated to TodoFacade) ---
 
   listTodoAccounts(): TodoAccountRecord[] {
-    return this.todosFacade.getService()?.listAccounts() ?? [];
+    return this.todoOps.listTodoAccounts();
   }
 
   listTodos(accountId: string, options?: { status?: string | undefined; priority?: number | undefined; projectName?: string | undefined; limit?: number | undefined }): TodoItemRecord[] {
-    const svc = this.todosFacade.getService();
-    if (!svc) return [];
-    this.requireTodoAccountForOperation(svc, accountId, 'todo_list');
-    return svc.listItems(accountId, options);
+    return this.todoOps.listTodos(accountId, options);
   }
 
   getTodo(id: string): TodoItemRecord | null {
-    const svc = this.todosFacade.getService();
-    if (!svc) return null;
-    const todo = svc.getItem(id);
-    if (!todo) return null;
-    try {
-      this.requireTodoAccountForOperation(svc, todo.accountId, 'todo_read');
-      return todo;
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return null;
-      }
-      throw error;
-    }
+    return this.todoOps.getTodo(id);
   }
 
   searchTodos(query: TodoSearchQuery): { query: string; results: TodoSearchResult[] } {
-    const svc = this.todosFacade.getService();
-    if (query.accountId && svc) {
-      this.requireTodoAccountForOperation(svc, query.accountId, 'todo_search');
-    }
-    return this.todosFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
+    return this.todoOps.searchTodos(query);
   }
 
   getTodoDigest(accountId: string): TodoDigestRecord | null {
-    const svc = this.todosFacade.getService();
-    if (!svc) return null;
-    this.requireTodoAccountForOperation(svc, accountId, 'todo_digest_read');
-    return svc.getLatestDigest(accountId);
+    return this.todoOps.getTodoDigest(accountId);
   }
 
   connectTodoist(input: TodoistConnectInput): TodoistConnectResult {
-    const existingConnection = this
-      .listConnections('todos')
-      .find((connection) => connection.providerKind === 'todoist') ?? null;
-
-    let connection = existingConnection;
-    if (!connection) {
-      connection = this.createConnection({
-        domain: 'todos',
-        providerKind: 'todoist',
-        label: input.label,
-        mode: input.mode,
-        secretRefId: null,
-        syncIntervalSeconds: input.syncIntervalSeconds,
-        allowedScopes: [],
-        allowedResources: [],
-        resourceRules: [],
-      });
-    } else {
-      connection = this.updateConnection(connection.id, {
-        label: input.label,
-        mode: input.mode,
-        syncIntervalSeconds: input.syncIntervalSeconds,
-      }) ?? connection;
-    }
-
-    const secretRef = connection.secretRefId
-      ? (this.secretStore.rotateSecret(connection.secretRefId, input.apiToken) ?? this.secretStore.setSecret({
-        provider: 'keychain',
-        key: 'todoist-api-token',
-        value: input.apiToken,
-        connectionId: connection.id,
-        description: 'Todoist API token',
-      }))
-      : this.secretStore.setSecret({
-        provider: 'keychain',
-        key: 'todoist-api-token',
-        value: input.apiToken,
-        connectionId: connection.id,
-        description: 'Todoist API token',
-      });
-
-    connection = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
-
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccountByConnection(connection.id)
-        ?? svc.registerAccount({
-          connectionId: connection.id,
-          providerKind: 'todoist',
-          displayName: input.displayName,
-        });
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: {
-          status: 'healthy',
-          authState: 'configured',
-          checkedAt: nowIso(),
-          lastError: null,
-          diagnostics: [],
-        },
-        sync: {
-          status: 'idle',
-          cursorKind: 'since',
-          cursorPresent: false,
-          lagSummary: 'Awaiting first sync',
-        },
-      });
-      this.todosFacade.invalidate();
-      return { connectionId: connection.id, account };
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.connectTodoist(input);
   }
 
   registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
-    // Local accounts don't need a connection
-    if (input.connectionId) {
-      this.requireConnectionForOperation({
-        connectionId: input.connectionId,
-        purpose: 'todo_account_register',
-        expectedDomain: 'todos',
-        allowedProviderKinds: ['todoist', 'local'],
-        requireSecret: false,
-      });
-    }
-
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      return svc.registerAccount(input);
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.registerTodoAccount(input);
   }
 
   createTodo(input: TodoCreateInput): TodoItemRecord {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      this.requireTodoAccountForOperation(svc, input.accountId, 'todo_create');
-      const data: { title: string; description?: string; priority?: number; dueDate?: string; dueTime?: string; labels?: string[]; projectName?: string } = { title: input.title };
-      if (input.description !== undefined) data.description = input.description;
-      if (input.priority !== undefined) data.priority = input.priority;
-      if (input.dueDate !== undefined) data.dueDate = input.dueDate;
-      if (input.dueTime !== undefined) data.dueTime = input.dueTime;
-      if (input.labels !== undefined) data.labels = input.labels;
-      if (input.projectName !== undefined) data.projectName = input.projectName;
-      const result = svc.createItem(input.accountId, data);
-
-      this.todosFacade.invalidate();
-
-      return result;
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.createTodo(input);
   }
 
   completeTodo(id: string): TodoItemRecord | null {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const existing = svc.getItem(id);
-      if (!existing) {
-        return null;
-      }
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_complete');
-      svc.completeItem(id);
-      const result = svc.getItem(id);
-
-      this.todosFacade.invalidate();
-
-      return result;
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.completeTodo(id);
   }
 
   reprioritizeTodo(todoId: string, priority: number): TodoItemRecord | null {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const existing = svc.getItem(todoId);
-      if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reprioritize');
-      const result = svc.reprioritizeItem(todoId, priority);
-      this.todosFacade.invalidate();
-      return result;
-    } finally { writeDb.close(); }
+    return this.todoOps.reprioritizeTodo(todoId, priority);
   }
 
   rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const existing = svc.getItem(todoId);
-      if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reschedule');
-      const result = svc.rescheduleItem(todoId, dueDate, dueTime);
-      this.todosFacade.invalidate();
-      return result;
-    } finally { writeDb.close(); }
+    return this.todoOps.rescheduleTodo(todoId, dueDate, dueTime);
   }
 
   moveTodo(todoId: string, projectName: string): TodoItemRecord | null {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const existing = svc.getItem(todoId);
-      if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_move');
-      const result = svc.moveItem(todoId, projectName);
-      this.todosFacade.invalidate();
-      return result;
-    } finally { writeDb.close(); }
+    return this.todoOps.moveTodo(todoId, projectName);
   }
 
   listTodoProjects(accountId: string): TodoProjectRecord[] {
-    const svc = this.todosFacade.getService();
-    if (!svc) return [];
-    this.requireTodoAccountForOperation(svc, accountId, 'todo_projects_list');
-    return svc.listProjects(accountId);
+    return this.todoOps.listTodoProjects(accountId);
   }
 
   async reconcileTodos(accountId: string): Promise<TodoReconcileResult> {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_reconcile', { requireSecret: true });
-
-      let adapter;
-      if (account.providerKind === 'local') {
-        adapter = new LocalTodoAdapter();
-      } else if (account.providerKind === 'todoist') {
-        if (!connection?.secretRefId) throw new RuntimeValidationError('Todoist account has no usable connection secret');
-        const apiToken = this.secretStore.getSecretValue(connection.secretRefId!);
-        if (!apiToken) throw new RuntimeValidationError('Failed to retrieve Todoist API token from SecretStore');
-        adapter = new TodoistAdapter({ apiToken });
-      } else {
-        throw new Error(`Unsupported todo provider: ${account.providerKind}`);
-      }
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new TodoSyncService(svc, ctx);
-      const syncResult = await syncService.syncAccount(account, adapter);
-
-      this.todosFacade.invalidate();
-
-      return {
-        accountId,
-        added: syncResult.todosSynced,
-        updated: syncResult.todosUpdated,
-        removed: 0,
-        errors: syncResult.errors,
-      };
-    } finally { writeDb.close(); }
+    return this.todoOps.reconcileTodos(accountId);
   }
 
   async syncTodoAccount(accountId: string): Promise<TodoSyncResult> {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_sync', {
-        requireSecret: true,
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new TodoSyncService(svc, ctx);
-
-      // Resolve adapter based on provider kind
-      let adapter;
-      if (account.providerKind === 'local') {
-        adapter = new LocalTodoAdapter();
-      } else if (account.providerKind === 'todoist') {
-        if (!connection?.secretRefId) {
-          throw new RuntimeValidationError('Todoist account has no usable connection secret');
-        }
-        const apiToken = this.secretStore.getSecretValue(connection.secretRefId!);
-        if (!apiToken) {
-          throw new RuntimeValidationError('Failed to retrieve Todoist API token from SecretStore');
-        }
-        adapter = new TodoistAdapter({ apiToken });
-      } else {
-        throw new Error(`Unsupported todo provider: ${account.providerKind}`);
-      }
-
-      const result = await syncService.syncAccount(account, adapter);
-
-      this.todosFacade.invalidate();
-
-      return result;
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.syncTodoAccount(accountId);
   }
 
   triggerTodoDigest(accountId?: string): TodoDigestRecord | null {
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) return null;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const candidateAccounts = accountId ? [svc.getAccount(accountId)].filter(Boolean) : svc.listAccounts();
-      if (candidateAccounts.length === 0) return null;
-      const accounts = candidateAccounts.map((account) => {
-        if (!account) {
-          throw new RuntimeValidationError(`Todo account ${accountId} not found`);
-        }
-        return this.requireTodoAccountForOperation(svc, account.id, 'todo_digest_generate').account;
-      });
-
-      const ctx = this.buildCapabilityContext();
-      const digestService = new TodoDigestService(svc, ctx);
-
-      let lastDigest: TodoDigestRecord | null = null;
-      for (const account of accounts) {
-        if (!account) continue;
-        lastDigest = digestService.generateDigest(account);
-      }
-
-      this.todosFacade.invalidate();
-
-      return lastDigest;
-    } finally {
-      writeDb.close();
-    }
+    return this.todoOps.triggerTodoDigest(accountId);
   }
 
-  // --- People facade ---
+  // --- People facade (delegated to PeopleFacade) ---
 
   listPeople(): PersonListItem[] {
-    return this.peopleFacade.getService()?.listPeople() ?? [];
+    return this.peopleOps.listPeople();
   }
 
   getPerson(id: string): PersonRecord | null {
-    return this.peopleFacade.getService()?.getPerson(id) ?? null;
+    return this.peopleOps.getPerson(id);
   }
 
   searchPeople(query: PersonSearchQuery): { query: string; results: PersonSearchResult[] } {
-    const svc = this.peopleFacade.getService();
-    if (!svc) {
-      return { query: query.query, results: [] };
-    }
-    return svc.searchPeople(query.query, query.limit);
+    return this.peopleOps.searchPeople(query);
   }
 
   updatePerson(id: string, input: PersonUpdateInput): PersonRecord | null {
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) throw new Error('People capability not initialized');
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      const updated = svc.updatePerson(id, input);
-      this.peopleFacade.invalidate();
-      return updated;
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.updatePerson(id, input);
   }
 
   mergePeople(input: PersonMergeInput): PersonRecord {
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) throw new Error('People capability not initialized');
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      const merged = svc.mergePeople(input);
-      this.peopleFacade.invalidate();
-      this.recordSecurityAudit({
-        code: 'people_merged',
-        severity: 'info',
-        message: 'People graph merge completed',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          sourcePersonId: input.sourcePersonId,
-          targetPersonId: input.targetPersonId,
-          requestedBy: input.requestedBy,
-        },
-      });
-      return merged;
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.mergePeople(input);
   }
 
   splitPerson(personId: string, input: PersonSplitInput): PersonRecord {
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) throw new Error('People capability not initialized');
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      const split = svc.splitPerson(personId, input);
-      this.peopleFacade.invalidate();
-      this.recordSecurityAudit({
-        code: 'people_split',
-        severity: 'info',
-        message: 'People graph split completed',
-        component: 'runtime-core',
-        timestamp: nowIso(),
-        details: {
-          sourcePersonId: personId,
-          targetPersonId: split.id,
-          requestedBy: input.requestedBy,
-        },
-      });
-      return split;
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.splitPerson(personId, input);
   }
 
   attachPersonIdentity(input: PersonIdentityAttachInput): PersonRecord {
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) throw new Error('People capability not initialized');
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      const updated = svc.attachIdentity(input);
-      this.peopleFacade.invalidate();
-      return updated;
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.attachPersonIdentity(input);
   }
 
   detachPersonIdentity(identityId: string, input: PersonIdentityDetachInput): PersonRecord {
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) throw new Error('People capability not initialized');
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      const detached = svc.detachIdentity(identityId, input.requestedBy);
-      this.peopleFacade.invalidate();
-      return detached;
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.detachPersonIdentity(identityId, input);
   }
 
   listPersonMergeEvents(personId?: string): PersonMergeEventRecord[] {
-    return this.peopleFacade.getService()?.listMergeEvents(personId) ?? [];
+    return this.peopleOps.listPersonMergeEvents(personId);
   }
 
   getPersonMergeSuggestions(): PersonMergeSuggestion[] {
-    return this.peopleFacade.getService()?.getMergeSuggestions() ?? [];
+    return this.peopleOps.getPersonMergeSuggestions();
   }
 
   getPersonActivityRollups(personId: string): PersonActivityRollup[] {
-    return this.peopleFacade.getService()?.getActivityRollups(personId) ?? [];
-  }
-
-  private refreshPeopleProjectionForEmailAccount(service: EmailService, accountId: string): void {
-    const account = service.getAccount(accountId);
-    if (!account) return;
-    const seeds: PersonProjectionSeed[] = [{
-      provider: 'email',
-      externalId: account.emailAddress,
-      displayName: account.displayName,
-      email: account.emailAddress,
-      activitySummary: 'email',
-    }];
-    for (const sender of service.getTopSenders(accountId, 50)) {
-      const email = normalizeEmail(sender.fromAddress);
-      if (!email) continue;
-      seeds.push({
-        provider: 'email',
-        externalId: email,
-        displayName: sender.fromAddress,
-        email,
-        activitySummary: 'email',
-      });
-    }
-    this.projectPeopleSeeds(seeds);
-  }
-
-  private refreshPeopleProjectionForCalendarAccount(service: CalendarService, accountId: string): void {
-    const account = service.getAccount(accountId);
-    if (!account) return;
-    const seeds: PersonProjectionSeed[] = [{
-      provider: 'calendar',
-      externalId: account.calendarEmail,
-      displayName: account.displayName,
-      email: account.calendarEmail,
-      activitySummary: 'calendar',
-    }];
-    for (const event of service.listEvents(accountId, { limit: 200 })) {
-      const organizer = normalizeEmail(event.organizer);
-      if (organizer) {
-        seeds.push({
-          provider: 'calendar',
-          externalId: organizer,
-          displayName: organizer,
-          email: organizer,
-          activitySummary: 'calendar',
-        });
-      }
-      for (const attendee of event.attendees) {
-        const email = normalizeEmail(attendee);
-        if (!email) continue;
-        seeds.push({
-          provider: 'calendar',
-          externalId: email,
-          displayName: attendee,
-          email,
-          activitySummary: 'calendar',
-        });
-      }
-    }
-    this.projectPeopleSeeds(seeds);
-  }
-
-  private refreshPeopleProjectionForGithubAccount(service: GithubService, accountId: string): void {
-    const account = service.getAccount(accountId);
-    if (!account) return;
-    const seeds: PersonProjectionSeed[] = [{
-      provider: 'github',
-      externalId: account.githubUsername,
-      displayName: account.displayName,
-      handle: account.githubUsername,
-      activitySummary: 'github',
-    }];
-    for (const repo of service.listRepos(accountId, { limit: 200 })) {
-      seeds.push({
-        provider: 'github',
-        externalId: repo.owner,
-        displayName: repo.owner,
-        handle: repo.owner,
-        activitySummary: 'github',
-      });
-    }
-    for (const pr of service.listPullRequests(accountId, { limit: 200 })) {
-      seeds.push({
-        provider: 'github',
-        externalId: pr.author,
-        displayName: pr.author,
-        handle: pr.author,
-        activitySummary: 'github',
-      });
-      for (const reviewer of pr.requestedReviewers) {
-        seeds.push({
-          provider: 'github',
-          externalId: reviewer,
-          displayName: reviewer,
-          handle: reviewer,
-          activitySummary: 'github',
-        });
-      }
-    }
-    for (const issue of service.listIssues(accountId, { limit: 200 })) {
-      seeds.push({
-        provider: 'github',
-        externalId: issue.author,
-        displayName: issue.author,
-        handle: issue.author,
-        activitySummary: 'github',
-      });
-      for (const assignee of issue.assignees) {
-        seeds.push({
-          provider: 'github',
-          externalId: assignee,
-          displayName: assignee,
-          handle: assignee,
-          activitySummary: 'github',
-        });
-      }
-    }
-    this.projectPeopleSeeds(seeds);
-  }
-
-  private projectPeopleSeeds(seeds: PersonProjectionSeed[]): void {
-    const deduped = new Map<string, PersonProjectionSeed>();
-    for (const seed of seeds) {
-      const key = `${seed.provider}:${seed.externalId}`;
-      if (!deduped.has(key)) {
-        deduped.set(key, seed);
-      }
-    }
-    if (deduped.size === 0) return;
-    const peopleCap = this.capabilityRegistry.getCapability('people');
-    if (!peopleCap) return;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
-      for (const seed of deduped.values()) {
-        svc.projectSeed(seed);
-      }
-      this.peopleFacade.invalidate();
-    } finally {
-      writeDb.close();
-    }
+    return this.peopleOps.getPersonActivityRollups(personId);
   }
 
   // --- Finance facade ---

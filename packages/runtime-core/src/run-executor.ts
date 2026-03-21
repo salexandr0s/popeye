@@ -13,6 +13,7 @@ import type {
   NormalizedEngineEvent,
   ProjectRecord,
   ReceiptRecord,
+  RecallExplanation,
   RunEventRecord,
   RunRecord,
   SecurityAuditEvent,
@@ -38,6 +39,7 @@ import {
   buildExecutionEnvelope,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
+import type { MemoryDescription, MemoryExpansion } from './runtime-tools.js';
 import { RuntimeValidationError } from './errors.js';
 import { buildCoreRuntimeTools } from './runtime-tools.js';
 import {
@@ -63,14 +65,17 @@ export interface ActiveRunContext {
 // Dependencies
 // ---------------------------------------------------------------------------
 
-export interface RunExecutorDeps {
-  db: {
-    prepare: (sql: string) => {
-      get: (...params: unknown[]) => unknown;
-      all: (...params: unknown[]) => unknown[];
-      run: (...params: unknown[]) => { changes: number };
-    };
+/** Structural subset of better-sqlite3 Database used by RunExecutor. */
+export interface RunExecutorDb {
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+    run(...params: unknown[]): { changes: number };
   };
+}
+
+export interface RunExecutorDeps {
+  db: RunExecutorDb;
   config: AppConfig;
   log: PopeyeLogger;
   getEngine: () => EngineAdapter;
@@ -119,13 +124,13 @@ export interface RunExecutorDeps {
     listCapabilities: () => CapabilityDescriptor[];
   };
   memoryLifecycle: {
-    processCompactionFlush: (runId: string, content: string, workspaceId: string) => Promise<void>;
+    processCompactionFlush: (runId: string, content: string, workspaceId: string) => Promise<unknown>;
   };
 
   // --- Memory operation callbacks ---
   searchMemory: (query: MemorySearchQuery) => Promise<MemorySearchResponse>;
-  describeMemory: (id: string, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => unknown;
-  expandMemory: (id: string, maxTokens?: number, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => unknown;
+  describeMemory: (id: string, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => MemoryDescription | null;
+  expandMemory: (id: string, maxTokens?: number, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => MemoryExpansion | null;
   explainMemoryRecall: (input: {
     query: string;
     memoryId: string;
@@ -138,7 +143,7 @@ export interface RunExecutorDeps {
     namespaceIds?: string[];
     tags?: string[];
     includeSuperseded?: boolean;
-  }, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => unknown;
+  }, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => Promise<RecallExplanation | null>;
 }
 
 // ---------------------------------------------------------------------------

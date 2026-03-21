@@ -21,7 +21,7 @@
     "verify:pi-checkout": "node scripts/check-pi-checkout.mjs",
     "verify:src-build-artifacts": "node scripts/check-src-build-artifacts.mjs",
     "verify:generated-artifacts": "tsx scripts/generate-swift-models.ts --check && tsx scripts/generate-typescript-models.ts --check && tsx scripts/export-json-schemas.ts --check",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -b",
     "generate:swift": "tsx scripts/generate-swift-models.ts",
     "generate:schemas": "tsx scripts/export-json-schemas.ts",
     "generate:typescript": "tsx scripts/generate-typescript-models.ts",

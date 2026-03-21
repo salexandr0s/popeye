@@ -3,8 +3,10 @@ import { DomainKindSchema } from './domain.js';
 import { TaskSourceSchema } from './execution.js';
 
 const ApprovalScopeSchema = z.enum(['secret_access', 'vault_open', 'context_release', 'data_source_connect', 'external_write']);
+export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
 
 export const ApprovalRiskClassSchema = z.enum(['auto', 'ask', 'deny']);
+export type ApprovalRiskClass = z.infer<typeof ApprovalRiskClassSchema>;
 
 const ApprovalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired']);
 
@@ -26,8 +28,10 @@ const ActionKindSchema = z.enum([
   'send',
   'delete',
 ]);
+export type ActionKind = z.infer<typeof ActionKindSchema>;
 
 const ActionResourceScopeSchema = z.enum(['global', 'workspace', 'project', 'run', 'connection', 'resource']);
+export type ActionResourceScope = z.infer<typeof ActionResourceScopeSchema>;
 
 export const ApprovalRecordSchema = z.object({
   id: z.string(),
