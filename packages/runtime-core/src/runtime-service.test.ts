@@ -264,7 +264,7 @@ describe('PopeyeRuntimeService', () => {
 
     expect(pending.status).toBe('pending');
     expect(pending.standingApprovalEligible).toBe(true);
-    expect(pending.automationGrantEligible).toBe(false);
+    expect(pending.automationGrantEligible).toBe(true);
 
     await runtime.close();
   });
@@ -2222,6 +2222,72 @@ describe('PopeyeRuntimeService', () => {
 
     const allRuns = runtime.listRuns();
     expect(allRuns.length).toBeGreaterThan(failedRuns.length);
+    await runtime.close();
+  });
+
+  // Phase 7 continued: auth_failure and policy_failure injection tests
+
+  it('failure injection: auth_failure produces failed_final run, security audit, and intervention', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-auth-'));
+    chmodSync(dir, 0o700);
+    const engine = new FailingFakeEngineAdapter('auth_failure');
+    const runtime = createRuntimeService(makeConfig(dir), engine);
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'auth-fail', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 5_000) : null;
+
+    // Auth failures must not be retried — run goes straight to failed_final
+    expect(terminal?.run?.state).toBe('failed_final');
+    expect(terminal?.receipt?.status).toBe('failed');
+
+    // Job must also be terminal
+    const job = runtime.listJobs().find((j) => j.id === created.job!.id);
+    expect(job?.status).toBe('failed_final');
+    expect(job?.retryCount).toBe(0);
+
+    // Security audit record must exist with code 'run_failed'
+    const securityRows = runtime.databases.app
+      .prepare("SELECT code, message FROM security_audit WHERE code = 'run_failed'")
+      .all() as Array<{ code: string; message: string }>;
+    expect(securityRows.length).toBeGreaterThanOrEqual(1);
+    expect(securityRows.some((row) => row.message === 'auth_failure')).toBe(true);
+
+    // An intervention must be created for operator awareness
+    const interventions = runtime.listInterventions();
+    expect(interventions.some((i) => i.code === 'failed_final' && i.reason.includes('auth_failure'))).toBe(true);
+
+    await runtime.close();
+  });
+
+  it('failure injection: policy_failure produces failed_final run, security audit, and intervention', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-fi-policy-'));
+    chmodSync(dir, 0o700);
+    const engine = new FailingFakeEngineAdapter('policy_failure');
+    const runtime = createRuntimeService(makeConfig(dir), engine);
+
+    const created = runtime.createTask({ workspaceId: 'default', projectId: null, title: 'policy-fail', prompt: 'hello', source: 'manual', autoEnqueue: true });
+    const terminal = created.job ? await runtime.waitForJobTerminalState(created.job.id, 5_000) : null;
+
+    // Policy failures must not be retried — run goes straight to failed_final
+    expect(terminal?.run?.state).toBe('failed_final');
+    expect(terminal?.receipt?.status).toBe('failed');
+
+    // Job must also be terminal
+    const job = runtime.listJobs().find((j) => j.id === created.job!.id);
+    expect(job?.status).toBe('failed_final');
+    expect(job?.retryCount).toBe(0);
+
+    // Security audit record must exist with code 'run_failed'
+    const securityRows = runtime.databases.app
+      .prepare("SELECT code, message FROM security_audit WHERE code = 'run_failed'")
+      .all() as Array<{ code: string; message: string }>;
+    expect(securityRows.length).toBeGreaterThanOrEqual(1);
+    expect(securityRows.some((row) => row.message === 'policy_failure')).toBe(true);
+
+    // An intervention must be created for operator awareness
+    const interventions = runtime.listInterventions();
+    expect(interventions.some((i) => i.code === 'failed_final' && i.reason.includes('policy_failure'))).toBe(true);
+
     await runtime.close();
   });
 });

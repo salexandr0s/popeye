@@ -5,6 +5,19 @@ import { createDisabledEmbeddingClient } from './embedding-client.js';
 import type { EmbeddingClient } from './embedding-client.js';
 import { loadSqliteVec } from './extension-loader.js';
 import { MemorySearchService } from './search-service.js';
+import { insertVecEmbedding } from './vec-search.js';
+
+// Detect sqlite-vec availability at module level so describe.skipIf can use it synchronously.
+let vecAvailable = false;
+try {
+  const probeDb = new Database(':memory:');
+  // loadSqliteVec is async — we await it in a top-level block evaluated before tests run.
+  // Vitest supports top-level await in test files.
+  vecAvailable = await loadSqliteVec(probeDb, 4);
+  probeDb.close();
+} catch {
+  vecAvailable = false;
+}
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
@@ -1489,5 +1502,200 @@ describe('provenance preservation', () => {
     expect(record!.memoryType).toBe('semantic');
     expect(record!.sourceType).toBe('curated_memory');
     expect(record!.classification).toBe('embeddable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hybrid search integration tests (FTS5 + sqlite-vec combined)
+// ---------------------------------------------------------------------------
+
+const HYBRID_DIM = 4;
+
+/**
+ * Create an embedding client that returns a predetermined vector for any query.
+ * The vector is configured at construction so the test controls exactly which
+ * stored embeddings will be "close" to the query.
+ */
+function createPredeterminedEmbeddingClient(queryVector: Float32Array): EmbeddingClient {
+  return {
+    dimensions: queryVector.length,
+    model: 'predetermined-test',
+    enabled: true,
+    async embed(_texts: string[]): Promise<Float32Array[]> {
+      return _texts.map(() => queryVector);
+    },
+  };
+}
+
+describe.skipIf(!vecAvailable)('hybrid search (FTS5 + sqlite-vec combined)', () => {
+  let db: Database.Database;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    await loadSqliteVec(db, HYBRID_DIM);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('merged output contains results surfaced by both FTS5 and vec paths', async () => {
+    const now = new Date().toISOString();
+
+    // -- Memory A: matches FTS5 ("database migration") but has a distant embedding.
+    const idFtsOnly = 'mem-fts-only';
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(idFtsOnly, 'Database migration plan', 'embeddable', 'curated_memory',
+      'Migrate the production database from MySQL to PostgreSQL with zero downtime',
+      0.9, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run(idFtsOnly, 'Database migration plan',
+        'Migrate the production database from MySQL to PostgreSQL with zero downtime');
+    // Distant embedding — orthogonal to the query vector we will use.
+    insertVecEmbedding(db, idFtsOnly, new Float32Array([0, 0, 0, 1]));
+
+    // -- Memory B: does NOT match FTS5 text ("database migration") but has a very close embedding.
+    const idVecOnly = 'mem-vec-only';
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(idVecOnly, 'Infrastructure scaling notes', 'embeddable', 'curated_memory',
+      'Horizontal pod autoscaler tuning and replica count thresholds for peak traffic',
+      0.85, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run(idVecOnly, 'Infrastructure scaling notes',
+        'Horizontal pod autoscaler tuning and replica count thresholds for peak traffic');
+    // Close embedding — nearly identical to the query vector.
+    insertVecEmbedding(db, idVecOnly, new Float32Array([1, 0, 0, 0]));
+
+    // -- Memory C: matches BOTH FTS5 and vec.
+    const idBoth = 'mem-both';
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(idBoth, 'Database migration execution log', 'embeddable', 'curated_memory',
+      'Executed the database migration script and verified data integrity across all tables',
+      0.95, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run(idBoth, 'Database migration execution log',
+        'Executed the database migration script and verified data integrity across all tables');
+    insertVecEmbedding(db, idBoth, new Float32Array([0.9, 0.1, 0, 0]));
+
+    // Query vector points towards [1,0,0,0] — close to idVecOnly and idBoth, far from idFtsOnly.
+    const queryVec = new Float32Array([1, 0, 0, 0]);
+    const embeddingClient = createPredeterminedEmbeddingClient(queryVec);
+
+    const service = new MemorySearchService({
+      db,
+      embeddingClient,
+      vecAvailable: true,
+    });
+
+    const response = await service.search({
+      query: 'database migration',
+      includeContent: true,
+    });
+
+    // --- Assertion (a): results from both FTS5 AND vec paths appear
+    expect(response.searchMode).toBe('hybrid');
+    const resultIds = response.results.map((r) => r.id);
+
+    // FTS-matched memory should be present (matched text "database migration").
+    expect(resultIds).toContain(idFtsOnly);
+    // Vec-only memory should be present (close embedding, no text overlap with query).
+    expect(resultIds).toContain(idVecOnly);
+    // Memory matching both paths should also be present.
+    expect(resultIds).toContain(idBoth);
+    expect(response.results.length).toBe(3);
+  });
+
+  it('latencyMs is tracked and greater than zero', async () => {
+    const now = new Date().toISOString();
+
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem-latency', 'Latency probe memory', 'embeddable', 'curated_memory',
+      'Content for latency measurement in hybrid search integration test',
+      0.8, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run('mem-latency', 'Latency probe memory',
+        'Content for latency measurement in hybrid search integration test');
+    insertVecEmbedding(db, 'mem-latency', new Float32Array([0.5, 0.5, 0.5, 0.5]));
+
+    const embeddingClient = createPredeterminedEmbeddingClient(new Float32Array([0.5, 0.5, 0.5, 0.5]));
+    const service = new MemorySearchService({
+      db,
+      embeddingClient,
+      vecAvailable: true,
+    });
+
+    const response = await service.search({ query: 'latency measurement' });
+
+    // --- Assertion (b): latencyMs is tracked and positive
+    expect(typeof response.latencyMs).toBe('number');
+    expect(response.latencyMs).toBeGreaterThan(0);
+  });
+
+  it('results are properly reranked by composite score', async () => {
+    const now = new Date().toISOString();
+
+    // Memory with high confidence + strong FTS match + close vec match → should rank first.
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem-high', 'Server deployment pipeline', 'embeddable', 'curated_memory',
+      'Complete server deployment pipeline with CI/CD automation and rollback procedures',
+      0.95, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run('mem-high', 'Server deployment pipeline',
+        'Complete server deployment pipeline with CI/CD automation and rollback procedures');
+    insertVecEmbedding(db, 'mem-high', new Float32Array([1, 0, 0, 0]));
+
+    // Memory with low confidence + weak FTS match + distant vec match → should rank lower.
+    db.prepare(
+      `INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem-low', 'Server configuration notes', 'embeddable', 'curated_memory',
+      'Miscellaneous server notes about the old deployment environment and legacy setup',
+      0.3, 'workspace', 'semantic', now, 0);
+    db.prepare('INSERT INTO memories_fts (memory_id, description, content) VALUES (?, ?, ?)')
+      .run('mem-low', 'Server configuration notes',
+        'Miscellaneous server notes about the old deployment environment and legacy setup');
+    insertVecEmbedding(db, 'mem-low', new Float32Array([0, 0, 0, 1]));
+
+    // Query: text matches both ("server" + "deployment"), vec close to mem-high.
+    const embeddingClient = createPredeterminedEmbeddingClient(new Float32Array([1, 0, 0, 0]));
+    const service = new MemorySearchService({
+      db,
+      embeddingClient,
+      vecAvailable: true,
+    });
+
+    const response = await service.search({
+      query: 'server deployment',
+      includeContent: true,
+    });
+
+    // --- Assertion (c): reranking produces descending composite scores
+    expect(response.searchMode).toBe('hybrid');
+    expect(response.results.length).toBe(2);
+
+    const [first, second] = response.results;
+    expect(first!.score).toBeGreaterThan(second!.score);
+    expect(first!.id).toBe('mem-high');
+    expect(second!.id).toBe('mem-low');
+
+    // Both results must have score breakdown components
+    for (const result of response.results) {
+      expect(result.scoreBreakdown).toBeDefined();
+      expect(typeof result.scoreBreakdown.relevance).toBe('number');
+      expect(typeof result.scoreBreakdown.recency).toBe('number');
+      expect(typeof result.scoreBreakdown.confidence).toBe('number');
+      expect(typeof result.scoreBreakdown.scopeMatch).toBe('number');
+      expect(result.score).toBeGreaterThan(0);
+    }
   });
 });
