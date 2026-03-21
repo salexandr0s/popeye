@@ -29,6 +29,9 @@
     "command": "node",
     "args": []
   },
+  "logging": {
+    "level": "info"
+  },
   "memory": {
     "confidenceHalfLifeDays": 30,
     "archiveThreshold": 0.1,

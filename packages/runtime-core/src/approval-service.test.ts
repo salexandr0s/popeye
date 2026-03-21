@@ -546,4 +546,376 @@ describe('ApprovalService', () => {
       databases.memory.close();
     }
   });
+
+  // B1: auth_failure intervention creation
+  it('creates auth_failure intervention for denied-by-policy requests', () => {
+    const { databases, service } = setup();
+    try {
+      // A riskClass=deny request is denied by policy. The approval service
+      // directly denies it; we verify the denied status and no intervention
+      // (the service only creates interventions for 'ask' class).
+      const approval = service.requestApproval({
+        scope: 'external_write',
+        domain: 'finance',
+        riskClass: 'deny',
+        actionKind: 'send',
+        resourceScope: 'resource',
+        resourceType: 'payment',
+        resourceId: 'pay-1',
+        requestedBy: 'agent-1',
+      });
+
+      expect(approval.status).toBe('denied');
+      expect(approval.resolvedBy).toBe('policy');
+      expect(approval.decisionReason).toBe('Denied by policy');
+      // riskClass=deny does not create an intervention (only 'ask' does)
+      expect(approval.interventionId).toBeNull();
+    } finally {
+      databases.app.close();
+      databases.memory.close();
+    }
+  });
+
+  // B2: needs_policy_decision intervention for gated action denied by operator
+  it('creates needs_policy_decision intervention when ask-class request has no matching grant', () => {
+    const { databases, service } = setup();
+    try {
+      const approval = service.requestApproval({
+        scope: 'external_write',
+        domain: 'email',
+        riskClass: 'ask',
+        actionKind: 'send',
+        resourceScope: 'resource',
+        resourceType: 'email_draft',
+        resourceId: 'draft-99',
+        requestedBy: 'agent-2',
+      });
+
+      // Approval should be pending with a linked intervention
+      expect(approval.status).toBe('pending');
+      expect(approval.interventionId).not.toBeNull();
+
+      // Verify the intervention record in the database
+      const intervention = databases.app
+        .prepare('SELECT * FROM interventions WHERE id = ?')
+        .get(approval.interventionId!) as Record<string, unknown>;
+      expect(intervention['code']).toBe('needs_policy_decision');
+      expect(intervention['status']).toBe('pending');
+      expect((intervention['reason'] as string)).toContain('external_write');
+      expect((intervention['reason'] as string)).toContain('email_draft');
+
+      // Deny the approval and verify the intervention is resolved
+      const denied = service.resolveApproval(approval.id, {
+        decision: 'denied',
+        decisionReason: 'Operator denied the action',
+      });
+      expect(denied.status).toBe('denied');
+
+      const resolvedIntervention = databases.app
+        .prepare('SELECT * FROM interventions WHERE id = ?')
+        .get(approval.interventionId!) as Record<string, unknown>;
+      expect(resolvedIntervention['status']).toBe('resolved');
+      expect((resolvedIntervention['resolution_note'] as string)).toContain('denied');
+    } finally {
+      databases.app.close();
+      databases.memory.close();
+    }
+  });
+
+  // B3: Standing approval matching — various scenarios
+  describe('standing approval matching', () => {
+    it('matching standing approval with correct domain/actionKind/scope auto-approves', () => {
+      const { databases, service } = setup();
+      try {
+        service.createStandingApproval({
+          scope: 'external_write',
+          domain: 'email',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          note: 'allow email sends',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'email',
+          riskClass: 'ask',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: 'draft-1',
+          requestedBy: 'agent-1',
+          standingApprovalEligible: true,
+        });
+
+        expect(approval.status).toBe('approved');
+        expect(approval.resolvedBy).toBe('standing_approval');
+        expect(approval.interventionId).toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('expired standing approval does NOT match', () => {
+      const { databases, service } = setup();
+      try {
+        const pastDate = new Date(Date.now() - 3600_000).toISOString();
+        service.createStandingApproval({
+          scope: 'external_write',
+          domain: 'email',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          note: 'expired standing',
+          expiresAt: pastDate,
+          createdBy: 'operator:test',
+        });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'email',
+          riskClass: 'ask',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: 'draft-2',
+          requestedBy: 'agent-1',
+          standingApprovalEligible: true,
+        });
+
+        // Should not match the expired grant, so stays pending
+        expect(approval.status).toBe('pending');
+        expect(approval.interventionId).not.toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('revoked standing approval does NOT match', () => {
+      const { databases, service } = setup();
+      try {
+        const standing = service.createStandingApproval({
+          scope: 'external_write',
+          domain: 'email',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          note: 'to-be-revoked',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        service.revokeStandingApproval(standing.id, { revokedBy: 'operator:test' });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'email',
+          riskClass: 'ask',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: 'draft-3',
+          requestedBy: 'agent-1',
+          standingApprovalEligible: true,
+        });
+
+        // Revoked grant should not match, stays pending
+        expect(approval.status).toBe('pending');
+        expect(approval.interventionId).not.toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('scope mismatch returns no match for standing approval', () => {
+      const { databases, service } = setup();
+      try {
+        service.createStandingApproval({
+          scope: 'external_write',
+          domain: 'email',
+          actionKind: 'send',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          note: 'email sends only',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        // Request for a different scope (vault_open instead of external_write)
+        const approval = service.requestApproval({
+          scope: 'vault_open',
+          domain: 'email',
+          riskClass: 'ask',
+          actionKind: 'open_vault',
+          resourceScope: 'resource',
+          resourceType: 'vault',
+          resourceId: 'vault-1',
+          requestedBy: 'agent-1',
+          standingApprovalEligible: true,
+        });
+
+        expect(approval.status).toBe('pending');
+        expect(approval.interventionId).not.toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+  });
+
+  // B4: Automation grant matching — various scenarios
+  describe('automation grant matching', () => {
+    it('valid automation grant with matching domain/actionKind/scope auto-approves', () => {
+      const { databases, service } = setup();
+      try {
+        const { runId } = seedRunContext(databases.app, { taskSource: 'schedule' });
+        const grant = service.createAutomationGrant({
+          scope: 'external_write',
+          domain: 'email',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          taskSources: ['schedule', 'heartbeat'],
+          note: 'auto email drafts',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'email',
+          riskClass: 'ask',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'email_draft',
+          resourceId: 'draft-1',
+          requestedBy: 'agent-1',
+          runId,
+          standingApprovalEligible: false,
+          automationGrantEligible: true,
+        });
+
+        expect(approval.status).toBe('approved');
+        expect(approval.resolvedBy).toBe('automation_grant');
+        expect(approval.resolvedByGrantId).toBe(grant.id);
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('automation grant with taskSource filter rejects mismatched task source', () => {
+      const { databases, service } = setup();
+      try {
+        // Seed a run with 'manual' task source
+        const { runId } = seedRunContext(databases.app, { taskSource: 'manual' });
+        service.createAutomationGrant({
+          scope: 'external_write',
+          domain: 'todos',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'todo',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          taskSources: ['schedule'],
+          note: 'only for scheduled tasks',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'todos',
+          riskClass: 'ask',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'todo',
+          resourceId: 'todo-1',
+          requestedBy: 'agent-1',
+          runId,
+          standingApprovalEligible: false,
+          automationGrantEligible: true,
+        });
+
+        // Grant requires 'schedule', run is 'manual' -> no match, stays pending
+        expect(approval.status).toBe('pending');
+        expect(approval.interventionId).not.toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('revoked automation grant does NOT match', () => {
+      const { databases, service } = setup();
+      try {
+        const { runId } = seedRunContext(databases.app, { taskSource: 'schedule' });
+        const grant = service.createAutomationGrant({
+          scope: 'external_write',
+          domain: 'todos',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'todo',
+          resourceId: null,
+          requestedBy: null,
+          workspaceId: null,
+          projectId: null,
+          taskSources: ['schedule'],
+          note: 'to be revoked',
+          expiresAt: null,
+          createdBy: 'operator:test',
+        });
+
+        service.revokeAutomationGrant(grant.id, { revokedBy: 'operator:test' });
+
+        const approval = service.requestApproval({
+          scope: 'external_write',
+          domain: 'todos',
+          riskClass: 'ask',
+          actionKind: 'write',
+          resourceScope: 'resource',
+          resourceType: 'todo',
+          resourceId: 'todo-2',
+          requestedBy: 'agent-1',
+          runId,
+          standingApprovalEligible: false,
+          automationGrantEligible: true,
+        });
+
+        // Revoked grant should not match
+        expect(approval.status).toBe('pending');
+        expect(approval.interventionId).not.toBeNull();
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+  });
 });

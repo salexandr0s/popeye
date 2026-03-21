@@ -255,6 +255,12 @@ export const MemoryImportInputSchema = z.object({
   projectId: z.string().nullable().optional(),
   confidence: z.number().min(0).max(1).default(0.8),
   classification: DataClassificationSchema.default('embeddable'),
+  domain: DomainKindSchema.optional(),
+  tags: z.array(z.string()).optional(),
+  durable: z.boolean().optional(),
+  dedupKey: z.string().optional(),
+  sourceRunId: z.string().optional(),
+  sourceTimestamp: z.string().optional(),
 });
 export type MemoryImportInput = z.infer<typeof MemoryImportInputSchema>;
 

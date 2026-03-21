@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { MemoryNamespaceKind, MemoryNamespaceRecord, MemorySourceType } from '@popeye/contracts';
 
-function inferNamespaceKind(scope: string, sourceType?: MemorySourceType | string | undefined): MemoryNamespaceKind {
+function inferNamespaceKind(scope: string, sourceType?: MemorySourceType | string | undefined, domain?: string | undefined): MemoryNamespaceKind {
   if (scope === 'global') return 'global';
   if (scope.startsWith('project:')) return 'project';
   if (scope.startsWith('communications:') || scope.startsWith('comms:')) return 'communications';
   if (scope.startsWith('integration:')) return 'integration';
   if (sourceType === 'telegram') return 'communications';
+  if (domain === 'coding' || sourceType === 'coding_session' || sourceType === 'code_review' || sourceType === 'debug_session') return 'coding';
   return 'workspace';
 }
 
@@ -22,6 +23,8 @@ function buildNamespaceLabel(kind: MemoryNamespaceKind, scope: string): string {
       return scope.replace(/^(communications:|comms:)/, 'Communications ');
     case 'integration':
       return scope.replace(/^integration:/, 'Integration ');
+    case 'coding':
+      return scope.startsWith('coding:') ? scope.replace(/^coding:/, 'Coding ') : `Coding ${scope}`;
     case 'workspace':
     default:
       return scope.startsWith('workspace:') ? scope.replace(/^workspace:/, 'Workspace ') : `Workspace ${scope}`;
@@ -31,10 +34,11 @@ function buildNamespaceLabel(kind: MemoryNamespaceKind, scope: string): string {
 export interface EnsureNamespaceInput {
   scope: string;
   sourceType?: MemorySourceType | string | undefined;
+  domain?: string | undefined;
 }
 
 export function ensureMemoryNamespace(db: Database.Database, input: EnsureNamespaceInput): MemoryNamespaceRecord {
-  const kind = inferNamespaceKind(input.scope, input.sourceType);
+  const kind = inferNamespaceKind(input.scope, input.sourceType, input.domain);
   const externalRef = input.scope === 'global'
     ? null
     : input.scope.includes(':')

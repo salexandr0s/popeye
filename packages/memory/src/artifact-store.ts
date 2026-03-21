@@ -20,6 +20,7 @@ export interface CaptureArtifactInput {
   occurredAt?: string | null | undefined;
   metadata?: Record<string, unknown> | undefined;
   tags?: string[] | undefined;
+  domain?: string | undefined;
 }
 
 export function captureArtifact(db: Database.Database, input: CaptureArtifactInput): MemoryArtifactRecord {
@@ -29,7 +30,7 @@ export function captureArtifact(db: Database.Database, input: CaptureArtifactInp
     workspaceId: input.workspaceId,
     projectId: input.projectId,
   });
-  const namespace = ensureMemoryNamespace(db, { scope: location.scope, sourceType: input.sourceType });
+  const namespace = ensureMemoryNamespace(db, { scope: location.scope, sourceType: input.sourceType, domain: input.domain });
   const contentHash = sha256(input.content);
 
   const existing = db.prepare(
@@ -106,7 +107,7 @@ export function captureArtifact(db: Database.Database, input: CaptureArtifactInp
   };
 
   db.prepare(
-    'INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     record.id,
     record.sourceType,
@@ -123,6 +124,7 @@ export function captureArtifact(db: Database.Database, input: CaptureArtifactInp
     record.content,
     record.contentHash,
     JSON.stringify(record.metadataJson),
+    input.domain ?? 'general',
   );
 
   replaceOwnerTags(db, { ownerKind: 'artifact', ownerId: record.id, tags: input.tags });

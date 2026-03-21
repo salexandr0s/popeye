@@ -22,6 +22,7 @@ export type { QualityAssessment } from './pure-functions.js';
 
 // Search pipeline
 export { MemorySearchService } from './search-service.js';
+export type { MemorySearchLogger } from './search-service.js';
 export { rerankAndMerge } from './scoring.js';
 export type { ScoredCandidate, RerankParams } from './scoring.js';
 export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
@@ -55,6 +56,10 @@ export type { TokenRiskLevel, ExpansionRoute, ExpansionPolicyResult } from './ex
 // Strategy
 export { classifyQueryStrategy, getStrategyWeights } from './strategy.js';
 export type { QueryStrategy, ScoringWeights } from './strategy.js';
+
+// Consumer profiles
+export { applyConsumerProfile, getExcludedDomains, CONSUMER_PROFILES } from './consumer-profiles.js';
+export type { ConsumerProfile, ProfileResolvedFilters } from './consumer-profiles.js';
 
 // Structured memory foundation
 export { ensureMemoryNamespace, replaceOwnerTags } from './namespace.js';
@@ -96,6 +101,7 @@ export type { CompactionConfig, CompactionResult, PromptBuilder } from './compac
 
 // Extension loader
 export { loadSqliteVec } from './extension-loader.js';
+export type { ExtensionLoaderLogger } from './extension-loader.js';
 
 // Location helpers
 export {

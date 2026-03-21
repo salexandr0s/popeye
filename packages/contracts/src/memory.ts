@@ -8,7 +8,7 @@ export type MemoryType = z.infer<typeof MemoryTypeSchema>;
 export const MemoryLayerSchema = z.enum(['artifact', 'fact', 'synthesis', 'curated']);
 export type MemoryLayer = z.infer<typeof MemoryLayerSchema>;
 
-export const MemoryNamespaceKindSchema = z.enum(['global', 'workspace', 'project', 'communications', 'integration']);
+export const MemoryNamespaceKindSchema = z.enum(['global', 'workspace', 'project', 'communications', 'integration', 'coding']);
 export type MemoryNamespaceKind = z.infer<typeof MemoryNamespaceKindSchema>;
 
 export const MemoryFactKindSchema = z.enum(['event', 'preference', 'identity', 'procedure', 'relationship', 'state', 'summary']);
@@ -36,6 +36,9 @@ export const MemorySourceTypeSchema = z.enum([
   'capability_sync',
   'context_release',
   'file_doc',
+  'coding_session',
+  'code_review',
+  'debug_session',
 ]);
 export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
 
@@ -97,6 +100,7 @@ export const MemoryArtifactRecordSchema = z.object({
   content: z.string(),
   contentHash: z.string(),
   metadataJson: z.record(z.string(), z.unknown()).default({}),
+  domain: DomainKindSchema.default('general'),
 });
 export type MemoryArtifactRecord = z.infer<typeof MemoryArtifactRecordSchema>;
 
@@ -126,6 +130,7 @@ export const MemoryFactRecordSchema = z.object({
   createdAt: z.string(),
   durable: z.boolean().default(false),
   revisionStatus: RevisionStatusSchema.default('active'),
+  domain: DomainKindSchema.default('general'),
 });
 export type MemoryFactRecord = z.infer<typeof MemoryFactRecordSchema>;
 
@@ -144,6 +149,7 @@ export const MemorySynthesisRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable().default(null),
+  domain: DomainKindSchema.default('general'),
 });
 export type MemorySynthesisRecord = z.infer<typeof MemorySynthesisRecordSchema>;
 
@@ -196,6 +202,7 @@ export const MemorySearchResultSchema = z.object({
   validTo: z.string().nullable().optional(),
   evidenceCount: z.number().int().nonnegative().optional(),
   revisionStatus: RevisionStatusSchema.optional(),
+  domain: DomainKindSchema.optional(),
   scoreBreakdown: z.object({
     relevance: z.number(),
     recency: z.number(),
@@ -314,6 +321,8 @@ export const MemorySearchQuerySchema = z.object({
   includeSuperseded: z.boolean().optional(),
   occurredAfter: z.string().optional(),
   occurredBefore: z.string().optional(),
+  domains: z.array(DomainKindSchema).optional(),
+  consumerProfile: z.string().optional(),
 });
 export type MemorySearchQuery = z.infer<typeof MemorySearchQuerySchema>;
 

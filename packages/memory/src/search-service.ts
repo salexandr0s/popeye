@@ -37,6 +37,14 @@ import type { ScoredCandidate, VecOnlyMetadata } from './scoring.js';
 import { deleteVecEmbedding, insertVecEmbedding, searchVec } from './vec-search.js';
 import { buildRecallPlan } from './recall-planner.js';
 import { buildRecallExplanation } from './recall-explainer.js';
+import { applyConsumerProfile, getExcludedDomains } from './consumer-profiles.js';
+
+export interface MemorySearchLogger {
+  info(msg: string, details?: Record<string, unknown>): void;
+  warn(msg: string, details?: Record<string, unknown>): void;
+  error(msg: string, details?: Record<string, unknown>): void;
+  debug(msg: string, details?: Record<string, unknown>): void;
+}
 
 export class MemorySearchService {
   private readonly db: Database.Database;
@@ -45,6 +53,7 @@ export class MemorySearchService {
   private readonly halfLifeDays: number;
   private readonly budgetConfig: BudgetConfig | undefined;
   private readonly redactionPatterns: string[];
+  private readonly logger: MemorySearchLogger | undefined;
 
   constructor(opts: {
     db: Database.Database;
@@ -53,6 +62,7 @@ export class MemorySearchService {
     halfLifeDays?: number;
     budgetConfig?: BudgetConfig | undefined;
     redactionPatterns?: string[] | undefined;
+    logger?: MemorySearchLogger | undefined;
   }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
@@ -66,6 +76,7 @@ export class MemorySearchService {
     this.halfLifeDays = opts.halfLifeDays ?? 30;
     this.budgetConfig = opts.budgetConfig;
     this.redactionPatterns = opts.redactionPatterns ?? [];
+    this.logger = opts.logger;
   }
 
   private buildQueryLocation(input: {
@@ -101,6 +112,8 @@ export class MemorySearchService {
     includeSuperseded?: boolean | undefined;
     occurredAfter?: string | undefined;
     occurredBefore?: string | undefined;
+    domains?: string[] | undefined;
+    consumerProfile?: string | undefined;
   }): Promise<MemorySearchResponse> {
     const queryText = sanitizeSearchQuery(query.query);
     const minConfidence = query.minConfidence ?? 0.1;
@@ -109,14 +122,25 @@ export class MemorySearchService {
     const scope = query.scope;
     const memoryTypes = query.memoryTypes;
     const layers = query.layers;
-    const namespaceIds = query.namespaceIds;
     const tags = query.tags;
     const includeSuperseded = query.includeSuperseded ?? false;
+
+    // Resolve consumer profile into filter defaults
+    const profileFilters = applyConsumerProfile(
+      query.consumerProfile,
+      { domains: query.domains, namespaceIds: query.namespaceIds, includeGlobal: query.includeGlobal },
+      this.db,
+    );
+    const domains = query.domains ?? profileFilters.domains;
+    const namespaceIds = query.namespaceIds ?? profileFilters.namespaceIds;
+    const excludedDomains = getExcludedDomains(query.consumerProfile);
+    const effectiveIncludeGlobal = query.includeGlobal ?? profileFilters.includeGlobal;
+
     const queryLocation = this.buildQueryLocation({
       scope,
       workspaceId: query.workspaceId,
       projectId: query.projectId,
-      includeGlobal: query.includeGlobal,
+      includeGlobal: effectiveIncludeGlobal,
     });
     const scopeAliasQuery = this.isScopeAliasQuery(query);
 
@@ -146,8 +170,9 @@ export class MemorySearchService {
     const legacyFtsFilters = {
       ...(scopeAliasQuery ? { scope } : {}),
       ...(queryLocation !== undefined ? { workspaceId: queryLocation.workspaceId, projectId: queryLocation.projectId } : {}),
-      ...(query.includeGlobal !== undefined ? { includeGlobal: query.includeGlobal } : {}),
+      ...(effectiveIncludeGlobal !== undefined ? { includeGlobal: effectiveIncludeGlobal } : {}),
       ...(memoryTypes !== undefined ? { memoryTypes } : {}),
+      ...(domains !== undefined ? { domains } : {}),
       minConfidence,
       limit: overfetch,
     };
@@ -155,10 +180,11 @@ export class MemorySearchService {
     const structuredFtsFilters = {
       ...(scopeAliasQuery ? { scope } : {}),
       ...(queryLocation !== undefined ? { workspaceId: queryLocation.workspaceId, projectId: queryLocation.projectId } : {}),
-      ...(query.includeGlobal !== undefined ? { includeGlobal: query.includeGlobal } : {}),
+      ...(effectiveIncludeGlobal !== undefined ? { includeGlobal: effectiveIncludeGlobal } : {}),
       ...(memoryTypes !== undefined ? { memoryTypes } : {}),
       ...(namespaceIds !== undefined ? { namespaceIds } : {}),
       ...(tags !== undefined ? { tags } : {}),
+      ...(domains !== undefined ? { domains } : {}),
       includeSuperseded,
       ...(occurredAfter !== undefined ? { occurredAfter } : {}),
       ...(occurredBefore !== undefined ? { occurredBefore } : {}),
@@ -231,22 +257,30 @@ export class MemorySearchService {
       validTo: candidate.validTo,
       evidenceCount: candidate.evidenceCount,
       revisionStatus: candidate.revisionStatus,
+      domain: candidate.domain,
       scoreBreakdown: candidate.scoreBreakdown,
     });
 
-    const ftsCandidates = [
+    const rawFtsCandidates = [
       ...(shouldSearchLegacy ? searchFts5(this.db, queryText, legacyFtsFilters) : []),
       ...(shouldSearchFacts ? searchFactsFts5(this.db, queryText, structuredFtsFilters) : []),
       ...(shouldSearchSyntheses ? searchSynthesesFts5(this.db, queryText, {
         ...(scopeAliasQuery ? { scope } : {}),
         ...(queryLocation !== undefined ? { workspaceId: queryLocation.workspaceId, projectId: queryLocation.projectId } : {}),
-        ...(query.includeGlobal !== undefined ? { includeGlobal: query.includeGlobal } : {}),
+        ...(effectiveIncludeGlobal !== undefined ? { includeGlobal: effectiveIncludeGlobal } : {}),
         ...(namespaceIds !== undefined ? { namespaceIds } : {}),
         ...(tags !== undefined ? { tags } : {}),
+        ...(domains !== undefined ? { domains } : {}),
         limit: overfetch,
         minConfidence,
       }) : []),
     ];
+
+    // Apply domain exclusion post-filter (handles the assistant profile's excludedDomains
+    // which cannot be expressed as a SQL inclusion filter)
+    const ftsCandidates = excludedDomains.length > 0
+      ? rawFtsCandidates.filter((c) => !c.domain || !excludedDomains.includes(c.domain))
+      : rawFtsCandidates;
 
     if (this.getVecAvailable() && this.embeddingClient.enabled && shouldSearchLegacy) {
       searchMode = 'hybrid';
@@ -260,7 +294,7 @@ export class MemorySearchService {
       if (vecOnlyIds.length > 0) {
         const placeholders = vecOnlyIds.map(() => '?').join(',');
         const rows = this.db
-          .prepare(`SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
+          .prepare(`SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable, domain FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
           .all(...vecOnlyIds) as Array<{
             id: string;
             description: string;
@@ -274,8 +308,12 @@ export class MemorySearchService {
             created_at: string;
             last_reinforced_at: string | null;
             durable: number;
+            domain: string | null;
           }>;
         for (const row of rows) {
+          // Filter out vec-only results that don't match domain constraints
+          if (domains && domains.length > 0 && row.domain && !domains.includes(row.domain)) continue;
+          if (excludedDomains.length > 0 && row.domain && excludedDomains.includes(row.domain)) continue;
           vecOnlyMetadata.set(row.id, {
             memoryId: row.id,
             description: row.description,
@@ -289,6 +327,7 @@ export class MemorySearchService {
             createdAt: row.created_at,
             lastReinforcedAt: row.last_reinforced_at,
             durable: Boolean(row.durable),
+            domain: row.domain ?? undefined,
           });
         }
       }
@@ -464,7 +503,7 @@ export class MemorySearchService {
 
   getMemoryContent(memoryId: string, locationFilter?: MemoryLocationFilter): MemoryRecord | null {
     const legacyRow = this.db.prepare(
-      'SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp, durable FROM memories WHERE id = ?',
+      'SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp, durable, domain FROM memories WHERE id = ?',
     ).get(memoryId) as {
       id: string;
       description: string;
@@ -483,6 +522,7 @@ export class MemorySearchService {
       source_run_id: string | null;
       source_timestamp: string | null;
       durable: number;
+      domain: string | null;
     } | undefined;
 
     if (legacyRow) {
@@ -504,6 +544,7 @@ export class MemorySearchService {
         archivedAt: legacyRow.archived_at,
         createdAt: legacyRow.created_at,
         durable: Boolean(legacyRow.durable),
+        domain: legacyRow.domain ?? undefined,
       };
       return matchesMemoryLocation(record, locationFilter) ? record : null;
     }
@@ -771,6 +812,8 @@ export class MemorySearchService {
     minConfidence?: number;
     maxTokens: number;
     limit?: number;
+    domains?: string[];
+    consumerProfile?: string;
   }): Promise<{
     results: MemorySearchResult[];
     totalTokensUsed: number;

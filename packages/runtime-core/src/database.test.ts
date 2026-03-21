@@ -832,6 +832,7 @@ describe('openRuntimeDatabases', () => {
           '010-structured-memory',
           '011-memory-locations',
           '012-structured-memory-locations',
+          '013-coding-domain',
         ]);
       } finally {
         databases.app.close();

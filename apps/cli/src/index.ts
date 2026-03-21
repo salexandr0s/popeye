@@ -40,16 +40,25 @@ import {
   verifyBackup,
 } from '@popeye/runtime-core';
 
-const VERSION = '0.1.0';
+const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
+const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
+const BUILD_DATE = process.env['POPEYE_BUILD_DATE'] ?? '';
 
-// --json flag: when present, output raw JSON instead of human-readable text
+// Global flags
 const jsonFlag = process.argv.includes('--json');
 const versionFlag = process.argv.includes('--version') || process.argv.includes('-v');
+const verboseFlag = process.argv.includes('--verbose');
+const quietFlag = process.argv.includes('--quiet');
 const positionalArgs = process.argv.filter(
-  (a) => a !== '--json' && a !== '--help' && a !== '-h' && a !== '--version' && a !== '-v',
+  (a) => a !== '--json' && a !== '--help' && a !== '-h' && a !== '--version' && a !== '-v'
+    && a !== '--verbose' && a !== '--quiet',
 );
 const helpFlag = process.argv.includes('--help') || process.argv.includes('-h');
 const [, , command, subcommand, arg1, _arg2] = positionalArgs;
+
+// --verbose: enable debug logging; --quiet: suppress non-essential output
+if (verboseFlag) process.env['POPEYE_LOG_LEVEL'] = 'debug';
+if (quietFlag) process.env['POPEYE_LOG_LEVEL'] = 'silent';
 
 const COMMANDS: Record<string, Record<string, { desc: string; usage: string; args?: string; examples?: string[] }>> = {
   auth: {
@@ -244,6 +253,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   migrate: {
     qmd: { desc: 'Import QMD markdown files', usage: 'pop migrate qmd <directory>' },
     'openclaw-memory': { desc: 'Import OpenClaw memory files', usage: 'pop migrate openclaw-memory <directory>' },
+    telegram: { desc: 'Generate Popeye telegram config from OpenClaw config', usage: 'pop migrate telegram [openclawConfigPath]' },
   },
 };
 
@@ -654,7 +664,10 @@ function isBundledMode(): boolean {
 
 // Early exits that don't require configuration
 if (versionFlag) {
-  console.info(`pop v${VERSION}`);
+  const parts = [`pop v${VERSION}`];
+  if (GIT_SHA) parts.push(`(${GIT_SHA})`);
+  if (BUILD_DATE) parts.push(`built ${BUILD_DATE}`);
+  console.info(parts.join(' '));
   process.exit(0);
 }
 
@@ -891,7 +904,7 @@ async function main(): Promise<void> {
   }
   if (command === 'backup' && subcommand === 'create') {
     const destination = arg1 ? resolve(arg1) : join(paths.backupsDir, new Date().toISOString().replaceAll(':', '-'));
-    const workspacePaths = positionalArgs.slice(6).map((p) => resolve(p));
+    const workspacePaths = positionalArgs.slice(5).map((p) => resolve(p));
     console.info(createBackup({
       destinationDir: destination,
       runtimePaths: paths,
@@ -2725,7 +2738,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'upgrade' && subcommand === 'rollback' && arg1) {
+  if (command === 'upgrade' && subcommand === 'rollback') {
+    requireArg(arg1, 'backupPath');
     const targetPath = resolve(arg1);
     if (!existsSync(targetPath)) {
       console.error(`Backup not found: ${targetPath}`);
@@ -2797,6 +2811,82 @@ async function main(): Promise<void> {
       if (imported % 10 === 0) console.info(`  ${imported}/${files.length} imported`);
     }
     console.info(`Imported ${imported} files from ${dir}`);
+    return;
+  }
+
+  if (command === 'migrate' && subcommand === 'telegram') {
+    if (arg1) {
+      // Read OpenClaw config and extract telegram settings
+      const configFilePath = resolve(arg1);
+      if (!existsSync(configFilePath)) {
+        console.error(`Config file not found: ${configFilePath}`);
+        process.exit(1);
+      }
+      try {
+        const rawContent = readFileSync(configFilePath, 'utf-8');
+        const parsed: unknown = JSON.parse(rawContent);
+        if (typeof parsed !== 'object' || parsed === null) {
+          console.error('Invalid config: expected a JSON object');
+          process.exit(1);
+        }
+        const obj = parsed as Record<string, unknown>;
+        const telegramSection = obj['telegram'] as Record<string, unknown> | undefined;
+
+        const botToken = telegramSection?.['botToken'] ?? telegramSection?.['bot_token'] ?? null;
+        const allowedUsers = telegramSection?.['allowedUsers'] ?? telegramSection?.['allowed_users'] ?? [];
+
+        const popeyeConfig = {
+          telegram: {
+            botToken: botToken ? '<REDACTED — set via POPEYE_TELEGRAM_BOT_TOKEN env var>' : null,
+            allowedUsers: Array.isArray(allowedUsers) ? allowedUsers : [],
+            rateLimitPerMinute: 30,
+          },
+        };
+
+        console.info('Extracted Popeye telegram config from OpenClaw config:');
+        console.info('');
+        console.info(JSON.stringify(popeyeConfig, null, 2));
+        console.info('');
+        if (botToken) {
+          console.info('NOTE: Bot token was found but redacted. Set it via environment variable:');
+          console.info('  export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
+        } else {
+          console.info('NOTE: No bot token found in the source config.');
+          console.info('Set it via environment variable: export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
+        }
+        console.info('');
+        console.info('Paste the JSON above into your Popeye config.json under the "telegram" key.');
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          console.error(`Failed to parse config file as JSON: ${error.message}`);
+        } else {
+          console.error(`Error reading config: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        process.exit(1);
+      }
+    } else {
+      // No source config — output a template
+      const template = {
+        telegram: {
+          botToken: '<set via POPEYE_TELEGRAM_BOT_TOKEN env var>',
+          allowedUsers: ['<telegram-user-id-1>', '<telegram-user-id-2>'],
+          rateLimitPerMinute: 30,
+        },
+      };
+      console.info('Popeye telegram config template:');
+      console.info('');
+      console.info(JSON.stringify(template, null, 2));
+      console.info('');
+      console.info('Instructions:');
+      console.info('  1. Create a Telegram bot via @BotFather and note the token');
+      console.info('  2. Set the token as an environment variable:');
+      console.info('     export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
+      console.info('  3. Replace allowedUsers with numeric Telegram user IDs');
+      console.info('  4. Paste the config into your Popeye config.json');
+      console.info('');
+      console.info('To import from an existing OpenClaw config:');
+      console.info('  pop migrate telegram /path/to/openclaw/config.json');
+    }
     return;
   }
 

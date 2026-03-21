@@ -865,6 +865,17 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_memory_syntheses_location_updated ON memory_syntheses(workspace_id, project_id, updated_at);',
     ],
   },
+  {
+    id: '013-coding-domain',
+    statements: [
+      "ALTER TABLE memory_facts ADD COLUMN domain TEXT DEFAULT 'general';",
+      "ALTER TABLE memory_artifacts ADD COLUMN domain TEXT DEFAULT 'general';",
+      "ALTER TABLE memory_syntheses ADD COLUMN domain TEXT DEFAULT 'general';",
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_domain ON memory_facts(domain);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_artifacts_domain ON memory_artifacts(domain);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_syntheses_domain ON memory_syntheses(domain);',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

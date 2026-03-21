@@ -30,6 +30,7 @@ export interface ScoredCandidate {
   validTo?: string | null | undefined;
   evidenceCount?: number | undefined;
   revisionStatus?: 'active' | 'superseded' | undefined;
+  domain?: string | undefined;
   scoreBreakdown: {
     relevance: number;
     recency: number;
@@ -61,6 +62,7 @@ export interface VecOnlyMetadata {
   validTo?: string | null | undefined;
   evidenceCount?: number | undefined;
   revisionStatus?: 'active' | 'superseded' | undefined;
+  domain?: string | undefined;
 }
 
 const DEFAULT_WEIGHTS: ScoringWeights = {
@@ -185,6 +187,7 @@ export function rerankAndMerge(
       validTo: meta.validTo,
       evidenceCount: meta.evidenceCount,
       revisionStatus: meta.revisionStatus,
+      domain: meta.domain,
       score,
       scoreBreakdown,
     });

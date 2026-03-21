@@ -12,4 +12,11 @@ fi
 for link in /usr/local/bin/pop /usr/local/bin/popeyed; do
   [ -L "$link" ] && rm "$link" && echo "  Removed $link"
 done
+# Remove .pkg installer receipt if installed via .pkg
+if pkgutil --pkg-info com.popeye.cli &>/dev/null; then
+  echo "  Forgetting .pkg receipt..."
+  sudo pkgutil --forget com.popeye.cli 2>/dev/null || true
+fi
+# Remove installed lib directory
+[ -d /usr/local/lib/popeye ] && rm -rf /usr/local/lib/popeye && echo "  Removed /usr/local/lib/popeye"
 echo "==> Popeye uninstalled. Data preserved at ~/Library/Application Support/Popeye/"

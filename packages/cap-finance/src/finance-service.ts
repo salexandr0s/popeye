@@ -108,7 +108,9 @@ function mapDigestRow(row: FinanceDigestRow): FinanceDigestRecord {
 // --- Service ---
 
 export class FinanceService {
-  constructor(private readonly db: FinanceCapabilityDb) {}
+  constructor(
+    private readonly db: FinanceCapabilityDb,
+  ) {}
 
   // --- Imports ---
 

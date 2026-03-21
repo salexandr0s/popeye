@@ -27,6 +27,7 @@ export interface FtsCandidate {
   validTo?: string | null | undefined;
   evidenceCount?: number | undefined;
   revisionStatus?: 'active' | 'superseded' | undefined;
+  domain?: string | undefined;
 }
 
 export function searchFts5(
@@ -39,6 +40,7 @@ export function searchFts5(
     includeGlobal?: boolean;
     minConfidence?: number;
     memoryTypes?: MemoryType[];
+    domains?: string[];
     limit?: number;
   },
   limit = 60,
@@ -80,9 +82,15 @@ export function searchFts5(
     params.push(...filters.memoryTypes);
   }
 
+  if (filters.domains !== undefined && filters.domains.length > 0) {
+    const placeholders = filters.domains.map(() => '?').join(', ');
+    conditions.push(`m.domain IN (${placeholders})`);
+    params.push(...filters.domains);
+  }
+
   params.push(effectiveLimit);
 
-  const sql = `SELECT m.id, m.description, m.content, m.memory_type, m.confidence, m.scope, m.workspace_id, m.project_id, m.source_type, m.created_at, m.last_reinforced_at, m.durable, rank
+  const sql = `SELECT m.id, m.description, m.content, m.memory_type, m.confidence, m.scope, m.workspace_id, m.project_id, m.source_type, m.created_at, m.last_reinforced_at, m.durable, m.domain, rank
 FROM memories_fts
 JOIN memories m ON m.id = memories_fts.memory_id
 WHERE ${conditions.join(' AND ')}
@@ -102,6 +110,7 @@ LIMIT ?`;
     created_at: string;
     last_reinforced_at: string | null;
     durable: number;
+    domain: string | null;
     rank: number;
   }>;
   try {
@@ -123,6 +132,7 @@ LIMIT ?`;
     createdAt: row.created_at,
     lastReinforcedAt: row.last_reinforced_at,
     durable: Boolean(row.durable),
+    domain: row.domain ?? undefined,
     ftsRank: row.rank,
   }));
 }
@@ -147,6 +157,7 @@ export function searchFactsFts5(
     memoryTypes?: MemoryType[];
     namespaceIds?: string[];
     tags?: string[];
+    domains?: string[];
     includeSuperseded?: boolean;
     occurredAfter?: string;
     occurredBefore?: string;
@@ -209,6 +220,11 @@ export function searchFactsFts5(
     conditions.push(`EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.owner_kind = 'fact' AND mt.owner_id = f.id AND mt.tag IN (${placeholders}))`);
     params.push(...filters.tags.map((tag) => tag.toLowerCase()));
   }
+  if (filters.domains && filters.domains.length > 0) {
+    const placeholders = filters.domains.map(() => '?').join(', ');
+    conditions.push(`f.domain IN (${placeholders})`);
+    params.push(...filters.domains);
+  }
 
   params.push(effectiveLimit);
 
@@ -225,6 +241,7 @@ export function searchFactsFts5(
     f.created_at,
     f.last_reinforced_at,
     f.durable,
+    f.domain,
     f.namespace_id,
     f.occurred_at,
     f.valid_from,
@@ -256,6 +273,7 @@ export function searchFactsFts5(
       created_at: string;
       last_reinforced_at: string | null;
       durable: number;
+      domain: string | null;
       namespace_id: string;
       occurred_at: string | null;
       valid_from: string | null;
@@ -282,6 +300,7 @@ export function searchFactsFts5(
         createdAt: row.created_at,
         lastReinforcedAt: row.last_reinforced_at,
         durable: Boolean(row.durable),
+        domain: row.domain ?? undefined,
         ftsRank: row.rank,
         layer: 'fact',
         namespaceId: row.namespace_id,
@@ -308,6 +327,7 @@ export function searchSynthesesFts5(
     minConfidence?: number;
     namespaceIds?: string[];
     tags?: string[];
+    domains?: string[];
     limit?: number;
   },
   limit = 40,
@@ -351,6 +371,11 @@ export function searchSynthesesFts5(
     conditions.push(`EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.owner_kind = 'synthesis' AND mt.owner_id = s.id AND mt.tag IN (${placeholders}))`);
     params.push(...filters.tags.map((tag) => tag.toLowerCase()));
   }
+  if (filters.domains && filters.domains.length > 0) {
+    const placeholders = filters.domains.map(() => '?').join(', ');
+    conditions.push(`s.domain IN (${placeholders})`);
+    params.push(...filters.domains);
+  }
 
   params.push(effectiveLimit);
 
@@ -367,6 +392,7 @@ export function searchSynthesesFts5(
     s.updated_at AS created_at,
     s.updated_at AS last_reinforced_at,
     1 AS durable,
+    s.domain,
     s.namespace_id,
     (
       SELECT COUNT(*)
@@ -394,6 +420,7 @@ export function searchSynthesesFts5(
       created_at: string;
       last_reinforced_at: string;
       durable: number;
+      domain: string | null;
       namespace_id: string;
       evidence_count: number;
       rank: number;
@@ -416,6 +443,7 @@ export function searchSynthesesFts5(
         createdAt: row.created_at,
         lastReinforcedAt: row.last_reinforced_at,
         durable: Boolean(row.durable),
+        domain: row.domain ?? undefined,
         ftsRank: row.rank,
         layer: 'synthesis',
         namespaceId: row.namespace_id,

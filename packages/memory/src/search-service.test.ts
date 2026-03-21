@@ -26,7 +26,8 @@ function createTestDb(): Database.Database {
       source_run_id TEXT,
       source_timestamp TEXT,
       created_at TEXT NOT NULL,
-      durable INTEGER NOT NULL DEFAULT 0
+      durable INTEGER NOT NULL DEFAULT 0,
+      domain TEXT DEFAULT 'general'
     );
     CREATE UNIQUE INDEX idx_memories_dedup_key ON memories(dedup_key) WHERE dedup_key IS NOT NULL;
     CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
@@ -67,7 +68,8 @@ function createTestDb(): Database.Database {
       occurred_at TEXT,
       content TEXT NOT NULL,
       content_hash TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}'
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      domain TEXT NOT NULL DEFAULT 'general'
     );
     CREATE TABLE memory_facts (
       id TEXT PRIMARY KEY,
@@ -94,7 +96,8 @@ function createTestDb(): Database.Database {
       archived_at TEXT,
       created_at TEXT NOT NULL,
       durable INTEGER NOT NULL DEFAULT 0,
-      revision_status TEXT NOT NULL DEFAULT 'active'
+      revision_status TEXT NOT NULL DEFAULT 'active',
+      domain TEXT DEFAULT 'general'
     );
     CREATE TABLE memory_fact_sources (
       id TEXT PRIMARY KEY,
@@ -117,7 +120,8 @@ function createTestDb(): Database.Database {
       refresh_policy TEXT NOT NULL DEFAULT 'manual',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      archived_at TEXT
+      archived_at TEXT,
+      domain TEXT DEFAULT 'general'
     );
     CREATE TABLE memory_synthesis_sources (
       id TEXT PRIMARY KEY,
@@ -1125,5 +1129,365 @@ describe('expandMemory', () => {
     });
 
     expect(expanded).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C3: FTS5-only search path tests
+// ---------------------------------------------------------------------------
+
+describe('FTS5-only search path', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('FTS5 search returns ranked results by relevance', async () => {
+    // Store memories with different levels of relevance to "database migration"
+    service.storeMemory({
+      description: 'Database migration plan for production',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Complete database migration from MySQL to PostgreSQL with zero downtime',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+    service.storeMemory({
+      description: 'API design patterns and best practices',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'RESTful API versioning strategy with endpoint documentation',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+    service.storeMemory({
+      description: 'Database backup procedures for disaster recovery',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Regular database backups and migration testing for data safety',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({
+      query: 'database migration',
+      includeContent: true,
+    });
+
+    expect(response.searchMode).toBe('fts_only');
+    expect(response.results.length).toBeGreaterThanOrEqual(2);
+    // All returned results should have positive scores
+    for (const result of response.results) {
+      expect(result.score).toBeGreaterThan(0);
+    }
+    // Results should be sorted by score descending
+    for (let i = 1; i < response.results.length; i++) {
+      expect(response.results[i - 1]!.score).toBeGreaterThanOrEqual(response.results[i]!.score);
+    }
+  });
+
+  it('scope filtering: workspace-scoped memory returned, global included when requested', async () => {
+    service.storeMemory({
+      description: 'Workspace alpha deployment config',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Deployment configuration for the alpha workspace environment',
+      confidence: 0.8,
+      scope: 'alpha',
+    });
+    service.storeMemory({
+      description: 'Workspace beta deployment config',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Deployment configuration for the beta workspace environment',
+      confidence: 0.8,
+      scope: 'beta',
+    });
+    service.storeMemory({
+      description: 'Global deployment standards',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Deployment standards that apply globally to all environments',
+      confidence: 0.8,
+      scope: 'global',
+    });
+
+    // Scope-only search: only alpha results
+    const alphaOnly = await service.search({
+      query: 'deployment',
+      scope: 'alpha',
+    });
+    expect(alphaOnly.results.length).toBeGreaterThanOrEqual(1);
+    expect(alphaOnly.results.every(r => r.scope === 'alpha')).toBe(true);
+
+    // With explicit workspaceId + includeGlobal: workspace + global
+    const withGlobal = await service.search({
+      query: 'deployment',
+      workspaceId: 'alpha',
+      includeGlobal: true,
+    });
+    const scopes = withGlobal.results.map(r => r.scope);
+    expect(scopes).toContain('alpha');
+    expect(scopes).toContain('global');
+    expect(scopes).not.toContain('beta');
+  });
+
+  it('LIKE fallback activates when FTS5 match expression has special chars', async () => {
+    service.storeMemory({
+      description: 'Config with special characters test',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Configuration settings for the production server environment setup',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    // Queries with special FTS5 chars (e.g., brackets, quotes) that would
+    // cause FTS5 MATCH to fail should fall back to LIKE and still return results
+    const response = await service.search({
+      query: 'config [production]',
+      includeContent: true,
+    });
+
+    // The LIKE fallback should still find results matching the tokens
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.searchMode).toBe('fts_only');
+  });
+
+  it('searchFactsFts5 returns results from structured facts table', async () => {
+    // Set up namespace and fact
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-fact-test', 'workspace', 'workspace', 'Workspace workspace', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+
+    db.prepare('INSERT INTO memory_artifacts (id, source_type, classification, scope, workspace_id, project_id, namespace_id, source_run_id, source_ref, source_ref_type, captured_at, occurred_at, content, content_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('artifact-fact-test', 'receipt', 'internal', 'workspace', 'workspace', null, 'ns-fact-test', 'run-1', 'receipt-fact', 'receipt', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', 'Terraform apply succeeded.', 'hash-fact', '{}');
+
+    db.prepare('INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('fact-search-test', 'ns-fact-test', 'workspace', 'workspace', null, 'internal', 'receipt', 'episodic', 'state', 'Terraform apply succeeded and infrastructure was provisioned correctly.', 0.9, 0.9, 0.9, 0, '2026-03-18T10:00:00.000Z', null, null, 'run-1', '2026-03-18T10:00:00.000Z', 'dedup-fact-test', '2026-03-18T10:00:00.000Z', null, '2026-03-18T10:00:00.000Z', 0, 'active');
+    db.prepare('INSERT INTO memory_fact_sources (id, fact_id, artifact_id, excerpt, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('fs-fact-test', 'fact-search-test', 'artifact-fact-test', 'Terraform apply succeeded', '2026-03-18T10:00:00.000Z');
+    db.prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)').run('fact-search-test', 'Terraform apply succeeded and infrastructure was provisioned correctly.');
+
+    const response = await service.search({
+      query: 'Terraform infrastructure',
+      layers: ['fact'],
+      includeContent: true,
+    });
+
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.results[0]?.layer).toBe('fact');
+    expect(response.results[0]?.id).toBe('fact-search-test');
+    expect(response.results[0]?.evidenceCount).toBe(1);
+  });
+
+  it('searchSynthesesFts5 returns results from structured syntheses table', async () => {
+    db.prepare('INSERT INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-synth-test', 'workspace', 'workspace', 'Workspace workspace', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z');
+
+    db.prepare('INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('synth-search-test', 'ns-synth-test', 'workspace', 'workspace', null, 'embeddable', 'daily', 'Daily summary for infrastructure work', 'Today we completed the Kubernetes cluster migration and updated monitoring dashboards.', 0.85, 'automatic_daily', '2026-03-18T10:00:00.000Z', '2026-03-18T10:00:00.000Z', null);
+    db.prepare('INSERT INTO memory_syntheses_fts (synthesis_id, title, text) VALUES (?, ?, ?)')
+      .run('synth-search-test', 'Daily summary for infrastructure work', 'Today we completed the Kubernetes cluster migration and updated monitoring dashboards.');
+
+    const response = await service.search({
+      query: 'Kubernetes cluster migration',
+      layers: ['synthesis'],
+      includeContent: true,
+    });
+
+    expect(response.results.length).toBeGreaterThanOrEqual(1);
+    expect(response.results[0]?.layer).toBe('synthesis');
+    expect(response.results[0]?.id).toBe('synth-search-test');
+    expect(response.results[0]?.content).toContain('Kubernetes cluster migration');
+  });
+
+  it('minConfidence filters out low-confidence results', async () => {
+    service.storeMemory({
+      description: 'High confidence memory about testing patterns',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Testing patterns using Vitest with comprehensive coverage reporting',
+      confidence: 0.9,
+      scope: 'workspace',
+    });
+    service.storeMemory({
+      description: 'Low confidence memory about testing patterns',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Some vague testing patterns with minimal detail about coverage',
+      confidence: 0.2,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({
+      query: 'testing patterns',
+      minConfidence: 0.5,
+    });
+
+    // Only high confidence result should pass the filter
+    for (const result of response.results) {
+      expect(result.confidence).toBeGreaterThanOrEqual(0.5);
+    }
+  });
+
+  it('memoryTypes filter restricts search to specified types', async () => {
+    service.storeMemory({
+      description: 'Episodic memory about a deployment event',
+      classification: 'embeddable',
+      sourceType: 'receipt',
+      content: 'The deployment to staging completed at 14:00 with all checks passing',
+      confidence: 0.8,
+      scope: 'workspace',
+      memoryType: 'episodic',
+    });
+    service.storeMemory({
+      description: 'Semantic memory about deployment strategy',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Our deployment strategy uses blue-green deployments for zero downtime',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const response = await service.search({
+      query: 'deployment',
+      memoryTypes: ['episodic'],
+    });
+
+    for (const result of response.results) {
+      expect(result.type).toBe('episodic');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C4: Provenance preservation tests (search-service level)
+// ---------------------------------------------------------------------------
+
+describe('provenance preservation', () => {
+  let db: Database.Database;
+  let service: MemorySearchService;
+
+  beforeEach(() => {
+    db = createTestDb();
+    service = new MemorySearchService({
+      db,
+      embeddingClient: createDisabledEmbeddingClient(),
+      vecAvailable: false,
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('stored memories retain source_run_id and source_timestamp via direct insert', () => {
+    const { memoryId } = service.storeMemory({
+      description: 'Provenance tracking test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Content for provenance test that verifies source tracking fields',
+      confidence: 0.7,
+      scope: 'workspace',
+      sourceRef: 'run-provenance-test',
+      sourceRefType: 'run',
+    });
+
+    // Source reference persisted in memory_sources
+    const sources = db.prepare('SELECT source_type, source_ref FROM memory_sources WHERE memory_id = ?').all(memoryId) as Array<{
+      source_type: string;
+      source_ref: string;
+    }>;
+    expect(sources).toHaveLength(1);
+    expect(sources[0]!.source_type).toBe('run');
+    expect(sources[0]!.source_ref).toBe('run-provenance-test');
+  });
+
+  it('creation event records provenance timestamp', () => {
+    const before = new Date();
+    const { memoryId } = service.storeMemory({
+      description: 'Event provenance timestamp test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Content for verifying creation event provenance timestamp tracking',
+      confidence: 0.8,
+      scope: 'workspace',
+    });
+
+    const events = db.prepare('SELECT type, created_at FROM memory_events WHERE memory_id = ?').all(memoryId) as Array<{
+      type: string;
+      created_at: string;
+    }>;
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe('created');
+    const eventTime = new Date(events[0]!.created_at);
+    expect(eventTime.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+  });
+
+  it('dedup key prevents duplicate insertion and reinforces existing memory', () => {
+    const first = service.storeMemory({
+      description: 'Dedup provenance test for duplicate prevention',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Unique content for dedup provenance verification test in search service',
+      confidence: 0.5,
+      scope: 'workspace',
+    });
+
+    const second = service.storeMemory({
+      description: 'Dedup provenance test for duplicate prevention',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Unique content for dedup provenance verification test in search service',
+      confidence: 0.5,
+      scope: 'workspace',
+    });
+
+    // Same memory was reinforced, not duplicated
+    expect(second.memoryId).toBe(first.memoryId);
+
+    // Confidence boosted
+    const row = db.prepare('SELECT confidence, last_reinforced_at FROM memories WHERE id = ?').get(first.memoryId) as {
+      confidence: number;
+      last_reinforced_at: string | null;
+    };
+    expect(row.confidence).toBeCloseTo(0.6, 5);
+    expect(row.last_reinforced_at).toBeTruthy();
+
+    // Reinforcement event recorded
+    const events = db.prepare("SELECT type FROM memory_events WHERE memory_id = ? AND type = 'reinforced'").all(first.memoryId) as Array<{ type: string }>;
+    expect(events).toHaveLength(1);
+  });
+
+  it('getMemoryContent returns all provenance fields', () => {
+    const { memoryId } = service.storeMemory({
+      description: 'Full provenance record test memory',
+      classification: 'embeddable',
+      sourceType: 'curated_memory',
+      content: 'Full record content with provenance fields for getMemoryContent test',
+      confidence: 0.75,
+      scope: 'workspace',
+    });
+
+    const record = service.getMemoryContent(memoryId);
+    expect(record).not.toBeNull();
+    expect(record!.id).toBe(memoryId);
+    expect(record!.confidence).toBe(0.75);
+    expect(record!.scope).toBe('workspace');
+    expect(record!.createdAt).toBeTruthy();
+    expect(record!.memoryType).toBe('semantic');
+    expect(record!.sourceType).toBe('curated_memory');
+    expect(record!.classification).toBe('embeddable');
   });
 });

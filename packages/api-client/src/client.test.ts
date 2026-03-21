@@ -432,4 +432,130 @@ describe('PopeyeApiClient', () => {
     await runtime.close();
     await app.close();
   });
+
+  it('exercises finance and medical read routes (empty state)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-finmed-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    await (runtime as any).capabilityInitPromise;
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+
+    expect(await client.listFinanceImports()).toEqual([]);
+    expect(await client.listFinanceTransactions()).toEqual([]);
+    expect(await client.searchFinance('test')).toMatchObject({ query: 'test', results: [] });
+    expect(await client.listMedicalImports()).toEqual([]);
+    expect(await client.listMedicalAppointments()).toEqual([]);
+    expect(await client.searchMedical('test')).toMatchObject({ query: 'test', results: [] });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('creates finance imports and transactions through the API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-finwrite-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    await (runtime as any).capabilityInitPromise;
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+
+    // Create a finance import
+    const imp = await client.createFinanceImport({ vaultId: 'test-vault', fileName: 'test.csv' });
+    expect(imp.fileName).toBe('test.csv');
+    expect(imp.status).toBe('pending');
+    expect(imp.id).toBeTruthy();
+
+    // Insert a transaction
+    const tx = await client.insertFinanceTransaction({
+      importId: imp.id,
+      date: '2025-01-15',
+      description: 'Coffee shop',
+      amount: -4.50,
+      category: 'food',
+    });
+    expect(tx.description).toBe('Coffee shop');
+    expect(tx.amount).toBe(-4.50);
+    expect(tx.importId).toBe(imp.id);
+
+    // Update import status
+    await client.updateFinanceImportStatus(imp.id, 'completed', 1);
+    const updated = await client.getFinanceImport(imp.id);
+    expect(updated.status).toBe('completed');
+    expect(updated.recordCount).toBe(1);
+
+    // Verify list returns data
+    const imports = await client.listFinanceImports();
+    expect(imports).toHaveLength(1);
+    const transactions = await client.listFinanceTransactions({ importId: imp.id });
+    expect(transactions).toHaveLength(1);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('creates medical imports and appointments through the API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-medwrite-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    await (runtime as any).capabilityInitPromise;
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const baseUrl = `http://${address.address}:${address.port}`;
+    const store = readAuthStore(config.authFile);
+
+    const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
+
+    // Create a medical import
+    const imp = await client.createMedicalImport({ vaultId: 'test-vault', fileName: 'scan.pdf' });
+    expect(imp.fileName).toBe('scan.pdf');
+    expect(imp.status).toBe('pending');
+
+    // Insert an appointment
+    const appt = await client.insertMedicalAppointment({
+      importId: imp.id,
+      date: '2025-02-10',
+      provider: 'Dr. Smith',
+      specialty: 'cardiology',
+    });
+    expect(appt.provider).toBe('Dr. Smith');
+    expect(appt.specialty).toBe('cardiology');
+
+    // Insert a medication
+    const med = await client.insertMedicalMedication({
+      importId: imp.id,
+      name: 'Aspirin',
+      dosage: '81mg',
+      frequency: 'daily',
+    });
+    expect(med.name).toBe('Aspirin');
+    expect(med.dosage).toBe('81mg');
+
+    // Update import status
+    await client.updateMedicalImportStatus(imp.id, 'completed');
+    const updated = await client.getMedicalImport(imp.id);
+    expect(updated.status).toBe('completed');
+
+    // Verify lists return data
+    expect(await client.listMedicalImports()).toHaveLength(1);
+    expect(await client.listMedicalAppointments()).toHaveLength(1);
+    expect(await client.listMedicalMedications()).toHaveLength(1);
+
+    await runtime.close();
+    await app.close();
+  });
 });

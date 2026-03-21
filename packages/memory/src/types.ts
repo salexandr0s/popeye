@@ -50,6 +50,7 @@ export interface MemoryRecord {
   validTo?: string | null | undefined;
   revisionStatus?: 'active' | 'superseded' | undefined;
   evidenceCount?: number | undefined;
+  domain?: string | undefined;
 }
 
 export interface StoreMemoryResult {

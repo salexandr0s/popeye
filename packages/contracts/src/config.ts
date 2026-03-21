@@ -171,6 +171,18 @@ const DEFAULT_MEMORY_CONFIG = {
   expandTokenCap: 8000,
 };
 
+export const LogLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']);
+export type LogLevel = z.infer<typeof LogLevelSchema>;
+
+export const LoggingConfigSchema = z.object({
+  level: LogLevelSchema.default('info'),
+});
+export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
+
+const DEFAULT_LOGGING_CONFIG = {
+  level: 'info' as const,
+};
+
 const DEFAULT_APPROVAL_POLICY_CONFIG = {
   rules: [],
   defaultRiskClass: 'ask' as const,
@@ -195,6 +207,7 @@ export const AppConfigSchema = z.object({
   telegram: TelegramConfigSchema,
   embeddings: EmbeddingConfigSchema,
   engine: EngineConfigSchema.default(DEFAULT_ENGINE_CONFIG),
+  logging: LoggingConfigSchema.default(DEFAULT_LOGGING_CONFIG),
   memory: MemoryConfigSchema.default(DEFAULT_MEMORY_CONFIG),
   workspaces: z.array(WorkspaceConfigSchema).default(DEFAULT_WORKSPACES),
   approvalPolicy: ApprovalPolicyConfigSchema.default(DEFAULT_APPROVAL_POLICY_CONFIG),

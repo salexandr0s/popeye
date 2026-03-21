@@ -95,6 +95,54 @@ rm -rf "$HOME/Library/Application Support/Popeye"
 - Bump versions before building a release package
 - Tag releases with `git tag v<version>` after verification passes
 
+## Release notes generation
+
+After commits are finalized for a release, generate draft release notes:
+
+```bash
+bash scripts/generate-release-notes.sh
+```
+
+This will:
+1. Parse `git log` from the last tag to HEAD (or all commits if no tags exist)
+2. Categorize commits by conventional type (feat, fix, chore, refactor, etc.)
+3. Flag any commits containing "BREAKING" or "breaking change"
+4. Read the version from `package.json` and Pi engine version from `packages/engine-pi/package.json`
+5. Write a draft to `dist/pkg/RELEASE-NOTES.md` following the template in `docs/templates/release-notes.md`
+
+The script is idempotent and can be re-run safely. Review and edit the output
+before publishing -- the script produces a first draft, not the final document.
+
+## Breaking changes
+
+All breaking changes are tracked in `docs/BREAKING-CHANGES.md`. This file is
+manually curated -- the release notes generator flags potential breaking changes
+but does not update this document.
+
+Before each release:
+1. Review flagged breaking changes in the generated release notes
+2. Add confirmed breaking changes to `docs/BREAKING-CHANGES.md` under the
+   appropriate version heading with a description and migration steps
+3. Ensure the release notes reference the breaking changes document
+
+## Artifact inventory
+
+After building release artifacts, produce an inventory manifest:
+
+```bash
+bash scripts/artifact-inventory.sh
+```
+
+This will:
+1. Enumerate `.pkg` and `.tar.gz` artifacts in `dist/pkg/`
+2. Read checksums from `CHECKSUMS.sha256`
+3. Record version, Git SHA, build date, and Pi engine version
+4. Run `pnpm verify:generated-artifacts` and `pnpm test` to report pass/fail status
+5. Write the manifest to `dist/pkg/INVENTORY.md`
+
+The script requires `dist/pkg/` to exist (run `bash scripts/build-pkg.sh` first).
+It is idempotent and can be re-run safely.
+
 ## Checklist
 
 Before releasing:
@@ -104,7 +152,10 @@ Before releasing:
 - [ ] Contracts generated and verified -- `pnpm generate:contracts && pnpm verify:generated-artifacts`
 - [ ] No source-adjacent build artifacts -- `pnpm verify:src-build-artifacts`
 - [ ] Changelog updated
+- [ ] Breaking changes documented -- `docs/BREAKING-CHANGES.md`
 - [ ] Version bumped in `package.json`
 - [ ] Package built -- `bash scripts/build-pkg.sh`
+- [ ] Release notes generated -- `bash scripts/generate-release-notes.sh`
+- [ ] Artifact inventory produced -- `bash scripts/artifact-inventory.sh`
 - [ ] Smoke test passes -- `bash scripts/smoke-test.sh`
 - [ ] Upgrade verification passes on a test installation -- `bash scripts/verify-upgrade.sh`

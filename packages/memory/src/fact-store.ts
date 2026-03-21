@@ -28,6 +28,7 @@ export interface UpsertFactsInput {
   sourceTimestamp?: string | null | undefined;
   facts: ExtractedFact[];
   tags?: string[] | undefined;
+  domain?: string | undefined;
 }
 
 export interface UpsertFactsResult {
@@ -75,8 +76,8 @@ export function upsertFacts(db: Database.Database, input: UpsertFactsInput): Ups
       if (existing) {
         const newConfidence = Math.min(1, Math.max(existing.confidence, fact.confidence) + 0.05);
         db.prepare(
-          'UPDATE memory_facts SET scope = ?, workspace_id = ?, project_id = ?, confidence = ?, last_reinforced_at = ?, archived_at = NULL, occurred_at = COALESCE(occurred_at, ?), valid_from = COALESCE(valid_from, ?), valid_to = COALESCE(valid_to, ?), revision_status = ? WHERE id = ?',
-        ).run(location.scope, location.workspaceId, location.projectId, newConfidence, now, fact.occurredAt, fact.validFrom, fact.validTo, 'active', existing.id);
+          'UPDATE memory_facts SET scope = ?, workspace_id = ?, project_id = ?, confidence = ?, last_reinforced_at = ?, archived_at = NULL, occurred_at = COALESCE(occurred_at, ?), valid_from = COALESCE(valid_from, ?), valid_to = COALESCE(valid_to, ?), revision_status = ?, domain = COALESCE(?, domain) WHERE id = ?',
+        ).run(location.scope, location.workspaceId, location.projectId, newConfidence, now, fact.occurredAt, fact.validFrom, fact.validTo, 'active', input.domain, existing.id);
         record = {
           id: existing.id,
           namespaceId: input.artifact.namespaceId,
@@ -134,7 +135,7 @@ export function upsertFacts(db: Database.Database, input: UpsertFactsInput): Ups
           revisionStatus: 'active',
         };
         db.prepare(
-          'INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         ).run(
           record.id,
           record.namespaceId,
@@ -161,6 +162,7 @@ export function upsertFacts(db: Database.Database, input: UpsertFactsInput): Ups
           record.createdAt,
           record.durable ? 1 : 0,
           record.revisionStatus,
+          input.domain ?? 'general',
         );
         syncFactFtsInsert(db, record.id, record.text);
         inserted++;

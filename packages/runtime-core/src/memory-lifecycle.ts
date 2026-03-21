@@ -210,6 +210,7 @@ export interface MemoryInsertInput {
   occurredAt?: string | undefined;
   tags?: string[] | undefined;
   sourceMetadata?: Record<string, unknown> | undefined;
+  durable?: boolean | undefined;
 }
 
 export interface MemoryMaintenanceResult {
@@ -242,7 +243,7 @@ export class MemoryLifecycleService {
   }
 
   private captureStructuredMemory(input: MemoryInsertInput, memoryType: MemoryType): void {
-    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary']);
+    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary', 'coding_session', 'code_review', 'debug_session']);
     if (!structuredSources.has(input.sourceType)) return;
 
     const { text: redactedContent } = redactText(input.content, this.config.security.redactionPatterns);
@@ -262,6 +263,7 @@ export class MemoryLifecycleService {
         ...(input.sourceMetadata ?? {}),
       },
       tags: input.tags,
+      domain: input.domain,
     });
 
     const extracted = extractFacts({
@@ -290,6 +292,7 @@ export class MemoryLifecycleService {
       sourceTimestamp: input.sourceTimestamp ?? null,
       facts: extracted,
       tags: input.tags,
+      domain: input.domain,
     });
 
     if (input.sourceType === 'daily_summary' && upserted.records.length > 0) {
@@ -306,6 +309,7 @@ export class MemoryLifecycleService {
         refreshPolicy: 'automatic_daily',
         sourceFacts: upserted.records.map((record) => ({ id: record.id })),
         tags: ['daily-summary', ...(input.tags ?? [])],
+        domain: input.domain,
       });
     }
 
@@ -323,6 +327,7 @@ export class MemoryLifecycleService {
         refreshPolicy: 'automatic_compaction',
         sourceFacts: upserted.records.map((record) => ({ id: record.id })),
         tags: ['compaction-summary', ...(input.tags ?? [])],
+        domain: input.domain,
       });
     }
   }
@@ -353,6 +358,7 @@ export class MemoryLifecycleService {
       if (input.dedupKey) { updates.push('dedup_key = ?'); params.push(input.dedupKey); }
       if (input.sourceRunId) { updates.push('source_run_id = ?'); params.push(input.sourceRunId); }
       if (input.sourceTimestamp) { updates.push('source_timestamp = ?'); params.push(input.sourceTimestamp); }
+      if (input.durable) { updates.push('durable = ?'); params.push(1); }
       if (updates.length > 0) {
         params.push(result.memoryId);
         this.databases.memory

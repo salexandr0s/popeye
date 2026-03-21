@@ -83,7 +83,9 @@ function mapDigestRow(row: MedicalDigestRow): MedicalDigestRecord {
 // --- Service ---
 
 export class MedicalService {
-  constructor(private readonly db: MedicalCapabilityDb) {}
+  constructor(
+    private readonly db: MedicalCapabilityDb,
+  ) {}
 
   // --- Imports ---
 
@@ -121,7 +123,33 @@ export class MedicalService {
     return result;
   }
 
+  updateImportStatus(id: string, status: MedicalImportRecord['status']): void {
+    prepareRun(this.db,
+      'UPDATE medical_imports SET status = ? WHERE id = ?',
+    )(status, id);
+  }
+
   // --- Appointments ---
+
+  insertAppointment(data: {
+    importId: string;
+    date: string;
+    provider: string;
+    specialty?: string | null;
+    location?: string | null;
+    redactedSummary?: string;
+  }): MedicalAppointmentRecord {
+    const id = randomUUID();
+    prepareRun(this.db,
+      `INSERT INTO medical_appointments (id, import_id, date, provider, specialty, location, redacted_summary)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )(id, data.importId, data.date, data.provider, data.specialty ?? null, data.location ?? null, data.redactedSummary ?? '');
+    const row = prepareGet<MedicalAppointmentRow>(this.db,
+      'SELECT * FROM medical_appointments WHERE id = ?',
+    )(id);
+    if (!row) throw new Error('Failed to insert medical appointment');
+    return mapAppointmentRow(row);
+  }
 
   listAppointments(importId?: string, options: { limit?: number | undefined } = {}): MedicalAppointmentRecord[] {
     const limit = options.limit ?? 50;
@@ -139,6 +167,29 @@ export class MedicalService {
 
   // --- Medications ---
 
+  insertMedication(data: {
+    importId: string;
+    name: string;
+    dosage?: string | null;
+    frequency?: string | null;
+    prescriber?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    redactedSummary?: string;
+  }): MedicalMedicationRecord {
+    const id = randomUUID();
+    prepareRun(this.db,
+      `INSERT INTO medical_medications (id, import_id, name, dosage, frequency, prescriber, start_date, end_date, redacted_summary)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )(id, data.importId, data.name, data.dosage ?? null, data.frequency ?? null,
+      data.prescriber ?? null, data.startDate ?? null, data.endDate ?? null, data.redactedSummary ?? '');
+    const row = prepareGet<MedicalMedicationRow>(this.db,
+      'SELECT * FROM medical_medications WHERE id = ?',
+    )(id);
+    if (!row) throw new Error('Failed to insert medical medication');
+    return mapMedicationRow(row);
+  }
+
   listMedications(importId?: string): MedicalMedicationRecord[] {
     if (importId) {
       const rows = prepareAll<MedicalMedicationRow>(this.db,
@@ -153,6 +204,25 @@ export class MedicalService {
   }
 
   // --- Documents ---
+
+  insertDocument(data: {
+    importId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    redactedSummary?: string;
+  }): MedicalDocumentRecord {
+    const id = randomUUID();
+    prepareRun(this.db,
+      `INSERT INTO medical_documents (id, import_id, file_name, mime_type, size_bytes, redacted_summary)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )(id, data.importId, data.fileName, data.mimeType, data.sizeBytes, data.redactedSummary ?? '');
+    const row = prepareGet<MedicalDocumentRow>(this.db,
+      'SELECT * FROM medical_documents WHERE id = ?',
+    )(id);
+    if (!row) throw new Error('Failed to insert medical document');
+    return mapDocumentRow(row);
+  }
 
   listDocuments(importId?: string): MedicalDocumentRecord[] {
     if (importId) {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { DomainKind, RuntimePaths, VaultRecord, VaultStatus } from '@popeye/contracts';
 import { nowIso } from '@popeye/contracts';
+import { keychainGet } from './keychain.js';
 
 export interface VaultHandle {
   vaultId: string;
@@ -66,14 +67,16 @@ export class VaultManager {
     // If restricted vault with encryption key available, encrypt the DB
     let encrypted = false;
     let encryptionKeyRef: string | null = null;
-    if (kind === 'restricted' && process.env['POPEYE_VAULT_KEK']) {
-      const kekHex = process.env['POPEYE_VAULT_KEK'];
+    const kekHex = kind === 'restricted' ? this.resolveKek() : null;
+    if (kind === 'restricted' && kekHex) {
+      const kcResult = keychainGet('vault-kek');
+      const kekSource = kcResult.ok ? 'keychain:vault-kek' : 'env:POPEYE_VAULT_KEK';
       const dek = this.generateDek();
       const dekWrapped = this.wrapDekWithKek(dek, kekHex);
       this.encryptFile(dbPath, dek);
-      this.cryptoMetadata.set(id, { kekRef: 'env:POPEYE_VAULT_KEK', dekWrapped });
+      this.cryptoMetadata.set(id, { kekRef: kekSource, dekWrapped });
       encrypted = true;
-      encryptionKeyRef = 'env:POPEYE_VAULT_KEK';
+      encryptionKeyRef = kekSource;
     }
 
     const record: VaultRecord = {
@@ -107,6 +110,23 @@ export class VaultManager {
 
     if (this.openHandles.has(vaultId)) {
       return this.openHandles.get(vaultId)!.handle;
+    }
+
+    // Decrypt-on-open for encrypted vaults
+    const encPath = `${record.dbPath}.enc`;
+    if (record.encrypted && existsSync(encPath)) {
+      const kekHex = this.resolveKek();
+      if (!kekHex) {
+        this.log.warn({ vaultId }, 'cannot open encrypted vault: no KEK available');
+        return null;
+      }
+      const meta = this.cryptoMetadata.get(vaultId);
+      if (!meta) {
+        this.log.warn({ vaultId }, 'cannot open encrypted vault: no crypto metadata');
+        return null;
+      }
+      const dek = this.unwrapDek(meta.dekWrapped, kekHex);
+      this.decryptFile(encPath, dek, record.dbPath);
     }
 
     if (!existsSync(record.dbPath)) return null;
@@ -174,6 +194,24 @@ export class VaultManager {
     this.openHandles.delete(vaultId);
 
     const record = this.registry.get(vaultId);
+
+    // Re-encrypt on close if the vault was encrypted
+    if (record?.encrypted && existsSync(record.dbPath)) {
+      const meta = this.cryptoMetadata.get(vaultId);
+      const kekHex = this.resolveKek();
+      if (meta && kekHex) {
+        const dek = this.unwrapDek(meta.dekWrapped, kekHex);
+        this.encryptFile(record.dbPath, dek);
+      } else {
+        this.log.error({ vaultId }, 'cannot re-encrypt vault on close: KEK or crypto metadata unavailable — plaintext DB remains on disk');
+        this.auditCallback({
+          eventType: 'vault_reencrypt_failed',
+          details: { vaultId, reason: !meta ? 'missing_crypto_metadata' : 'kek_unavailable' },
+          severity: 'error',
+        });
+      }
+    }
+
     if (record && record.status === 'open') {
       record.status = 'closed';
     }
@@ -222,6 +260,14 @@ export class VaultManager {
 
   getVault(vaultId: string): VaultRecord | null {
     return this.registry.get(vaultId) ?? null;
+  }
+
+  private resolveKek(): string | null {
+    const kcResult = keychainGet('vault-kek');
+    if (kcResult.ok && kcResult.value) return kcResult.value;
+    const envKek = process.env['POPEYE_VAULT_KEK'];
+    if (envKek) return envKek;
+    return null;
   }
 
   private generateDek(): Buffer {

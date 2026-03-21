@@ -17,6 +17,7 @@ export interface LikeFallbackCandidate {
   createdAt: string;
   lastReinforcedAt: string | null;
   durable: boolean;
+  domain?: string | undefined;
   ftsRank: number;
 }
 
@@ -46,6 +47,7 @@ export function buildLikeQuery(
     includeGlobal?: boolean;
     minConfidence?: number;
     memoryTypes?: MemoryType[];
+    domains?: string[];
     limit?: number;
   },
   limit = 60,
@@ -89,10 +91,15 @@ export function buildLikeQuery(
     conditions.push(`memory_type IN (${placeholders})`);
     params.push(...filters.memoryTypes);
   }
+  if (filters.domains !== undefined && filters.domains.length > 0) {
+    const placeholders = filters.domains.map(() => '?').join(', ');
+    conditions.push(`domain IN (${placeholders})`);
+    params.push(...filters.domains);
+  }
 
   params.push(effectiveLimit);
 
-  const sql = `SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable
+  const sql = `SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable, domain
 FROM memories
 WHERE ${conditions.join(' AND ')}
 ORDER BY confidence DESC
@@ -131,6 +138,7 @@ export function searchLikeFallback(
     includeGlobal?: boolean;
     minConfidence?: number;
     memoryTypes?: MemoryType[];
+    domains?: string[];
     limit?: number;
   },
   limit = 60,
@@ -153,6 +161,7 @@ export function searchLikeFallback(
     created_at: string;
     last_reinforced_at: string | null;
     durable: number;
+    domain: string | null;
   }>;
 
   return rows.map((row) => ({
@@ -168,6 +177,7 @@ export function searchLikeFallback(
     createdAt: row.created_at,
     lastReinforcedAt: row.last_reinforced_at,
     durable: Boolean(row.durable),
+    domain: row.domain ?? undefined,
     ftsRank: computeSyntheticRank(row.description, row.content, tokens),
   }));
 }

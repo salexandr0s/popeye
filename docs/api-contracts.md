@@ -4,16 +4,23 @@ Current control API routes with response schema references (all schemas from `@p
 
 | Method | Path | Response Schema |
 |--------|------|----------------|
+| POST | `/v1/auth/exchange` | `{ token: string }` (req: bearer auth; mints browser-session cookie) |
 | GET | `/v1/health` | `HealthResponseSchema` |
 | GET | `/v1/status` | `DaemonStatusResponseSchema` |
+| GET | `/v1/engine/capabilities` | engine capability listing |
 | GET | `/v1/daemon/state` | `DaemonStateRecordSchema` |
 | GET | `/v1/daemon/scheduler` | `SchedulerStatusResponseSchema` |
 | GET | `/v1/workspaces` | `Array<{ id, name, createdAt }>` |
+| GET | `/v1/workspaces/:id` | workspace record |
+| POST | `/v1/workspaces` | workspace record (req: `{ id, name }`) |
 | GET | `/v1/projects` | `Array<{ id, workspaceId, name, createdAt }>` |
+| GET | `/v1/projects/:id` | project record |
+| POST | `/v1/projects` | project record (req: `{ id, name, workspaceId? }`) |
 | GET | `/v1/agent-profiles` | `Array<{ id, name, createdAt }>` |
 | GET | `/v1/profiles` | `ExecutionProfileSchema[]` |
 | GET | `/v1/profiles/:id` | `ExecutionProfileSchema` |
 | GET | `/v1/tasks` | `TaskRecordSchema[]` |
+| GET | `/v1/tasks/:id` | `TaskRecordSchema` |
 | POST | `/v1/tasks` | `TaskCreateResponseSchema` (req: `TaskCreateInputSchema`) |
 | GET | `/v1/jobs` | `JobRecordSchema[]` |
 | GET | `/v1/jobs/:id` | `JobRecordSchema` |
@@ -30,6 +37,7 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/runs/:id/events` | `RunEventRecordSchema[]` |
 | POST | `/v1/runs/:id/retry` | `JobRecordSchema` |
 | POST | `/v1/runs/:id/cancel` | `RunRecordSchema` |
+| GET | `/v1/receipts` | `ReceiptRecordSchema[]` |
 | GET | `/v1/receipts/:id` | `ReceiptRecordSchema` |
 | GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` (`projectId` query optional; `400 { error: "invalid_context" }` on cross-workspace mismatch) |
 | GET | `/v1/interventions` | `InterventionRecordSchema[]` |
@@ -158,17 +166,25 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/vaults/:id/backup` | `VaultBackupResultSchema` (req: `{ destinationDir? }`) |
 | POST | `/v1/vaults/:id/restore` | `VaultBackupResultSchema` (req: `{ backupPath }`) |
 | GET | `/v1/vaults/:id/backup/verify` | `VaultVerifyResultSchema` |
+| POST | `/v1/context-release/preview` | context release preview result |
+| POST | `/v1/secrets` | secret storage result |
+| DELETE | `/v1/files/roots/:id` | `FileRootResponseSchema` |
 | GET | `/v1/events/stream` | SSE `text/event-stream` |
 | POST | `/v1/messages/ingest` | `MessageIngressResponseSchema` (req: `IngestMessageInputSchema`) |
 | GET | `/v1/messages/:id` | `MessageRecordSchema` |
 | GET | `/v1/usage/summary` | `UsageSummarySchema` |
 | GET | `/v1/security/audit` | `SecurityAuditResponseSchema` |
 | GET | `/v1/security/csrf-token` | `CsrfTokenResponseSchema` |
-| GET | `/v1/memory/search?query=...` | `MemorySearchResponseSchema` |
+| GET | `/v1/memory/search?query=...&domains=...&consumerProfile=...` | `MemorySearchResponseSchema` |
 | GET | `/v1/memory/audit` | `MemoryAuditResponseSchema` |
+| GET | `/v1/memory/integrity` | memory integrity check result |
+| GET | `/v1/memory/budget-fit` | memory budget allocation fit |
 | GET | `/v1/memory/:id` | `MemoryRecordSchema` |
+| GET | `/v1/memory/:id/describe` | memory description (progressive disclosure) |
+| GET | `/v1/memory/:id/expand` | full memory content |
 | GET | `/v1/memory` | `MemoryRecordSchema[]` |
 | POST | `/v1/memory/maintenance` | `{ decayed, archived, merged, deduped }` |
+| POST | `/v1/memory/import` | memory import result |
 | POST | `/v1/memory/:id/promote/propose` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionProposalRequestSchema`) |
 | POST | `/v1/memory/:id/promote/execute` | `MemoryPromotionResponseSchema` (req: `MemoryPromotionExecuteRequestSchema`) |
 
@@ -193,6 +209,8 @@ Behavior notes:
   releases, and terminal receipt outcomes.
 - `POST /v1/memory/:id/promote/propose` returns a review payload with `diff`, `approved: false`, and `promoted: false`.
 - `POST /v1/memory/:id/promote/execute` requires an approved proposal payload and writes the promoted markdown file inside the runtime memory directory.
+- `GET /v1/memory/search` accepts `domains` (comma-separated domain filter) and `consumerProfile` (`assistant` or `coding`) query params, plus `X-Consumer-Profile` header as a fallback. Consumer profiles set sensible default domain/namespace filters for different agent types.
+- `POST /v1/memory/import` accepts `domain`, `tags`, `durable`, `dedupKey`, `sourceRunId`, `sourceTimestamp` fields for coding agent ingestion. New source types: `coding_session`, `code_review`, `debug_session`.
 - Approval and vault routes are shared operator surfaces consumed by both CLI and
   web inspector.
 - Approval records now carry structured action metadata (`actionKind`,
@@ -288,6 +306,16 @@ Behavior notes:
   - `GET /v1/telegram/relay/checkpoint?workspaceId=...`
   - `POST /v1/telegram/relay/checkpoint`
   - `POST /v1/telegram/replies/:chatId/:telegramMessageId/mark-sent`
+  - `POST /v1/telegram/replies/:chatId/:telegramMessageId/mark-sending`
+  - `POST /v1/telegram/replies/:chatId/:telegramMessageId/mark-pending`
+  - `POST /v1/telegram/replies/:chatId/:telegramMessageId/mark-uncertain`
+- Telegram delivery management routes:
+  - `GET /v1/telegram/deliveries/uncertain` — list deliveries with uncertain send status
+  - `GET /v1/telegram/deliveries/:id` — delivery record by ID
+  - `POST /v1/telegram/deliveries/:id/resolve` — resolve an uncertain delivery
+  - `GET /v1/telegram/deliveries/:id/resolutions` — resolution history for a delivery
+  - `GET /v1/telegram/deliveries/:id/attempts` — send attempt history for a delivery
+  - `POST /v1/telegram/send-attempts` — record a send attempt
 - Relay behavior is intentionally thin:
   - duplicate replayed Telegram ingress responses with `telegramDelivery.status === "sent"` do not trigger a second reply
   - denied ingress responses do not trigger a Telegram reply

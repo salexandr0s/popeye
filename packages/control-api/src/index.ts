@@ -125,6 +125,8 @@ const MemorySearchQueryParamsSchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
   types: z.string().optional(),
   full: z.string().optional(),
+  domains: z.string().optional(),
+  consumerProfile: z.enum(['assistant', 'coding']).optional(),
 });
 
 const MemoryListQueryParamsSchema = z.object({
@@ -823,6 +825,7 @@ export async function createControlApi(
     const params = MemorySearchQueryParamsSchema.parse(request.query);
     const queryText = params.q ?? params.query ?? '';
     if (!queryText) return { query: '', results: [], totalCandidates: 0, latencyMs: 0, searchMode: 'fts_only' };
+    const consumerProfile = params.consumerProfile ?? (request.headers['x-consumer-profile'] as string | undefined);
     return dependencies.runtime.searchMemory({
       query: queryText,
       scope: params.scope,
@@ -832,6 +835,8 @@ export async function createControlApi(
       memoryTypes: params.types ? (params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>) : undefined,
       limit: params.limit ?? 20,
       includeContent: params.full === 'true',
+      ...(params.domains !== undefined && { domains: params.domains.split(',') }),
+      ...(consumerProfile !== undefined && { consumerProfile }),
     });
   });
 

@@ -65,6 +65,7 @@ function wrapPino(base: pino.Logger, customPatterns: string[]): PopeyeLogger {
 export interface CreateLoggerOptions {
   customPatterns?: string[];
   destination?: Writable;
+  level?: string;
 }
 
 export function createLogger(
@@ -75,7 +76,7 @@ export function createLogger(
     ? { customPatterns: customPatternsOrOptions }
     : customPatternsOrOptions ?? {};
 
-  const level = process.env.POPEYE_LOG_LEVEL ?? 'info';
+  const level = opts.level ?? process.env.POPEYE_LOG_LEVEL ?? 'info';
   const base = opts.destination
     ? pino({ name: component, level }, opts.destination)
     : pino({ name: component, level });

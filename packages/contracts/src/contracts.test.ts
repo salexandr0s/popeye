@@ -25,6 +25,11 @@ import {
   MemorySearchResultSchema,
   MemorySearchResponseSchema,
   MemoryAuditResponseSchema,
+  MemorySearchQuerySchema,
+  MemorySourceTypeSchema,
+  MemoryNamespaceKindSchema,
+  DomainKindSchema,
+  MemoryImportInputSchema,
 
   // Config domain
   AppConfigSchema,
@@ -1396,5 +1401,82 @@ describe('Additional schema smoke tests', () => {
       payload: { size: 1024 },
     });
     expect(result.type).toBe('compaction');
+  });
+
+  describe('Coding agent memory extension', () => {
+    it('DomainKindSchema accepts coding', () => {
+      expect(DomainKindSchema.parse('coding')).toBe('coding');
+    });
+
+    it('MemoryNamespaceKindSchema accepts coding', () => {
+      expect(MemoryNamespaceKindSchema.parse('coding')).toBe('coding');
+    });
+
+    it('MemorySourceTypeSchema accepts coding source types', () => {
+      expect(MemorySourceTypeSchema.parse('coding_session')).toBe('coding_session');
+      expect(MemorySourceTypeSchema.parse('code_review')).toBe('code_review');
+      expect(MemorySourceTypeSchema.parse('debug_session')).toBe('debug_session');
+    });
+
+    it('MemoryImportInputSchema accepts domain, tags, durable, dedupKey', () => {
+      const result = MemoryImportInputSchema.parse({
+        description: 'Vitest mock pattern',
+        content: 'Use in-memory SQLite',
+        domain: 'coding',
+        tags: ['testing', 'vitest'],
+        durable: true,
+        dedupKey: 'pattern:vitest-mock',
+        sourceRunId: 'run-123',
+        sourceTimestamp: '2026-03-21T00:00:00Z',
+      });
+      expect(result.domain).toBe('coding');
+      expect(result.tags).toEqual(['testing', 'vitest']);
+      expect(result.durable).toBe(true);
+      expect(result.dedupKey).toBe('pattern:vitest-mock');
+    });
+
+    it('MemorySearchQuerySchema accepts domains and consumerProfile', () => {
+      const result = MemorySearchQuerySchema.parse({
+        query: 'vitest mock pattern',
+        domains: ['coding', 'general'],
+        consumerProfile: 'coding',
+      });
+      expect(result.domains).toEqual(['coding', 'general']);
+      expect(result.consumerProfile).toBe('coding');
+    });
+
+    it('MemorySearchResultSchema accepts domain field', () => {
+      const result = MemorySearchResultSchema.parse({
+        id: 'mem-1',
+        description: 'Test',
+        content: null,
+        type: 'procedural',
+        confidence: 0.8,
+        effectiveConfidence: 0.75,
+        scope: 'workspace',
+        sourceType: 'coding_session',
+        createdAt: '2026-03-21T00:00:00Z',
+        lastReinforcedAt: null,
+        score: 0.9,
+        domain: 'coding',
+        scoreBreakdown: { relevance: 0.4, recency: 0.2, confidence: 0.2, scopeMatch: 0.1 },
+      });
+      expect(result.domain).toBe('coding');
+    });
+
+    it('MemoryRecordSchema accepts coding domain', () => {
+      const result = MemoryRecordSchema.parse({
+        id: 'mem-coding',
+        description: 'Coding pattern',
+        classification: 'internal',
+        sourceType: 'coding_session',
+        content: 'Pattern content',
+        confidence: 0.8,
+        createdAt: '2026-03-21T00:00:00Z',
+        domain: 'coding',
+      });
+      expect(result.domain).toBe('coding');
+      expect(result.sourceType).toBe('coding_session');
+    });
   });
 });

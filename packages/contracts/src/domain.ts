@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const DomainKindSchema = z.enum(['general', 'email', 'calendar', 'todos', 'github', 'files', 'people', 'finance', 'medical']);
+export const DomainKindSchema = z.enum(['general', 'email', 'calendar', 'todos', 'github', 'files', 'people', 'finance', 'medical', 'coding']);
 export type DomainKind = z.infer<typeof DomainKindSchema>;
 
 export const SensitivityLevelSchema = z.enum(['internal', 'personal', 'restricted']);
@@ -30,4 +30,5 @@ export const DOMAIN_POLICY_DEFAULTS: Record<DomainKind, DomainPolicy> = {
   people:   { domain: 'people',   sensitivity: 'personal',   embeddingPolicy: 'derived_only', contextReleasePolicy: 'summary' },
   finance:  { domain: 'finance',  sensitivity: 'restricted', embeddingPolicy: 'none',         contextReleasePolicy: 'none' },
   medical:  { domain: 'medical',  sensitivity: 'restricted', embeddingPolicy: 'none',         contextReleasePolicy: 'none' },
+  coding:   { domain: 'coding',   sensitivity: 'internal',   embeddingPolicy: 'full',         contextReleasePolicy: 'full' },
 };

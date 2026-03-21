@@ -958,6 +958,7 @@ export class PopeyeRuntimeService {
       halfLifeDays: config.memory.confidenceHalfLifeDays,
       budgetConfig: config.memory.budgetAllocation,
       redactionPatterns: config.security.redactionPatterns,
+      logger: this.log,
     });
     const summarizationClient = config.embeddings.provider === 'openai'
       ? createOpenAISummarizationClient({})
@@ -965,7 +966,7 @@ export class PopeyeRuntimeService {
     this.memoryLifecycle = new MemoryLifecycleService(this.databases, config, this.memorySearch, summarizationClient);
 
     // Try loading sqlite-vec (non-blocking)
-    this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions).then((loaded) => {
+    this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions, this.log).then((loaded) => {
       this.vecAvailable = loaded;
     });
 
@@ -2611,6 +2612,8 @@ export class PopeyeRuntimeService {
       ...(query.includeSuperseded !== undefined && { includeSuperseded: query.includeSuperseded }),
       ...(query.occurredAfter !== undefined && { occurredAfter: query.occurredAfter }),
       ...(query.occurredBefore !== undefined && { occurredBefore: query.occurredBefore }),
+      ...(query.domains !== undefined && { domains: query.domains }),
+      ...(query.consumerProfile !== undefined && { consumerProfile: query.consumerProfile }),
     });
   }
 
@@ -2754,6 +2757,12 @@ export class PopeyeRuntimeService {
     projectId?: string | null;
     confidence?: number;
     classification?: 'secret' | 'sensitive' | 'internal' | 'embeddable';
+    domain?: MemoryInsertInput['domain'];
+    tags?: string[];
+    durable?: boolean;
+    dedupKey?: string;
+    sourceRunId?: string;
+    sourceTimestamp?: string;
   }): { memoryId: string; embedded: boolean } {
     const redactedContent = redactText(input.content, this.config.security.redactionPatterns).text;
     const redactedDesc = redactText(input.description, this.config.security.redactionPatterns).text;
@@ -2774,6 +2783,12 @@ export class PopeyeRuntimeService {
       ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       confidence: input.confidence ?? 0.8,
       classification: input.classification ?? 'embeddable',
+      ...(input.domain !== undefined ? { domain: input.domain } : {}),
+      ...(input.tags !== undefined ? { tags: input.tags } : {}),
+      ...(input.durable !== undefined ? { durable: input.durable } : {}),
+      ...(input.dedupKey !== undefined ? { dedupKey: input.dedupKey } : {}),
+      ...(input.sourceRunId !== undefined ? { sourceRunId: input.sourceRunId } : {}),
+      ...(input.sourceTimestamp !== undefined ? { sourceTimestamp: input.sourceTimestamp } : {}),
     });
   }
 

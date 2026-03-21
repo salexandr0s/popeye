@@ -221,4 +221,68 @@ describe('ContextReleaseService', () => {
     const fetched = svc.listReleasesForRun('run1');
     expect(fetched[0].redacted).toBe(true);
   });
+
+  // B5: Finance/medical context-release approval tiers
+  describe('context-release approval tiers for restricted domains', () => {
+    it('finance default context release policy is none (restricted)', () => {
+      const { svc } = makeFixture();
+      const preview = svc.previewRelease({ domain: 'finance', sourceRef: 'account-summary' });
+      expect(preview.releaseLevel).toBe('none');
+      expect(preview.requiresApproval).toBe(true);
+    });
+
+    it('medical default context release policy is none (restricted)', () => {
+      const { svc } = makeFixture();
+      const preview = svc.previewRelease({ domain: 'medical', sourceRef: 'patient-chart' });
+      expect(preview.releaseLevel).toBe('none');
+      expect(preview.requiresApproval).toBe(true);
+    });
+
+    it('general domain allows full release without approval', () => {
+      const { svc } = makeFixture();
+      const preview = svc.previewRelease({ domain: 'general', sourceRef: 'notes' });
+      expect(preview.releaseLevel).toBe('full');
+      expect(preview.requiresApproval).toBe(false);
+    });
+
+    it('summary release for non-restricted domain does not require approval', () => {
+      const { svc } = makeFixture();
+      const preview = svc.previewRelease({ domain: 'email', sourceRef: 'inbox-summary' });
+      expect(preview.releaseLevel).toBe('summary');
+      expect(preview.requiresApproval).toBe(false);
+    });
+
+    it('finance context release records the release level correctly', () => {
+      const { svc } = makeFixture();
+      // Record a finance release without an approval (no FK constraint issue).
+      // In production the approval would exist; here we verify the stored level.
+      const result = svc.recordRelease({
+        domain: 'finance',
+        sourceRef: 'account-data',
+        releaseLevel: 'summary',
+        runId: 'run1',
+        tokenEstimate: 200,
+      });
+      expect(result.domain).toBe('finance');
+      expect(result.releaseLevel).toBe('summary');
+      expect(result.approvalId).toBeNull();
+      expect(result.tokenEstimate).toBe(200);
+    });
+
+    it('medical context release records the release level correctly', () => {
+      const { svc } = makeFixture();
+      const result = svc.recordRelease({
+        domain: 'medical',
+        sourceRef: 'patient-data',
+        releaseLevel: 'excerpt',
+        runId: 'run1',
+        tokenEstimate: 150,
+        redacted: true,
+      });
+      expect(result.domain).toBe('medical');
+      expect(result.releaseLevel).toBe('excerpt');
+      expect(result.approvalId).toBeNull();
+      expect(result.redacted).toBe(true);
+    });
+  });
 });

@@ -277,7 +277,7 @@ describe('CLI help and discoverability', () => {
   it('--version prints version and exits 0', async () => {
     const r = await runPop('--version');
     expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toBe('pop v0.1.0');
+    expect(r.stdout.trim()).toMatch(/^pop v\d+\.\d+\.\d+/);
   });
 
   it('pop auth --help prints auth subcommands', async () => {

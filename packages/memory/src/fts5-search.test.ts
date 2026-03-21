@@ -21,7 +21,8 @@ function createTestDb(): Database.Database {
       last_reinforced_at TEXT,
       archived_at TEXT,
       created_at TEXT NOT NULL,
-      durable INTEGER NOT NULL DEFAULT 0
+      durable INTEGER NOT NULL DEFAULT 0,
+      domain TEXT DEFAULT 'general'
     );
     CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
   `);
@@ -219,5 +220,50 @@ describe('stable memory_id FTS linkage', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('domain filtering', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createTestDb();
+    // Insert memories with different domains
+    db.prepare(
+      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('coding-1', 'vitest mock pattern', 'embeddable', 'coding_session', 'Use in-memory SQLite for testing', 0.8, 'workspace', 'procedural', new Date().toISOString(), 'coding');
+    syncFtsInsert(db, 'coding-1', 'vitest mock pattern', 'Use in-memory SQLite for testing');
+
+    db.prepare(
+      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('general-1', 'project goals', 'embeddable', 'curated_memory', 'Build a testing framework', 0.8, 'workspace', 'semantic', new Date().toISOString(), 'general');
+    syncFtsInsert(db, 'general-1', 'project goals', 'Build a testing framework');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('filters by single domain', () => {
+    const results = searchFts5(db, 'testing', { domains: ['coding'] });
+    expect(results.length).toBe(1);
+    expect(results[0].memoryId).toBe('coding-1');
+    expect(results[0].domain).toBe('coding');
+  });
+
+  it('filters by multiple domains', () => {
+    const results = searchFts5(db, 'testing', { domains: ['coding', 'general'] });
+    expect(results.length).toBe(2);
+  });
+
+  it('returns all domains when no domain filter', () => {
+    const results = searchFts5(db, 'testing', {});
+    expect(results.length).toBe(2);
+  });
+
+  it('returns domain field in results', () => {
+    const results = searchFts5(db, 'vitest', {});
+    expect(results.length).toBe(1);
+    expect(results[0].domain).toBe('coding');
   });
 });

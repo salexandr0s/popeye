@@ -23,6 +23,7 @@ export interface CreateSynthesisInput {
   refreshPolicy?: string | undefined;
   sourceFacts: Array<Pick<MemoryFactRecord, 'id'>>;
   tags?: string[] | undefined;
+  domain?: string | undefined;
 }
 
 export function createSynthesis(db: Database.Database, input: CreateSynthesisInput): MemorySynthesisRecord {
@@ -55,13 +56,13 @@ export function createSynthesis(db: Database.Database, input: CreateSynthesisInp
 
   if (existing) {
     db.prepare(
-      'UPDATE memory_syntheses SET namespace_id = ?, scope = ?, workspace_id = ?, project_id = ?, classification = ?, text = ?, confidence = ?, refresh_policy = ?, updated_at = ?, archived_at = NULL WHERE id = ?',
-    ).run(record.namespaceId, record.scope, record.workspaceId, record.projectId, record.classification, record.text, record.confidence, record.refreshPolicy, record.updatedAt, record.id);
+      'UPDATE memory_syntheses SET namespace_id = ?, scope = ?, workspace_id = ?, project_id = ?, classification = ?, text = ?, confidence = ?, refresh_policy = ?, updated_at = ?, archived_at = NULL, domain = COALESCE(?, domain) WHERE id = ?',
+    ).run(record.namespaceId, record.scope, record.workspaceId, record.projectId, record.classification, record.text, record.confidence, record.refreshPolicy, record.updatedAt, input.domain, record.id);
     db.prepare('DELETE FROM memory_syntheses_fts WHERE synthesis_id = ?').run(record.id);
     db.prepare('DELETE FROM memory_synthesis_sources WHERE synthesis_id = ?').run(record.id);
   } else {
     db.prepare(
-      'INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(
       record.id,
       record.namespaceId,
@@ -77,6 +78,7 @@ export function createSynthesis(db: Database.Database, input: CreateSynthesisInp
       record.createdAt,
       record.updatedAt,
       record.archivedAt,
+      input.domain ?? 'general',
     );
   }
 

@@ -20,8 +20,20 @@ if (!configPath) {
   throw new Error('POPEYE_CONFIG_PATH is required');
 }
 
+const DAEMON_VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
+const DAEMON_GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
+const DAEMON_BUILD_DATE = process.env['POPEYE_BUILD_DATE'] ?? '';
+
 const config = loadAppConfig(configPath);
-const log = createLogger('daemon', config.security.redactionPatterns);
+const log = createLogger('daemon', {
+  customPatterns: config.security.redactionPatterns,
+  level: config.logging.level,
+});
+log.info('daemon starting', {
+  version: DAEMON_VERSION,
+  ...(DAEMON_GIT_SHA && { gitSha: DAEMON_GIT_SHA }),
+  ...(DAEMON_BUILD_DATE && { buildDate: DAEMON_BUILD_DATE }),
+});
 ensureRuntimePaths(config);
 const cleanedTempDirs = cleanStalePiTempDirs();
 if (cleanedTempDirs > 0) {
