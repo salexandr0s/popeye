@@ -196,6 +196,7 @@ import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { ConnectionService, type ConnectionServiceDeps } from './connection-service.js';
+import { OAuthConnectService } from './oauth-connect.js';
 import { buildCoreRuntimeTools } from './runtime-tools.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, GmailAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
@@ -218,12 +219,7 @@ import {
   validateProfileTaskContext,
 } from './execution-envelopes.js';
 import {
-  buildPkceChallenge,
-  buildPkceVerifier,
-  buildProviderAuthorizationUrl,
-  exchangeProviderAuthorizationCode,
   getProviderScopes,
-  mapProviderToDomain,
   type OAuthTokenPayload,
 } from './provider-oauth.js';
 
@@ -344,6 +340,7 @@ export class PopeyeRuntimeService {
   private readonly telegramDelivery: TelegramDeliveryService;
   private readonly capabilityRegistry: CapabilityRegistry;
   private readonly connectionService: ConnectionService;
+  private readonly oauthConnect: OAuthConnectService;
   private capabilityInitPromise: Promise<void> | null = null;
   private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -451,6 +448,13 @@ export class PopeyeRuntimeService {
       capabilityStoresDir: this.databases.paths.capabilityStoresDir,
       log: this.log,
       auditCallback: (event) => this.recordSecurityAudit(event),
+    });
+    this.oauthConnect = new OAuthConnectService({
+      oauthSessionService: this.oauthSessionService,
+      connectionService: this.connectionService,
+      config: this.config,
+      capabilityStoresDir: this.databases.paths.capabilityStoresDir,
+      log: this.log,
     });
     this.receiptBuilder = new ReceiptBuilder({
       db: this.databases.app,
@@ -1192,44 +1196,7 @@ export class PopeyeRuntimeService {
   }
 
   startOAuthConnectSession(input: OAuthConnectStartRequest): OAuthSessionRecord {
-    this.oauthSessionService.expirePendingSessions();
-
-    const domain = mapProviderToDomain(input.providerKind);
-    if (input.connectionId) {
-      const existing = this.getConnection(input.connectionId);
-      if (!existing) {
-        throw new RuntimeNotFoundError(`Connection ${input.connectionId} not found`);
-      }
-      if (existing.providerKind !== input.providerKind || existing.domain !== domain) {
-        throw new RuntimeValidationError(`Connection ${input.connectionId} does not match ${input.providerKind}`);
-      }
-    }
-
-    const id = randomUUID();
-    const stateToken = `oauth_${id}_${buildPkceVerifier()}`;
-    const pkceVerifier = buildPkceVerifier();
-    const redirectUri = this.getOAuthRedirectUri();
-    const authorizationUrl = buildProviderAuthorizationUrl({
-      providerKind: input.providerKind,
-      config: this.config,
-      redirectUri,
-      state: stateToken,
-      codeChallenge: buildPkceChallenge(pkceVerifier),
-    });
-
-    return this.oauthSessionService.createSession({
-      id,
-      providerKind: input.providerKind,
-      domain,
-      connectionMode: input.mode,
-      syncIntervalSeconds: input.syncIntervalSeconds,
-      connectionId: input.connectionId ?? null,
-      stateToken,
-      pkceVerifier,
-      redirectUri,
-      authorizationUrl,
-      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-    });
+    return this.oauthConnect.startOAuthConnectSession(input);
   }
 
   getOAuthSession(id: string): OAuthSessionRecord | null {
@@ -1243,57 +1210,7 @@ export class PopeyeRuntimeService {
     error?: string | undefined;
     errorDescription?: string | undefined;
   }): Promise<OAuthSessionRecord> {
-    this.oauthSessionService.expirePendingSessions();
-
-    if (!input.state) {
-      throw new RuntimeValidationError('Missing OAuth state');
-    }
-    const session = this.oauthSessionService.getByStateToken(input.state);
-    if (!session) {
-      throw new RuntimeNotFoundError('OAuth session not found');
-    }
-    if (session.status !== 'pending') {
-      return this.oauthSessionService.getSession(session.id)!;
-    }
-    if (Date.parse(session.expiresAt) <= Date.now()) {
-      return this.oauthSessionService.failSession(session.id, 'OAuth session expired', 'expired')!;
-    }
-    if (input.error) {
-      return this.oauthSessionService.failSession(
-        session.id,
-        input.errorDescription ? `${input.error}: ${input.errorDescription}` : input.error,
-      )!;
-    }
-    if (!input.code) {
-      return this.oauthSessionService.failSession(session.id, 'OAuth callback did not include an authorization code')!;
-    }
-
-    try {
-      const tokenPayload = await exchangeProviderAuthorizationCode({
-        providerKind: session.providerKind,
-        config: this.config,
-        code: input.code,
-        redirectUri: session.redirectUri,
-        codeVerifier: session.pkceVerifier,
-      });
-      const completed = await this.completeProviderSession(session, tokenPayload);
-      return completed;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.oauthSessionService.failSession(session.id, message);
-      if (session.connectionId) {
-        this.updateConnectionRollups({
-          connectionId: session.connectionId,
-          health: {
-            status: 'reauth_required',
-            authState: 'stale',
-            checkedAt: nowIso(),
-            lastError: message,
-          },
-        });
-      }
-      throw error;
-    }
+    return this.oauthConnect.completeOAuthConnectCallback(input);
   }
 
   private async completeProviderSession(
