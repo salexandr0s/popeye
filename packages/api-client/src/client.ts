@@ -245,6 +245,8 @@ export interface MemorySearchOptions {
   memoryTypes?: MemoryType[];
   limit?: number;
   includeContent?: boolean;
+  domains?: string[];
+  consumerProfile?: 'assistant' | 'coding';
 }
 
 export interface MemoryListOptions {
@@ -624,6 +626,8 @@ export class PopeyeApiClient {
         types: options.memoryTypes?.join(','),
         limit: options.limit,
         full: options.includeContent,
+        domains: options.domains?.join(','),
+        consumerProfile: options.consumerProfile,
       })}`,
       MemorySearchResponseSchema,
     );

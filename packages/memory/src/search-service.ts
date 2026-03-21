@@ -833,6 +833,8 @@ export class MemorySearchService {
       ...(query.includeGlobal !== undefined && { includeGlobal: query.includeGlobal }),
       ...(query.memoryTypes !== undefined && { memoryTypes: query.memoryTypes }),
       ...(query.minConfidence !== undefined && { minConfidence: query.minConfidence }),
+      ...(query.domains !== undefined && { domains: query.domains }),
+      ...(query.consumerProfile !== undefined && { consumerProfile: query.consumerProfile }),
       limit: effectiveLimit,
       includeContent: true,
     });

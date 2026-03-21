@@ -856,7 +856,10 @@ export async function createControlApi(
       includeGlobal: z.enum(['true', 'false']).optional(),
       maxTokens: z.coerce.number().int().positive().default(8000),
       limit: z.coerce.number().int().positive().max(100).optional(),
+      domains: z.string().optional(),
+      consumerProfile: z.enum(['assistant', 'coding']).optional(),
     }).parse(request.query);
+    const budgetConsumerProfile = params.consumerProfile ?? (request.headers['x-consumer-profile'] as string | undefined);
     return dependencies.runtime.budgetFitMemory(stripUndefined({
       query: params.q,
       maxTokens: params.maxTokens,
@@ -864,6 +867,8 @@ export async function createControlApi(
       workspaceId: params.workspaceId,
       projectId: params.projectId,
       ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
+      ...(params.domains !== undefined && { domains: params.domains.split(',') }),
+      ...(budgetConsumerProfile !== undefined && { consumerProfile: budgetConsumerProfile }),
       limit: params.limit,
     }));
   });

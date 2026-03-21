@@ -2728,6 +2728,8 @@ export class PopeyeRuntimeService {
     minConfidence?: number;
     maxTokens: number;
     limit?: number;
+    domains?: string[];
+    consumerProfile?: string;
   }) {
     return this.memorySearch.budgetFit(query);
   }
