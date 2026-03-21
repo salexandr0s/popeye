@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { DomainKindSchema, ContextReleasePolicySchema } from './domain.js';
 
-export const ContextReleaseAuthorizationOutcomeSchema = z.enum(['allow', 'deny', 'approval_required']);
-export type ContextReleaseAuthorizationOutcome = z.infer<typeof ContextReleaseAuthorizationOutcomeSchema>;
+const ContextReleaseAuthorizationOutcomeSchema = z.enum(['allow', 'deny', 'approval_required']);
 
-export const ContextReleaseAuthorizationSchema = z.object({
+const ContextReleaseAuthorizationSchema = z.object({
   outcome: ContextReleaseAuthorizationOutcomeSchema,
   approvedLevel: ContextReleasePolicySchema.nullable().default(null),
   approvalId: z.string().nullable().default(null),
@@ -13,7 +12,7 @@ export const ContextReleaseAuthorizationSchema = z.object({
 });
 export type ContextReleaseAuthorization = z.infer<typeof ContextReleaseAuthorizationSchema>;
 
-export const ContextReleaseDecisionSchema = z.object({
+const ContextReleaseDecisionSchema = z.object({
   id: z.string(),
   domain: DomainKindSchema,
   vaultId: z.string().nullable().default(null),
@@ -27,8 +26,7 @@ export const ContextReleaseDecisionSchema = z.object({
 });
 export type ContextReleaseDecision = z.infer<typeof ContextReleaseDecisionSchema>;
 
-export const ContextReleaseFidelityLevelSchema = z.enum(['summary', 'excerpt', 'full']);
-export type ContextReleaseFidelityLevel = z.infer<typeof ContextReleaseFidelityLevelSchema>;
+const ContextReleaseFidelityLevelSchema = z.enum(['summary', 'excerpt', 'full']);
 
 export const ContextReleasePreviewSchema = z.object({
   domain: DomainKindSchema,

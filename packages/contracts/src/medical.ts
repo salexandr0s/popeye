@@ -2,11 +2,9 @@ import { z } from 'zod';
 
 // --- Medical Import ---
 
-export const MedicalImportTypeSchema = z.enum(['pdf', 'document', 'operator_note']);
-export type MedicalImportType = z.infer<typeof MedicalImportTypeSchema>;
+const MedicalImportTypeSchema = z.enum(['pdf', 'document', 'operator_note']);
 
-export const MedicalImportStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed']);
-export type MedicalImportStatus = z.infer<typeof MedicalImportStatusSchema>;
+const MedicalImportStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed']);
 
 export const MedicalImportRecordSchema = z.object({
   id: z.string(),
@@ -72,13 +70,6 @@ export type MedicalDigestRecord = z.infer<typeof MedicalDigestRecordSchema>;
 
 // --- Medical Search ---
 
-export const MedicalSearchQuerySchema = z.object({
-  query: z.string().min(1),
-  dateFrom: z.string().optional(),
-  dateTo: z.string().optional(),
-  limit: z.number().int().positive().max(100).default(20),
-});
-export type MedicalSearchQuery = z.infer<typeof MedicalSearchQuerySchema>;
 
 export const MedicalSearchResultSchema = z.object({
   recordId: z.string(),
@@ -97,4 +88,3 @@ export const MedicalReminderCandidateSchema = z.object({
   source: z.string(),
   reminderType: z.enum(['appointment', 'medication_refill', 'follow_up']),
 });
-export type MedicalReminderCandidate = z.infer<typeof MedicalReminderCandidateSchema>;

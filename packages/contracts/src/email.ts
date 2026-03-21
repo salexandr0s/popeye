@@ -18,8 +18,7 @@ export type EmailAccountRecord = z.infer<typeof EmailAccountRecordSchema>;
 
 // --- Email Thread Record ---
 
-export const EmailImportanceSchema = z.enum(['low', 'normal', 'high', 'critical']);
-export type EmailImportance = z.infer<typeof EmailImportanceSchema>;
+const EmailImportanceSchema = z.enum(['low', 'normal', 'high', 'critical']);
 
 export const EmailThreadRecordSchema = z.object({
   id: z.string(),
@@ -61,13 +60,6 @@ export type EmailMessageRecord = z.infer<typeof EmailMessageRecordSchema>;
 
 // --- Email Sync Cursor ---
 
-export const EmailSyncCursorSchema = z.object({
-  accountId: z.string(),
-  pageToken: z.string().nullable().default(null),
-  historyId: z.string().nullable().default(null),
-  updatedAt: z.string(),
-});
-export type EmailSyncCursor = z.infer<typeof EmailSyncCursorSchema>;
 
 // --- Email Digest Record ---
 

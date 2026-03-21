@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { DomainKindSchema } from './domain.js';
 
 export const VaultKindSchema = z.enum(['capability', 'restricted']);
-export type VaultKind = z.infer<typeof VaultKindSchema>;
 
 export const VaultStatusSchema = z.enum(['closed', 'open', 'sealed']);
 export type VaultStatus = z.infer<typeof VaultStatusSchema>;

@@ -2,11 +2,9 @@ import { z } from 'zod';
 
 // --- Finance Import ---
 
-export const FinanceImportTypeSchema = z.enum(['csv', 'ofx', 'qfx', 'document']);
-export type FinanceImportType = z.infer<typeof FinanceImportTypeSchema>;
+const FinanceImportTypeSchema = z.enum(['csv', 'ofx', 'qfx', 'document']);
 
-export const FinanceImportStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed']);
-export type FinanceImportStatus = z.infer<typeof FinanceImportStatusSchema>;
+const FinanceImportStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed']);
 
 export const FinanceImportRecordSchema = z.object({
   id: z.string(),
@@ -69,7 +67,8 @@ export type FinanceDigestRecord = z.infer<typeof FinanceDigestRecordSchema>;
 
 // --- Finance Search ---
 
-export const FinanceSearchQuerySchema = z.object({
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used via z.infer for FinanceSearchQuery
+const FinanceSearchQuerySchema = z.object({
   query: z.string().min(1),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
@@ -96,4 +95,3 @@ export const FinanceReminderCandidateSchema = z.object({
   dueDate: z.string().nullable(),
   source: z.string(),
 });
-export type FinanceReminderCandidate = z.infer<typeof FinanceReminderCandidateSchema>;
