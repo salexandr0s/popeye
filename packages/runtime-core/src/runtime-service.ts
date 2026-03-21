@@ -199,9 +199,11 @@ import { ConnectionService, type ConnectionServiceDeps } from './connection-serv
 import { OAuthConnectService } from './oauth-connect.js';
 import { buildCoreRuntimeTools } from './runtime-tools.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
-import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, GmailAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
-import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService, GithubApiAdapter } from '@popeye/cap-github';
-import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService, GoogleCalendarAdapter } from '@popeye/cap-calendar';
+import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, type EmailProviderAdapter } from '@popeye/cap-email';
+import type { GithubApiAdapter } from '@popeye/cap-github';
+import { createGithubCapability, GithubService, GithubSearchService, GithubSyncService, GithubDigestService } from '@popeye/cap-github';
+import type { GoogleCalendarAdapter } from '@popeye/cap-calendar';
+import { createCalendarCapability, CalendarService, CalendarSearchService, CalendarSyncService, CalendarDigestService } from '@popeye/cap-calendar';
 import { createTodosCapability, TodoService, TodoSearchService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
 import { createPeopleCapability, PeopleService, type PersonProjectionSeed } from '@popeye/cap-people';
 import { createFinanceCapability, FinanceService, FinanceSearchService } from '@popeye/cap-finance';
@@ -218,9 +220,8 @@ import {
   computeEffectiveContextReleaseLevel,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
-import {
-  getProviderScopes,
-  type OAuthTokenPayload,
+import type {
+  OAuthTokenPayload,
 } from './provider-oauth.js';
 
 import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
@@ -1211,246 +1212,6 @@ export class PopeyeRuntimeService {
     errorDescription?: string | undefined;
   }): Promise<OAuthSessionRecord> {
     return this.oauthConnect.completeOAuthConnectCallback(input);
-  }
-
-  private async completeProviderSession(
-    session: ReturnType<OAuthSessionService['getSessionInternal']> extends infer T ? NonNullable<T> : never,
-    tokenPayload: OAuthTokenPayload,
-  ): Promise<OAuthSessionRecord> {
-    switch (session.providerKind) {
-      case 'gmail':
-        return this.completeGmailSession(session, tokenPayload);
-      case 'google_calendar':
-        return this.completeGoogleCalendarSession(session, tokenPayload);
-      case 'github':
-        return this.completeGithubSession(session, tokenPayload);
-    }
-  }
-
-  private createOrUpdateConnectedConnection(input: {
-    session: ReturnType<OAuthSessionService['getSessionInternal']> extends infer T ? NonNullable<T> : never;
-    providerKind: ConnectionRecord['providerKind'];
-    domain: DomainKind;
-    label: string;
-    allowedResources: string[];
-    resourceRules: Array<Pick<ConnectionResourceRule, 'resourceType' | 'resourceId' | 'displayName' | 'writeAllowed'>>;
-    scopes: string[];
-  }): ConnectionRecord {
-    if (input.session.connectionId) {
-      const updated = this.updateConnection(input.session.connectionId, {
-        label: input.label,
-        mode: input.session.connectionMode,
-        syncIntervalSeconds: input.session.syncIntervalSeconds,
-        allowedScopes: input.scopes,
-        allowedResources: input.allowedResources,
-        resourceRules: input.resourceRules,
-      });
-      if (!updated) {
-        throw new RuntimeNotFoundError(`Connection ${input.session.connectionId} not found`);
-      }
-      return updated;
-    }
-
-    return this.createConnection({
-      domain: input.domain,
-      providerKind: input.providerKind,
-      label: input.label,
-      mode: input.session.connectionMode,
-      secretRefId: null,
-      syncIntervalSeconds: input.session.syncIntervalSeconds,
-      allowedScopes: input.scopes,
-      allowedResources: input.allowedResources,
-      resourceRules: input.resourceRules,
-    });
-  }
-
-  private async completeGmailSession(
-    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
-    tokenPayload: OAuthTokenPayload,
-  ): Promise<OAuthSessionRecord> {
-    const adapter = new GmailAdapter({
-      accessToken: tokenPayload.accessToken,
-      refreshToken: tokenPayload.refreshToken,
-      clientId: this.config.providerAuth.google.clientId,
-      clientSecret: this.config.providerAuth.google.clientSecret,
-    });
-    const profile = await adapter.getProfile();
-    const connection = this.createOrUpdateConnectedConnection({
-      session,
-      providerKind: 'gmail',
-      domain: 'email',
-      label: `Gmail (${profile.emailAddress})`,
-      allowedResources: [profile.emailAddress],
-      resourceRules: [{
-        resourceType: 'mailbox',
-        resourceId: profile.emailAddress,
-        displayName: profile.emailAddress,
-        writeAllowed: true,
-      }],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('gmail'),
-    });
-    const secretRef = this.storeOAuthSecret(connection.id, 'gmail', tokenPayload, connection.secretRefId);
-    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    let accountId: string;
-    try {
-      const svc = new EmailService(writeDb as unknown as CapabilityContext['appDb']);
-      accountId = svc.getAccountByConnection(connection.id)?.id
-        ?? svc.registerAccount({
-          connectionId: connection.id,
-          emailAddress: profile.emailAddress,
-          displayName: profile.emailAddress.split('@')[0] ?? profile.emailAddress,
-        }).id;
-    } finally {
-      writeDb.close();
-    }
-
-    this.updateConnectionRollups({
-      connectionId: connected.id,
-      health: {
-        status: 'healthy',
-        authState: 'configured',
-        checkedAt: nowIso(),
-        lastError: null,
-        diagnostics: [],
-      },
-      sync: {
-        status: 'idle',
-        cursorKind: connectionCursorKindForProvider(connected.providerKind),
-        cursorPresent: false,
-        lagSummary: 'Awaiting first sync',
-      },
-    });
-
-    return this.oauthSessionService.completeSession(session.id, {
-      connectionId: connected.id,
-      accountId,
-    })!;
-  }
-
-  private async completeGoogleCalendarSession(
-    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
-    tokenPayload: OAuthTokenPayload,
-  ): Promise<OAuthSessionRecord> {
-    const adapter = new GoogleCalendarAdapter({
-      accessToken: tokenPayload.accessToken,
-      refreshToken: tokenPayload.refreshToken,
-      clientId: this.config.providerAuth.google.clientId,
-      clientSecret: this.config.providerAuth.google.clientSecret,
-    });
-    const profile = await adapter.getProfile();
-    const connection = this.createOrUpdateConnectedConnection({
-      session,
-      providerKind: 'google_calendar',
-      domain: 'calendar',
-      label: `Google Calendar (${profile.email})`,
-      allowedResources: [profile.email],
-      resourceRules: [{
-        resourceType: 'calendar',
-        resourceId: profile.email,
-        displayName: profile.email,
-        writeAllowed: true,
-      }],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_calendar'),
-    });
-    const secretRef = this.storeOAuthSecret(connection.id, 'google_calendar', tokenPayload, connection.secretRefId);
-    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    let accountId: string;
-    try {
-      const svc = new CalendarService(writeDb as unknown as CapabilityContext['appDb']);
-      accountId = svc.getAccountByConnection(connection.id)?.id
-        ?? svc.registerAccount({
-          connectionId: connection.id,
-          calendarEmail: profile.email,
-          displayName: profile.email.split('@')[0] ?? profile.email,
-          timeZone: profile.timeZone,
-        }).id;
-    } finally {
-      writeDb.close();
-    }
-
-    this.updateConnectionRollups({
-      connectionId: connected.id,
-      health: {
-        status: 'healthy',
-        authState: 'configured',
-        checkedAt: nowIso(),
-        lastError: null,
-        diagnostics: [],
-      },
-      sync: {
-        status: 'idle',
-        cursorKind: connectionCursorKindForProvider(connected.providerKind),
-        cursorPresent: false,
-        lagSummary: 'Awaiting first sync',
-      },
-    });
-
-    return this.oauthSessionService.completeSession(session.id, {
-      connectionId: connected.id,
-      accountId,
-    })!;
-  }
-
-  private async completeGithubSession(
-    session: NonNullable<ReturnType<OAuthSessionService['getSessionInternal']>>,
-    tokenPayload: OAuthTokenPayload,
-  ): Promise<OAuthSessionRecord> {
-    const adapter = new GithubApiAdapter({ accessToken: tokenPayload.accessToken });
-    const profile = await adapter.getProfile();
-    const connection = this.createOrUpdateConnectedConnection({
-      session,
-      providerKind: 'github',
-      domain: 'github',
-      label: `GitHub (${profile.username})`,
-      allowedResources: [],
-      resourceRules: [],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('github'),
-    });
-    const secretRef = this.storeOAuthSecret(connection.id, 'github', tokenPayload, connection.secretRefId);
-    const connected = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
-
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    let accountId: string;
-    try {
-      const svc = new GithubService(writeDb as unknown as CapabilityContext['appDb']);
-      accountId = svc.getAccountByConnection(connection.id)?.id
-        ?? svc.registerAccount({
-          connectionId: connection.id,
-          githubUsername: profile.username,
-          displayName: profile.name,
-        }).id;
-    } finally {
-      writeDb.close();
-    }
-
-    this.updateConnectionRollups({
-      connectionId: connected.id,
-      health: {
-        status: 'healthy',
-        authState: 'configured',
-        checkedAt: nowIso(),
-        lastError: null,
-        diagnostics: [],
-      },
-      sync: {
-        status: 'idle',
-        cursorKind: connectionCursorKindForProvider(connected.providerKind),
-        cursorPresent: false,
-        lagSummary: 'Awaiting first sync',
-      },
-    });
-
-    return this.oauthSessionService.completeSession(session.id, {
-      connectionId: connected.id,
-      accountId,
-    })!;
   }
 
   // --- Delegated: MessageIngestion ---

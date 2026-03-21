@@ -43,5 +43,4 @@ export interface FinanceDigestRow {
   generated_at: string;
 }
 
-/** @deprecated Use CapabilityDb from @popeye/cap-common */
 export type FinanceCapabilityDb = CapabilityDb;

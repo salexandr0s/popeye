@@ -1,7 +1,6 @@
 export { type CapabilityDb, prepareGet, prepareAll, prepareRun } from '@popeye/cap-common';
 import type { CapabilityDb } from '@popeye/cap-common';
 
-/** @deprecated Use `CapabilityDb` from `@popeye/cap-common` instead. */
 export type EmailCapabilityDb = CapabilityDb;
 
 export interface EmailAccountRow {

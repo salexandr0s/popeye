@@ -50,5 +50,4 @@ export interface PersonActivityRollupRow {
   updated_at: string;
 }
 
-/** @deprecated Use CapabilityDb from @popeye/cap-common */
 export type PeopleCapabilityDb = CapabilityDb;

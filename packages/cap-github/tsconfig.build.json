@@ -11,6 +11,9 @@
     },
     {
       "path": "../observability/tsconfig.build.json"
+    },
+    {
+      "path": "../cap-common/tsconfig.build.json"
     }
   ]
 }
