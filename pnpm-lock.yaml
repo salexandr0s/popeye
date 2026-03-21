@@ -14,9 +14,6 @@ importers:
       '@eslint/js':
         specifier: ^9.23.0
         version: 9.39.4
-      '@fastify/sensible':
-        specifier: ^6.0.3
-        version: 6.0.4
       '@playwright/test':
         specifier: ^1.55.0
         version: 1.58.2
@@ -41,9 +38,6 @@ importers:
       eslint:
         specifier: ^9.23.0
         version: 9.39.4(jiti@2.6.1)
-      fastify:
-        specifier: ^5.2.1
-        version: 5.8.2
       globals:
         specifier: ^15.15.0
         version: 15.15.0
@@ -184,6 +178,9 @@ importers:
 
   packages/cap-calendar:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -197,8 +194,20 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
 
+  packages/cap-common:
+    dependencies:
+      '@popeye/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+
   packages/cap-email:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -239,6 +248,9 @@ importers:
 
   packages/cap-finance:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -251,6 +263,9 @@ importers:
 
   packages/cap-github:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -266,6 +281,9 @@ importers:
 
   packages/cap-medical:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -278,6 +296,9 @@ importers:
 
   packages/cap-people:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -290,6 +311,9 @@ importers:
 
   packages/cap-todos:
     dependencies:
+      '@popeye/cap-common':
+        specifier: workspace:*
+        version: link:../cap-common
       '@popeye/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -470,12 +494,9 @@ importers:
       '@popeye/observability':
         specifier: workspace:*
         version: link:../observability
-
-  packages/testkit:
-    dependencies:
-      '@popeye/engine-pi':
+      '@popeye/receipts':
         specifier: workspace:*
-        version: link:../engine-pi
+        version: link:../receipts
 
   packages/workspace:
     dependencies:

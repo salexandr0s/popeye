@@ -7,6 +7,22 @@ import type { DomainKind, RuntimePaths, VaultRecord, VaultStatus } from '@popeye
 import { nowIso } from '@popeye/contracts';
 import { keychainGet } from './keychain.js';
 
+const SQL_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function assertSqlIdentifier(name: string, label: string): void {
+  if (!SQL_IDENTIFIER_RE.test(name)) {
+    throw new Error(`Invalid SQL identifier for ${label}: ${name}`);
+  }
+}
+
+const UNSAFE_WHERE_RE = /;|--/;
+
+function assertSafeWhereClause(clause: string): void {
+  if (UNSAFE_WHERE_RE.test(clause)) {
+    throw new Error(`Unsafe WHERE clause: ${clause}`);
+  }
+}
+
 export interface VaultHandle {
   vaultId: string;
   domain: DomainKind;
@@ -151,7 +167,9 @@ export class VaultManager {
         return [];
       },
       insert(table: string, data: Record<string, unknown>): void {
+        assertSqlIdentifier(table, 'table');
         const keys = Object.keys(data);
+        for (const k of keys) assertSqlIdentifier(k, 'column');
         const placeholders = keys.map(() => '?').join(', ');
         const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`;
         vaultDb.prepare(sql).run(...keys.map((k) => data[k]));
@@ -162,6 +180,9 @@ export class VaultManager {
         where: string,
         whereParams?: unknown[],
       ): number {
+        assertSqlIdentifier(table, 'table');
+        for (const k of Object.keys(data)) assertSqlIdentifier(k, 'column');
+        assertSafeWhereClause(where);
         const setClause = Object.keys(data)
           .map((k) => `${k} = ?`)
           .join(', ');
@@ -203,10 +224,16 @@ export class VaultManager {
         const dek = this.unwrapDek(meta.dekWrapped, kekHex);
         this.encryptFile(record.dbPath, dek);
       } else {
-        this.log.error({ vaultId }, 'cannot re-encrypt vault on close: KEK or crypto metadata unavailable — plaintext DB remains on disk');
+        this.log.error({ vaultId }, 'cannot re-encrypt vault on close: KEK or crypto metadata unavailable — deleting plaintext DB');
+        unlinkSync(record.dbPath);
+        for (const suffix of ['-wal', '-shm']) {
+          const walPath = `${record.dbPath}${suffix}`;
+          if (existsSync(walPath)) unlinkSync(walPath);
+        }
+        record.status = 'sealed';
         this.auditCallback({
           eventType: 'vault_reencrypt_failed',
-          details: { vaultId, reason: !meta ? 'missing_crypto_metadata' : 'kek_unavailable' },
+          details: { vaultId, reason: !meta ? 'missing_crypto_metadata' : 'kek_unavailable', action: 'plaintext_deleted_and_sealed' },
           severity: 'error',
         });
       }
@@ -317,7 +344,8 @@ export class VaultManager {
     const decipher = createDecipheriv('aes-256-gcm', dek, iv);
     decipher.setAuthTag(authTag);
     const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-    writeFileSync(outputPath, plaintext);
+    writeFileSync(outputPath, plaintext, { mode: 0o600 });
+    chmodSync(outputPath, 0o600);
   }
 
   private scanExistingVaults(): void {

@@ -242,4 +242,70 @@ describe('CSRF token issuance and validation', () => {
     await runtime.close();
     await app.close();
   });
+
+  // Timing-safe comparison for browser session CSRF is structural (uses constantTimeEquals).
+  // This test exercises the code path to ensure correct accept/reject behavior.
+  it('browser session CSRF rejects wrong token of same length', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-csrf-timing-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: {
+        bindHost: '127.0.0.1',
+        bindPort: 3210,
+        redactionPatterns: [],
+      },
+      telegram: {
+        enabled: false,
+        allowedUserId: '42',
+        maxMessagesPerMinute: 10,
+        rateLimitWindowSeconds: 60,
+      },
+      embeddings: {
+        provider: 'disabled',
+        allowedClassifications: ['embeddable'],
+      },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [
+        {
+          id: 'default',
+          name: 'Default workspace',
+          heartbeatEnabled: true,
+          heartbeatIntervalSeconds: 3600,
+        },
+      ],
+    });
+    const app = await createControlApi({ runtime });
+    const session = runtime.createBrowserSession();
+
+    // Wrong token of same length as the real CSRF token — must be rejected
+    const wrongCsrf = 'x'.repeat(session.csrfToken.length);
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: {
+        cookie: `${AUTH_COOKIE_NAME}=${encodeURIComponent(session.id)}`,
+        'x-popeye-csrf': wrongCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        projectId: null,
+        title: 'timing-test',
+        prompt: 'hello',
+        source: 'manual',
+        autoEnqueue: false,
+      },
+    });
+
+    expect(rejected.statusCode).toBe(403);
+
+    await runtime.close();
+    await app.close();
+  });
 });

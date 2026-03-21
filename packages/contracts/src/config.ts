@@ -18,6 +18,7 @@ export const SecurityConfigSchema = z.object({
   promptScanSanitizePatterns: z.array(z.object({ pattern: z.string(), replacement: z.string() })).default([]),
   useSecureCookies: z.boolean().default(false),
   tokenRotationDays: z.number().int().positive().default(30),
+  tokenExpiryDays: z.number().int().positive().default(90),
 });
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 

@@ -1,3 +1,4 @@
+import { authorizeContextRelease } from '@popeye/cap-common';
 import type { CapabilityContext, CapabilityToolDescriptor } from '@popeye/contracts';
 import { extractRedactionPatterns, redactText } from '@popeye/observability';
 import { z } from 'zod';
@@ -14,38 +15,6 @@ export function createGithubTools(
   taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
   const redactionPatterns = extractRedactionPatterns(ctx.config);
-
-  function authorizeRelease(input: {
-    sourceRef: string;
-    releaseLevel: 'summary';
-    tokenEstimate: number;
-    payloadPreview?: string;
-  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
-    if (!taskContext.runId || !ctx.authorizeContextRelease) {
-      return { ok: true };
-    }
-    const authorization = ctx.authorizeContextRelease({
-      runId: taskContext.runId,
-      domain: 'github',
-      sourceRef: input.sourceRef,
-      requestedLevel: input.releaseLevel,
-      tokenEstimate: input.tokenEstimate,
-      resourceType: 'github_context',
-      resourceId: input.sourceRef,
-      requestedBy: 'cap-github',
-      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
-    });
-    if (authorization.outcome === 'deny') {
-      return { ok: false, text: authorization.reason };
-    }
-    if (authorization.outcome === 'approval_required') {
-      return {
-        ok: false,
-        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
-      };
-    }
-    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
-  }
 
   return [
     {
@@ -168,10 +137,13 @@ export function createGithubTools(
           lines.push(redactedBody);
         }
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'github',
           sourceRef: `github:pr:${pr.id}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          resourceType: 'github_context',
+          requestedBy: 'cap-github',
           payloadPreview: pr.title,
         });
         if (!release.ok) {
@@ -228,10 +200,13 @@ export function createGithubTools(
           lines.push(redactedBody);
         }
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'github',
           sourceRef: `github:issue:${issue.id}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          resourceType: 'github_context',
+          requestedBy: 'cap-github',
           payloadPreview: issue.title,
         });
         if (!release.ok) {

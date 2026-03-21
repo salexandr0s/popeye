@@ -7,6 +7,9 @@
   },
   "references": [
     {
+      "path": "../cap-common/tsconfig.build.json"
+    },
+    {
       "path": "../contracts/tsconfig.build.json"
     },
     {

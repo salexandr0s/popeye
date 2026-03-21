@@ -73,6 +73,7 @@ import {
   RuntimeConflictError,
   RuntimeNotFoundError,
   RuntimeValidationError,
+  constantTimeEquals,
   issueCsrfToken,
   resolveBearerPrincipal,
   serializeAuthCookie,
@@ -597,7 +598,7 @@ export async function createControlApi(
       const authContext = request.popeyeAuthContext;
       const csrfValid = authContext?.kind === 'bearer'
         ? validateCsrfToken(csrf, authContext.record)
-        : csrf === authContext?.csrfToken;
+        : (csrf !== undefined && authContext?.csrfToken !== undefined && constantTimeEquals(csrf, authContext.csrfToken));
       if (!csrfValid) {
         log?.warn('csrf validation failed', { path, method: request.method });
         recordCsrfFailureAudit(dependencies.runtime, request, 'token_invalid');

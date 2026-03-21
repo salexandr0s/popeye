@@ -1,8 +1,8 @@
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { openCapabilityDb } from '@popeye/cap-common';
 import type { CapabilityContext, CapabilityModule } from '@popeye/contracts';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 
 import { GithubService } from './github-service.js';
 import { GithubSyncService } from './github-sync.js';
@@ -32,21 +32,6 @@ export function createGithubCapability(): CapabilityModule {
   let ctx: CapabilityContext | null = null;
   let githubDb: Database.Database | null = null;
 
-  function applyGithubMigrations(db: Database.Database): void {
-    db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);');
-    const getMigration = db.prepare('SELECT id FROM schema_migrations WHERE id = ?');
-    const addMigration = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
-
-    for (const migration of getGithubMigrations()) {
-      if (getMigration.get(migration.id)) continue;
-      const tx = db.transaction(() => {
-        for (const statement of migration.statements) db.exec(statement);
-        addMigration.run(migration.id, new Date().toISOString());
-      });
-      tx();
-    }
-  }
-
   return {
     descriptor: {
       id: 'github',
@@ -60,13 +45,7 @@ export function createGithubCapability(): CapabilityModule {
       ctx = context;
 
       const storesDir = context.paths.capabilityStoresDir;
-      mkdirSync(storesDir, { recursive: true });
-      const dbPath = join(storesDir, 'github.db');
-      githubDb = new Database(dbPath);
-      githubDb.pragma('journal_mode = WAL');
-      githubDb.pragma('foreign_keys = ON');
-
-      applyGithubMigrations(githubDb);
+      githubDb = openCapabilityDb(storesDir, 'github.db', getGithubMigrations());
 
       const dbHandle = githubDb as unknown as CapabilityContext['appDb'];
       githubService = new GithubService(dbHandle);
@@ -74,7 +53,7 @@ export function createGithubCapability(): CapabilityModule {
       digestService = new GithubDigestService(githubService, context);
       searchService = new GithubSearchService(dbHandle);
 
-      context.log.info('cap-github initialized', { dbPath });
+      context.log.info('cap-github initialized', { dbPath: join(storesDir, 'github.db') });
     },
 
     shutdown(): void {

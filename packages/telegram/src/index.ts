@@ -14,7 +14,7 @@ import type {
   TelegramRelayCheckpointCommitRequest,
   TelegramSendAttemptRecord,
 } from '@popeye/contracts';
-import { extractCanonicalRunReplyText } from '@popeye/contracts';
+import { extractCanonicalRunReplyText } from '@popeye/receipts';
 
 export interface TelegramUserRef {
   id: number | string;

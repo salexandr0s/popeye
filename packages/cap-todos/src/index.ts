@@ -1,8 +1,6 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-
 import type { CapabilityContext, CapabilityModule } from '@popeye/contracts';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { openCapabilityDb } from '@popeye/cap-common';
 
 import { TodoService } from './todo-service.js';
 import { TodoSyncService } from './todo-sync.js';
@@ -31,21 +29,6 @@ export function createTodosCapability(): CapabilityModule {
   let ctx: CapabilityContext | null = null;
   let todosDb: Database.Database | null = null;
 
-  function applyTodoMigrations(db: Database.Database): void {
-    db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);');
-    const getMigration = db.prepare('SELECT id FROM schema_migrations WHERE id = ?');
-    const addMigration = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
-
-    for (const migration of getTodoMigrations()) {
-      if (getMigration.get(migration.id)) continue;
-      const tx = db.transaction(() => {
-        for (const statement of migration.statements) db.exec(statement);
-        addMigration.run(migration.id, new Date().toISOString());
-      });
-      tx();
-    }
-  }
-
   return {
     descriptor: {
       id: 'todos',
@@ -59,13 +42,7 @@ export function createTodosCapability(): CapabilityModule {
       ctx = context;
 
       const storesDir = context.paths.capabilityStoresDir;
-      mkdirSync(storesDir, { recursive: true });
-      const dbPath = join(storesDir, 'todos.db');
-      todosDb = new Database(dbPath);
-      todosDb.pragma('journal_mode = WAL');
-      todosDb.pragma('foreign_keys = ON');
-
-      applyTodoMigrations(todosDb);
+      todosDb = openCapabilityDb(storesDir, 'todos.db', getTodoMigrations());
 
       const dbHandle = todosDb as unknown as CapabilityContext['appDb'];
       todoService = new TodoService(dbHandle);
@@ -73,7 +50,7 @@ export function createTodosCapability(): CapabilityModule {
       digestService = new TodoDigestService(todoService, context);
       searchService = new TodoSearchService(dbHandle);
 
-      context.log.info('cap-todos initialized', { dbPath });
+      context.log.info('cap-todos initialized', { storesDir });
     },
 
     shutdown(): void {

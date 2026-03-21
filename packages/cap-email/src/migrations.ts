@@ -1,9 +1,6 @@
-export interface EmailMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getEmailMigrations(): EmailMigration[] {
+export function getEmailMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'email-001-accounts',

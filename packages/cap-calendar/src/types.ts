@@ -1,4 +1,8 @@
-import type { CapabilityContext } from '@popeye/contracts';
+export { type CapabilityDb, prepareGet, prepareAll, prepareRun } from '@popeye/cap-common';
+import type { CapabilityDb } from '@popeye/cap-common';
+
+/** @deprecated Use CapabilityDb from @popeye/cap-common directly */
+export type CalendarCapabilityDb = CapabilityDb;
 
 export interface CalendarAccountRow {
   id: string;
@@ -45,30 +49,3 @@ export interface CalendarDigestRow {
   generated_at: string;
 }
 
-export type CalendarCapabilityDb = CapabilityContext['appDb'];
-
-// --- Typed DB helpers ---
-
-interface PreparedStatement<TRow> {
-  get(...args: unknown[]): TRow | undefined;
-  all(...args: unknown[]): TRow[];
-  run(...args: unknown[]): { changes: number; lastInsertRowid: number | bigint };
-}
-
-export function prepareGet<TRow>(db: CalendarCapabilityDb, sql: string): (...args: unknown[]) => TRow | undefined {
-  const stmt = (db.prepare as (sql: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.get(...args);
-}
-
-export function prepareAll<TRow>(db: CalendarCapabilityDb, sql: string): (...args: unknown[]) => TRow[] {
-  const stmt = (db.prepare as (sql: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.all(...args);
-}
-
-export function prepareRun(db: CalendarCapabilityDb, sql: string): (...args: unknown[]) => { changes: number } {
-  const stmt = (db.prepare as (sql: string) => PreparedStatement<never>)(sql);
-  return (...args: unknown[]) => {
-    const result = stmt.run(...args);
-    return { changes: result.changes };
-  };
-}

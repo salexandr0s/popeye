@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "dependencies": {
     "@popeye/contracts": "workspace:*",
-    "@popeye/observability": "workspace:*"
+    "@popeye/observability": "workspace:*",
+    "@popeye/receipts": "workspace:*"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json --pretty false",

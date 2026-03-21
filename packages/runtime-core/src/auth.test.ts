@@ -236,4 +236,58 @@ describe('auth store', () => {
     const newToken = issueCsrfToken(record);
     expect(newToken).not.toBe(token);
   });
+
+  it('rejects token after expiresAt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    // Create with 1-day expiry
+    const store = initAuthStore(authPath, 'operator', 1);
+    // Validate with now set 2 days in the future
+    const futureDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    expect(validateBearerToken(`Bearer ${store.current.token}`, store, futureDate)).toBe(false);
+  });
+
+  it('accepts token before expiresAt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    const store = initAuthStore(authPath);
+    // Validate immediately — well within 90-day default expiry
+    expect(validateBearerToken(`Bearer ${store.current.token}`, store)).toBe(true);
+  });
+
+  it('accepts legacy token without expiresAt', () => {
+    const now = new Date().toISOString();
+    const record: AuthRotationRecord = {
+      current: { token: 'e'.repeat(64), createdAt: now },
+    };
+    // No expiresAt field — backward-compatible, should be accepted
+    expect(validateBearerToken(`Bearer ${'e'.repeat(64)}`, record)).toBe(true);
+  });
+
+  it('rotateAuthStore populates expiresAt on new tokens', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    initAuthStore(authPath);
+    const rotated = rotateAuthStore(authPath, 1);
+    expect(rotated.next).toBeDefined();
+    expect(rotated.next!.expiresAt).toBeDefined();
+    // Verify expiry is approximately 90 days in the future (default)
+    const expiresAt = new Date(rotated.next!.expiresAt!);
+    const expectedMin = Date.now() + 89 * 24 * 60 * 60 * 1000;
+    expect(expiresAt.getTime()).toBeGreaterThan(expectedMin);
+  });
+
+  it('initAuthStore populates expiresAt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-auth-'));
+    chmodSync(dir, 0o700);
+    const authPath = join(dir, 'auth.json');
+    const store = initAuthStore(authPath);
+    expect(store.current.expiresAt).toBeDefined();
+    const expiresAt = new Date(store.current.expiresAt!);
+    const expectedMin = Date.now() + 89 * 24 * 60 * 60 * 1000;
+    expect(expiresAt.getTime()).toBeGreaterThan(expectedMin);
+  });
 });

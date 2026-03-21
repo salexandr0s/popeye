@@ -1,9 +1,6 @@
-export interface TodoMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getTodoMigrations(): TodoMigration[] {
+export function getTodoMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'todos-001-accounts',

@@ -1,4 +1,5 @@
 import type { CapabilityContext, CapabilityToolDescriptor } from '@popeye/contracts';
+import { authorizeContextRelease } from '@popeye/cap-common';
 import { extractRedactionPatterns, redactText } from '@popeye/observability';
 import { z } from 'zod';
 
@@ -14,39 +15,6 @@ export function createEmailTools(
   taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
   const redactionPatterns = extractRedactionPatterns(ctx.config);
-
-  function authorizeRelease(input: {
-    sourceRef: string;
-    releaseLevel: 'summary' | 'excerpt';
-    tokenEstimate: number;
-    payloadPreview?: string;
-    redacted?: boolean;
-  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
-    if (!taskContext.runId || !ctx.authorizeContextRelease) {
-      return { ok: true };
-    }
-    const authorization = ctx.authorizeContextRelease({
-      runId: taskContext.runId,
-      domain: 'email',
-      sourceRef: input.sourceRef,
-      requestedLevel: input.releaseLevel,
-      tokenEstimate: input.tokenEstimate,
-      resourceType: 'email',
-      resourceId: input.sourceRef,
-      requestedBy: 'cap-email',
-      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
-    });
-    if (authorization.outcome === 'deny') {
-      return { ok: false, text: authorization.reason };
-    }
-    if (authorization.outcome === 'approval_required') {
-      return {
-        ok: false,
-        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
-      };
-    }
-    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
-  }
 
   return [
     {
@@ -167,10 +135,13 @@ export function createEmailTools(
           lines.push(`**Snippet:** ${msg.snippet}`);
         }
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'email',
           sourceRef: `email:thread:${thread.id}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          resourceType: 'email_context',
+          requestedBy: 'cap-email',
           payloadPreview: thread.subject,
         });
         if (!release.ok) {
@@ -226,12 +197,14 @@ export function createEmailTools(
         lines.push('');
         lines.push(redactedPreview.length > 0 ? redactedPreview : redactText(message.snippet, redactionPatterns).text);
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'email',
           sourceRef: `email:message:${message.id}`,
           releaseLevel: 'excerpt',
           tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          resourceType: 'email_context',
+          requestedBy: 'cap-email',
           payloadPreview: message.subject,
-          redacted: true,
         });
         if (!release.ok) {
           return { content: [{ type: 'text', text: release.text }] };

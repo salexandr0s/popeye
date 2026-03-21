@@ -4,23 +4,9 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { ApiError, type PopeyeApiClient } from '@popeye/api-client';
-import type {
-  ApprovalRecord,
-  AgentProfileRecord,
-  AutomationGrantRecord,
-  AppConfig,
-  DomainKind,
-  EngineCapabilitiesResponse,
-  ExecutionEnvelopeResponse,
-  RunRecord,
-  SecurityPolicyResponse,
-  StandingApprovalRecord,
-  VaultRecord,
-} from '@popeye/contracts';
+import type { PopeyeApiClient } from '@popeye/api-client';
+import type { AppConfig, ApprovalRecord, AutomationGrantRecord, DomainKind, StandingApprovalRecord } from '@popeye/contracts';
 import { z } from 'zod';
-import { PiEngineAdapter, runPiCompatibilityCheck } from '@popeye/engine-pi';
-import { renderReceipt } from '@popeye/receipts';
 import { tryConnectDaemon } from './api-client.js';
 import {
   createBackup,
@@ -31,14 +17,19 @@ import {
   installLaunchAgent,
   loadLaunchAgent,
   loadAppConfig,
+  PiEngineAdapter,
   restoreBackup,
   restartLaunchAgent,
   rotateAuthStore,
   runLocalSecurityAudit,
+  runPiCompatibilityCheck,
   uninstallLaunchAgent,
   unloadLaunchAgent,
   verifyBackup,
 } from '@popeye/runtime-core';
+import { formatApproval, formatAutomationGrant, formatEngineCapabilities, formatEnvelope, formatProfile, formatRun, formatSecurityPolicy, formatStandingApproval, formatVault, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
+import { ApiError } from '@popeye/api-client';
+import { renderReceipt } from '@popeye/receipts';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -257,37 +248,6 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
 };
 
-/** Parse a CSV line respecting quoted fields (handles commas inside quotes). */
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (i + 1 < line.length && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        current += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ',') {
-      fields.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  fields.push(current);
-  return fields;
-}
-
 function showHelp(): void {
   console.info(`pop v${VERSION} — Popeye CLI\n`);
   console.info('Usage: pop <command> <subcommand> [args] [--json] [--help]\n');
@@ -349,230 +309,6 @@ function showSubcommandHelp(cmd: string, sub: string): void {
       console.info(`  ${example}`);
     }
   }
-}
-
-function requireArg(value: string | undefined, label: string): asserts value is string {
-  if (!value) {
-    console.error(`Missing required argument: <${label}>`);
-    const subs = command ? COMMANDS[command] : undefined;
-    const sub = subs && subcommand ? subs[subcommand] : undefined;
-    if (sub) console.error(`Usage: ${sub.usage}`);
-    process.exit(1);
-  }
-}
-
-function getFlagValue(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag);
-  if (index < 0) return undefined;
-  return process.argv[index + 1];
-}
-
-function formatRun(run: RunRecord, envelope?: ExecutionEnvelopeResponse | null): string {
-  const lines = [
-    `Run ${run.id}`,
-    `  State:      ${run.state}`,
-    `  Job:        ${run.jobId}`,
-    `  Task:       ${run.taskId}`,
-    `  Workspace:  ${run.workspaceId}`,
-    `  Profile:    ${run.profileId}`,
-    `  Session:    ${run.sessionRootId}`,
-    `  Started:    ${run.startedAt}`,
-  ];
-  if (run.finishedAt) lines.push(`  Finished:   ${run.finishedAt}`);
-  if (run.error) lines.push(`  Error:      ${run.error}`);
-  if (envelope) {
-    lines.push('  Envelope:   persisted');
-    lines.push(`  Recall:     ${envelope.memoryScope} memory / ${envelope.recallScope} recall`);
-    lines.push(`  Filesystem: ${envelope.filesystemPolicyClass}`);
-    lines.push(`  Release:    ${envelope.contextReleasePolicy}`);
-    lines.push(`  Roots:      ${envelope.readRoots.length} read / ${envelope.writeRoots.length} write / ${envelope.protectedPaths.length} protected`);
-    if (envelope.provenance.warnings.length > 0) {
-      lines.push(`  Warnings:   ${envelope.provenance.warnings.join(' | ')}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-function formatEnvelope(envelope: ExecutionEnvelopeResponse): string {
-  const lines = [
-    `Execution Envelope ${envelope.runId}`,
-    `  Task:                 ${envelope.taskId}`,
-    `  Profile:              ${envelope.profileId}`,
-    `  Workspace:            ${envelope.workspaceId}`,
-    `  Project:              ${envelope.projectId ?? '(none)'}`,
-    `  Mode:                 ${envelope.mode}`,
-    `  Model policy:         ${envelope.modelPolicy}`,
-    `  Memory scope:         ${envelope.memoryScope}`,
-    `  Recall scope:         ${envelope.recallScope}`,
-    `  Filesystem policy:    ${envelope.filesystemPolicyClass}`,
-    `  Context release:      ${envelope.contextReleasePolicy}`,
-    `  CWD:                  ${envelope.cwd ?? '(none)'}`,
-    `  Scratch root:         ${envelope.scratchRoot}`,
-    `  Runtime tools:        ${envelope.allowedRuntimeTools.length > 0 ? envelope.allowedRuntimeTools.join(', ') : '(none)'}`,
-    `  Capabilities:         ${envelope.allowedCapabilityIds.length > 0 ? envelope.allowedCapabilityIds.join(', ') : '(none)'}`,
-    `  Read roots:           ${envelope.readRoots.length > 0 ? envelope.readRoots.join(', ') : '(none)'}`,
-    `  Write roots:          ${envelope.writeRoots.length > 0 ? envelope.writeRoots.join(', ') : '(none)'}`,
-    `  Protected paths:      ${envelope.protectedPaths.length > 0 ? envelope.protectedPaths.join(', ') : '(none)'}`,
-    `  Derived at:           ${envelope.provenance.derivedAt}`,
-    `  Engine kind:          ${envelope.provenance.engineKind}`,
-    `  Session policy:       ${envelope.provenance.sessionPolicy}`,
-  ];
-  if (envelope.provenance.warnings.length > 0) {
-    lines.push(`  Warnings:             ${envelope.provenance.warnings.join(' | ')}`);
-  }
-  return lines.join('\n');
-}
-
-function formatEngineCapabilities(capabilities: EngineCapabilitiesResponse): string {
-  const lines = [
-    `Engine:              ${capabilities.engineKind}`,
-    `  Host tools:        ${capabilities.hostToolMode}`,
-    `  Sessions:          ${capabilities.persistentSessionSupport ? 'persistent' : 'ephemeral'}`,
-    `  Resume by ref:     ${capabilities.resumeBySessionRefSupport ? 'yes' : 'no'}`,
-    `  Compaction events: ${capabilities.compactionEventSupport ? 'yes' : 'no'}`,
-    `  Cancellation:      ${capabilities.cancellationMode}`,
-  ];
-  if (capabilities.acceptedRequestMetadata.length > 0) {
-    lines.push(`  Metadata:          ${capabilities.acceptedRequestMetadata.join(', ')}`);
-  }
-  if (capabilities.warnings.length > 0) {
-    lines.push(`  Warnings:          ${capabilities.warnings.join(' | ')}`);
-  }
-  return lines.join('\n');
-}
-
-function formatProfile(profile: AgentProfileRecord): string {
-  const lines = [
-    `Profile ${profile.id}`,
-    `  Name:                 ${profile.name}`,
-    `  Mode:                 ${profile.mode}`,
-    `  Model policy:         ${profile.modelPolicy}`,
-    `  Memory scope:         ${profile.memoryScope}`,
-    `  Recall scope:         ${profile.recallScope}`,
-    `  Filesystem policy:    ${profile.filesystemPolicyClass}`,
-    `  Context release:      ${profile.contextReleasePolicy}`,
-    `  Runtime tools:        ${profile.allowedRuntimeTools.length > 0 ? profile.allowedRuntimeTools.join(', ') : 'all/default'}`,
-    `  Capabilities:         ${profile.allowedCapabilityIds.length > 0 ? profile.allowedCapabilityIds.join(', ') : 'all/default'}`,
-    `  Created:              ${profile.createdAt}`,
-  ];
-  if (profile.description) lines.splice(2, 0, `  Description:          ${profile.description}`);
-  if (profile.updatedAt) lines.push(`  Updated:              ${profile.updatedAt}`);
-  return lines.join('\n');
-}
-
-function formatApproval(approval: ApprovalRecord): string {
-  const lines = [
-    `Approval ${approval.id}`,
-    `  Scope:                ${approval.scope}`,
-    `  Domain:               ${approval.domain}`,
-    `  Status:               ${approval.status}`,
-    `  Risk class:           ${approval.riskClass}`,
-    `  Action kind:          ${approval.actionKind}`,
-    `  Resource scope:       ${approval.resourceScope}`,
-    `  Resource:             ${approval.resourceType}/${approval.resourceId}`,
-    `  Requested by:         ${approval.requestedBy}`,
-    `  Run:                  ${approval.runId ?? '(none)'}`,
-    `  Standing eligible:    ${approval.standingApprovalEligible ? 'yes' : 'no'}`,
-    `  Automation eligible:  ${approval.automationGrantEligible ? 'yes' : 'no'}`,
-    `  Created:              ${approval.createdAt}`,
-  ];
-  if (approval.expiresAt) lines.push(`  Expires:              ${approval.expiresAt}`);
-  if (approval.resolvedBy) lines.push(`  Resolved by:          ${approval.resolvedBy}`);
-  if (approval.resolvedByGrantId) lines.push(`  Resolution grant:     ${approval.resolvedByGrantId}`);
-  if (approval.decisionReason) lines.push(`  Decision reason:      ${approval.decisionReason}`);
-  return lines.join('\n');
-}
-
-function formatStandingApproval(record: StandingApprovalRecord): string {
-  const lines = [
-    `Standing Approval ${record.id}`,
-    `  Scope:                ${record.scope}`,
-    `  Domain:               ${record.domain}`,
-    `  Action kind:          ${record.actionKind}`,
-    `  Resource scope:       ${record.resourceScope}`,
-    `  Resource:             ${record.resourceType}/${record.resourceId ?? '*'}`,
-    `  Requested by:         ${record.requestedBy ?? '*'}`,
-    `  Workspace:            ${record.workspaceId ?? '*'}`,
-    `  Project:              ${record.projectId ?? '*'}`,
-    `  Status:               ${record.status}`,
-    `  Created by:           ${record.createdBy}`,
-    `  Created:              ${record.createdAt}`,
-  ];
-  if (record.note) lines.push(`  Note:                 ${record.note}`);
-  if (record.expiresAt) lines.push(`  Expires:              ${record.expiresAt}`);
-  if (record.revokedBy) lines.push(`  Revoked by:           ${record.revokedBy}`);
-  if (record.revokedAt) lines.push(`  Revoked at:           ${record.revokedAt}`);
-  return lines.join('\n');
-}
-
-function formatAutomationGrant(record: AutomationGrantRecord): string {
-  const lines = [
-    `Automation Grant ${record.id}`,
-    `  Scope:                ${record.scope}`,
-    `  Domain:               ${record.domain}`,
-    `  Action kind:          ${record.actionKind}`,
-    `  Resource scope:       ${record.resourceScope}`,
-    `  Resource:             ${record.resourceType}/${record.resourceId ?? '*'}`,
-    `  Requested by:         ${record.requestedBy ?? '*'}`,
-    `  Workspace:            ${record.workspaceId ?? '*'}`,
-    `  Project:              ${record.projectId ?? '*'}`,
-    `  Task sources:         ${record.taskSources.join(', ')}`,
-    `  Status:               ${record.status}`,
-    `  Created by:           ${record.createdBy}`,
-    `  Created:              ${record.createdAt}`,
-  ];
-  if (record.note) lines.push(`  Note:                 ${record.note}`);
-  if (record.expiresAt) lines.push(`  Expires:              ${record.expiresAt}`);
-  if (record.revokedBy) lines.push(`  Revoked by:           ${record.revokedBy}`);
-  if (record.revokedAt) lines.push(`  Revoked at:           ${record.revokedAt}`);
-  return lines.join('\n');
-}
-
-function formatVault(vault: VaultRecord): string {
-  const lines = [
-    `Vault ${vault.id}`,
-    `  Domain:               ${vault.domain}`,
-    `  Kind:                 ${vault.kind}`,
-    `  Status:               ${vault.status}`,
-    `  Encrypted:            ${vault.encrypted ? 'yes' : 'no'}`,
-    `  Path:                 ${vault.dbPath}`,
-    `  Created:              ${vault.createdAt}`,
-  ];
-  if (vault.lastAccessedAt) lines.push(`  Last accessed:        ${vault.lastAccessedAt}`);
-  return lines.join('\n');
-}
-
-function formatSecurityPolicy(policy: SecurityPolicyResponse): string {
-  const lines = [
-    'Security policy',
-    `  Default risk class:   ${policy.defaultRiskClass}`,
-    '',
-    'Domain policies:',
-  ];
-  for (const domainPolicy of policy.domainPolicies) {
-    lines.push(
-      `  ${domainPolicy.domain}: sensitivity=${domainPolicy.sensitivity}, embeddings=${domainPolicy.embeddingPolicy}, context=${domainPolicy.contextReleasePolicy}`,
-    );
-  }
-  lines.push('', 'Action defaults:');
-  if (policy.actionDefaults.length === 0) {
-    lines.push('  (no built-in defaults exposed)');
-  } else {
-    for (const actionDefault of policy.actionDefaults) {
-      lines.push(
-        `  ${actionDefault.scope} / ${actionDefault.domain ?? 'all'} / ${actionDefault.actionKind} -> ${actionDefault.riskClass} (standing=${actionDefault.standingApprovalEligible ? 'yes' : 'no'}, automation=${actionDefault.automationGrantEligible ? 'yes' : 'no'})`,
-      );
-    }
-  }
-  lines.push('', 'Approval rules:');
-  if (policy.approvalRules.length === 0) {
-    lines.push('  (no explicit rules configured)');
-  } else {
-    for (const rule of policy.approvalRules) {
-      lines.push(`  ${rule.scope} / ${rule.domain} -> ${rule.riskClass}`);
-    }
-  }
-  return lines.join('\n');
 }
 
 async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> {

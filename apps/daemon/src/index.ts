@@ -4,10 +4,10 @@ import { resolve } from 'node:path';
 
 import fastifyStatic from '@fastify/static';
 
-import { cleanStalePiTempDirs } from '@popeye/engine-pi';
 import { createControlApi } from '@popeye/control-api';
 import { createLogger, redactText } from '@popeye/observability';
 import {
+  cleanStalePiTempDirs,
   createRuntimeService,
   ensureRuntimePaths,
   loadAppConfig,

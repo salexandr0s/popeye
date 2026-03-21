@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import type {
   ActionApprovalRequestInput,
@@ -149,25 +149,16 @@ import type {
   MedicalSearchResult,
 } from '@popeye/contracts';
 import {
-  buildCanonicalRunReply,
   ConnectionHealthSummarySchema,
-  ConnectionResourceRuleSchema,
   ConnectionSyncSummarySchema,
   MemoryRecordSchema,
   RunEventRecordSchema,
-  RunRecordSchema,
   RunReplySchema,
   TaskCreateInputSchema,
-  TelegramDeliveryRecordSchema,
-  TelegramDeliveryResolutionRecordSchema,
-  TelegramDeliveryStateSchema,
-  TelegramRelayCheckpointSchema,
-  TelegramSendAttemptRecordSchema,
 } from '@popeye/contracts';
 import {
   createEngineAdapter,
   type EngineAdapter,
-  type EngineFailureClassification,
   type EngineRunCompletion,
   type EngineRunHandle,
   type EngineRunRequest,
@@ -188,7 +179,7 @@ import { createLogger, redactText, type PopeyeLogger } from '@popeye/observabili
 import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
 import { selectSessionRoot, SessionService } from '@popeye/sessions';
 
-import { ReceiptManager } from '@popeye/receipts';
+import { ReceiptManager, buildCanonicalRunReply } from '@popeye/receipts';
 
 import { WorkspaceRegistry } from '@popeye/workspace';
 
@@ -202,6 +193,8 @@ import { ApprovalService } from './approval-service.js';
 import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
+import { TelegramDeliveryService } from './telegram-delivery.js';
+import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, createAdapter, GmailAdapter, type EmailProviderAdapter } from '@popeye/cap-email';
@@ -239,31 +232,48 @@ import { z } from 'zod';
 import safe from 'safe-regex2';
 import { initAuthStore, readAuthStore, readRoleAuthStore, rotateAuthStore } from './auth.js';
 
-function isTerminalJobStatus(status: JobRecord['status']): boolean {
-  return ['succeeded', 'failed_final', 'cancelled'].includes(status);
-}
+import {
+  buildReceiptFallbackReplyText,
+  buildTimelineMetadata,
+  canRefreshStoredOAuthSecret,
+  canonicalizeLocalPath,
+  classifyFailureFromMessage,
+  connectionCursorKindForProvider,
+  IdRowSchema,
+  isExpiredIso,
+  isPathWithinRoot,
+  isProviderAllowedForDomain,
+  isTerminalJobStatus,
+  isTerminalRunState,
+  JobIdRowSchema,
+  mapConnectionRow,
+  mapExecutionEnvelopeRow,
+  mapRunEventDetail,
+  mapRunEventRow,
+  mapRunEventTitle,
+  mapRunRow,
+  mapSecurityAuditKind,
+  matchesConnectionResourceId,
+  MemoryListRowSchema,
+  normalizeEmail,
+  parseCountRow,
+  parseCreatedAt,
+  parseRunEventPayload,
+  parseStoredOAuthSecret,
+  ProjectPathRowSchema,
+  providerRequiresSecret,
+  RunEventRowSchema,
+  RunRowSchema,
+  RuntimeMemorySearchToolInputSchema,
+  ScheduleRowSchema,
+  selectSessionKind,
+  serializeStoredOAuthSecret,
+  titleCase,
+  WorkspacePathRowSchema,
+  type StoredOAuthSecret,
+} from './row-mappers.js';
 
-function isTerminalRunState(state: RunRecord['state']): boolean {
-  return ['succeeded', 'failed_retryable', 'failed_final', 'cancelled', 'abandoned'].includes(state);
-}
-
-export function classifyFailureFromMessage(message: string): EngineFailureClassification {
-  const lowered = message.toLowerCase();
-  if (lowered.includes('protocol')) return 'protocol_error';
-  if (lowered.includes('cancel')) return 'cancelled';
-  if (lowered.includes('timeout') || lowered.includes('temporary') || lowered.includes('transient')) return 'transient_failure';
-  if (lowered.includes('startup') || lowered.includes('spawn') || lowered.includes('not configured')) return 'startup_failure';
-  return 'permanent_failure';
-}
-
-function selectSessionKind(source: TaskRecord['source']): Parameters<typeof selectSessionRoot>[0]['kind'] {
-  if (source === 'telegram') return 'telegram_user';
-  if (source === 'heartbeat') return 'system_heartbeat';
-  if (source === 'schedule') return 'scheduled_task';
-  return 'interactive_main';
-}
-
-export { MessageIngressError };
+export { classifyFailureFromMessage, MessageIngressError };
 
 export class RuntimeNotFoundError extends Error {
   readonly errorCode = 'not_found';
@@ -318,551 +328,6 @@ interface SchedulerInternals {
   lastLeaseSweepAt: string | null;
 }
 
-const ProjectPathRowSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  path: z.string(),
-});
-
-const WorkspacePathRowSchema = z.object({
-  id: z.string(),
-  root_path: z.string(),
-});
-
-const RunRowSchema = z.object({
-  id: z.string(),
-  job_id: z.string(),
-  task_id: z.string(),
-  workspace_id: z.string(),
-  profile_id: z.string().nullable().default('default'),
-  session_root_id: z.string(),
-  engine_session_ref: z.string().nullable(),
-  state: z.string(),
-  started_at: z.string(),
-  finished_at: z.string().nullable(),
-  error: z.string().nullable(),
-});
-
-const RunEventRowSchema = z.object({
-  id: z.string(),
-  run_id: z.string(),
-  type: z.string(),
-  payload: z.string(),
-  created_at: z.string(),
-});
-
-const ExecutionEnvelopeRowSchema = z.object({
-  run_id: z.string(),
-  task_id: z.string(),
-  profile_id: z.string(),
-  workspace_id: z.string(),
-  project_id: z.string().nullable(),
-  mode: z.string(),
-  model_policy: z.string(),
-  allowed_runtime_tools_json: z.string(),
-  allowed_capability_ids_json: z.string(),
-  memory_scope: z.string(),
-  recall_scope: z.string(),
-  filesystem_policy_class: z.string(),
-  context_release_policy: z.string(),
-  read_roots_json: z.string(),
-  write_roots_json: z.string(),
-  protected_paths_json: z.string(),
-  scratch_root: z.string(),
-  cwd: z.string().nullable(),
-  provenance_json: z.string(),
-  created_at: z.string(),
-});
-
-const MemoryListRowSchema = z.object({
-  id: z.string(),
-  description: z.string(),
-  classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']),
-  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release', 'file_doc']),
-  content: z.string(),
-  confidence: z.number(),
-  scope: z.string(),
-  workspace_id: z.string().nullable().default(null),
-  project_id: z.string().nullable().default(null),
-  memory_type: z.enum(['episodic', 'semantic', 'procedural']).nullable(),
-  dedup_key: z.string().nullable(),
-  last_reinforced_at: z.string().nullable(),
-  archived_at: z.string().nullable(),
-  created_at: z.string(),
-  source_run_id: z.string().nullable(),
-  source_timestamp: z.string().nullable(),
-});
-
-const IdRowSchema = z.object({
-  id: z.string(),
-});
-
-const JobIdRowSchema = z.object({
-  job_id: z.string(),
-});
-
-const CountRowSchema = z.object({
-  count: z.coerce.number().int().nonnegative(),
-});
-
-const CreatedAtRowSchema = z.object({
-  created_at: z.string(),
-});
-
-const ScheduleRowSchema = z.object({
-  id: z.string(),
-  task_id: z.string(),
-  interval_seconds: z.coerce.number().nonnegative(),
-  created_at: z.string(),
-});
-
-const TelegramRelayCheckpointRowSchema = z.object({
-  relay_key: z.literal('telegram_long_poll'),
-  workspace_id: z.string(),
-  last_acknowledged_update_id: z.coerce.number().int().nonnegative(),
-  updated_at: z.string(),
-});
-
-const TelegramReplyDeliveryRowSchema = z.object({
-  chat_id: z.string(),
-  telegram_message_id: z.coerce.number().int(),
-  status: z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']),
-  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
-  sent_at: z.string().nullable().optional(),
-  run_id: z.string().nullable().optional(),
-});
-
-const TelegramReplyDeliveryFullRowSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  chat_id: z.string(),
-  telegram_message_id: z.coerce.number().int(),
-  message_ingress_id: z.string(),
-  task_id: z.string().nullable(),
-  job_id: z.string().nullable(),
-  run_id: z.string().nullable(),
-  status: z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']),
-  sent_at: z.string().nullable(),
-  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-const TelegramDeliveryResolutionRowSchema = z.object({
-  id: z.string(),
-  delivery_id: z.string(),
-  workspace_id: z.string(),
-  action: z.enum(['confirm_sent', 'resend', 'abandon']),
-  intervention_id: z.string().nullable(),
-  operator_note: z.string().nullable(),
-  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
-  previous_status: z.string(),
-  new_status: z.string(),
-  created_at: z.string(),
-});
-
-const TelegramSendAttemptRowSchema = z.object({
-  id: z.string(),
-  delivery_id: z.string(),
-  workspace_id: z.string(),
-  attempt_number: z.coerce.number().int(),
-  started_at: z.string(),
-  finished_at: z.string().nullable(),
-  run_id: z.string().nullable(),
-  content_hash: z.string(),
-  outcome: z.enum(['sent', 'retryable_failure', 'permanent_failure', 'ambiguous']),
-  sent_telegram_message_id: z.coerce.number().int().nullable().optional(),
-  error_summary: z.string().nullable(),
-  source: z.string(),
-  created_at: z.string(),
-});
-
-const RuntimeMemorySearchToolInputSchema = z.object({
-  query: z.string().min(1),
-  scope: z.string().optional(),
-  limit: z.number().int().positive().max(10).optional(),
-  includeContent: z.boolean().optional(),
-});
-
-function mapRunRow(row: unknown): RunRecord {
-  const parsed = RunRowSchema.parse(row);
-  return RunRecordSchema.parse({
-    id: parsed.id,
-    jobId: parsed.job_id,
-    taskId: parsed.task_id,
-    workspaceId: parsed.workspace_id,
-    profileId: parsed.profile_id ?? 'default',
-    sessionRootId: parsed.session_root_id,
-    engineSessionRef: parsed.engine_session_ref,
-    state: parsed.state,
-    startedAt: parsed.started_at,
-    finishedAt: parsed.finished_at,
-    error: parsed.error,
-  });
-}
-
-function mapRunEventRow(row: unknown): RunEventRecord {
-  const parsed = RunEventRowSchema.parse(row);
-  return RunEventRecordSchema.parse({
-    id: parsed.id,
-    runId: parsed.run_id,
-    type: parsed.type,
-    payload: parsed.payload,
-    createdAt: parsed.created_at,
-  });
-}
-
-function mapExecutionEnvelopeRow(row: unknown): ExecutionEnvelope {
-  const parsed = ExecutionEnvelopeRowSchema.parse(row);
-  return {
-    runId: parsed.run_id,
-    taskId: parsed.task_id,
-    profileId: parsed.profile_id,
-    workspaceId: parsed.workspace_id,
-    projectId: parsed.project_id,
-    mode: parsed.mode as ExecutionEnvelope['mode'],
-    modelPolicy: parsed.model_policy,
-    allowedRuntimeTools: JSON.parse(parsed.allowed_runtime_tools_json) as string[],
-    allowedCapabilityIds: JSON.parse(parsed.allowed_capability_ids_json) as string[],
-    memoryScope: parsed.memory_scope as ExecutionEnvelope['memoryScope'],
-    recallScope: parsed.recall_scope as ExecutionEnvelope['recallScope'],
-    filesystemPolicyClass: parsed.filesystem_policy_class as ExecutionEnvelope['filesystemPolicyClass'],
-    contextReleasePolicy: parsed.context_release_policy as ExecutionEnvelope['contextReleasePolicy'],
-    readRoots: JSON.parse(parsed.read_roots_json) as string[],
-    writeRoots: JSON.parse(parsed.write_roots_json) as string[],
-    protectedPaths: JSON.parse(parsed.protected_paths_json) as string[],
-    scratchRoot: parsed.scratch_root,
-    cwd: parsed.cwd,
-    provenance: JSON.parse(parsed.provenance_json) as ExecutionEnvelope['provenance'],
-  };
-}
-
-function mapTelegramDeliveryRow(row: unknown): TelegramDeliveryState {
-  const parsed = TelegramReplyDeliveryRowSchema.parse(row);
-  return TelegramDeliveryStateSchema.parse({
-    chatId: parsed.chat_id,
-    telegramMessageId: parsed.telegram_message_id,
-    status: parsed.status,
-  });
-}
-
-function parseCountRow(row: unknown): number {
-  return CountRowSchema.parse(row).count;
-}
-
-function parseCreatedAt(row: unknown): string | null {
-  const parsed = CreatedAtRowSchema.safeParse(row);
-  return parsed.success ? parsed.data.created_at : null;
-}
-
-const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRecord['providerKind']>> = {
-  general: ['local'],
-  email: ['gmail', 'proton'],
-  calendar: ['google_calendar'],
-  todos: ['todoist', 'local'],
-  github: ['github'],
-  files: ['local_fs', 'local'],
-  people: ['local'],
-  finance: ['local'],
-  medical: ['local'],
-  coding: ['local'],
-};
-
-const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>([
-  'gmail',
-  'google_calendar',
-  'github',
-  'proton',
-  'todoist',
-]);
-
-function providerRequiresSecret(providerKind: ConnectionRecord['providerKind']): boolean {
-  return SECRET_REQUIRED_CONNECTION_PROVIDERS.has(providerKind);
-}
-
-function isProviderAllowedForDomain(domain: DomainKind, providerKind: ConnectionRecord['providerKind']): boolean {
-  return (ALLOWED_CONNECTION_PROVIDERS[domain] ?? []).includes(providerKind);
-}
-
-function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-  const rel = relative(rootPath, candidatePath);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
-function canonicalizeLocalPath(inputPath: string): string {
-  try {
-    return realpathSync(inputPath);
-  } catch {
-    return resolve(inputPath);
-  }
-}
-
-function buildReceiptFallbackReplyText(receipt: ReceiptRecord): string {
-  const parts = [
-    receipt.summary,
-    `Status: ${receipt.status}`,
-    `Model: ${receipt.usage.provider}/${receipt.usage.model}`,
-    `Tokens: ${receipt.usage.tokensIn}/${receipt.usage.tokensOut}`,
-    `Cost: $${receipt.usage.estimatedCostUsd.toFixed(4)}`,
-  ];
-  if (receipt.status !== 'succeeded' && receipt.details.trim().length > 0) {
-    parts.push(`Details: ${receipt.details}`);
-  }
-  return parts.join('\n');
-}
-
-function stringifyTimelineMetadata(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
-}
-
-function buildTimelineMetadata(details: Record<string, unknown>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(details)
-      .map(([key, value]) => [key, stringifyTimelineMetadata(value)] as const)
-      .filter(([, value]) => value.length > 0),
-  );
-}
-
-function parseRunEventPayload(payload: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(payload) as Record<string, unknown>;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function titleCase(value: string): string {
-  return value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function mapRunEventTitle(type: RunEventRecord['type']): string {
-  switch (type) {
-    case 'started':
-      return 'Engine run started';
-    case 'session':
-      return 'Engine session assigned';
-    case 'message':
-      return 'Assistant message emitted';
-    case 'tool_call':
-      return 'Tool call requested';
-    case 'tool_result':
-      return 'Tool result received';
-    case 'completed':
-      return 'Engine run completed';
-    case 'failed':
-      return 'Engine run failed';
-    case 'usage':
-      return 'Usage reported';
-    case 'compaction':
-      return 'Compaction captured';
-    default:
-      return titleCase(type);
-  }
-}
-
-function mapRunEventDetail(record: RunEventRecord): string {
-  const payload = parseRunEventPayload(record.payload);
-  switch (record.type) {
-    case 'started':
-      return typeof payload.input === 'string' ? `Prompt: ${payload.input}` : '';
-    case 'session':
-      return typeof payload.sessionRef === 'string' ? `Session ref: ${payload.sessionRef}` : '';
-    case 'completed':
-      return typeof payload.output === 'string' ? payload.output : '';
-    case 'failed':
-      return typeof payload.error === 'string' ? payload.error : '';
-    case 'usage': {
-      const provider = typeof payload.provider === 'string' ? payload.provider : 'unknown';
-      const model = typeof payload.model === 'string' ? payload.model : 'unknown';
-      const tokensIn = typeof payload.tokensIn === 'number' ? payload.tokensIn : 0;
-      const tokensOut = typeof payload.tokensOut === 'number' ? payload.tokensOut : 0;
-      return `${provider}/${model} · ${tokensIn}/${tokensOut} tokens`;
-    }
-    case 'tool_call':
-      return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
-    case 'tool_result':
-      return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
-    case 'compaction':
-      return typeof payload.content === 'string' ? 'Compaction flush captured before context loss.' : '';
-    default:
-      return '';
-  }
-}
-
-function mapSecurityAuditKind(code: string): ReceiptTimelineEvent['kind'] {
-  if (code.startsWith('approval_')) return 'approval';
-  if (code.startsWith('context_')) return 'context_release';
-  if (code.includes('warning')) return 'warning';
-  return 'policy';
-}
-
-function parseStringArrayColumn(value: unknown): string[] {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseJsonArrayColumn<T>(value: unknown, schema: z.ZodType<T[]>): T[] {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return schema.parse([]);
-  }
-  try {
-    return schema.parse(JSON.parse(value));
-  } catch {
-    return schema.parse([]);
-  }
-}
-
-function matchesConnectionResourceId(left: string, right: string): boolean {
-  return left === right || left.toLowerCase() === right.toLowerCase();
-}
-
-function buildLegacyConnectionResourceRules(
-  resourceIds: string[],
-  timestamp: string,
-): ConnectionResourceRule[] {
-  return resourceIds.map((resourceId) => ({
-    resourceType: 'resource',
-    resourceId,
-    displayName: resourceId,
-    writeAllowed: true,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }));
-}
-
-function normalizeEmail(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match ? match[0]!.toLowerCase() : null;
-}
-
-function mapConnectionRow(row: Record<string, unknown>): ConnectionRecord {
-  const allowedResources = parseStringArrayColumn(row['allowed_resources']);
-  const resourceRules = parseJsonArrayColumn(row['resource_rules_json'], z.array(ConnectionResourceRuleSchema));
-  const timestamp = (row['updated_at'] as string) ?? (row['created_at'] as string) ?? nowIso();
-  return {
-    id: row['id'] as string,
-    domain: row['domain'] as ConnectionRecord['domain'],
-    providerKind: row['provider_kind'] as ConnectionRecord['providerKind'],
-    label: row['label'] as string,
-    mode: (row['mode'] as ConnectionRecord['mode']) ?? 'read_only',
-    secretRefId: (row['secret_ref_id'] as string) ?? null,
-    enabled: !!(row['enabled'] as number),
-    syncIntervalSeconds: (row['sync_interval_seconds'] as number) ?? 900,
-    allowedScopes: parseStringArrayColumn(row['allowed_scopes']),
-    allowedResources,
-    resourceRules: (resourceRules.length > 0 ? resourceRules : buildLegacyConnectionResourceRules(allowedResources, timestamp)).map((r) => ({ ...r, writeAllowed: r.writeAllowed ?? false })),
-    lastSyncAt: (row['last_sync_at'] as string) ?? null,
-    lastSyncStatus: (row['last_sync_status'] as ConnectionRecord['lastSyncStatus']) ?? null,
-    policy: undefined as unknown as ConnectionRecord['policy'],
-    health: (parseJsonColumn(row['health_json'], ConnectionHealthSummarySchema) ?? { status: 'unknown', diagnostics: [], authState: 'unknown', checkedAt: null, lastError: null, remediation: null }) as ConnectionRecord['health'],
-    sync: (parseJsonColumn(row['sync_json'], ConnectionSyncSummarySchema) ?? { status: 'idle', lastAttemptAt: null, lastSuccessAt: null, cursorKind: 'none', cursorPresent: false, lagSummary: '' }) as ConnectionRecord['sync'],
-    createdAt: row['created_at'] as string,
-    updatedAt: row['updated_at'] as string,
-  };
-}
-
-interface StoredOAuthSecret {
-  accessToken: string;
-  refreshToken?: string | undefined;
-  tokenType?: string | undefined;
-  scopes: string[];
-  expiresAt?: string | undefined;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function parseJsonColumn<T>(value: unknown, schema: z.ZodType<T>): T {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return schema.parse({});
-  }
-  try {
-    return schema.parse(JSON.parse(value));
-  } catch {
-    return schema.parse({});
-  }
-}
-
-function parseStoredOAuthSecret(value: string | null | undefined): StoredOAuthSecret | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
-    if (typeof parsed['accessToken'] !== 'string' || !Array.isArray(parsed['scopes'])) {
-      return null;
-    }
-    return {
-      accessToken: parsed['accessToken'],
-      refreshToken: typeof parsed['refreshToken'] === 'string' ? parsed['refreshToken'] : undefined,
-      tokenType: typeof parsed['tokenType'] === 'string' ? parsed['tokenType'] : undefined,
-      scopes: parsed['scopes'].filter((scope): scope is string => typeof scope === 'string'),
-      expiresAt: typeof parsed['expiresAt'] === 'string' ? parsed['expiresAt'] : undefined,
-      createdAt: typeof parsed['createdAt'] === 'string' ? parsed['createdAt'] : nowIso(),
-      updatedAt: typeof parsed['updatedAt'] === 'string' ? parsed['updatedAt'] : nowIso(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function serializeStoredOAuthSecret(input: OAuthTokenPayload): string {
-  return JSON.stringify({
-    accessToken: input.accessToken,
-    ...(input.refreshToken ? { refreshToken: input.refreshToken } : {}),
-    ...(input.tokenType ? { tokenType: input.tokenType } : {}),
-    scopes: input.scopes,
-    ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  } satisfies StoredOAuthSecret);
-}
-
-function canRefreshStoredOAuthSecret(
-  providerKind: ConnectionRecord['providerKind'],
-  secret: StoredOAuthSecret | null,
-  config: AppConfig,
-): boolean {
-  if (!secret?.refreshToken) return false;
-  switch (providerKind) {
-    case 'gmail':
-    case 'google_calendar':
-      return Boolean(config.providerAuth.google.clientId && config.providerAuth.google.clientSecret);
-    default:
-      return false;
-  }
-}
-
-function connectionCursorKindForProvider(providerKind: ConnectionRecord['providerKind']): ConnectionSyncSummary['cursorKind'] {
-  switch (providerKind) {
-    case 'gmail':
-      return 'history_id';
-    case 'google_calendar':
-      return 'sync_token';
-    case 'github':
-      return 'since';
-    default:
-      return 'none';
-  }
-}
-
-function isExpiredIso(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.length > 0 && Date.parse(value) <= Date.now();
-}
-
 export class PopeyeRuntimeService {
   readonly events = new EventEmitter();
   readonly databases: RuntimeDatabases;
@@ -908,9 +373,19 @@ export class PopeyeRuntimeService {
   private readonly actionPolicyEvaluator: ActionPolicyEvaluator;
   private readonly vaultManager: VaultManager;
   private readonly contextReleaseService: ContextReleaseService;
+  private readonly telegramDelivery: TelegramDeliveryService;
   private readonly capabilityRegistry: CapabilityRegistry;
   private capabilityInitPromise: Promise<void> | null = null;
   private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Capability facades — lazy read-only DB + service/search caches
+  private readonly emailFacade: CapabilityFacade<EmailService, EmailSearchService>;
+  private readonly githubFacade: CapabilityFacade<GithubService, GithubSearchService>;
+  private readonly calendarFacade: CapabilityFacade<CalendarService, CalendarSearchService>;
+  private readonly todosFacade: CapabilityFacade<TodoService, TodoSearchService>;
+  private readonly peopleFacade: CapabilityFacade<PeopleService>;
+  private readonly financeFacade: CapabilityFacade<FinanceService, FinanceSearchService>;
+  private readonly medicalFacade: CapabilityFacade<MedicalService, MedicalSearchService>;
 
   private static validateRegexPatterns(config: AppConfig): void {
     const fields: Array<{ name: string; patterns: string[] }> = [
@@ -999,6 +474,16 @@ export class PopeyeRuntimeService {
     this.actionPolicyEvaluator = new ActionPolicyEvaluator(config.approvalPolicy);
     this.vaultManager = new VaultManager(this.databases.app, this.log, this.databases.paths, auditCallback);
     this.contextReleaseService = new ContextReleaseService(this.databases.app, this.log, auditCallback);
+    this.telegramDelivery = new TelegramDeliveryService(
+      this.databases.app,
+      this.log,
+      {
+        getWorkspace: (id) => this.getWorkspace(id),
+        createIntervention: (code, runId, reason) => this.createIntervention(code, runId, reason),
+        resolveIntervention: (id, note) => this.resolveIntervention(id, note),
+        emit: (event, payload) => this.emit(event, payload),
+      },
+    );
 
     this.receiptManager = new ReceiptManager(this.databases, config, {
       captureMemory: (input) => this.memoryLifecycle.insertMemory(input),
@@ -1053,6 +538,43 @@ export class PopeyeRuntimeService {
     this.capabilityRegistry.register(createFinanceCapability());
     this.capabilityRegistry.register(createMedicalCapability());
 
+    // Initialize capability facades (lazy read-only DB + service/search caches)
+    const storesDir = this.databases.paths.capabilityStoresDir;
+    this.emailFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'email', 'email.db',
+      (db) => new EmailService(db),
+      (db) => new EmailSearchService(db),
+    );
+    this.githubFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'github', 'github.db',
+      (db) => new GithubService(db),
+      (db) => new GithubSearchService(db),
+    );
+    this.calendarFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'calendar', 'calendar.db',
+      (db) => new CalendarService(db),
+      (db) => new CalendarSearchService(db),
+    );
+    this.todosFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'todos', 'todos.db',
+      (db) => new TodoService(db),
+      (db) => new TodoSearchService(db),
+    );
+    this.peopleFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'people', 'people.db',
+      (db) => new PeopleService(db),
+    );
+    this.financeFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'finance', 'finance.db',
+      (db) => new FinanceService(db),
+      (db) => new FinanceSearchService(db),
+    );
+    this.medicalFacade = new CapabilityFacade(
+      this.capabilityRegistry, storesDir, 'medical', 'medical.db',
+      (db) => new MedicalService(db),
+      (db) => new MedicalSearchService(db),
+    );
+
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
       this.log.error('capability initialization failed', { error: err instanceof Error ? err.message : String(err) });
@@ -1095,51 +617,14 @@ export class PopeyeRuntimeService {
       this.approvalExpiryTimer = null;
     }
     this.vaultManager.closeAllVaults();
-    // Close email read-only DB before capability shutdown
-    if (this.emailReadDb) {
-      this.emailReadDb.close();
-      this.emailReadDb = null;
-      this.emailServiceCache = null;
-      this.emailSearchCache = null;
-    }
-    // Close github read-only DB before capability shutdown
-    if (this.githubReadDb) {
-      this.githubReadDb.close();
-      this.githubReadDb = null;
-      this.githubServiceCache = null;
-      this.githubSearchCache = null;
-    }
-    // Close calendar read-only DB before capability shutdown
-    if (this.calendarReadDb) {
-      this.calendarReadDb.close();
-      this.calendarReadDb = null;
-      this.calendarServiceCache = null;
-      this.calendarSearchCache = null;
-    }
-    // Close todos read-only DB before capability shutdown
-    if (this.todosReadDb) {
-      this.todosReadDb.close();
-      this.todosReadDb = null;
-      this.todosServiceCache = null;
-      this.todosSearchCache = null;
-    }
-    if (this.peopleReadDb) {
-      this.peopleReadDb.close();
-      this.peopleReadDb = null;
-      this.peopleServiceCache = null;
-    }
-    if (this.financeReadDb) {
-      this.financeReadDb.close();
-      this.financeReadDb = null;
-      this.financeServiceCache = null;
-      this.financeSearchCache = null;
-    }
-    if (this.medicalReadDb) {
-      this.medicalReadDb.close();
-      this.medicalReadDb = null;
-      this.medicalServiceCache = null;
-      this.medicalSearchCache = null;
-    }
+    // Close capability read-only DBs before capability shutdown
+    this.emailFacade.invalidate();
+    this.githubFacade.invalidate();
+    this.calendarFacade.invalidate();
+    this.todosFacade.invalidate();
+    this.peopleFacade.invalidate();
+    this.financeFacade.invalidate();
+    this.medicalFacade.invalidate();
     if (this.capabilityInitPromise) await this.capabilityInitPromise;
     await this.capabilityRegistry.shutdownAll();
     await this.stopScheduler();
@@ -2073,38 +1558,21 @@ export class PopeyeRuntimeService {
     return this.messageIngestion.getMessage(messageId);
   }
 
+  // --- Telegram delivery (delegated to TelegramDeliveryService) ---
+
   getTelegramRelayCheckpoint(workspaceId: string, relayKey: 'telegram_long_poll' = 'telegram_long_poll'): TelegramRelayCheckpoint | null {
-    const row = this.databases.app
-      .prepare('SELECT relay_key, workspace_id, last_acknowledged_update_id, updated_at FROM telegram_relay_checkpoints WHERE relay_key = ? AND workspace_id = ?')
-      .get(relayKey, workspaceId);
-    if (!row) return null;
-    const parsed = TelegramRelayCheckpointRowSchema.parse(row);
-    return TelegramRelayCheckpointSchema.parse({
-      relayKey: parsed.relay_key,
-      workspaceId: parsed.workspace_id,
-      lastAcknowledgedUpdateId: parsed.last_acknowledged_update_id,
-      updatedAt: parsed.updated_at,
-    });
+    return this.telegramDelivery.getTelegramRelayCheckpoint(workspaceId, relayKey);
   }
 
   commitTelegramRelayCheckpoint(input: TelegramRelayCheckpointCommitRequest): TelegramRelayCheckpoint {
-    if (!this.getWorkspace(input.workspaceId)) {
-      throw new RuntimeNotFoundError(`Workspace ${input.workspaceId} not found`);
+    try {
+      return this.telegramDelivery.commitTelegramRelayCheckpoint(input);
+    } catch (error) {
+      if (error instanceof Error && 'errorCode' in error && error.errorCode === 'not_found') {
+        throw new RuntimeNotFoundError(error.message);
+      }
+      throw error;
     }
-    const relayKey = input.relayKey ?? 'telegram_long_poll';
-    const updatedAt = nowIso();
-    this.databases.app.prepare(`
-      INSERT INTO telegram_relay_checkpoints (relay_key, workspace_id, last_acknowledged_update_id, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(relay_key, workspace_id) DO UPDATE SET
-        last_acknowledged_update_id = MAX(telegram_relay_checkpoints.last_acknowledged_update_id, excluded.last_acknowledged_update_id),
-        updated_at = excluded.updated_at
-    `).run(relayKey, input.workspaceId, input.lastAcknowledgedUpdateId, updatedAt);
-    const checkpoint = this.getTelegramRelayCheckpoint(input.workspaceId, relayKey);
-    if (!checkpoint) {
-      throw new Error(`Failed to persist Telegram relay checkpoint for workspace ${input.workspaceId}`);
-    }
-    return checkpoint;
   }
 
   markTelegramReplySending(
@@ -2112,29 +1580,7 @@ export class PopeyeRuntimeService {
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null },
   ): TelegramDeliveryState | null {
-    const updatedAt = nowIso();
-    this.databases.app.prepare(`
-      UPDATE telegram_reply_deliveries
-      SET status = CASE
-            WHEN status = 'pending' THEN 'sending'
-            ELSE status
-          END,
-          run_id = COALESCE(?, run_id),
-          updated_at = ?
-      WHERE workspace_id = ?
-        AND chat_id = ?
-        AND telegram_message_id = ?
-    `).run(
-      input.runId ?? null,
-      updatedAt,
-      input.workspaceId,
-      chatId,
-      telegramMessageId,
-    );
-    const row = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-      .get(input.workspaceId, chatId, telegramMessageId);
-    return row ? mapTelegramDeliveryRow(row) : null;
+    return this.telegramDelivery.markTelegramReplySending(chatId, telegramMessageId, input);
   }
 
   markTelegramReplyPending(
@@ -2142,26 +1588,7 @@ export class PopeyeRuntimeService {
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null },
   ): TelegramDeliveryState | null {
-    const updatedAt = nowIso();
-    this.databases.app.prepare(`
-      UPDATE telegram_reply_deliveries
-      SET status = 'pending',
-          run_id = COALESCE(?, run_id),
-          updated_at = ?
-      WHERE workspace_id = ?
-        AND chat_id = ?
-        AND telegram_message_id = ?
-    `).run(
-      input.runId ?? null,
-      updatedAt,
-      input.workspaceId,
-      chatId,
-      telegramMessageId,
-    );
-    const row = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-      .get(input.workspaceId, chatId, telegramMessageId);
-    return row ? mapTelegramDeliveryRow(row) : null;
+    return this.telegramDelivery.markTelegramReplyPending(chatId, telegramMessageId, input);
   }
 
   markTelegramReplyUncertain(
@@ -2169,40 +1596,7 @@ export class PopeyeRuntimeService {
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null; reason?: string | null },
   ): TelegramDeliveryState | null {
-    const updatedAt = nowIso();
-    const row = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-      .get(input.workspaceId, chatId, telegramMessageId);
-    if (!row) return null;
-
-    const previous = TelegramReplyDeliveryRowSchema.parse(row);
-    this.databases.app.prepare(`
-      UPDATE telegram_reply_deliveries
-      SET status = 'uncertain',
-          run_id = COALESCE(?, run_id),
-          updated_at = ?
-      WHERE workspace_id = ?
-        AND chat_id = ?
-        AND telegram_message_id = ?
-    `).run(
-      input.runId ?? null,
-      updatedAt,
-      input.workspaceId,
-      chatId,
-      telegramMessageId,
-    );
-    if (previous.status !== 'uncertain') {
-      this.createIntervention(
-        'needs_operator_input',
-        input.runId ?? previous.run_id ?? null,
-        input.reason ?? `Telegram delivery for chat ${chatId} message ${telegramMessageId} became uncertain and needs operator confirmation.`,
-      );
-    }
-
-    const updatedRow = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-      .get(input.workspaceId, chatId, telegramMessageId);
-    return updatedRow ? mapTelegramDeliveryRow(updatedRow) : null;
+    return this.telegramDelivery.markTelegramReplyUncertain(chatId, telegramMessageId, input);
   }
 
   markTelegramReplySent(
@@ -2210,182 +1604,28 @@ export class PopeyeRuntimeService {
     telegramMessageId: number,
     input: { workspaceId: string; runId?: string | null; sentTelegramMessageId?: number | null },
   ): TelegramDeliveryState | null {
-    const updatedAt = nowIso();
-    this.databases.app.prepare(`
-      UPDATE telegram_reply_deliveries
-      SET status = 'sent',
-          sent_telegram_message_id = COALESCE(?, sent_telegram_message_id),
-          sent_at = COALESCE(sent_at, ?),
-          run_id = COALESCE(?, run_id),
-          updated_at = ?
-      WHERE workspace_id = ?
-        AND chat_id = ?
-        AND telegram_message_id = ?
-    `).run(
-      input.sentTelegramMessageId ?? null,
-      updatedAt,
-      input.runId ?? null,
-      updatedAt,
-      input.workspaceId,
-      chatId,
-      telegramMessageId,
-    );
-    const row = this.databases.app
-      .prepare('SELECT chat_id, telegram_message_id, status, sent_telegram_message_id, sent_at, run_id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-      .get(input.workspaceId, chatId, telegramMessageId);
-    return row ? mapTelegramDeliveryRow(row) : null;
-  }
-
-  // --- Telegram delivery resolution (Step 1) ---
-
-  private mapFullDeliveryRow(row: unknown): TelegramDeliveryRecord {
-    const parsed = TelegramReplyDeliveryFullRowSchema.parse(row);
-    return TelegramDeliveryRecordSchema.parse({
-      id: parsed.id,
-      workspaceId: parsed.workspace_id,
-      chatId: parsed.chat_id,
-      telegramMessageId: parsed.telegram_message_id,
-      messageIngressId: parsed.message_ingress_id,
-      taskId: parsed.task_id,
-      jobId: parsed.job_id,
-      runId: parsed.run_id,
-      status: parsed.status,
-      sentAt: parsed.sent_at,
-      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
-      createdAt: parsed.created_at,
-      updatedAt: parsed.updated_at,
-    });
-  }
-
-  private mapResolutionRow(row: unknown): TelegramDeliveryResolutionRecord {
-    const parsed = TelegramDeliveryResolutionRowSchema.parse(row);
-    return TelegramDeliveryResolutionRecordSchema.parse({
-      id: parsed.id,
-      deliveryId: parsed.delivery_id,
-      workspaceId: parsed.workspace_id,
-      action: parsed.action,
-      interventionId: parsed.intervention_id,
-      operatorNote: parsed.operator_note,
-      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
-      previousStatus: parsed.previous_status,
-      newStatus: parsed.new_status,
-      createdAt: parsed.created_at,
-    });
-  }
-
-  private mapSendAttemptRow(row: unknown): TelegramSendAttemptRecord {
-    const parsed = TelegramSendAttemptRowSchema.parse(row);
-    return TelegramSendAttemptRecordSchema.parse({
-      id: parsed.id,
-      deliveryId: parsed.delivery_id,
-      workspaceId: parsed.workspace_id,
-      attemptNumber: parsed.attempt_number,
-      startedAt: parsed.started_at,
-      finishedAt: parsed.finished_at,
-      runId: parsed.run_id,
-      contentHash: parsed.content_hash,
-      outcome: parsed.outcome,
-      sentTelegramMessageId: parsed.sent_telegram_message_id ?? null,
-      errorSummary: parsed.error_summary,
-      source: parsed.source,
-      createdAt: parsed.created_at,
-    });
+    return this.telegramDelivery.markTelegramReplySent(chatId, telegramMessageId, input);
   }
 
   listUncertainDeliveries(workspaceId?: string): TelegramDeliveryRecord[] {
-    const sql = workspaceId
-      ? "SELECT * FROM telegram_reply_deliveries WHERE status = 'uncertain' AND workspace_id = ?"
-      : "SELECT * FROM telegram_reply_deliveries WHERE status = 'uncertain'";
-    const rows = workspaceId
-      ? this.databases.app.prepare(sql).all(workspaceId)
-      : this.databases.app.prepare(sql).all();
-    return rows.map((row) => this.mapFullDeliveryRow(row));
+    return this.telegramDelivery.listUncertainDeliveries(workspaceId);
   }
 
   getDeliveryById(id: string): TelegramDeliveryRecord | null {
-    const row = this.databases.app.prepare('SELECT * FROM telegram_reply_deliveries WHERE id = ?').get(id);
-    return row ? this.mapFullDeliveryRow(row) : null;
+    return this.telegramDelivery.getDeliveryById(id);
   }
 
   resolveTelegramDelivery(deliveryId: string, input: TelegramDeliveryResolutionRequest): TelegramDeliveryResolutionRecord {
-    const delivery = this.getDeliveryById(deliveryId);
-    if (!delivery) {
-      throw new RuntimeNotFoundError(`Delivery ${deliveryId} not found`);
-    }
-    if (delivery.status !== 'uncertain') {
-      throw new RuntimeConflictError(`Delivery ${deliveryId} status is '${delivery.status}', expected 'uncertain'`);
-    }
-
-    const actionToStatus: Record<string, string> = {
-      confirm_sent: 'sent',
-      resend: 'pending',
-      abandon: 'abandoned',
-    };
-    const newStatus = actionToStatus[input.action]!;
-    const now = nowIso();
-
-    // Find linked open intervention
-    const interventionRow = this.databases.app
-      .prepare("SELECT id FROM interventions WHERE run_id = ? AND code = 'needs_operator_input' AND status = 'open' ORDER BY created_at DESC LIMIT 1")
-      .get(delivery.runId);
-    const interventionId = interventionRow ? z.object({ id: z.string() }).parse(interventionRow).id : null;
-
-    // Update delivery status
-    const updateSql = newStatus === 'sent'
-      ? `UPDATE telegram_reply_deliveries SET status = ?, sent_telegram_message_id = COALESCE(?, sent_telegram_message_id), sent_at = COALESCE(sent_at, ?), updated_at = ? WHERE id = ?`
-      : 'UPDATE telegram_reply_deliveries SET status = ?, updated_at = ? WHERE id = ?';
-    if (newStatus === 'sent') {
-      this.databases.app.prepare(updateSql).run(newStatus, input.sentTelegramMessageId ?? null, now, now, deliveryId);
-    } else {
-      this.databases.app.prepare(updateSql).run(newStatus, now, deliveryId);
-    }
-
-    // Insert resolution record
-    const resolutionId = randomUUID();
-    this.databases.app.prepare(`
-      INSERT INTO telegram_delivery_resolutions (id, delivery_id, workspace_id, action, intervention_id, operator_note, sent_telegram_message_id, previous_status, new_status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      resolutionId,
-      deliveryId,
-      input.workspaceId,
-      input.action,
-      interventionId,
-      input.operatorNote ?? null,
-      input.sentTelegramMessageId ?? null,
-      delivery.status,
-      newStatus,
-      now,
-    );
-
-    // Resolve linked intervention
-    if (interventionId) {
-      this.resolveIntervention(interventionId, input.operatorNote);
-    }
-
-    this.emit('telegram_delivery_resolved', { deliveryId, action: input.action, newStatus });
-
-    const resolutionRow = this.databases.app
-      .prepare('SELECT * FROM telegram_delivery_resolutions WHERE id = ?')
-      .get(resolutionId);
-    return this.mapResolutionRow(resolutionRow);
+    return this.telegramDelivery.resolveTelegramDelivery(deliveryId, input);
   }
 
   listDeliveryResolutions(deliveryId: string): TelegramDeliveryResolutionRecord[] {
-    const rows = this.databases.app
-      .prepare('SELECT * FROM telegram_delivery_resolutions WHERE delivery_id = ? ORDER BY created_at ASC')
-      .all(deliveryId);
-    return rows.map((row) => this.mapResolutionRow(row));
+    return this.telegramDelivery.listDeliveryResolutions(deliveryId);
   }
 
   getResendableDeliveries(workspaceId: string): TelegramDeliveryRecord[] {
-    const rows = this.databases.app
-      .prepare("SELECT * FROM telegram_reply_deliveries WHERE status = 'pending' AND updated_at > created_at AND workspace_id = ?")
-      .all(workspaceId);
-    return rows.map((row) => this.mapFullDeliveryRow(row));
+    return this.telegramDelivery.getResendableDeliveries(workspaceId);
   }
-
-  // --- Telegram send-attempt audit (Step 2) ---
 
   recordTelegramSendAttempt(input: {
     deliveryId?: string;
@@ -2401,54 +1641,11 @@ export class PopeyeRuntimeService {
     errorSummary?: string;
     source?: string;
   }): TelegramSendAttemptRecord {
-    let deliveryId = input.deliveryId;
-    if (!deliveryId && input.chatId !== undefined && input.telegramMessageId !== undefined) {
-      const row = this.databases.app
-        .prepare('SELECT id FROM telegram_reply_deliveries WHERE workspace_id = ? AND chat_id = ? AND telegram_message_id = ?')
-        .get(input.workspaceId, input.chatId, input.telegramMessageId);
-      if (row) {
-        deliveryId = z.object({ id: z.string() }).parse(row).id;
-      }
-    }
-    if (!deliveryId) {
-      throw new RuntimeNotFoundError('Cannot resolve delivery for send-attempt recording');
-    }
-    const id = randomUUID();
-    const now = nowIso();
-    const countRow = this.databases.app
-      .prepare('SELECT COALESCE(MAX(attempt_number), 0) as max_attempt FROM telegram_send_attempts WHERE delivery_id = ?')
-      .get(deliveryId);
-    const attemptNumber = z.object({ max_attempt: z.coerce.number().int() }).parse(countRow).max_attempt + 1;
-    const errorSummary = input.errorSummary ? input.errorSummary.slice(0, 500) : null;
-
-    this.databases.app.prepare(`
-      INSERT INTO telegram_send_attempts (id, delivery_id, workspace_id, attempt_number, started_at, finished_at, run_id, content_hash, outcome, sent_telegram_message_id, error_summary, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      deliveryId,
-      input.workspaceId,
-      attemptNumber,
-      input.startedAt,
-      input.finishedAt ?? null,
-      input.runId ?? null,
-      input.contentHash,
-      input.outcome,
-      input.sentTelegramMessageId ?? null,
-      errorSummary,
-      input.source ?? 'relay',
-      now,
-    );
-
-    const row = this.databases.app.prepare('SELECT * FROM telegram_send_attempts WHERE id = ?').get(id);
-    return this.mapSendAttemptRow(row);
+    return this.telegramDelivery.recordTelegramSendAttempt(input);
   }
 
   listTelegramSendAttempts(deliveryId: string): TelegramSendAttemptRecord[] {
-    const rows = this.databases.app
-      .prepare('SELECT * FROM telegram_send_attempts WHERE delivery_id = ? ORDER BY created_at ASC')
-      .all(deliveryId);
-    return rows.map((row) => this.mapSendAttemptRow(row));
+    return this.telegramDelivery.listTelegramSendAttempts(deliveryId);
   }
 
   // --- Run lifecycle (stays in facade -- tightly coupled to event loop) ---
@@ -3497,32 +2694,8 @@ export class PopeyeRuntimeService {
     return { account, connection };
   }
 
-  private invalidateEmailFacade(): void {
-    if (this.emailReadDb) {
-      this.emailReadDb.close();
-      this.emailReadDb = null;
-    }
-    this.emailServiceCache = null;
-    this.emailSearchCache = null;
-  }
-
-  private invalidateCalendarFacade(): void {
-    if (this.calendarReadDb) {
-      this.calendarReadDb.close();
-      this.calendarReadDb = null;
-    }
-    this.calendarServiceCache = null;
-    this.calendarSearchCache = null;
-  }
-
-  private invalidateGithubFacade(): void {
-    if (this.githubReadDb) {
-      this.githubReadDb.close();
-      this.githubReadDb = null;
-    }
-    this.githubServiceCache = null;
-    this.githubSearchCache = null;
-  }
+  // Capability facade invalidation is now handled by CapabilityFacade.invalidate()
+  // via this.emailFacade.invalidate(), this.calendarFacade.invalidate(), etc.
 
   private classifyConnectionFailure(message: string): Pick<ConnectionHealthSummary, 'status' | 'authState'> {
     const lowered = message.toLowerCase();
@@ -5099,52 +4272,20 @@ export class PopeyeRuntimeService {
   }
 
   // --- Email facade ---
-  // Uses a cached readonly DB handle opened on first access.
-  // Closed when the runtime shuts down.
-
-  private emailReadDb: BetterSqlite3.Database | null = null;
-  private emailServiceCache: EmailService | null = null;
-  private emailSearchCache: EmailSearchService | null = null;
-
-  private getEmailReadDb(): BetterSqlite3.Database | null {
-    if (this.emailReadDb) return this.emailReadDb;
-    const cap = this.capabilityRegistry.getCapability('email');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/email.db`;
-    if (!existsSync(dbPath)) return null;
-    this.emailReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.emailReadDb;
-  }
-
-  private getEmailServiceFacade(): EmailService | null {
-    if (this.emailServiceCache) return this.emailServiceCache;
-    const db = this.getEmailReadDb();
-    if (!db) return null;
-    this.emailServiceCache = new EmailService(db as unknown as CapabilityContext['appDb']);
-    return this.emailServiceCache;
-  }
-
-  private getEmailSearchFacade(): EmailSearchService | null {
-    if (this.emailSearchCache) return this.emailSearchCache;
-    const db = this.getEmailReadDb();
-    if (!db) return null;
-    this.emailSearchCache = new EmailSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.emailSearchCache;
-  }
 
   listEmailAccounts(): EmailAccountRecord[] {
-    return this.getEmailServiceFacade()?.listAccounts() ?? [];
+    return this.emailFacade.getService()?.listAccounts() ?? [];
   }
 
   listEmailThreads(accountId: string, options?: { limit?: number | undefined; unreadOnly?: boolean | undefined }): EmailThreadRecord[] {
-    const svc = this.getEmailServiceFacade();
+    const svc = this.emailFacade.getService();
     if (!svc) return [];
     this.requireEmailAccountForOperation(svc, accountId, 'email_thread_list');
     return svc.listThreads(accountId, options);
   }
 
   getEmailThread(id: string): EmailThreadRecord | null {
-    const svc = this.getEmailServiceFacade();
+    const svc = this.emailFacade.getService();
     if (!svc) return null;
     const thread = svc.getThread(id);
     if (!thread) return null;
@@ -5160,22 +4301,22 @@ export class PopeyeRuntimeService {
   }
 
   searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
-    const svc = this.getEmailServiceFacade();
+    const svc = this.emailFacade.getService();
     if (query.accountId && svc) {
       this.requireEmailAccountForOperation(svc, query.accountId, 'email_search');
     }
-    return this.getEmailSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+    return this.emailFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getEmailDigest(accountId: string): EmailDigestRecord | null {
-    const svc = this.getEmailServiceFacade();
+    const svc = this.emailFacade.getService();
     if (!svc) return null;
     this.requireEmailAccountForOperation(svc, accountId, 'email_digest_read');
     return svc.getLatestDigest(accountId);
   }
 
   getEmailMessage(id: string): EmailMessageRecord | null {
-    const svc = this.getEmailServiceFacade();
+    const svc = this.emailFacade.getService();
     if (!svc) return null;
     const message = svc.getMessage(id);
     if (!message) return null;
@@ -5191,72 +4332,41 @@ export class PopeyeRuntimeService {
   }
 
   // --- GitHub facade ---
-  // Uses a cached readonly DB handle opened on first access.
-
-  private githubReadDb: BetterSqlite3.Database | null = null;
-  private githubServiceCache: GithubService | null = null;
-  private githubSearchCache: GithubSearchService | null = null;
-
-  private getGithubReadDb(): BetterSqlite3.Database | null {
-    if (this.githubReadDb) return this.githubReadDb;
-    const cap = this.capabilityRegistry.getCapability('github');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/github.db`;
-    if (!existsSync(dbPath)) return null;
-    this.githubReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.githubReadDb;
-  }
-
-  private getGithubServiceFacade(): GithubService | null {
-    if (this.githubServiceCache) return this.githubServiceCache;
-    const db = this.getGithubReadDb();
-    if (!db) return null;
-    this.githubServiceCache = new GithubService(db as unknown as CapabilityContext['appDb']);
-    return this.githubServiceCache;
-  }
-
-  private getGithubSearchFacade(): GithubSearchService | null {
-    if (this.githubSearchCache) return this.githubSearchCache;
-    const db = this.getGithubReadDb();
-    if (!db) return null;
-    this.githubSearchCache = new GithubSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.githubSearchCache;
-  }
 
   listGithubAccounts(): GithubAccountRecord[] {
-    return this.getGithubServiceFacade()?.listAccounts() ?? [];
+    return this.githubFacade.getService()?.listAccounts() ?? [];
   }
 
   listGithubRepos(accountId: string, options?: { limit?: number | undefined }): GithubRepoRecord[] {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return [];
     this.requireGithubAccountForOperation(svc, accountId, 'github_repo_list');
     return svc.listRepos(accountId, options);
   }
 
   listGithubPullRequests(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; repoId?: string | undefined }): GithubPullRequestRecord[] {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return [];
     this.requireGithubAccountForOperation(svc, accountId, 'github_pr_list');
     return svc.listPullRequests(accountId, options);
   }
 
   listGithubIssues(accountId: string, options?: { state?: string | undefined; limit?: number | undefined; assignedOnly?: boolean | undefined }): GithubIssueRecord[] {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return [];
     this.requireGithubAccountForOperation(svc, accountId, 'github_issue_list');
     return svc.listIssues(accountId, options);
   }
 
   listGithubNotifications(accountId: string, options?: { unreadOnly?: boolean | undefined; limit?: number | undefined }): GithubNotificationRecord[] {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return [];
     this.requireGithubAccountForOperation(svc, accountId, 'github_notification_list');
     return svc.listNotifications(accountId, options);
   }
 
   getGithubPullRequest(id: string): GithubPullRequestRecord | null {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return null;
     const pullRequest = svc.getPullRequest(id);
     if (!pullRequest) return null;
@@ -5272,7 +4382,7 @@ export class PopeyeRuntimeService {
   }
 
   getGithubIssue(id: string): GithubIssueRecord | null {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return null;
     const issue = svc.getIssue(id);
     if (!issue) return null;
@@ -5288,15 +4398,15 @@ export class PopeyeRuntimeService {
   }
 
   searchGithub(query: GithubSearchQuery): { query: string; results: GithubSearchResult[] } {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (query.accountId && svc) {
       this.requireGithubAccountForOperation(svc, query.accountId, 'github_search');
     }
-    return this.getGithubSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+    return this.githubFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getGithubDigest(accountId: string): GithubDigestRecord | null {
-    const svc = this.getGithubServiceFacade();
+    const svc = this.githubFacade.getService();
     if (!svc) return null;
     this.requireGithubAccountForOperation(svc, accountId, 'github_digest_read');
     return svc.getLatestDigest(accountId);
@@ -5370,7 +4480,7 @@ export class PopeyeRuntimeService {
         },
       });
 
-      this.invalidateGithubFacade();
+      this.githubFacade.invalidate();
       try {
         this.refreshPeopleProjectionForGithubAccount(svc, account.id);
       } catch (error) {
@@ -5437,7 +4547,7 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      this.invalidateGithubFacade();
+      this.githubFacade.invalidate();
 
       return lastDigest;
     } finally {
@@ -5556,7 +4666,7 @@ export class PopeyeRuntimeService {
       await resolved.adapter.markNotificationRead(notification.githubNotificationId);
       const updated = svc.markNotificationRead(notification.id);
       const record = updated ?? { ...notification, isUnread: false, updatedAt: nowIso() };
-      this.invalidateGithubFacade();
+      this.githubFacade.invalidate();
 
       this.recordSecurityAudit({
         code: 'github_notification_marked_read',
@@ -5675,7 +4785,7 @@ export class PopeyeRuntimeService {
         },
       });
 
-      this.invalidateEmailFacade();
+      this.emailFacade.invalidate();
       try {
         this.refreshPeopleProjectionForEmailAccount(svc, account.id);
       } catch (error) {
@@ -5742,7 +4852,7 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      this.invalidateEmailFacade();
+      this.emailFacade.invalidate();
 
       return lastDigest;
     } finally {
@@ -5794,7 +4904,7 @@ export class PopeyeRuntimeService {
         subject: draft.subject,
         bodyPreview: draft.bodyPreview,
       });
-      this.invalidateEmailFacade();
+      this.emailFacade.invalidate();
 
       this.recordSecurityAudit({
         code: 'email_draft_created',
@@ -5873,7 +4983,7 @@ export class PopeyeRuntimeService {
         subject: draft.subject,
         bodyPreview: draft.bodyPreview,
       });
-      this.invalidateEmailFacade();
+      this.emailFacade.invalidate();
       this.recordSecurityAudit({
         code: 'email_draft_updated',
         severity: 'info',
@@ -5903,49 +5013,19 @@ export class PopeyeRuntimeService {
 
   // --- Calendar facade ---
 
-  private calendarReadDb: BetterSqlite3.Database | null = null;
-  private calendarServiceCache: CalendarService | null = null;
-  private calendarSearchCache: CalendarSearchService | null = null;
-
-  private getCalendarReadDb(): BetterSqlite3.Database | null {
-    if (this.calendarReadDb) return this.calendarReadDb;
-    const cap = this.capabilityRegistry.getCapability('calendar');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/calendar.db`;
-    if (!existsSync(dbPath)) return null;
-    this.calendarReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.calendarReadDb;
-  }
-
-  private getCalendarServiceFacade(): CalendarService | null {
-    if (this.calendarServiceCache) return this.calendarServiceCache;
-    const db = this.getCalendarReadDb();
-    if (!db) return null;
-    this.calendarServiceCache = new CalendarService(db as unknown as CapabilityContext['appDb']);
-    return this.calendarServiceCache;
-  }
-
-  private getCalendarSearchFacade(): CalendarSearchService | null {
-    if (this.calendarSearchCache) return this.calendarSearchCache;
-    const db = this.getCalendarReadDb();
-    if (!db) return null;
-    this.calendarSearchCache = new CalendarSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.calendarSearchCache;
-  }
-
   listCalendarAccounts(): CalendarAccountRecord[] {
-    return this.getCalendarServiceFacade()?.listAccounts() ?? [];
+    return this.calendarFacade.getService()?.listAccounts() ?? [];
   }
 
   listCalendarEvents(accountId: string, options?: { limit?: number | undefined; dateFrom?: string | undefined; dateTo?: string | undefined }): CalendarEventRecord[] {
-    const svc = this.getCalendarServiceFacade();
+    const svc = this.calendarFacade.getService();
     if (!svc) return [];
     this.requireCalendarAccountForOperation(svc, accountId, 'calendar_event_list');
     return svc.listEvents(accountId, options);
   }
 
   getCalendarEvent(id: string): CalendarEventRecord | null {
-    const svc = this.getCalendarServiceFacade();
+    const svc = this.calendarFacade.getService();
     if (!svc) return null;
     const event = svc.getEvent(id);
     if (!event) return null;
@@ -5961,22 +5041,22 @@ export class PopeyeRuntimeService {
   }
 
   searchCalendar(query: CalendarSearchQuery): { query: string; results: CalendarSearchResult[] } {
-    const svc = this.getCalendarServiceFacade();
+    const svc = this.calendarFacade.getService();
     if (query.accountId && svc) {
       this.requireCalendarAccountForOperation(svc, query.accountId, 'calendar_search');
     }
-    return this.getCalendarSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+    return this.calendarFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getCalendarDigest(accountId: string): CalendarDigestRecord | null {
-    const svc = this.getCalendarServiceFacade();
+    const svc = this.calendarFacade.getService();
     if (!svc) return null;
     this.requireCalendarAccountForOperation(svc, accountId, 'calendar_digest_read');
     return svc.getLatestDigest(accountId);
   }
 
   getCalendarAvailability(accountId: string, date: string, startHour = 9, endHour = 17, slotMinutes = 30): CalendarAvailabilitySlot[] {
-    const svc = this.getCalendarServiceFacade();
+    const svc = this.calendarFacade.getService();
     if (!svc) return [];
     this.requireCalendarAccountForOperation(svc, accountId, 'calendar_availability_read');
     return svc.computeAvailability(accountId, date, startHour, endHour, slotMinutes);
@@ -6070,7 +5150,7 @@ export class PopeyeRuntimeService {
         },
       });
 
-      this.invalidateCalendarFacade();
+      this.calendarFacade.invalidate();
       try {
         this.refreshPeopleProjectionForCalendarAccount(svc, account.id);
       } catch (error) {
@@ -6137,7 +5217,7 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      this.invalidateCalendarFacade();
+      this.calendarFacade.invalidate();
 
       return lastDigest;
     } finally {
@@ -6199,7 +5279,7 @@ export class PopeyeRuntimeService {
         updatedAtGoogle: event.updatedAt,
       });
       svc.updateEventCount(account.id);
-      this.invalidateCalendarFacade();
+      this.calendarFacade.invalidate();
 
       this.recordSecurityAudit({
         code: 'calendar_event_created',
@@ -6274,7 +5354,7 @@ export class PopeyeRuntimeService {
         updatedAtGoogle: event.updatedAt,
       });
       svc.updateEventCount(account.id);
-      this.invalidateCalendarFacade();
+      this.calendarFacade.invalidate();
 
       this.recordSecurityAudit({
         code: 'calendar_event_updated',
@@ -6301,49 +5381,19 @@ export class PopeyeRuntimeService {
 
   // --- Todos facade ---
 
-  private todosReadDb: BetterSqlite3.Database | null = null;
-  private todosServiceCache: TodoService | null = null;
-  private todosSearchCache: TodoSearchService | null = null;
-
-  private getTodosReadDb(): BetterSqlite3.Database | null {
-    if (this.todosReadDb) return this.todosReadDb;
-    const cap = this.capabilityRegistry.getCapability('todos');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/todos.db`;
-    if (!existsSync(dbPath)) return null;
-    this.todosReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.todosReadDb;
-  }
-
-  private getTodosServiceFacade(): TodoService | null {
-    if (this.todosServiceCache) return this.todosServiceCache;
-    const db = this.getTodosReadDb();
-    if (!db) return null;
-    this.todosServiceCache = new TodoService(db as unknown as CapabilityContext['appDb']);
-    return this.todosServiceCache;
-  }
-
-  private getTodosSearchFacade(): TodoSearchService | null {
-    if (this.todosSearchCache) return this.todosSearchCache;
-    const db = this.getTodosReadDb();
-    if (!db) return null;
-    this.todosSearchCache = new TodoSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.todosSearchCache;
-  }
-
   listTodoAccounts(): TodoAccountRecord[] {
-    return this.getTodosServiceFacade()?.listAccounts() ?? [];
+    return this.todosFacade.getService()?.listAccounts() ?? [];
   }
 
   listTodos(accountId: string, options?: { status?: string | undefined; priority?: number | undefined; projectName?: string | undefined; limit?: number | undefined }): TodoItemRecord[] {
-    const svc = this.getTodosServiceFacade();
+    const svc = this.todosFacade.getService();
     if (!svc) return [];
     this.requireTodoAccountForOperation(svc, accountId, 'todo_list');
     return svc.listItems(accountId, options);
   }
 
   getTodo(id: string): TodoItemRecord | null {
-    const svc = this.getTodosServiceFacade();
+    const svc = this.todosFacade.getService();
     if (!svc) return null;
     const todo = svc.getItem(id);
     if (!todo) return null;
@@ -6359,15 +5409,15 @@ export class PopeyeRuntimeService {
   }
 
   searchTodos(query: TodoSearchQuery): { query: string; results: TodoSearchResult[] } {
-    const svc = this.getTodosServiceFacade();
+    const svc = this.todosFacade.getService();
     if (query.accountId && svc) {
       this.requireTodoAccountForOperation(svc, query.accountId, 'todo_search');
     }
-    return this.getTodosSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+    return this.todosFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getTodoDigest(accountId: string): TodoDigestRecord | null {
-    const svc = this.getTodosServiceFacade();
+    const svc = this.todosFacade.getService();
     if (!svc) return null;
     this.requireTodoAccountForOperation(svc, accountId, 'todo_digest_read');
     return svc.getLatestDigest(accountId);
@@ -6446,12 +5496,7 @@ export class PopeyeRuntimeService {
           lagSummary: 'Awaiting first sync',
         },
       });
-      if (this.todosReadDb) {
-        this.todosReadDb.close();
-        this.todosReadDb = null;
-        this.todosServiceCache = null;
-        this.todosSearchCache = null;
-      }
+      this.todosFacade.invalidate();
       return { connectionId: connection.id, account };
     } finally {
       writeDb.close();
@@ -6501,12 +5546,7 @@ export class PopeyeRuntimeService {
       if (input.projectName !== undefined) data.projectName = input.projectName;
       const result = svc.createItem(input.accountId, data);
 
-      if (this.todosReadDb) {
-        this.todosReadDb.close();
-        this.todosReadDb = null;
-        this.todosServiceCache = null;
-        this.todosSearchCache = null;
-      }
+      this.todosFacade.invalidate();
 
       return result;
     } finally {
@@ -6530,12 +5570,7 @@ export class PopeyeRuntimeService {
       svc.completeItem(id);
       const result = svc.getItem(id);
 
-      if (this.todosReadDb) {
-        this.todosReadDb.close();
-        this.todosReadDb = null;
-        this.todosServiceCache = null;
-        this.todosSearchCache = null;
-      }
+      this.todosFacade.invalidate();
 
       return result;
     } finally {
@@ -6555,7 +5590,7 @@ export class PopeyeRuntimeService {
       if (!existing) return null;
       this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reprioritize');
       const result = svc.reprioritizeItem(todoId, priority);
-      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      this.todosFacade.invalidate();
       return result;
     } finally { writeDb.close(); }
   }
@@ -6572,7 +5607,7 @@ export class PopeyeRuntimeService {
       if (!existing) return null;
       this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reschedule');
       const result = svc.rescheduleItem(todoId, dueDate, dueTime);
-      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      this.todosFacade.invalidate();
       return result;
     } finally { writeDb.close(); }
   }
@@ -6589,13 +5624,13 @@ export class PopeyeRuntimeService {
       if (!existing) return null;
       this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_move');
       const result = svc.moveItem(todoId, projectName);
-      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      this.todosFacade.invalidate();
       return result;
     } finally { writeDb.close(); }
   }
 
   listTodoProjects(accountId: string): TodoProjectRecord[] {
-    const svc = this.getTodosServiceFacade();
+    const svc = this.todosFacade.getService();
     if (!svc) return [];
     this.requireTodoAccountForOperation(svc, accountId, 'todo_projects_list');
     return svc.listProjects(accountId);
@@ -6627,7 +5662,7 @@ export class PopeyeRuntimeService {
       const syncService = new TodoSyncService(svc, ctx);
       const syncResult = await syncService.syncAccount(account, adapter);
 
-      if (this.todosReadDb) { this.todosReadDb.close(); this.todosReadDb = null; this.todosServiceCache = null; this.todosSearchCache = null; }
+      this.todosFacade.invalidate();
 
       return {
         accountId,
@@ -6673,12 +5708,7 @@ export class PopeyeRuntimeService {
 
       const result = await syncService.syncAccount(account, adapter);
 
-      if (this.todosReadDb) {
-        this.todosReadDb.close();
-        this.todosReadDb = null;
-        this.todosServiceCache = null;
-        this.todosSearchCache = null;
-      }
+      this.todosFacade.invalidate();
 
       return result;
     } finally {
@@ -6712,12 +5742,7 @@ export class PopeyeRuntimeService {
         lastDigest = digestService.generateDigest(account);
       }
 
-      if (this.todosReadDb) {
-        this.todosReadDb.close();
-        this.todosReadDb = null;
-        this.todosServiceCache = null;
-        this.todosSearchCache = null;
-      }
+      this.todosFacade.invalidate();
 
       return lastDigest;
     } finally {
@@ -6727,45 +5752,16 @@ export class PopeyeRuntimeService {
 
   // --- People facade ---
 
-  private peopleReadDb: BetterSqlite3.Database | null = null;
-  private peopleServiceCache: PeopleService | null = null;
-
-  private getPeopleReadDb(): BetterSqlite3.Database | null {
-    if (this.peopleReadDb) return this.peopleReadDb;
-    const cap = this.capabilityRegistry.getCapability('people');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/people.db`;
-    if (!existsSync(dbPath)) return null;
-    this.peopleReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.peopleReadDb;
-  }
-
-  private getPeopleServiceFacade(): PeopleService | null {
-    if (this.peopleServiceCache) return this.peopleServiceCache;
-    const db = this.getPeopleReadDb();
-    if (!db) return null;
-    this.peopleServiceCache = new PeopleService(db as unknown as CapabilityContext['appDb']);
-    return this.peopleServiceCache;
-  }
-
-  private invalidatePeopleFacade(): void {
-    if (this.peopleReadDb) {
-      this.peopleReadDb.close();
-      this.peopleReadDb = null;
-    }
-    this.peopleServiceCache = null;
-  }
-
   listPeople(): PersonListItem[] {
-    return this.getPeopleServiceFacade()?.listPeople() ?? [];
+    return this.peopleFacade.getService()?.listPeople() ?? [];
   }
 
   getPerson(id: string): PersonRecord | null {
-    return this.getPeopleServiceFacade()?.getPerson(id) ?? null;
+    return this.peopleFacade.getService()?.getPerson(id) ?? null;
   }
 
   searchPeople(query: PersonSearchQuery): { query: string; results: PersonSearchResult[] } {
-    const svc = this.getPeopleServiceFacade();
+    const svc = this.peopleFacade.getService();
     if (!svc) {
       return { query: query.query, results: [] };
     }
@@ -6780,7 +5776,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
       const updated = svc.updatePerson(id, input);
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
       return updated;
     } finally {
       writeDb.close();
@@ -6795,7 +5791,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
       const merged = svc.mergePeople(input);
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
       this.recordSecurityAudit({
         code: 'people_merged',
         severity: 'info',
@@ -6822,7 +5818,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
       const split = svc.splitPerson(personId, input);
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
       this.recordSecurityAudit({
         code: 'people_split',
         severity: 'info',
@@ -6849,7 +5845,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
       const updated = svc.attachIdentity(input);
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
       return updated;
     } finally {
       writeDb.close();
@@ -6864,7 +5860,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new PeopleService(writeDb as unknown as CapabilityContext['appDb']);
       const detached = svc.detachIdentity(identityId, input.requestedBy);
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
       return detached;
     } finally {
       writeDb.close();
@@ -6872,15 +5868,15 @@ export class PopeyeRuntimeService {
   }
 
   listPersonMergeEvents(personId?: string): PersonMergeEventRecord[] {
-    return this.getPeopleServiceFacade()?.listMergeEvents(personId) ?? [];
+    return this.peopleFacade.getService()?.listMergeEvents(personId) ?? [];
   }
 
   getPersonMergeSuggestions(): PersonMergeSuggestion[] {
-    return this.getPeopleServiceFacade()?.getMergeSuggestions() ?? [];
+    return this.peopleFacade.getService()?.getMergeSuggestions() ?? [];
   }
 
   getPersonActivityRollups(personId: string): PersonActivityRollup[] {
-    return this.getPeopleServiceFacade()?.getActivityRollups(personId) ?? [];
+    return this.peopleFacade.getService()?.getActivityRollups(personId) ?? [];
   }
 
   private refreshPeopleProjectionForEmailAccount(service: EmailService, accountId: string): void {
@@ -7019,7 +6015,7 @@ export class PopeyeRuntimeService {
       for (const seed of deduped.values()) {
         svc.projectSeed(seed);
       }
-      this.invalidatePeopleFacade();
+      this.peopleFacade.invalidate();
     } finally {
       writeDb.close();
     }
@@ -7027,67 +6023,28 @@ export class PopeyeRuntimeService {
 
   // --- Finance facade ---
 
-  private financeReadDb: BetterSqlite3.Database | null = null;
-  private financeServiceCache: FinanceService | null = null;
-  private financeSearchCache: FinanceSearchService | null = null;
-
-  private getFinanceReadDb(): BetterSqlite3.Database | null {
-    if (this.financeReadDb) return this.financeReadDb;
-    const cap = this.capabilityRegistry.getCapability('finance');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
-    if (!existsSync(dbPath)) return null;
-    this.financeReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.financeReadDb;
-  }
-
-  private getFinanceServiceFacade(): FinanceService | null {
-    if (this.financeServiceCache) return this.financeServiceCache;
-    const db = this.getFinanceReadDb();
-    if (!db) return null;
-    this.financeServiceCache = new FinanceService(db as unknown as CapabilityContext['appDb']);
-    return this.financeServiceCache;
-  }
-
-  private getFinanceSearchFacade(): FinanceSearchService | null {
-    if (this.financeSearchCache) return this.financeSearchCache;
-    const db = this.getFinanceReadDb();
-    if (!db) return null;
-    this.financeSearchCache = new FinanceSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.financeSearchCache;
-  }
-
   listFinanceImports(): FinanceImportRecord[] {
-    return this.getFinanceServiceFacade()?.listImports() ?? [];
+    return this.financeFacade.getService()?.listImports() ?? [];
   }
 
   getFinanceImport(id: string): FinanceImportRecord | null {
-    return this.getFinanceServiceFacade()?.getImport(id) ?? null;
+    return this.financeFacade.getService()?.getImport(id) ?? null;
   }
 
   listFinanceTransactions(importId?: string, options?: { dateFrom?: string; dateTo?: string; category?: string; limit?: number }): FinanceTransactionRecord[] {
-    return this.getFinanceServiceFacade()?.listTransactions(importId, options) ?? [];
+    return this.financeFacade.getService()?.listTransactions(importId, options) ?? [];
   }
 
   listFinanceDocuments(importId?: string): FinanceDocumentRecord[] {
-    return this.getFinanceServiceFacade()?.listDocuments(importId) ?? [];
+    return this.financeFacade.getService()?.listDocuments(importId) ?? [];
   }
 
   searchFinance(query: FinanceSearchQuery): { query: string; results: FinanceSearchResult[] } {
-    return this.getFinanceSearchFacade()?.search(query) ?? { query: query.query, results: [] };
+    return this.financeFacade.getSearch()?.search(query) ?? { query: query.query, results: [] };
   }
 
   getFinanceDigest(period?: string): FinanceDigestRecord | null {
-    return this.getFinanceServiceFacade()?.getDigest(period) ?? null;
-  }
-
-  private invalidateFinanceFacade(): void {
-    if (this.financeReadDb) {
-      this.financeReadDb.close();
-      this.financeReadDb = null;
-    }
-    this.financeServiceCache = null;
-    this.financeSearchCache = null;
+    return this.financeFacade.getService()?.getDigest(period) ?? null;
   }
 
   createFinanceImport(data: { vaultId: string; importType: FinanceImportRecord['importType']; fileName: string }): FinanceImportRecord {
@@ -7098,7 +6055,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.createImport(data);
-      this.invalidateFinanceFacade();
+      this.financeFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7123,7 +6080,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.insertTransaction(data);
-      this.invalidateFinanceFacade();
+      this.financeFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7151,7 +6108,7 @@ export class PopeyeRuntimeService {
       const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
       const records = data.transactions.map((tx) => ({ ...tx, importId: data.importId }));
       const result = svc.insertTransactionBatch(records);
-      this.invalidateFinanceFacade();
+      this.financeFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7172,7 +6129,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.insertDocument(data);
-      this.invalidateFinanceFacade();
+      this.financeFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7187,7 +6144,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
       svc.updateImportStatus(id, status, recordCount);
-      this.invalidateFinanceFacade();
+      this.financeFacade.invalidate();
     } finally {
       writeDb.close();
     }
@@ -7195,71 +6152,32 @@ export class PopeyeRuntimeService {
 
   // --- Medical facade ---
 
-  private medicalReadDb: BetterSqlite3.Database | null = null;
-  private medicalServiceCache: MedicalService | null = null;
-  private medicalSearchCache: MedicalSearchService | null = null;
-
-  private getMedicalReadDb(): BetterSqlite3.Database | null {
-    if (this.medicalReadDb) return this.medicalReadDb;
-    const cap = this.capabilityRegistry.getCapability('medical');
-    if (!cap) return null;
-    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
-    if (!existsSync(dbPath)) return null;
-    this.medicalReadDb = new BetterSqlite3(dbPath, { readonly: true });
-    return this.medicalReadDb;
-  }
-
-  private getMedicalServiceFacade(): MedicalService | null {
-    if (this.medicalServiceCache) return this.medicalServiceCache;
-    const db = this.getMedicalReadDb();
-    if (!db) return null;
-    this.medicalServiceCache = new MedicalService(db as unknown as CapabilityContext['appDb']);
-    return this.medicalServiceCache;
-  }
-
-  private getMedicalSearchFacade(): MedicalSearchService | null {
-    if (this.medicalSearchCache) return this.medicalSearchCache;
-    const db = this.getMedicalReadDb();
-    if (!db) return null;
-    this.medicalSearchCache = new MedicalSearchService(db as unknown as CapabilityContext['appDb']);
-    return this.medicalSearchCache;
-  }
-
   listMedicalImports(): MedicalImportRecord[] {
-    return this.getMedicalServiceFacade()?.listImports() ?? [];
+    return this.medicalFacade.getService()?.listImports() ?? [];
   }
 
   getMedicalImport(id: string): MedicalImportRecord | null {
-    return this.getMedicalServiceFacade()?.getImport(id) ?? null;
+    return this.medicalFacade.getService()?.getImport(id) ?? null;
   }
 
   listMedicalAppointments(importId?: string, options?: { limit?: number }): MedicalAppointmentRecord[] {
-    return this.getMedicalServiceFacade()?.listAppointments(importId, options) ?? [];
+    return this.medicalFacade.getService()?.listAppointments(importId, options) ?? [];
   }
 
   listMedicalMedications(importId?: string): MedicalMedicationRecord[] {
-    return this.getMedicalServiceFacade()?.listMedications(importId) ?? [];
+    return this.medicalFacade.getService()?.listMedications(importId) ?? [];
   }
 
   listMedicalDocuments(importId?: string): MedicalDocumentRecord[] {
-    return this.getMedicalServiceFacade()?.listDocuments(importId) ?? [];
+    return this.medicalFacade.getService()?.listDocuments(importId) ?? [];
   }
 
   searchMedical(query: string, limit?: number): { query: string; results: MedicalSearchResult[] } {
-    return this.getMedicalSearchFacade()?.search(query, limit) ?? { query, results: [] };
+    return this.medicalFacade.getSearch()?.search(query, limit) ?? { query, results: [] };
   }
 
   getMedicalDigest(period?: string): MedicalDigestRecord | null {
-    return this.getMedicalServiceFacade()?.getDigest(period) ?? null;
-  }
-
-  private invalidateMedicalFacade(): void {
-    if (this.medicalReadDb) {
-      this.medicalReadDb.close();
-      this.medicalReadDb = null;
-    }
-    this.medicalServiceCache = null;
-    this.medicalSearchCache = null;
+    return this.medicalFacade.getService()?.getDigest(period) ?? null;
   }
 
   createMedicalImport(data: { vaultId: string; importType: MedicalImportRecord['importType']; fileName: string }): MedicalImportRecord {
@@ -7270,7 +6188,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.createImport(data);
-      this.invalidateMedicalFacade();
+      this.medicalFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7292,7 +6210,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.insertAppointment(data);
-      this.invalidateMedicalFacade();
+      this.medicalFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7316,7 +6234,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.insertMedication(data);
-      this.invalidateMedicalFacade();
+      this.medicalFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7337,7 +6255,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
       const result = svc.insertDocument(data);
-      this.invalidateMedicalFacade();
+      this.medicalFacade.invalidate();
       return result;
     } finally {
       writeDb.close();
@@ -7352,7 +6270,7 @@ export class PopeyeRuntimeService {
     try {
       const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
       svc.updateImportStatus(id, status);
-      this.invalidateMedicalFacade();
+      this.medicalFacade.invalidate();
     } finally {
       writeDb.close();
     }

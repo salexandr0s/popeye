@@ -7,7 +7,7 @@
   },
   "references": [
     {
-      "path": "../engine-pi/tsconfig.build.json"
+      "path": "../contracts/tsconfig.build.json"
     }
   ]
 }

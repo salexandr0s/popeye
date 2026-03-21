@@ -26,13 +26,16 @@
       "@popeye/observability": ["packages/observability/src/index.ts"],
       "@popeye/control-api": ["packages/control-api/src/index.ts"],
       "@popeye/telegram": ["packages/telegram/src/index.ts"],
-      "@popeye/testkit": ["packages/testkit/src/index.ts"],
       "@popeye/api-client": ["packages/api-client/src/index.ts"],
+      "@popeye/cap-common": ["packages/cap-common/src/index.ts"],
       "@popeye/cap-files": ["packages/cap-files/src/index.ts"],
       "@popeye/cap-email": ["packages/cap-email/src/index.ts"],
       "@popeye/cap-github": ["packages/cap-github/src/index.ts"],
       "@popeye/cap-calendar": ["packages/cap-calendar/src/index.ts"],
-      "@popeye/cap-todos": ["packages/cap-todos/src/index.ts"]
+      "@popeye/cap-todos": ["packages/cap-todos/src/index.ts"],
+      "@popeye/cap-people": ["packages/cap-people/src/index.ts"],
+      "@popeye/cap-finance": ["packages/cap-finance/src/index.ts"],
+      "@popeye/cap-medical": ["packages/cap-medical/src/index.ts"]
     },
     "types": ["node", "vitest/globals"]
   },
