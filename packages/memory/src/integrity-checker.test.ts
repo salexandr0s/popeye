@@ -24,7 +24,8 @@ function createTestDb(): Database.Database {
       source_run_id TEXT,
       source_timestamp TEXT,
       created_at TEXT NOT NULL,
-      durable INTEGER NOT NULL DEFAULT 0
+      durable INTEGER NOT NULL DEFAULT 0,
+      domain TEXT DEFAULT 'general'
     );
     CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
     CREATE TABLE memory_events (

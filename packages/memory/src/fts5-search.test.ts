@@ -139,7 +139,7 @@ describe('fts5-search', () => {
     db.close();
     const brokenDb = new Database(':memory:');
     // No FTS table exists — query will throw
-    brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, workspace_id TEXT, project_id TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT, durable INTEGER NOT NULL DEFAULT 0)');
+    brokenDb.exec('CREATE TABLE memories (id TEXT, description TEXT, content TEXT, confidence REAL, scope TEXT, workspace_id TEXT, project_id TEXT, memory_type TEXT, source_type TEXT, created_at TEXT, last_reinforced_at TEXT, archived_at TEXT, classification TEXT, durable INTEGER NOT NULL DEFAULT 0, domain TEXT DEFAULT \'general\')');
     brokenDb.exec('CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content)');
     // Insert with invalid MATCH expression won't reach our try/catch since buildFts5MatchExpression sanitizes.
     // Drop the FTS virtual table to force a runtime error on the FTS path;
@@ -197,7 +197,8 @@ describe('stable memory_id FTS linkage', () => {
           last_reinforced_at TEXT,
           archived_at TEXT,
           created_at TEXT NOT NULL,
-          durable INTEGER NOT NULL DEFAULT 0
+          durable INTEGER NOT NULL DEFAULT 0,
+          domain TEXT DEFAULT 'general'
         );
         CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
       `);
