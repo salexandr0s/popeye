@@ -41,11 +41,11 @@ if (cleanedTempDirs > 0) {
 }
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
-const cspNonce = randomBytes(16).toString('base64');
+const generateCspNonce = () => randomBytes(16).toString('base64');
 const webBootstrap = new WebBootstrapNonceStore();
 const app = await createControlApi({
   runtime,
-  cspNonce,
+  generateCspNonce,
   validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
   useSecureCookies: config.security.useSecureCookies,
   logger: log.child({}),
@@ -61,12 +61,12 @@ if (existsSync(webInspectorDist)) {
     resolve(webInspectorDist, 'index.html'),
     'utf8',
   );
-  const renderWebInspector = () => rawHtml
-    .replaceAll('__POPEYE_CSP_NONCE__', cspNonce)
+  const renderWebInspector = (nonce: string) => rawHtml
+    .replaceAll('__POPEYE_CSP_NONCE__', nonce)
     .replaceAll('__POPEYE_BOOTSTRAP_NONCE__', webBootstrap.issue());
 
-  app.get('/', async (_request, reply) => (
-    reply.code(200).type('text/html').send(renderWebInspector())
+  app.get('/', async (request, reply) => (
+    reply.code(200).type('text/html').send(renderWebInspector(request.popeyeCspNonce ?? generateCspNonce()))
   ));
 
   await app.register(fastifyStatic, {
@@ -81,7 +81,7 @@ if (existsSync(webInspectorDist)) {
     if (request.url.startsWith('/v1/')) {
       return reply.code(404).send({ error: 'not_found' });
     }
-    return reply.code(200).type('text/html').send(renderWebInspector());
+    return reply.code(200).type('text/html').send(renderWebInspector(request.popeyeCspNonce ?? generateCspNonce()));
   });
 }
 

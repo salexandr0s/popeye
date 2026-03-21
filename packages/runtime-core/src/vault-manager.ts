@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 import type { DomainKind, RuntimePaths, VaultRecord, VaultStatus } from '@popeye/contracts';
-import { nowIso } from '@popeye/contracts';
+import { DomainKindSchema, nowIso } from '@popeye/contracts';
 import { keychainGet } from './keychain.js';
 
 const SQL_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -361,6 +361,8 @@ export class VaultManager {
         continue;
       }
       for (const domain of domainDirs) {
+        const parsed = DomainKindSchema.safeParse(domain);
+        if (!parsed.success) continue;
         const domainPath = join(baseDir, domain);
         let files: string[];
         try {
@@ -374,7 +376,7 @@ export class VaultManager {
           const id = randomUUID();
           this.registry.set(id, {
             id,
-            domain: domain as DomainKind,
+            domain: parsed.data,
             kind,
             dbPath,
             encrypted: false,

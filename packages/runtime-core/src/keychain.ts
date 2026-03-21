@@ -12,6 +12,14 @@ export interface KeychainResult {
   error?: string;
 }
 
+const SAFE_KEY_RE = /^[a-zA-Z0-9._-]+$/;
+
+function assertSafeKeychainKey(key: string): void {
+  if (!SAFE_KEY_RE.test(key)) {
+    throw new Error(`Unsafe keychain key: ${key}`);
+  }
+}
+
 export function keychainServiceName(key: string): string {
   return `${KEYCHAIN_SERVICE_PREFIX}${key}`;
 }
@@ -25,6 +33,7 @@ export function isKeychainAvailable(): boolean {
 }
 
 export function keychainGet(key: string): KeychainResult {
+  assertSafeKeychainKey(key);
   if (process.platform !== 'darwin') {
     return { ok: false, error: 'keychain is only available on macOS' };
   }
@@ -47,6 +56,7 @@ export function keychainGet(key: string): KeychainResult {
  * permissions and deleted immediately after use.
  */
 export function keychainSet(key: string, value: string): KeychainResult {
+  assertSafeKeychainKey(key);
   if (process.platform !== 'darwin') {
     return { ok: false, error: 'keychain is only available on macOS' };
   }
@@ -74,6 +84,7 @@ export function keychainSet(key: string, value: string): KeychainResult {
 }
 
 export function keychainDelete(key: string): KeychainResult {
+  assertSafeKeychainKey(key);
   if (process.platform !== 'darwin') {
     return { ok: false, error: 'keychain is only available on macOS' };
   }
@@ -88,5 +99,6 @@ export function keychainDelete(key: string): KeychainResult {
 }
 
 export function keychainHas(key: string): boolean {
+  assertSafeKeychainKey(key);
   return keychainGet(key).ok;
 }

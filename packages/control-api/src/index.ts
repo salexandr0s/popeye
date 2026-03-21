@@ -86,7 +86,10 @@ import type { PopeyeLogger } from '@popeye/observability';
 
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
+  /** @deprecated Use generateCspNonce instead. Static nonce reused for all responses. */
   cspNonce?: string;
+  /** Generate a fresh CSP nonce per request. Preferred over static cspNonce. */
+  generateCspNonce?: () => string;
   validateAuthExchangeNonce?: (nonce: string) => 'accepted' | 'expired' | 'invalid';
   /** When true, emitted Set-Cookie headers include the Secure flag. */
   useSecureCookies?: boolean;
@@ -106,6 +109,7 @@ type RequestAuthContext =
 declare module 'fastify' {
   interface FastifyRequest {
     popeyeAuthContext?: RequestAuthContext;
+    popeyeCspNonce?: string;
   }
 }
 
@@ -520,16 +524,26 @@ export async function createControlApi(
   });
   await app.register(sensible);
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
-  await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: dependencies.cspNonce ? ["'self'", `'nonce-${dependencies.cspNonce}'`] : ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        connectSrc: ["'self'"],
-      },
-    },
-  });
+  // POP-AUD-006: CSP nonce generated per request instead of reused across all responses.
+  // Helmet handles all security headers except CSP, which we set manually per-request.
+  const cspNonceGenerator = dependencies.generateCspNonce
+    ?? (dependencies.cspNonce ? () => dependencies.cspNonce! : undefined);
+  await app.register(helmet, { contentSecurityPolicy: false });
+
+  if (cspNonceGenerator) {
+    app.addHook('onRequest', async (request) => {
+      request.popeyeCspNonce = cspNonceGenerator();
+    });
+    app.addHook('onSend', async (request, reply) => {
+      const nonce = request.popeyeCspNonce;
+      if (nonce) {
+        reply.header(
+          'content-security-policy',
+          `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'`,
+        );
+      }
+    });
+  }
 
   const log = dependencies.logger ?? null;
 
@@ -538,6 +552,9 @@ export async function createControlApi(
     if (!path.startsWith('/v1/')) {
       return undefined;
     }
+    // POP-AUD-003: OAuth callback bypasses auth by design — OAuth redirects carry
+    // state in query params, not auth headers. Protected by: (1) OAuth state parameter
+    // validation in the handler, (2) per-route rate limit (10 req/min), (3) loopback-only binding.
     if (path === '/v1/connections/oauth/callback') {
       return undefined;
     }
@@ -1321,7 +1338,7 @@ export async function createControlApi(
     return session;
   });
 
-  app.get('/v1/connections/oauth/callback', async (request, reply) => {
+  app.get('/v1/connections/oauth/callback', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const query = z.object({
       code: z.string().optional(),
       state: z.string().optional(),

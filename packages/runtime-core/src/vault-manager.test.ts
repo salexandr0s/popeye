@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -423,5 +423,34 @@ describe('VaultHandle SQL identifier validation', () => {
     expect(() => handle.update('test_items', { my_value: 'updated' }, '_id = ?', ['1'])).not.toThrow();
 
     mgr.closeVault(record.id);
+  });
+});
+
+describe('scanExistingVaults DomainKind validation', () => {
+  it('skips directories with invalid domain names', () => {
+    const root = mkdtempSync(join(tmpdir(), 'popeye-vault-scan-'));
+    chmodSync(root, 0o700);
+    const paths = makePaths(root);
+
+    // Create a valid domain directory with a vault
+    const validDir = join(paths.capabilityStoresDir, 'general');
+    mkdirSync(validDir, { recursive: true });
+    const validDb = join(validDir, 'test.db');
+    writeFileSync(validDb, '');
+
+    // Create an invalid domain directory with a vault
+    const invalidDir = join(paths.capabilityStoresDir, 'not-a-domain');
+    mkdirSync(invalidDir, { recursive: true });
+    const invalidDb = join(invalidDir, 'bad.db');
+    writeFileSync(invalidDb, '');
+
+    const db = new Database(':memory:');
+    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const mgr = new VaultManager(db, log, paths, () => {});
+
+    const vaults = mgr.listVaults();
+    // Only the valid 'general' domain should be registered
+    expect(vaults.some((v) => v.domain === 'general')).toBe(true);
+    expect(vaults.some((v) => (v.domain as string) === 'not-a-domain')).toBe(false);
   });
 });

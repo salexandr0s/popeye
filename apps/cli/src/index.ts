@@ -4,8 +4,8 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import type { PopeyeApiClient } from '@popeye/api-client';
-import type { AppConfig, ApprovalRecord, AutomationGrantRecord, DomainKind, StandingApprovalRecord } from '@popeye/contracts';
+import { type PopeyeApiClient, ApiError } from '@popeye/api-client';
+import type { AppConfig, DomainKind } from '@popeye/contracts';
 import { z } from 'zod';
 import { tryConnectDaemon } from './api-client.js';
 import {
@@ -27,9 +27,9 @@ import {
   unloadLaunchAgent,
   verifyBackup,
 } from '@popeye/runtime-core';
-import { formatApproval, formatAutomationGrant, formatEngineCapabilities, formatEnvelope, formatProfile, formatRun, formatSecurityPolicy, formatStandingApproval, formatVault, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
-import { ApiError } from '@popeye/api-client';
-import { renderReceipt } from '@popeye/receipts';
+import { formatEngineCapabilities, formatProfile, formatSecurityPolicy, formatVault, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
+import { handleApprovals, handleStandingApprovals, handleAutomationGrants } from './commands/approvals.js';
+import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask } from './commands/runs.js';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -449,29 +449,6 @@ function readRoleFlag(): 'operator' | 'service' | 'readonly' {
   );
 }
 
-function readFlagValue(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag);
-  return index !== -1 ? process.argv[index + 1] : undefined;
-}
-
-function requireFlag(flag: string): string {
-  const value = readFlagValue(flag);
-  if (!value) {
-    console.error(`Missing required flag: ${flag}`);
-    const subs = command ? COMMANDS[command] : undefined;
-    const sub = subs && subcommand ? subs[subcommand] : undefined;
-    if (sub) console.error(`Usage: ${sub.usage}`);
-    process.exit(1);
-  }
-  return value;
-}
-
-function readCsvFlag(flag: string): string[] | undefined {
-  const value = readFlagValue(flag);
-  if (!value) return undefined;
-  return value.split(',').map((entry) => entry.trim()).filter(Boolean);
-}
-
 async function main(): Promise<void> {
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile, readRoleFlag()), null, 2));
@@ -663,261 +640,37 @@ async function main(): Promise<void> {
     console.info(JSON.stringify({ restored: true, path: resolve(arg1) }, null, 2));
     return;
   }
-  if (command === 'task' && subcommand === 'run') {
+  if (command === 'task') {
     const client = await requireDaemonClient(config);
-    const profileIdx = process.argv.indexOf('--profile');
-    const profileId = profileIdx !== -1 ? process.argv[profileIdx + 1] ?? 'default' : 'default';
-    const taskArgs = positionalArgs.slice(4);
-    const nonFlagTaskArgs = taskArgs.filter((value, index) => value !== '--profile' && taskArgs[index - 1] !== '--profile');
-    const title = nonFlagTaskArgs[0] ?? 'cli-task';
-    const prompt = nonFlagTaskArgs[1] ?? nonFlagTaskArgs[0] ?? 'hello from pop';
-    const result = await client.createTask({
-      workspaceId: 'default',
-      projectId: null,
-      profileId,
-      title,
-      prompt,
-      source: 'manual',
-      autoEnqueue: true,
-    });
-    if (jsonFlag) {
-      console.info(JSON.stringify(result, null, 2));
-    } else {
-      const lines = [
-        `Task: ${result.task.title} (${result.task.id})`,
-        `  Status: ${result.task.status}`,
-        `  Profile: ${result.task.profileId}`,
-      ];
-      if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
-      if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);
-      console.info(lines.join('\n'));
-    }
-    return;
+    return handleTask({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'run' && subcommand === 'show') {
-    requireArg(arg1, 'runId');
-  }
-  if (command === 'run' && subcommand === 'show' && arg1) {
-    try {
-      const client = await requireDaemonClient(config);
-      const run = await client.getRun(arg1);
-      const envelope = await client.getRunEnvelope(arg1).catch((error: unknown) => {
-        if (error instanceof ApiError && error.statusCode === 404) {
-          return null;
-        }
-        throw error;
-      });
-      if (jsonFlag) {
-        console.info(JSON.stringify(run, null, 2));
-      } else {
-        console.info(formatRun(run, envelope));
-      }
-    } catch (error) {
-      if (error instanceof ApiError && error.statusCode === 404) {
-        console.info(`Run not found: ${arg1}`);
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-  if (command === 'run' && subcommand === 'envelope') {
-    requireArg(arg1, 'runId');
-  }
-  if (command === 'run' && subcommand === 'envelope' && arg1) {
-    try {
-      const client = await requireDaemonClient(config);
-      const envelope = await client.getRunEnvelope(arg1);
-      if (jsonFlag) {
-        console.info(JSON.stringify(envelope, null, 2));
-      } else {
-        console.info(formatEnvelope(envelope));
-      }
-    } catch (error) {
-      if (error instanceof ApiError && error.statusCode === 404) {
-        console.info(`Execution envelope not found for run: ${arg1}`);
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-  if (command === 'receipt' && subcommand === 'show') {
-    requireArg(arg1, 'receiptId');
-  }
-  if (command === 'receipt' && subcommand === 'show' && arg1) {
-    try {
-      const client = await requireDaemonClient(config);
-      const receipt = await client.getReceipt(arg1);
-      if (jsonFlag) {
-        console.info(JSON.stringify(receipt, null, 2));
-      } else {
-        console.info(renderReceipt(receipt));
-      }
-    } catch (error) {
-      if (error instanceof ApiError && error.statusCode === 404) {
-        console.info(`Receipt not found: ${arg1}`);
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-
-  if (command === 'runs' && subcommand === 'tail') {
+  if (command === 'run') {
     const client = await requireDaemonClient(config);
-    console.info(JSON.stringify((await client.listRuns()).slice(0, 20), null, 2));
-    return;
+    return handleRun({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'runs' && subcommand === 'failures') {
+  if (command === 'receipt') {
     const client = await requireDaemonClient(config);
-    console.info(
-      JSON.stringify(
-        await client.listRuns({ state: ['failed_retryable', 'failed_final', 'abandoned'] }),
-        null,
-        2,
-      ),
-    );
-    return;
+    return handleReceipt({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'interventions' && subcommand === 'list') {
+  if (command === 'runs') {
     const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.listInterventions(), null, 2));
-    return;
+    return handleRuns({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'approvals' && subcommand === 'list') {
+  if (command === 'interventions') {
     const client = await requireDaemonClient(config);
-    const approvalFilters: { status?: string; domain?: string; scope?: string; actionKind?: string; runId?: string; resolvedBy?: string } = {};
-    const aStatus = readFlagValue('--status'); if (aStatus) approvalFilters.status = aStatus;
-    const aDomain = readFlagValue('--domain'); if (aDomain) approvalFilters.domain = aDomain;
-    const aScope = readFlagValue('--scope'); if (aScope) approvalFilters.scope = aScope;
-    const aKind = readFlagValue('--action-kind'); if (aKind) approvalFilters.actionKind = aKind;
-    const aRunId = readFlagValue('--run-id'); if (aRunId) approvalFilters.runId = aRunId;
-    const aResolvedBy = readFlagValue('--resolved-by'); if (aResolvedBy) approvalFilters.resolvedBy = aResolvedBy;
-    const approvals = await client.listApprovals(approvalFilters);
-    if (jsonFlag) {
-      console.info(JSON.stringify(approvals, null, 2));
-    } else if (approvals.length === 0) {
-      console.info('No approvals');
-    } else {
-      console.info(approvals.map(formatApproval).join('\n\n'));
-    }
-    return;
+    return handleInterventions({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'approvals' && subcommand === 'show') {
-    requireArg(arg1, 'approvalId');
-  }
-  if (command === 'approvals' && subcommand === 'show' && arg1) {
+  if (command === 'approvals') {
     const client = await requireDaemonClient(config);
-    const approval = await client.getApproval(arg1);
-    console.info(jsonFlag ? JSON.stringify(approval, null, 2) : formatApproval(approval));
-    return;
+    return handleApprovals({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'approvals' && (subcommand === 'approve' || subcommand === 'deny')) {
-    requireArg(arg1, 'approvalId');
-  }
-  if (command === 'approvals' && (subcommand === 'approve' || subcommand === 'deny') && arg1) {
+  if (command === 'standing-approvals') {
     const client = await requireDaemonClient(config);
-    const decisionReason = positionalArgs.slice(5).join(' ').trim() || undefined;
-    const approval = await client.resolveApproval(arg1, {
-      decision: subcommand === 'approve' ? 'approved' : 'denied',
-      ...(decisionReason ? { decisionReason } : {}),
-    });
-    console.info(jsonFlag ? JSON.stringify(approval, null, 2) : formatApproval(approval));
-    return;
+    return handleStandingApprovals({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'standing-approvals' && subcommand === 'list') {
+  if (command === 'automation-grants') {
     const client = await requireDaemonClient(config);
-    const saFilters: { status?: string; domain?: string; actionKind?: string } = {};
-    const saStatus = readFlagValue('--status'); if (saStatus) saFilters.status = saStatus;
-    const saDomain = readFlagValue('--domain'); if (saDomain) saFilters.domain = saDomain;
-    const saKind = readFlagValue('--action-kind'); if (saKind) saFilters.actionKind = saKind;
-    const records = await client.listStandingApprovals(saFilters);
-    if (jsonFlag) {
-      console.info(JSON.stringify(records, null, 2));
-    } else if (records.length === 0) {
-      console.info('No standing approvals');
-    } else {
-      console.info(records.map(formatStandingApproval).join('\n\n'));
-    }
-    return;
-  }
-  if (command === 'standing-approvals' && subcommand === 'create') {
-    const client = await requireDaemonClient(config);
-    const record = await client.createStandingApproval({
-      scope: requireFlag('--scope') as ApprovalRecord['scope'],
-      domain: requireFlag('--domain') as DomainKind,
-      actionKind: requireFlag('--action-kind') as StandingApprovalRecord['actionKind'],
-      resourceType: requireFlag('--resource-type'),
-      resourceScope: (readFlagValue('--resource-scope') ?? 'resource') as StandingApprovalRecord['resourceScope'],
-      resourceId: readFlagValue('--resource-id') ?? null,
-      requestedBy: readFlagValue('--requested-by') ?? null,
-      workspaceId: readFlagValue('--workspace-id') ?? null,
-      projectId: readFlagValue('--project-id') ?? null,
-      note: readFlagValue('--note') ?? '',
-      expiresAt: readFlagValue('--expires-at') ?? null,
-      createdBy: readFlagValue('--created-by') ?? 'cli:pop',
-    });
-    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatStandingApproval(record));
-    return;
-  }
-  if (command === 'standing-approvals' && subcommand === 'revoke') {
-    requireArg(arg1, 'standingApprovalId');
-  }
-  if (command === 'standing-approvals' && subcommand === 'revoke' && arg1) {
-    const client = await requireDaemonClient(config);
-    const record = await client.revokeStandingApproval(arg1, {
-      revokedBy: readFlagValue('--by') ?? 'cli:pop',
-    });
-    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatStandingApproval(record));
-    return;
-  }
-  if (command === 'automation-grants' && subcommand === 'list') {
-    const client = await requireDaemonClient(config);
-    const agFilters: { status?: string; domain?: string; actionKind?: string } = {};
-    const agStatus = readFlagValue('--status'); if (agStatus) agFilters.status = agStatus;
-    const agDomain = readFlagValue('--domain'); if (agDomain) agFilters.domain = agDomain;
-    const agKind = readFlagValue('--action-kind'); if (agKind) agFilters.actionKind = agKind;
-    const records = await client.listAutomationGrants(agFilters);
-    if (jsonFlag) {
-      console.info(JSON.stringify(records, null, 2));
-    } else if (records.length === 0) {
-      console.info('No automation grants');
-    } else {
-      console.info(records.map(formatAutomationGrant).join('\n\n'));
-    }
-    return;
-  }
-  if (command === 'automation-grants' && subcommand === 'create') {
-    const client = await requireDaemonClient(config);
-    const record = await client.createAutomationGrant({
-      scope: requireFlag('--scope') as ApprovalRecord['scope'],
-      domain: requireFlag('--domain') as DomainKind,
-      actionKind: requireFlag('--action-kind') as AutomationGrantRecord['actionKind'],
-      resourceType: requireFlag('--resource-type'),
-      resourceScope: (readFlagValue('--resource-scope') ?? 'resource') as AutomationGrantRecord['resourceScope'],
-      resourceId: readFlagValue('--resource-id') ?? null,
-      requestedBy: readFlagValue('--requested-by') ?? null,
-      workspaceId: readFlagValue('--workspace-id') ?? null,
-      projectId: readFlagValue('--project-id') ?? null,
-      taskSources: (readCsvFlag('--task-sources') ?? []) as AutomationGrantRecord['taskSources'],
-      note: readFlagValue('--note') ?? '',
-      expiresAt: readFlagValue('--expires-at') ?? null,
-      createdBy: readFlagValue('--created-by') ?? 'cli:pop',
-    });
-    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatAutomationGrant(record));
-    return;
-  }
-  if (command === 'automation-grants' && subcommand === 'revoke') {
-    requireArg(arg1, 'automationGrantId');
-  }
-  if (command === 'automation-grants' && subcommand === 'revoke' && arg1) {
-    const client = await requireDaemonClient(config);
-    const record = await client.revokeAutomationGrant(arg1, {
-      revokedBy: readFlagValue('--by') ?? 'cli:pop',
-    });
-    console.info(jsonFlag ? JSON.stringify(record, null, 2) : formatAutomationGrant(record));
-    return;
+    return handleAutomationGrants({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
   if (command === 'vaults' && subcommand === 'list') {
     const client = await requireDaemonClient(config);

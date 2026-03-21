@@ -193,6 +193,7 @@ import { ApprovalService } from './approval-service.js';
 import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
+import { ReceiptBuilder } from './receipt-builder.js';
 import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
@@ -274,33 +275,9 @@ import {
 } from './row-mappers.js';
 
 export { classifyFailureFromMessage, MessageIngressError };
+export { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError } from './errors.js';
+import { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError } from './errors.js';
 
-export class RuntimeNotFoundError extends Error {
-  readonly errorCode = 'not_found';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'RuntimeNotFoundError';
-  }
-}
-
-export class RuntimeConflictError extends Error {
-  readonly errorCode = 'conflict';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'RuntimeConflictError';
-  }
-}
-
-export class RuntimeValidationError extends Error {
-  readonly errorCode = 'invalid_input';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'RuntimeValidationError';
-  }
-}
 
 export interface RuntimeEvent {
   event: string;
@@ -373,6 +350,7 @@ export class PopeyeRuntimeService {
   private readonly actionPolicyEvaluator: ActionPolicyEvaluator;
   private readonly vaultManager: VaultManager;
   private readonly contextReleaseService: ContextReleaseService;
+  private readonly receiptBuilder: ReceiptBuilder;
   private readonly telegramDelivery: TelegramDeliveryService;
   private readonly capabilityRegistry: CapabilityRegistry;
   private capabilityInitPromise: Promise<void> | null = null;
@@ -474,6 +452,16 @@ export class PopeyeRuntimeService {
     this.actionPolicyEvaluator = new ActionPolicyEvaluator(config.approvalPolicy);
     this.vaultManager = new VaultManager(this.databases.app, this.log, this.databases.paths, auditCallback);
     this.contextReleaseService = new ContextReleaseService(this.databases.app, this.log, auditCallback);
+    this.receiptBuilder = new ReceiptBuilder({
+      db: this.databases.app,
+      listRunEvents: (runId) => this.listRunEvents(runId),
+      getRun: (runId) => this.getRun(runId),
+      getTask: (taskId) => this.getTask(taskId),
+      getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
+      summarizeRunReleases: (runId) => this.summarizeRunReleases(runId),
+      contextReleaseService: this.contextReleaseService,
+      approvalService: this.approvalService,
+    });
     this.telegramDelivery = new TelegramDeliveryService(
       this.databases.app,
       this.log,
