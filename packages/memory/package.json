@@ -8,7 +8,7 @@
   "dependencies": {
     "@popeye/contracts": "workspace:*",
     "@popeye/observability": "workspace:*",
-    "sqlite-vec": "0.1.7-alpha.2"
+    "sqlite-vec": "0.1.7"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json --pretty false",
