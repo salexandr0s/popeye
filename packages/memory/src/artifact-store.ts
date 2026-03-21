@@ -85,6 +85,7 @@ export function captureArtifact(db: Database.Database, input: CaptureArtifactInp
       content: existing.content,
       contentHash: existing.content_hash,
       metadataJson: existing.metadata_json ? JSON.parse(existing.metadata_json) as Record<string, unknown> : {},
+      domain: input.domain ?? 'general',
     };
   }
 
@@ -104,6 +105,7 @@ export function captureArtifact(db: Database.Database, input: CaptureArtifactInp
     content: input.content,
     contentHash,
     metadataJson: input.metadata ?? {},
+    domain: input.domain ?? 'general',
   };
 
   db.prepare(
