@@ -3,7 +3,6 @@ import { z } from 'zod';
 // --- File Root Permission ---
 
 export const FileRootPermissionSchema = z.enum(['read', 'index', 'index_and_derive']);
-export type FileRootPermission = z.infer<typeof FileRootPermissionSchema>;
 
 // --- File Root Record ---
 
@@ -104,18 +103,11 @@ export const FileIndexResultSchema = z.object({
 });
 export type FileIndexResult = z.infer<typeof FileIndexResultSchema>;
 
-// --- Write Posture ---
-
-export const FileWritePostureSchema = z.enum(['read_only', 'agent_owned', 'review_required']);
-export type FileWritePosture = z.infer<typeof FileWritePostureSchema>;
-
 // --- Write Intent ---
 
-export const FileWriteIntentStatusSchema = z.enum(['pending', 'applied', 'rejected']);
-export type FileWriteIntentStatus = z.infer<typeof FileWriteIntentStatusSchema>;
+const FileWriteIntentStatusSchema = z.enum(['pending', 'applied', 'rejected']);
 
-export const FileWriteIntentTypeSchema = z.enum(['create', 'update', 'delete']);
-export type FileWriteIntentType = z.infer<typeof FileWriteIntentTypeSchema>;
+const FileWriteIntentTypeSchema = z.enum(['create', 'update', 'delete']);
 
 export const FileWriteIntentRecordSchema = z.object({
   id: z.string(),

@@ -1,13 +1,10 @@
 import { z } from 'zod';
 
 export const EngineKindSchema = z.enum(['fake', 'pi']);
-export type EngineKind = z.infer<typeof EngineKindSchema>;
 
 export const EngineHostToolModeSchema = z.enum(['none', 'native', 'bridge', 'native_with_fallback']);
-export type EngineHostToolMode = z.infer<typeof EngineHostToolModeSchema>;
 
 export const EngineCancellationModeSchema = z.enum(['none', 'cooperative', 'rpc_abort', 'rpc_abort_with_signal_fallback']);
-export type EngineCancellationMode = z.infer<typeof EngineCancellationModeSchema>;
 
 export const EngineCapabilitiesSchema = z.object({
   engineKind: EngineKindSchema,

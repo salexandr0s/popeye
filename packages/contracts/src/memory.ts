@@ -24,7 +24,6 @@ export const RevisionStatusSchema = z.enum(['active', 'superseded']);
 export type RevisionStatus = z.infer<typeof RevisionStatusSchema>;
 
 export const EvidenceKindSchema = z.enum(['artifact', 'fact', 'synthesis']);
-export type EvidenceKind = z.infer<typeof EvidenceKindSchema>;
 
 export const MemorySourceTypeSchema = z.enum([
   'receipt',
@@ -74,15 +73,6 @@ export const MemoryNamespaceRecordSchema = z.object({
   updatedAt: z.string(),
 });
 export type MemoryNamespaceRecord = z.infer<typeof MemoryNamespaceRecordSchema>;
-
-export const MemoryTagRecordSchema = z.object({
-  id: z.string(),
-  ownerKind: EvidenceKindSchema,
-  ownerId: z.string(),
-  tag: z.string(),
-  createdAt: z.string(),
-});
-export type MemoryTagRecord = z.infer<typeof MemoryTagRecordSchema>;
 
 export const MemoryArtifactRecordSchema = z.object({
   id: z.string(),
@@ -262,32 +252,6 @@ export const RecallExplanationSchema = z.object({
 });
 export type RecallExplanation = z.infer<typeof RecallExplanationSchema>;
 
-export const MemoryEventRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  type: z.string(),
-  createdAt: z.string(),
-});
-export type MemoryEventRecord = z.infer<typeof MemoryEventRecordSchema>;
-
-export const MemorySourceRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  sourceType: z.string(),
-  sourceRef: z.string(),
-  createdAt: z.string(),
-});
-export type MemorySourceRecord = z.infer<typeof MemorySourceRecordSchema>;
-
-export const MemoryConsolidationRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  mergedIntoId: z.string(),
-  reason: z.string().default(''),
-  createdAt: z.string(),
-});
-export type MemoryConsolidationRecord = z.infer<typeof MemoryConsolidationRecordSchema>;
-
 export const MemoryAuditResponseSchema = z.object({
   totalMemories: z.number().int().nonnegative(),
   activeMemories: z.number().int().nonnegative(),
@@ -325,48 +289,3 @@ export const MemorySearchQuerySchema = z.object({
   consumerProfile: z.string().optional(),
 });
 export type MemorySearchQuery = z.infer<typeof MemorySearchQuerySchema>;
-
-export const BudgetFitResultSchema = z.object({
-  results: z.array(MemorySearchResultSchema),
-  totalTokensUsed: z.number().int().nonnegative(),
-  totalTokensBudget: z.number().int().positive(),
-  truncatedCount: z.number().int().nonnegative(),
-  droppedCount: z.number().int().nonnegative(),
-  expansionPolicy: z.object({
-    risk: z.enum(['low', 'moderate', 'high']),
-    route: z.enum(['answer_directly', 'expand_shallow', 'expand_deep']),
-    warning: z.string().optional(),
-  }).optional(),
-});
-export type BudgetFitResult = z.infer<typeof BudgetFitResultSchema>;
-
-export const MemoryDescribeResultSchema = z.object({
-  id: z.string(),
-  description: z.string(),
-  type: z.string(),
-  confidence: z.number(),
-  scope: z.string(),
-  workspaceId: z.string().nullable().default(null),
-  projectId: z.string().nullable().default(null),
-  sourceType: z.string(),
-  createdAt: z.string(),
-  lastReinforcedAt: z.string().nullable(),
-  durable: z.boolean(),
-  contentLength: z.number().int().nonnegative(),
-  entityCount: z.number().int().nonnegative(),
-  sourceCount: z.number().int().nonnegative(),
-  eventCount: z.number().int().nonnegative(),
-  layer: MemoryLayerSchema.optional(),
-  namespaceId: z.string().optional(),
-  evidenceCount: z.number().int().nonnegative().optional(),
-  revisionStatus: RevisionStatusSchema.optional(),
-});
-export type MemoryDescribeResult = z.infer<typeof MemoryDescribeResultSchema>;
-
-export const MemoryExpandResultSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  tokenEstimate: z.number().int().nonnegative(),
-  truncated: z.boolean(),
-});
-export type MemoryExpandResult = z.infer<typeof MemoryExpandResultSchema>;

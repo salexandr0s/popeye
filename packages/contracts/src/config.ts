@@ -20,7 +20,6 @@ export const SecurityConfigSchema = z.object({
   tokenRotationDays: z.number().int().positive().default(30),
   tokenExpiryDays: z.number().int().positive().default(90),
 });
-export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 export const TelegramConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -38,7 +37,6 @@ export const TelegramConfigSchema = z.object({
     });
   }
 });
-export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
 export const EmbeddingConfigSchema = z.object({
   provider: z.enum(['disabled', 'openai']).default('disabled'),
@@ -46,7 +44,6 @@ export const EmbeddingConfigSchema = z.object({
   dimensions: z.number().int().positive().default(1536),
   allowedClassifications: z.array(DataClassificationSchema).default(['embeddable']),
 });
-export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 
 export const EngineConfigSchema = z.object({
   kind: EngineKindSchema.default('fake'),
@@ -58,7 +55,6 @@ export const EngineConfigSchema = z.object({
   runtimeToolTimeoutMs: z.number().int().positive().default(30_000),
   allowRuntimeToolBridgeFallback: z.boolean().default(true),
 });
-export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
 export const OAuthClientConfigSchema = z.object({
   clientId: z.string().min(1),

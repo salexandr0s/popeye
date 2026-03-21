@@ -1,5 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
@@ -36,7 +35,6 @@ import type {
   MemoryType,
   MessageIngressResponse,
   MessageRecord,
-  NormalizedEngineEvent,
   ProjectRecord,
   ProjectRegistrationInput,
   ReceiptRecord,
@@ -150,7 +148,6 @@ import type {
 } from '@popeye/contracts';
 import {
   MemoryRecordSchema,
-  RunEventRecordSchema,
   RunReplySchema,
   TaskCreateInputSchema,
 } from '@popeye/contracts';
@@ -158,9 +155,6 @@ import {
   createEngineAdapter,
   type EngineAdapter,
   type EngineRunCompletion,
-  type EngineRunHandle,
-  type EngineRunRequest,
-  type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
 import {
   buildLocationCondition,
@@ -174,8 +168,8 @@ import {
   loadSqliteVec,
 } from '@popeye/memory';
 import { createLogger, redactText, type PopeyeLogger } from '@popeye/observability';
-import { calculateRetryDelaySeconds, TaskManager } from '@popeye/scheduler';
-import { selectSessionRoot, SessionService } from '@popeye/sessions';
+import { TaskManager } from '@popeye/scheduler';
+import { SessionService } from '@popeye/sessions';
 
 import { ReceiptManager, buildCanonicalRunReply } from '@popeye/receipts';
 
@@ -192,12 +186,12 @@ import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { ReceiptBuilder } from './receipt-builder.js';
+import { RunExecutor } from './run-executor.js';
 import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { ConnectionService, type ConnectionServiceDeps } from './connection-service.js';
 import { OAuthConnectService } from './oauth-connect.js';
-import { buildCoreRuntimeTools } from './runtime-tools.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, EmailSyncService, EmailDigestService, type EmailProviderAdapter } from '@popeye/cap-email';
 import type { GithubApiAdapter } from '@popeye/cap-github';
@@ -216,7 +210,6 @@ import {
   validateBrowserSession as validateRuntimeBrowserSession,
 } from './browser-sessions.js';
 import {
-  buildExecutionEnvelope,
   computeEffectiveContextReleaseLevel,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
@@ -255,7 +248,6 @@ import {
   RunEventRowSchema,
   RunRowSchema,
   ScheduleRowSchema,
-  selectSessionKind,
   titleCase,
   WorkspacePathRowSchema,
   type StoredOAuthSecret,
@@ -269,15 +261,6 @@ import { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError } fr
 export interface RuntimeEvent {
   event: string;
   data: string;
-}
-
-interface ActiveRunContext {
-  runId: string;
-  jobId: string;
-  task: TaskRecord;
-  workspaceLockId: string;
-  handle: EngineRunHandle;
-  finalizing: boolean;
 }
 
 interface SchedulerInternals {
@@ -309,7 +292,7 @@ export class PopeyeRuntimeService {
   private readonly vecInitPromise: Promise<void>;
 
   private readonly log: PopeyeLogger;
-  private readonly activeRuns = new Map<string, ActiveRunContext>();
+  private readonly runExecutor: RunExecutor;
   private readonly scheduler: SchedulerInternals = {
     running: false,
     tickTimer: null,
@@ -493,7 +476,7 @@ export class PopeyeRuntimeService {
     const self = this;
     this.queryService = new QueryService(this.databases, config, {
       get schedulerRunning() { return self.scheduler.running; },
-      get activeRunsCount() { return self.activeRuns.size; },
+      get activeRunsCount() { return self.runExecutor.activeRunCount; },
       get startedAt() { return self.startedAt; },
       get lastSchedulerTickAt() { return self.scheduler.lastSchedulerTickAt; },
       get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
@@ -571,6 +554,43 @@ export class PopeyeRuntimeService {
     // Defer async initialization (similar to vecInitPromise pattern)
     this.capabilityInitPromise = this.capabilityRegistry.initializeAll().catch((err) => {
       this.log.error('capability initialization failed', { error: err instanceof Error ? err.message : String(err) });
+    });
+
+    this.runExecutor = new RunExecutor({
+      db: this.databases.app,
+      config: this.config,
+      log: this.log,
+      getEngine: () => this.engine,
+      stateDir: this.databases.paths.stateDir,
+      getJob: (id) => this.getJob(id),
+      getTask: (id) => this.getTask(id),
+      getRun: (id) => this.getRun(id),
+      getWorkspace: (id) => this.getWorkspace(id),
+      getProject: (id) => this.getProject(id),
+      getAgentProfile: (id) => this.queryService.getAgentProfile(id),
+      getReceiptByRunId: (id) => this.getReceiptByRunId(id),
+      getExecutionEnvelope: (id) => this.getExecutionEnvelope(id),
+      listJobs: () => this.listJobs(),
+      listRunEvents: (id) => this.listRunEvents(id),
+      writeRuntimeReceipt: (input) => this.writeRuntimeReceipt(input),
+      persistExecutionEnvelope: (envelope) => this.persistExecutionEnvelope(envelope),
+      acquireWorkspaceLock: (wid, owner) => this.acquireWorkspaceLock(wid, owner),
+      releaseWorkspaceLock: (wid) => this.releaseWorkspaceLock(wid),
+      refreshLease: (jid, owner) => this.refreshLease(jid, owner),
+      redactError: (err) => this.redactError(err),
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      createIntervention: (code, runId, reason) => this.createIntervention(code, runId, reason),
+      emit: (event, payload) => this.emit(event, payload),
+      receiptManager: this.receiptManager,
+      sessionService: this.sessionService,
+      messageIngestion: this.messageIngestion,
+      resolveInstructionsForRun: (task) => this.queryService.resolveInstructionsForRun(task),
+      capabilityRegistry: this.capabilityRegistry,
+      memoryLifecycle: this.memoryLifecycle,
+      searchMemory: (query) => this.searchMemory(query),
+      describeMemory: (id, scope) => this.describeMemory(id, scope),
+      expandMemory: (id, maxTokens, scope) => this.expandMemory(id, maxTokens, scope),
+      explainMemoryRecall: (input, filter) => this.explainMemoryRecall(input, filter),
     });
 
     this.seedReferenceData();
@@ -1365,7 +1385,7 @@ export class PopeyeRuntimeService {
     const run = this.getRun(runId);
     if (!run) return null;
     if (isTerminalRunState(run.state)) return run;
-    const activeRun = this.activeRuns.get(runId);
+    const activeRun = this.runExecutor.getActiveRun(runId);
     if (activeRun) {
       await activeRun.handle.cancel();
       return this.getRun(runId);
@@ -1430,20 +1450,20 @@ export class PopeyeRuntimeService {
   }
 
   async stopScheduler(): Promise<void> {
-    this.log.info('scheduler stopping', { activeRuns: this.activeRuns.size });
+    this.log.info('scheduler stopping', { activeRuns: this.runExecutor.activeRunCount });
     if (this.scheduler.tickTimer) clearInterval(this.scheduler.tickTimer);
     if (this.scheduler.leaseTimer) clearInterval(this.scheduler.leaseTimer);
     this.scheduler.tickTimer = null;
     this.scheduler.leaseTimer = null;
     this.scheduler.running = false;
 
-    if (this.activeRuns.size === 0) return;
+    if (this.runExecutor.activeRunCount === 0) return;
 
-    for (const activeRun of this.activeRuns.values()) {
+    for (const activeRun of this.runExecutor.getActiveRuns().values()) {
       await activeRun.handle.cancel();
     }
 
-    const waiters = Array.from(this.activeRuns.values()).map((activeRun) =>
+    const waiters = Array.from(this.runExecutor.getActiveRuns().values()).map((activeRun) =>
       Promise.race([
         activeRun.handle.wait(),
         new Promise<EngineRunCompletion>((resolve) => {
@@ -1451,7 +1471,7 @@ export class PopeyeRuntimeService {
         }),
       ]).then(async () => {
         if (activeRun.finalizing) return;
-        await this.abandonRun(activeRun.runId, 'Scheduler shutdown interrupted an in-flight run');
+        await this.runExecutor.abandonRun(activeRun.runId, 'Scheduler shutdown interrupted an in-flight run');
       }),
     );
     await Promise.all(waiters);
@@ -1980,40 +2000,6 @@ export class PopeyeRuntimeService {
     this.events.emit('event', { event, data: JSON.stringify(payload) } satisfies RuntimeEvent);
   }
 
-  private createRuntimeTools(task: TaskRecord, runId: string, envelope: ExecutionEnvelope): RuntimeToolDescriptor[] {
-    const capabilityTools = this.capabilityRegistry
-      .getRuntimeTools({ workspaceId: task.workspaceId, runId })
-      .filter((entry) =>
-        envelope.allowedCapabilityIds.includes(entry.capabilityId)
-        && envelope.allowedRuntimeTools.includes(entry.tool.name),
-      )
-      .map((entry) => ({
-        ...entry.tool,
-        execute: async (params: unknown) => {
-          const result = await entry.tool.execute(params);
-          return {
-            ...result,
-            content: result.content.map((c) => ({ ...c, type: c.type as 'text' })),
-          };
-        },
-      }));
-
-    return [
-      ...this.createCoreRuntimeTools(task, runId).filter((tool) => envelope.allowedRuntimeTools.includes(tool.name)),
-      ...capabilityTools,
-    ];
-  }
-
-  private createCoreRuntimeTools(_task: TaskRecord, runId: string): RuntimeToolDescriptor[] {
-    return buildCoreRuntimeTools({
-      getExecutionEnvelope: (id) => this.getExecutionEnvelope(id),
-      searchMemory: (query) => this.searchMemory(query),
-      describeMemory: (id, scope) => this.describeMemory(id, scope),
-      expandMemory: (id, maxTokens, scope) => this.expandMemory(id, maxTokens, scope),
-      explainMemoryRecall: (input, scope) => this.explainMemoryRecall(input, scope),
-    }, runId);
-  }
-
   // --- Internal: startup & seeding ---
 
   private seedDaemonState(): void {
@@ -2125,7 +2111,7 @@ export class PopeyeRuntimeService {
         'Daemon restarted before the run reached a terminal state',
       );
       this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', reconciledAt, this.redactError('Daemon restarted before the run reached a terminal state'), run.id);
-      void this.applyRecoveryDecision(run.jobId, run.id, 'Daemon restarted before the run reached a terminal state');
+      void this.runExecutor.applyRecoveryDecision(run.jobId, run.id, 'Daemon restarted before the run reached a terminal state');
     }
 
     const staleLeasedJobs = z.array(IdRowSchema).parse(this.databases.app
@@ -2183,7 +2169,7 @@ export class PopeyeRuntimeService {
         if (!job) continue;
         const workspaceId = job.workspaceId;
         if (this.workspaceHasActiveExecution(workspaceId)) continue;
-        await this.startJobExecution(job.id);
+        await this.runExecutor.startJobExecution(job.id);
       }
     } catch (error) {
       if (!this.closed) throw error;
@@ -2195,9 +2181,9 @@ export class PopeyeRuntimeService {
     try {
       this.scheduler.lastLeaseSweepAt = nowIso();
 
-      for (const activeRun of Array.from(this.activeRuns.values())) {
+      for (const activeRun of Array.from(this.runExecutor.getActiveRuns().values())) {
         if (activeRun.handle.isAlive && !activeRun.handle.isAlive()) {
-          await this.abandonRun(activeRun.runId, 'Worker liveness check failed during lease sweep');
+          await this.runExecutor.abandonRun(activeRun.runId, 'Worker liveness check failed during lease sweep');
           continue;
         }
         this.refreshLease(activeRun.jobId, activeRun.handle.pid ? `worker:${activeRun.handle.pid}` : `popeyed:${process.pid}`);
@@ -2252,387 +2238,6 @@ export class PopeyeRuntimeService {
     this.databases.app
       .prepare('INSERT OR REPLACE INTO job_leases (job_id, lease_owner, lease_expires_at, updated_at) VALUES (?, ?, ?, ?)')
       .run(jobId, owner, new Date(Date.now() + this.scheduler.leaseTtlMs).toISOString(), nowIso());
-  }
-
-  // --- Internal: run execution ---
-
-  private async startJobExecution(jobId: string): Promise<RunRecord | null> {
-    const job = this.getJob(jobId);
-    if (!job || job.status !== 'queued') return null;
-    const task = this.getTask(job.taskId);
-    if (!task) return null;
-    const workspaceLockId = this.acquireWorkspaceLock(job.workspaceId, `popeyed:${process.pid}`);
-    if (!workspaceLockId) return null;
-
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('leased', nowIso(), job.id);
-    this.refreshLease(job.id, `popeyed:${process.pid}`);
-
-    const sessionRoot = selectSessionRoot({ kind: selectSessionKind(task.source), scope: job.workspaceId });
-    this.sessionService.ensureSessionRoot(sessionRoot);
-
-    const run: RunRecord = {
-      id: randomUUID(),
-      jobId: job.id,
-      taskId: task.id,
-      workspaceId: job.workspaceId,
-      profileId: task.profileId,
-      sessionRootId: sessionRoot.id,
-      engineSessionRef: null,
-      state: 'starting',
-      startedAt: nowIso(),
-      finishedAt: null,
-      error: null,
-    };
-
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ?, last_run_id = ? WHERE id = ?').run('running', nowIso(), run.id, job.id);
-    this.databases.app.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-      run.id,
-      run.jobId,
-      run.taskId,
-      run.workspaceId,
-      run.profileId,
-      run.sessionRootId,
-      run.engineSessionRef,
-      run.state,
-      run.startedAt,
-      run.finishedAt,
-      run.error,
-    );
-
-    const instructionBundle = this.queryService.resolveInstructionsForRun(task);
-    const redactedPrompt = redactText(task.prompt, this.config.security.redactionPatterns);
-    for (const event of redactedPrompt.events) this.recordSecurityAudit(event);
-    const fullPrompt = instructionBundle.compiledText
-      ? `${instructionBundle.compiledText}\n\n---\n\n${redactedPrompt.text}`
-      : redactedPrompt.text;
-
-    this.messageIngestion.linkAcceptedIngressToRun(task.id, job.id, run.id);
-    this.emit('run_started', run);
-
-    const runLog = this.log.child({
-      workspaceId: task.workspaceId,
-      ...(task.projectId != null && { projectId: task.projectId }),
-      taskId: task.id,
-      jobId: job.id,
-      runId: run.id,
-      sessionRootId: sessionRoot.id,
-    });
-
-    try {
-      const profile = this.getAgentProfile(task.profileId);
-      if (!profile) {
-        throw new RuntimeValidationError(`Execution profile not found: ${task.profileId}`);
-      }
-      const workspace = this.getWorkspace(task.workspaceId);
-      if (!workspace) {
-        throw new RuntimeValidationError(`Workspace not found: ${task.workspaceId}`);
-      }
-      const project = task.projectId ? this.getProject(task.projectId) : null;
-      if (task.projectId && !project) {
-        throw new RuntimeValidationError(`Project not found: ${task.projectId}`);
-      }
-      if (project && project.workspaceId !== task.workspaceId) {
-        throw new RuntimeValidationError(`Project ${task.projectId} does not belong to workspace ${task.workspaceId}`);
-      }
-      const profileContextError = validateProfileTaskContext(profile, task);
-      if (profileContextError) {
-        throw new RuntimeValidationError(profileContextError);
-      }
-
-      const capabilityToolEntries = this.capabilityRegistry.getRuntimeTools({
-        workspaceId: task.workspaceId,
-        runId: run.id,
-      });
-      const invalidCapabilityToolEntry = capabilityToolEntries.find((entry) => entry == null || typeof entry !== 'object' || !('tool' in entry) || !entry.tool);
-      if (invalidCapabilityToolEntry) {
-        runLog.error('invalid capability tool entry', {
-          entry: invalidCapabilityToolEntry as unknown as Record<string, unknown>,
-        });
-      }
-      const coreToolNames = this.createCoreRuntimeTools(task, run.id).map((tool) => tool.name);
-      const capabilityToolNames = capabilityToolEntries.map((entry) => entry.tool.name);
-      const allRuntimeToolNames = Array.from(new Set([...coreToolNames, ...capabilityToolNames])).sort();
-      const allCapabilityIds = this.capabilityRegistry.listCapabilities().map((capability) => capability.id).sort();
-      const allowedCapabilityIds = profile.allowedCapabilityIds.length > 0 ? profile.allowedCapabilityIds : allCapabilityIds;
-      const allowedRuntimeTools = profile.allowedRuntimeTools.length > 0 ? profile.allowedRuntimeTools : allRuntimeToolNames;
-      const warnings: string[] = [];
-      const envelope = buildExecutionEnvelope({
-        runId: run.id,
-        task,
-        profile,
-        engineKind: this.config.engine.kind,
-        allowedRuntimeTools,
-        allowedCapabilityIds,
-        workspaceRootPath: workspace.rootPath,
-        projectPath: project?.path ?? null,
-        sessionPolicy: 'dedicated',
-        warnings,
-        scratchRoot: `${this.databases.paths.stateDir}/scratch/${run.id}`,
-      });
-      mkdirSync(envelope.scratchRoot, { recursive: true });
-      this.persistExecutionEnvelope(envelope);
-
-      const engineRequest: EngineRunRequest = {
-        prompt: fullPrompt,
-        workspaceId: task.workspaceId,
-        projectId: task.projectId,
-        instructionSnapshotId: instructionBundle.id,
-        ...(envelope.cwd ? { cwd: envelope.cwd } : {}),
-        sessionPolicy: { type: 'dedicated', rootId: sessionRoot.id },
-        trigger: {
-          source: task.source,
-          timestamp: run.startedAt,
-        },
-        runtimeTools: this.createRuntimeTools(task, run.id, envelope),
-      };
-      const handle = await this.engine.startRun(engineRequest, {
-        onEvent: (event) => this.persistEngineEvent(run.id, event),
-      });
-      const activeRun: ActiveRunContext = {
-        runId: run.id,
-        jobId: job.id,
-        task,
-        workspaceLockId,
-        handle,
-        finalizing: false,
-      };
-      this.activeRuns.set(run.id, activeRun);
-      this.refreshLease(job.id, handle.pid ? `worker:${handle.pid}` : `popeyed:${process.pid}`);
-      this.databases.app.prepare('UPDATE runs SET state = ? WHERE id = ?').run('running', run.id);
-      runLog.info('run started');
-      void this.awaitRunCompletion(activeRun);
-      return this.getRun(run.id);
-    } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : String(error);
-      const safeMessage = this.redactError(rawMessage) ?? rawMessage;
-      runLog.error('run startup failed', {
-        error: safeMessage,
-        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
-      });
-      this.releaseWorkspaceLock(job.workspaceId);
-      this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_final', nowIso(), safeMessage, run.id);
-      this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), job.id);
-      const receipt = this.writeRuntimeReceipt({
-        runId: run.id,
-        jobId: job.id,
-        taskId: task.id,
-        workspaceId: task.workspaceId,
-        status: 'failed',
-        summary: 'Run failed during engine startup',
-        details: safeMessage,
-        usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
-      });
-      this.emit('run_completed', receipt);
-      this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: safeMessage, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
-      return this.getRun(run.id);
-    }
-  }
-
-  private persistEngineEvent(runId: string, event: NormalizedEngineEvent): void {
-    const record: RunEventRecord = RunEventRecordSchema.parse({
-      id: randomUUID(),
-      runId,
-      type: event.type,
-      payload: JSON.stringify(event.payload ?? {}),
-      createdAt: nowIso(),
-    });
-    this.databases.app.prepare('INSERT INTO run_events (id, run_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)').run(record.id, record.runId, record.type, record.payload, record.createdAt);
-    this.log.debug('engine event persisted', { runId, eventType: event.type });
-    if (event.type === 'session' && event.payload?.sessionRef) {
-      this.databases.app.prepare('UPDATE runs SET engine_session_ref = ? WHERE id = ?').run(event.payload.sessionRef, runId);
-    }
-    if (event.type === 'compaction' && typeof event.payload?.content === 'string') {
-      const activeRun = this.activeRuns.get(runId);
-      const workspaceId = activeRun?.task.workspaceId ?? 'default';
-      void this.memoryLifecycle.processCompactionFlush(runId, event.payload.content, workspaceId);
-    }
-    this.emit('run_event', record);
-  }
-
-  private async awaitRunCompletion(activeRun: ActiveRunContext): Promise<void> {
-    try {
-      const completion = await activeRun.handle.wait();
-      await this.finalizeRun(activeRun, completion);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.finalizeRun(activeRun, {
-        engineSessionRef: null,
-        usage: { provider: this.config.engine.kind, model: 'unknown', tokensIn: activeRun.task.prompt.length, tokensOut: 0, estimatedCostUsd: 0 },
-        failureClassification: classifyFailureFromMessage(message),
-      });
-    }
-  }
-
-  private async finalizeRun(activeRun: ActiveRunContext, completion: EngineRunCompletion): Promise<void> {
-    if (activeRun.finalizing) return;
-    activeRun.finalizing = true;
-    const run = this.getRun(activeRun.runId);
-    if (!run) return;
-
-    const runLog = this.log.child({
-      workspaceId: run.workspaceId,
-      taskId: run.taskId,
-      jobId: run.jobId,
-      runId: run.id,
-      sessionRootId: run.sessionRootId,
-    });
-
-    const failure = completion.failureClassification;
-    if (failure === null) {
-      this.databases.app.prepare('UPDATE runs SET state = ?, engine_session_ref = ?, finished_at = ?, error = ? WHERE id = ?').run('succeeded', completion.engineSessionRef, nowIso(), null, run.id);
-      this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('succeeded', nowIso(), run.jobId);
-      const receipt = this.writeRuntimeReceipt({
-        runId: run.id,
-        jobId: run.jobId,
-        taskId: run.taskId,
-        workspaceId: run.workspaceId,
-        status: 'succeeded',
-        summary: 'Run completed successfully',
-        details: JSON.stringify(this.listRunEvents(run.id)),
-        usage: completion.usage,
-      });
-      runLog.info('run succeeded', {
-        provider: completion.usage.provider,
-        model: completion.usage.model,
-        tokensIn: completion.usage.tokensIn,
-        tokensOut: completion.usage.tokensOut,
-        estimatedCostUsd: completion.usage.estimatedCostUsd,
-      });
-      this.emit('run_completed', receipt);
-      this.cleanupActiveRun(activeRun);
-      return;
-    }
-
-    if (failure === 'cancelled') {
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('cancelled', nowIso(), this.redactError('cancelled'), run.id);
-      this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
-      const receipt = this.writeRuntimeReceipt({
-        runId: run.id,
-        jobId: run.jobId,
-        taskId: run.taskId,
-        workspaceId: run.workspaceId,
-        status: 'cancelled',
-        summary: 'Run cancelled',
-        details: 'Cancelled by operator or daemon shutdown',
-        usage: completion.usage,
-      });
-      runLog.info('run cancelled');
-      this.emit('run_completed', receipt);
-      this.cleanupActiveRun(activeRun);
-      return;
-    }
-
-    if (failure === 'transient_failure') {
-      this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('failed_retryable', nowIso(), this.redactError(failure), run.id);
-      runLog.warn('run failed (retryable)', { failure });
-      await this.scheduleRetry(activeRun.task, run.jobId, completion, failure);
-      this.cleanupActiveRun(activeRun);
-      return;
-    }
-
-    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ?, engine_session_ref = ? WHERE id = ?').run('failed_final', nowIso(), this.redactError(failure), completion.engineSessionRef, run.id);
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), run.jobId);
-    const receipt = this.writeRuntimeReceipt({
-      runId: run.id,
-      jobId: run.jobId,
-      taskId: run.taskId,
-      workspaceId: run.workspaceId,
-      status: 'failed',
-      summary: 'Run failed',
-      details: failure,
-      usage: completion.usage,
-    });
-    runLog.error('run failed (final)', { failure });
-    this.emit('run_completed', receipt);
-    this.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
-    this.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
-    this.cleanupActiveRun(activeRun);
-  }
-
-  private async scheduleRetry(task: TaskRecord, jobId: string, completion: EngineRunCompletion, reason: string): Promise<void> {
-    const job = this.listJobs().find((candidate) => candidate.id === jobId);
-    if (!job) return;
-    const nextRetryCount = job.retryCount + 1;
-    if (task.source === 'heartbeat') {
-      this.databases.app.prepare('UPDATE jobs SET status = ?, retry_count = ?, available_at = ?, updated_at = ? WHERE id = ?').run('queued', nextRetryCount, nowIso(), nowIso(), jobId);
-    } else if (nextRetryCount < task.retryPolicy.maxAttempts) {
-      const delaySeconds = calculateRetryDelaySeconds(nextRetryCount, task.retryPolicy);
-      const availableAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
-      this.databases.app.prepare('UPDATE jobs SET status = ?, retry_count = ?, available_at = ?, updated_at = ? WHERE id = ?').run('waiting_retry', nextRetryCount, availableAt, nowIso(), jobId);
-    } else {
-      this.databases.app.prepare('UPDATE jobs SET status = ?, retry_count = ?, updated_at = ? WHERE id = ?').run('failed_final', nextRetryCount, nowIso(), jobId);
-      this.createIntervention('retry_budget_exhausted', job.lastRunId, `Retry budget exhausted for job ${jobId}`);
-    }
-
-    const receipt = this.writeRuntimeReceipt({
-      runId: job.lastRunId ?? 'unknown',
-      jobId,
-      taskId: task.id,
-      workspaceId: task.workspaceId,
-      status: 'failed',
-      summary: 'Run failed and was scheduled for retry',
-      details: reason,
-      usage: completion.usage,
-    });
-    this.emit('run_completed', receipt);
-  }
-
-  private cleanupActiveRun(activeRun: ActiveRunContext): void {
-    this.activeRuns.delete(activeRun.runId);
-    this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(activeRun.jobId);
-    this.releaseWorkspaceLock(activeRun.task.workspaceId);
-  }
-
-  private async abandonRun(runId: string, reason: string): Promise<void> {
-    const run = this.getRun(runId);
-    if (!run || isTerminalRunState(run.state)) return;
-    this.log.warn('run abandoned', { runId, reason });
-    this.receiptManager.writeAbandonedReceiptIfMissing(run.id, run.jobId, run.taskId, run.workspaceId, 'Run abandoned', reason);
-    this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ?, error = ? WHERE id = ?').run('abandoned', nowIso(), this.redactError(reason), run.id);
-    const receipt = this.getReceiptByRunId(run.id);
-    if (receipt) {
-      this.emit('run_completed', receipt);
-    }
-    await this.applyRecoveryDecision(run.jobId, run.id, reason);
-    const activeRun = this.activeRuns.get(runId);
-    if (activeRun) this.cleanupActiveRun(activeRun);
-  }
-
-  private async applyRecoveryDecision(jobId: string, runId: string, reason: string): Promise<void> {
-    const job = this.listJobs().find((candidate) => candidate.id === jobId);
-    if (!job) return;
-    const task = this.getTask(job.taskId);
-    if (!task) return;
-    this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(jobId);
-    this.releaseWorkspaceLock(job.workspaceId);
-    const lowered = reason.toLowerCase();
-
-    if (task.source === 'heartbeat') {
-      this.databases.app.prepare('UPDATE jobs SET status = ?, available_at = ?, updated_at = ? WHERE id = ?').run('queued', nowIso(), nowIso(), jobId);
-      return;
-    }
-    if (lowered.includes('auth') || lowered.includes('credential')) {
-      this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('blocked_operator', nowIso(), jobId);
-      this.createIntervention('needs_credentials', runId, `Credentials required after abandoned run ${runId}`);
-      return;
-    }
-    if (lowered.includes('policy')) {
-      this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('blocked_operator', nowIso(), jobId);
-      this.createIntervention('needs_policy_decision', runId, `Policy decision required after abandoned run ${runId}`);
-      return;
-    }
-
-    const nextRetryCount = job.retryCount + 1;
-    if (nextRetryCount < task.retryPolicy.maxAttempts) {
-      const delaySeconds = calculateRetryDelaySeconds(nextRetryCount, task.retryPolicy);
-      const availableAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
-      this.databases.app.prepare('UPDATE jobs SET status = ?, retry_count = ?, available_at = ?, updated_at = ? WHERE id = ?').run('waiting_retry', nextRetryCount, availableAt, nowIso(), jobId);
-      return;
-    }
-
-    this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('failed_final', nowIso(), jobId);
-    this.createIntervention('retry_budget_exhausted', runId, `Retry budget exhausted for abandoned run ${runId}`);
   }
 
   // --- Internal: heartbeat scheduling ---

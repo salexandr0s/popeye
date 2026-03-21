@@ -1,32 +1,25 @@
 import { z } from 'zod';
 import { DomainKindSchema } from './domain.js';
 
-export const ConnectionProviderKindSchema = z.enum(['gmail', 'proton', 'google_calendar', 'github', 'todoist', 'local_fs', 'local']);
-export type ConnectionProviderKind = z.infer<typeof ConnectionProviderKindSchema>;
+const ConnectionProviderKindSchema = z.enum(['gmail', 'proton', 'google_calendar', 'github', 'todoist', 'local_fs', 'local']);
 
 export const ConnectionModeSchema = z.enum(['read_only', 'read_write']);
-export type ConnectionMode = z.infer<typeof ConnectionModeSchema>;
 
-export const ConnectionSyncStatusSchema = z.enum(['success', 'partial', 'failed']);
-export type ConnectionSyncStatus = z.infer<typeof ConnectionSyncStatusSchema>;
+const ConnectionSyncStatusSchema = z.enum(['success', 'partial', 'failed']);
 
-export const ConnectionPolicyDiagnosticSchema = z.object({
+const ConnectionPolicyDiagnosticSchema = z.object({
   code: z.string(),
   severity: z.enum(['info', 'warn', 'error']),
   message: z.string(),
 });
-export type ConnectionPolicyDiagnostic = z.infer<typeof ConnectionPolicyDiagnosticSchema>;
 
-export const ConnectionReadinessStatusSchema = z.enum(['ready', 'disabled', 'incomplete']);
-export type ConnectionReadinessStatus = z.infer<typeof ConnectionReadinessStatusSchema>;
+const ConnectionReadinessStatusSchema = z.enum(['ready', 'disabled', 'incomplete']);
 
-export const ConnectionSecretStatusSchema = z.enum(['not_required', 'configured', 'missing', 'stale']);
-export type ConnectionSecretStatus = z.infer<typeof ConnectionSecretStatusSchema>;
+const ConnectionSecretStatusSchema = z.enum(['not_required', 'configured', 'missing', 'stale']);
 
-export const ConnectionHealthStatusSchema = z.enum(['unknown', 'healthy', 'degraded', 'reauth_required', 'error']);
-export type ConnectionHealthStatus = z.infer<typeof ConnectionHealthStatusSchema>;
+const ConnectionHealthStatusSchema = z.enum(['unknown', 'healthy', 'degraded', 'reauth_required', 'error']);
 
-export const ConnectionAuthStateSchema = z.enum([
+const ConnectionAuthStateSchema = z.enum([
   'not_required',
   'configured',
   'missing',
@@ -35,19 +28,16 @@ export const ConnectionAuthStateSchema = z.enum([
   'revoked',
   'invalid_scopes',
 ]);
-export type ConnectionAuthState = z.infer<typeof ConnectionAuthStateSchema>;
 
-export const ConnectionCursorKindSchema = z.enum(['none', 'history_id', 'sync_token', 'since']);
-export type ConnectionCursorKind = z.infer<typeof ConnectionCursorKindSchema>;
+const ConnectionCursorKindSchema = z.enum(['none', 'history_id', 'sync_token', 'since']);
 
-export const ConnectionResourceTypeSchema = z.enum([
+const ConnectionResourceTypeSchema = z.enum([
   'resource',
   'mailbox',
   'calendar',
   'repo',
   'project',
 ]);
-export type ConnectionResourceType = z.infer<typeof ConnectionResourceTypeSchema>;
 
 export const ConnectionResourceRuleSchema = z.object({
   resourceType: ConnectionResourceTypeSchema,

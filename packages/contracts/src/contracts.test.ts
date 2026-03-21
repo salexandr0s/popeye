@@ -19,9 +19,6 @@ import {
   // Memory domain
   MemoryTypeSchema,
   MemoryRecordSchema,
-  MemoryEventRecordSchema,
-  MemorySourceRecordSchema,
-  MemoryConsolidationRecordSchema,
   MemorySearchResultSchema,
   MemorySearchResponseSchema,
   MemoryAuditResponseSchema,
@@ -426,61 +423,6 @@ describe('Schema parse tests', () => {
     });
   });
 
-  describe('MemoryEventRecordSchema', () => {
-    it('parses valid data', () => {
-      const result = MemoryEventRecordSchema.parse({
-        id: 'me-001',
-        memoryId: 'mem-001',
-        type: 'created',
-        createdAt: '2026-03-13T00:00:00Z',
-      });
-      expect(result.id).toBe('me-001');
-      expect(result.type).toBe('created');
-    });
-
-    it('rejects missing memoryId', () => {
-      expect(() => MemoryEventRecordSchema.parse({ id: 'me-001', type: 'created', createdAt: '2026-03-13T00:00:00Z' })).toThrow();
-    });
-  });
-
-  describe('MemorySourceRecordSchema', () => {
-    it('parses valid data', () => {
-      const result = MemorySourceRecordSchema.parse({
-        id: 'ms-001',
-        memoryId: 'mem-001',
-        sourceType: 'receipt',
-        sourceRef: 'run-001',
-        createdAt: '2026-03-13T00:00:00Z',
-      });
-      expect(result.id).toBe('ms-001');
-      expect(result.sourceRef).toBe('run-001');
-    });
-
-    it('rejects missing sourceRef', () => {
-      expect(() =>
-        MemorySourceRecordSchema.parse({ id: 'ms-001', memoryId: 'mem-001', sourceType: 'receipt', createdAt: '2026-03-13T00:00:00Z' }),
-      ).toThrow();
-    });
-  });
-
-  describe('MemoryConsolidationRecordSchema', () => {
-    it('parses valid data', () => {
-      const result = MemoryConsolidationRecordSchema.parse({
-        id: 'mc-001',
-        memoryId: 'mem-001',
-        mergedIntoId: 'mem-002',
-        createdAt: '2026-03-13T00:00:00Z',
-      });
-      expect(result.id).toBe('mc-001');
-      expect(result.mergedIntoId).toBe('mem-002');
-    });
-
-    it('rejects missing mergedIntoId', () => {
-      expect(() =>
-        MemoryConsolidationRecordSchema.parse({ id: 'mc-001', memoryId: 'mem-001', createdAt: '2026-03-13T00:00:00Z' }),
-      ).toThrow();
-    });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1345,25 +1287,6 @@ describe('Additional schema smoke tests', () => {
     expect(result.totalMemories).toBe(100);
     expect(result.activeMemories).toBe(80);
     expect(result.byType['episodic']).toBe(50);
-  });
-
-  it('MemoryConsolidationRecordSchema includes reason with default', () => {
-    const result = MemoryConsolidationRecordSchema.parse({
-      id: 'mc-002',
-      memoryId: 'mem-003',
-      mergedIntoId: 'mem-004',
-      createdAt: '2026-03-13T00:00:00Z',
-    });
-    expect(result.reason).toBe('');
-
-    const withReason = MemoryConsolidationRecordSchema.parse({
-      id: 'mc-003',
-      memoryId: 'mem-005',
-      mergedIntoId: 'mem-006',
-      reason: 'exact_dedup',
-      createdAt: '2026-03-13T00:00:00Z',
-    });
-    expect(withReason.reason).toBe('exact_dedup');
   });
 
   it('MemoryRecordSchema includes new fields with defaults', () => {

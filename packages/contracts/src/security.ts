@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 export const PromptScanVerdictSchema = z.enum(['allow', 'sanitize', 'quarantine']);
-export type PromptScanVerdict = z.infer<typeof PromptScanVerdictSchema>;
 
 export const PromptScanResultSchema = z.object({
   verdict: PromptScanVerdictSchema,
@@ -48,7 +47,6 @@ export const AuthTokenRecordSchema = z.object({
   createdAt: z.string(),
   expiresAt: z.string().optional(),
 });
-export type AuthTokenRecord = z.infer<typeof AuthTokenRecordSchema>;
 
 export const AuthRotationRecordSchema = z.object({
   current: AuthTokenRecordSchema,

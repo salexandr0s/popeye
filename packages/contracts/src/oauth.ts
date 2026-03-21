@@ -6,8 +6,7 @@ import { DomainKindSchema } from './domain.js';
 const OAuthProviderKindSchema = z.enum(['gmail', 'google_calendar', 'github']);
 export type OAuthProviderKind = z.infer<typeof OAuthProviderKindSchema>;
 
-export const OAuthSessionStatusSchema = z.enum(['pending', 'completed', 'failed', 'expired']);
-export type OAuthSessionStatus = z.infer<typeof OAuthSessionStatusSchema>;
+const OAuthSessionStatusSchema = z.enum(['pending', 'completed', 'failed', 'expired']);
 
 export const OAuthConnectStartRequestSchema = z.object({
   providerKind: OAuthProviderKindSchema,

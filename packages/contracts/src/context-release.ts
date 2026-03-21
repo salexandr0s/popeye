@@ -3,7 +3,7 @@ import { DomainKindSchema, ContextReleasePolicySchema } from './domain.js';
 
 const ContextReleaseAuthorizationOutcomeSchema = z.enum(['allow', 'deny', 'approval_required']);
 
-const ContextReleaseAuthorizationSchema = z.object({
+export const ContextReleaseAuthorizationSchema = z.object({
   outcome: ContextReleaseAuthorizationOutcomeSchema,
   approvedLevel: ContextReleasePolicySchema.nullable().default(null),
   approvalId: z.string().nullable().default(null),
@@ -12,7 +12,7 @@ const ContextReleaseAuthorizationSchema = z.object({
 });
 export type ContextReleaseAuthorization = z.infer<typeof ContextReleaseAuthorizationSchema>;
 
-const ContextReleaseDecisionSchema = z.object({
+export const ContextReleaseDecisionSchema = z.object({
   id: z.string(),
   domain: DomainKindSchema,
   vaultId: z.string().nullable().default(null),

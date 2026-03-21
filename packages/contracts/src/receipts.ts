@@ -22,12 +22,11 @@ const ReceiptContextReleaseDomainSummarySchema = z.object({
   tokens: z.number().int().nonnegative(),
 });
 
-export const ReceiptContextReleaseSummarySchema = z.object({
+const ReceiptContextReleaseSummarySchema = z.object({
   totalReleases: z.number().int().nonnegative(),
   totalTokenEstimate: z.number().int().nonnegative(),
   byDomain: z.record(z.string(), ReceiptContextReleaseDomainSummarySchema),
 });
-export type ReceiptContextReleaseSummary = z.infer<typeof ReceiptContextReleaseSummarySchema>;
 
 export const ReceiptTimelineEventKindSchema = z.enum(['run', 'policy', 'approval', 'context_release', 'warning']);
 export type ReceiptTimelineEventKind = z.infer<typeof ReceiptTimelineEventKindSchema>;
