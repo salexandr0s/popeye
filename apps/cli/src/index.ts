@@ -2518,7 +2518,7 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      const defaultVault = vaults[0];
+      const defaultVault = vaults[0]!;
       const imp = await client.createFinanceImport({ vaultId: defaultVault.id, importType, fileName });
       if (importType === 'csv') {
         const content = readFileSync(filePath, 'utf-8');
@@ -2535,7 +2535,7 @@ async function main(): Promise<void> {
           category?: string | null;
         }> = [];
         for (let i = 1; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]);
+          const cols = parseCsvLine(lines[i]!);
           if (cols.length < 3) continue;
           transactions.push({
             date: cols[dateIdx >= 0 ? dateIdx : 0]?.trim() ?? '',
@@ -2663,7 +2663,7 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      resolvedVaultId = vaults[0].id;
+      resolvedVaultId = vaults[0]!.id;
     }
     const imp = await client.createMedicalImport({ vaultId: resolvedVaultId, importType, fileName });
     console.info(`Import created: ${imp.id.slice(0, 8)} (${importType})`);

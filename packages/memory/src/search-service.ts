@@ -126,9 +126,13 @@ export class MemorySearchService {
     const includeSuperseded = query.includeSuperseded ?? false;
 
     // Resolve consumer profile into filter defaults
+    const profileQuery: { domains?: string[]; namespaceIds?: string[]; includeGlobal?: boolean } = {};
+    if (query.domains !== undefined) profileQuery.domains = query.domains;
+    if (query.namespaceIds !== undefined) profileQuery.namespaceIds = query.namespaceIds;
+    if (query.includeGlobal !== undefined) profileQuery.includeGlobal = query.includeGlobal;
     const profileFilters = applyConsumerProfile(
       query.consumerProfile,
-      { domains: query.domains, namespaceIds: query.namespaceIds, includeGlobal: query.includeGlobal },
+      profileQuery,
       this.db,
     );
     const domains = query.domains ?? profileFilters.domains;
@@ -257,7 +261,7 @@ export class MemorySearchService {
       validTo: candidate.validTo,
       evidenceCount: candidate.evidenceCount,
       revisionStatus: candidate.revisionStatus,
-      domain: candidate.domain,
+      domain: candidate.domain as MemorySearchResult['domain'],
       scoreBreakdown: candidate.scoreBreakdown,
     });
 

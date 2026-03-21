@@ -58,7 +58,7 @@ export function applyConsumerProfile(
   } else if (profile.excludedDomains.length > 0) {
     // No explicit include list, but has exclusions — resolve all domains except excluded.
     // We don't enumerate all domains here; instead, the search layer applies exclusion.
-    result.domains = undefined;
+    // Leave result.domains unset (already optional/undefined by default).
   }
 
   // Namespace IDs: use explicit query namespaceIds, or resolve profile kinds to IDs

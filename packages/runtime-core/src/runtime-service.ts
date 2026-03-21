@@ -565,6 +565,7 @@ const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRecord['p
   people: ['local'],
   finance: ['local'],
   medical: ['local'],
+  coding: ['local'],
 };
 
 const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>([

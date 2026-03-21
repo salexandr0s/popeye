@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
-import type { DataClassification, MemoryFactRecord, MemorySynthesisKind, MemorySynthesisRecord } from '@popeye/contracts';
+import type { DataClassification, DomainKind, MemoryFactRecord, MemorySynthesisKind, MemorySynthesisRecord } from '@popeye/contracts';
 
 import { canonicalizeMemoryLocation } from './location.js';
 import { replaceOwnerTags } from './namespace.js';
@@ -23,7 +23,7 @@ export interface CreateSynthesisInput {
   refreshPolicy?: string | undefined;
   sourceFacts: Array<Pick<MemoryFactRecord, 'id'>>;
   tags?: string[] | undefined;
-  domain?: string | undefined;
+  domain?: DomainKind | undefined;
 }
 
 export function createSynthesis(db: Database.Database, input: CreateSynthesisInput): MemorySynthesisRecord {
@@ -52,6 +52,7 @@ export function createSynthesis(db: Database.Database, input: CreateSynthesisInp
     createdAt: existing?.created_at ?? now,
     updatedAt: now,
     archivedAt: null,
+    domain: input.domain ?? 'general',
   };
 
   if (existing) {

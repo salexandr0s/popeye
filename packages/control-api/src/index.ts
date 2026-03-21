@@ -826,18 +826,19 @@ export async function createControlApi(
     const queryText = params.q ?? params.query ?? '';
     if (!queryText) return { query: '', results: [], totalCandidates: 0, latencyMs: 0, searchMode: 'fts_only' };
     const consumerProfile = params.consumerProfile ?? (request.headers['x-consumer-profile'] as string | undefined);
-    return dependencies.runtime.searchMemory({
+    const searchInput: Parameters<typeof dependencies.runtime.searchMemory>[0] = {
       query: queryText,
-      scope: params.scope,
-      workspaceId: params.workspaceId,
-      projectId: params.projectId,
-      ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
-      memoryTypes: params.types ? (params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>) : undefined,
       limit: params.limit ?? 20,
       includeContent: params.full === 'true',
-      ...(params.domains !== undefined && { domains: params.domains.split(',') }),
-      ...(consumerProfile !== undefined && { consumerProfile }),
-    });
+    };
+    if (params.scope !== undefined) searchInput.scope = params.scope;
+    if (params.workspaceId !== undefined) searchInput.workspaceId = params.workspaceId;
+    if (params.projectId !== undefined) searchInput.projectId = params.projectId;
+    if (params.includeGlobal !== undefined) searchInput.includeGlobal = params.includeGlobal === 'true';
+    if (params.types !== undefined) searchInput.memoryTypes = params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>;
+    if (params.domains !== undefined) searchInput.domains = params.domains.split(',') as typeof searchInput.domains;
+    if (consumerProfile !== undefined) searchInput.consumerProfile = consumerProfile;
+    return dependencies.runtime.searchMemory(searchInput);
   });
 
   app.get('/v1/memory/audit', async () => dependencies.runtime.getMemoryAudit());
@@ -2404,7 +2405,7 @@ export async function createControlApi(
   app.post('/v1/finance/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
-      importType: z.enum(['csv', 'ofx', 'qfx', 'other']).default('csv'),
+      importType: z.enum(['csv', 'ofx', 'qfx', 'document']).default('csv'),
       fileName: z.string().min(1),
     }).parse(request.body);
     return dependencies.runtime.createFinanceImport(body);
@@ -2416,11 +2417,11 @@ export async function createControlApi(
       date: z.string().min(1),
       description: z.string().min(1),
       amount: z.number(),
-      currency: z.string().optional(),
-      category: z.string().nullable().optional(),
-      merchantName: z.string().nullable().optional(),
-      accountLabel: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      currency: z.string().default('USD'),
+      category: z.string().nullable().default(null),
+      merchantName: z.string().nullable().default(null),
+      accountLabel: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertFinanceTransaction(body);
   });
@@ -2432,11 +2433,11 @@ export async function createControlApi(
         date: z.string().min(1),
         description: z.string().min(1),
         amount: z.number(),
-        currency: z.string().optional(),
-        category: z.string().nullable().optional(),
-        merchantName: z.string().nullable().optional(),
-        accountLabel: z.string().nullable().optional(),
-        redactedSummary: z.string().optional(),
+        currency: z.string().default('USD'),
+        category: z.string().nullable().default(null),
+        merchantName: z.string().nullable().default(null),
+        accountLabel: z.string().nullable().default(null),
+        redactedSummary: z.string().default(''),
       })).max(5000),
     }).parse(request.body);
     return dependencies.runtime.insertFinanceTransactionBatch(body);
@@ -2508,7 +2509,7 @@ export async function createControlApi(
   app.post('/v1/medical/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
-      importType: z.enum(['pdf', 'document', 'other']).default('pdf'),
+      importType: z.enum(['pdf', 'document', 'operator_note']).default('pdf'),
       fileName: z.string().min(1),
     }).parse(request.body);
     return dependencies.runtime.createMedicalImport(body);
@@ -2519,9 +2520,9 @@ export async function createControlApi(
       importId: z.string().min(1),
       date: z.string().min(1),
       provider: z.string().min(1),
-      specialty: z.string().nullable().optional(),
-      location: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      specialty: z.string().nullable().default(null),
+      location: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertMedicalAppointment(body);
   });
@@ -2530,12 +2531,12 @@ export async function createControlApi(
     const body = z.object({
       importId: z.string().min(1),
       name: z.string().min(1),
-      dosage: z.string().nullable().optional(),
-      frequency: z.string().nullable().optional(),
-      prescriber: z.string().nullable().optional(),
-      startDate: z.string().nullable().optional(),
-      endDate: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      dosage: z.string().nullable().default(null),
+      frequency: z.string().nullable().default(null),
+      prescriber: z.string().nullable().default(null),
+      startDate: z.string().nullable().default(null),
+      endDate: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertMedicalMedication(body);
   });

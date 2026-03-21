@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
-import type { EvidenceLink, MemoryArtifactRecord, MemoryFactRecord, RevisionStatus } from '@popeye/contracts';
+import type { DomainKind, EvidenceLink, MemoryArtifactRecord, MemoryFactRecord, RevisionStatus } from '@popeye/contracts';
 import { sha256 } from '@popeye/observability';
 
 import type { ExtractedFact } from './fact-extractor.js';
@@ -28,7 +28,7 @@ export interface UpsertFactsInput {
   sourceTimestamp?: string | null | undefined;
   facts: ExtractedFact[];
   tags?: string[] | undefined;
-  domain?: string | undefined;
+  domain?: DomainKind | undefined;
 }
 
 export interface UpsertFactsResult {
@@ -104,6 +104,7 @@ export function upsertFacts(db: Database.Database, input: UpsertFactsInput): Ups
           createdAt: existing.created_at,
           durable: Boolean(existing.durable || fact.durable),
           revisionStatus: 'active',
+          domain: input.domain ?? 'general',
         };
         reinforced++;
       } else {
@@ -133,6 +134,7 @@ export function upsertFacts(db: Database.Database, input: UpsertFactsInput): Ups
           createdAt: now,
           durable: fact.durable,
           revisionStatus: 'active',
+          domain: input.domain ?? 'general',
         };
         db.prepare(
           'INSERT INTO memory_facts (id, namespace_id, scope, workspace_id, project_id, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, human_confirmed, occurred_at, valid_from, valid_to, source_run_id, source_timestamp, dedup_key, last_reinforced_at, archived_at, created_at, durable, revision_status, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
-import type { DataClassification, MemoryArtifactRecord, MemorySourceType } from '@popeye/contracts';
+import type { DataClassification, DomainKind, MemoryArtifactRecord, MemorySourceType } from '@popeye/contracts';
 import { sha256 } from '@popeye/observability';
 
 import { ensureMemoryNamespace, replaceOwnerTags } from './namespace.js';
@@ -20,7 +20,7 @@ export interface CaptureArtifactInput {
   occurredAt?: string | null | undefined;
   metadata?: Record<string, unknown> | undefined;
   tags?: string[] | undefined;
-  domain?: string | undefined;
+  domain?: DomainKind | undefined;
 }
 
 export function captureArtifact(db: Database.Database, input: CaptureArtifactInput): MemoryArtifactRecord {
