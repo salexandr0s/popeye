@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { type PopeyeApiClient, ApiError } from '@popeye/api-client';
-import type { AppConfig, DomainKind } from '@popeye/contracts';
+import type { AppConfig } from '@popeye/contracts';
 import { z } from 'zod';
 import { tryConnectDaemon } from './api-client.js';
 import {
@@ -27,9 +27,11 @@ import {
   unloadLaunchAgent,
   verifyBackup,
 } from '@popeye/runtime-core';
-import { formatEngineCapabilities, formatProfile, formatSecurityPolicy, formatVault, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
+import { formatEngineCapabilities, formatProfile, formatSecurityPolicy, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
 import { handleApprovals, handleStandingApprovals, handleAutomationGrants } from './commands/approvals.js';
-import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask } from './commands/runs.js';
+import { handleMemory, handleKnowledge } from './commands/memory.js';
+import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask, handleRecovery } from './commands/runs.js';
+import { handleVaults } from './commands/vaults.js';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -672,152 +674,22 @@ async function main(): Promise<void> {
     const client = await requireDaemonClient(config);
     return handleAutomationGrants({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'vaults' && subcommand === 'list') {
+  if (command === 'vaults') {
     const client = await requireDaemonClient(config);
-    const domainIndex = process.argv.indexOf('--domain');
-    const vaults = await client.listVaults(domainIndex !== -1 ? process.argv[domainIndex + 1] as DomainKind : undefined);
-    if (jsonFlag) {
-      console.info(JSON.stringify(vaults, null, 2));
-    } else if (vaults.length === 0) {
-      console.info('No vaults');
-    } else {
-      console.info(vaults.map(formatVault).join('\n\n'));
-    }
-    return;
+    return handleVaults({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'vaults' && (subcommand === 'show' || subcommand === 'close' || subcommand === 'seal')) {
-    requireArg(arg1, 'vaultId');
-  }
-  if (command === 'vaults' && subcommand === 'show' && arg1) {
+  if (command === 'recovery') {
     const client = await requireDaemonClient(config);
-    const vault = await client.getVault(arg1);
-    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
-    return;
-  }
-  if (command === 'vaults' && subcommand === 'create') {
-    requireArg(arg1, 'domain');
-    requireArg(_arg2, 'name');
-  }
-  if (command === 'vaults' && subcommand === 'create' && arg1 && _arg2) {
-    const client = await requireDaemonClient(config);
-    const vault = await client.createVault({
-      domain: arg1 as DomainKind,
-      name: _arg2,
-      ...(process.argv.includes('--restricted') ? { kind: 'restricted' } : {}),
-    });
-    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
-    return;
-  }
-  if (command === 'vaults' && subcommand === 'open') {
-    requireArg(arg1, 'vaultId');
-    requireArg(_arg2, 'approvalId');
-  }
-  if (command === 'vaults' && subcommand === 'open' && arg1 && _arg2) {
-    const client = await requireDaemonClient(config);
-    const vault = await client.openVault(arg1, { approvalId: _arg2 });
-    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
-    return;
-  }
-  if (command === 'vaults' && subcommand === 'close' && arg1) {
-    const client = await requireDaemonClient(config);
-    const vault = await client.closeVault(arg1);
-    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
-    return;
-  }
-  if (command === 'vaults' && subcommand === 'seal' && arg1) {
-    const client = await requireDaemonClient(config);
-    const vault = await client.sealVault(arg1);
-    console.info(jsonFlag ? JSON.stringify(vault, null, 2) : formatVault(vault));
-    return;
-  }
-  if (command === 'vaults' && subcommand === 'set-kek') {
-    const { randomBytes: rb } = await import('node:crypto');
-    const { keychainSet } = await import('@popeye/runtime-core');
-    const generateFlag = process.argv.includes('--generate');
-    let kekValue: string;
-    if (generateFlag) {
-      kekValue = rb(32).toString('hex');
-    } else {
-      const { createInterface } = await import('node:readline');
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      kekValue = await new Promise<string>((resolveValue) => {
-        rl.question('Enter KEK (64-char hex string): ', (answer) => {
-          rl.close();
-          resolveValue(answer.trim());
-        });
-      });
-    }
-    if (kekValue.length !== 64 || !/^[0-9a-f]+$/i.test(kekValue)) {
-      console.error('KEK must be a 64-character hex string (256 bits).');
-      process.exitCode = 1;
-      return;
-    }
-    const result = keychainSet('vault-kek', kekValue);
-    if (result.ok) {
-      console.info('Vault KEK stored in macOS Keychain.');
-    } else {
-      console.error(`Failed to store KEK: ${result.error}`);
-      process.exitCode = 1;
-    }
-    return;
-  }
-  if (command === 'recovery' && subcommand === 'retry') {
-    requireArg(arg1, 'runId');
-  }
-  if (command === 'recovery' && subcommand === 'retry' && arg1) {
-    const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.retryRun(arg1), null, 2));
-    return;
+    return handleRecovery({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
 
-  if (command === 'memory' && subcommand === 'search') {
-    requireArg(arg1, 'query');
-  }
-  if (command === 'memory' && subcommand === 'search' && arg1) {
-    const includeContent = process.argv.includes('--full');
+  if (command === 'memory') {
     const client = await requireDaemonClient(config);
-    const result = await client.searchMemory({ query: arg1, limit: 20, includeContent });
-    console.info(JSON.stringify(result, null, 2));
-    return;
+    return handleMemory({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'memory' && subcommand === 'audit') {
+  if (command === 'knowledge') {
     const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.memoryAudit(), null, 2));
-    return;
-  }
-  if (command === 'memory' && subcommand === 'list') {
-    const client = await requireDaemonClient(config);
-    console.info(
-      JSON.stringify(await client.listMemories({ ...(arg1 ? { type: arg1 } : {}), limit: 50 }), null, 2),
-    );
-    return;
-  }
-  if (command === 'memory' && subcommand === 'show') {
-    requireArg(arg1, 'id');
-  }
-  if (command === 'memory' && subcommand === 'show' && arg1) {
-    const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.getMemory(arg1), null, 2));
-    return;
-  }
-  if (command === 'memory' && subcommand === 'maintenance') {
-    const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.triggerMemoryMaintenance(), null, 2));
-    return;
-  }
-  if (command === 'knowledge' && subcommand === 'search') {
-    requireArg(arg1, 'query');
-  }
-  if (command === 'knowledge' && subcommand === 'search' && arg1) {
-    const client = await requireDaemonClient(config);
-    const result = await client.searchMemory({
-      query: arg1,
-      memoryTypes: ['semantic', 'procedural'],
-      limit: 20,
-      includeContent: process.argv.includes('--full'),
-    });
-    console.info(JSON.stringify(result, null, 2));
-    return;
+    return handleKnowledge({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
   if (command === 'receipt' && subcommand === 'search') {
     requireArg(arg1, 'query');
