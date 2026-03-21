@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { type PopeyeApiClient, ApiError } from '@popeye/api-client';
+import type { PopeyeApiClient } from '@popeye/api-client';
 import type { AppConfig } from '@popeye/contracts';
 import { z } from 'zod';
 import { tryConnectDaemon } from './api-client.js';
@@ -27,11 +27,20 @@ import {
   unloadLaunchAgent,
   verifyBackup,
 } from '@popeye/runtime-core';
-import { formatEngineCapabilities, formatProfile, formatSecurityPolicy, getFlagValue, parseCsvLine, requireArg } from './formatters.js';
+import { formatEngineCapabilities, formatSecurityPolicy, requireArg } from './formatters.js';
 import { handleApprovals, handleStandingApprovals, handleAutomationGrants } from './commands/approvals.js';
 import { handleMemory, handleKnowledge } from './commands/memory.js';
-import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask, handleRecovery } from './commands/runs.js';
+import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask, handleRecovery, handleJobs, handleSessions, handleProfile } from './commands/runs.js';
 import { handleVaults } from './commands/vaults.js';
+import { handleConnection } from './commands/connection.js';
+import { handleEmail } from './commands/email.js';
+import { handleGithub } from './commands/github.js';
+import { handleCalendar } from './commands/calendar.js';
+import { handleTodo } from './commands/todo.js';
+import { handlePeople } from './commands/people.js';
+import { handleFinance } from './commands/finance.js';
+import { handleMedical } from './commands/medical.js';
+import { handleFiles } from './commands/files.js';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -320,77 +329,6 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
     process.exit(1);
   }
   return client;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function openBrowserUrl(url: string): Promise<boolean> {
-  const platform = process.platform;
-  const command = platform === 'darwin'
-    ? 'open'
-    : platform === 'win32'
-      ? 'cmd'
-      : 'xdg-open';
-  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
-
-  return await new Promise<boolean>((resolve) => {
-    const child = spawn(command, args, {
-      stdio: 'ignore',
-      detached: platform !== 'win32',
-    });
-    child.once('error', () => resolve(false));
-    child.once('spawn', () => {
-      child.unref();
-      resolve(true);
-    });
-  });
-}
-
-async function runOAuthConnectFlow(
-  client: PopeyeApiClient,
-  input: {
-    providerKind: 'gmail' | 'google_calendar' | 'github';
-    mode: 'read_only' | 'read_write';
-    syncIntervalSeconds?: number;
-    connectionId?: string;
-  },
-): Promise<void> {
-  const session = await client.startOAuthConnection({
-    providerKind: input.providerKind,
-    mode: input.mode,
-    syncIntervalSeconds: input.syncIntervalSeconds ?? 900,
-    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
-  });
-
-  const opened = await openBrowserUrl(session.authorizationUrl);
-  console.info(`Starting ${input.providerKind} connection...`);
-  if (opened) {
-    console.info('Opened browser for OAuth approval.');
-  } else {
-    console.info('Open this URL in your browser:');
-    console.info(`  ${session.authorizationUrl}`);
-  }
-
-  for (let attempt = 0; attempt < 150; attempt += 1) {
-    await sleep(2000);
-    const latest = await client.getOAuthConnectionSession(session.id);
-    if (latest.status === 'pending') {
-      continue;
-    }
-    if (latest.status === 'completed') {
-      console.info(input.connectionId ? `${input.providerKind} reconnected.` : `${input.providerKind} connected.`);
-      if (latest.connectionId) console.info(`  Connection: ${latest.connectionId}`);
-      if (latest.accountId) console.info(`  Account:    ${latest.accountId}`);
-      return;
-    }
-    console.error(`${input.providerKind} connection failed: ${latest.error ?? latest.status}`);
-    process.exit(1);
-  }
-
-  console.error('OAuth connection timed out while waiting for callback completion.');
-  process.exit(1);
 }
 
 function isBundledMode(): boolean {
@@ -691,65 +629,17 @@ async function main(): Promise<void> {
     const client = await requireDaemonClient(config);
     return handleKnowledge({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'receipt' && subcommand === 'search') {
-    requireArg(arg1, 'query');
-  }
-  if (command === 'receipt' && subcommand === 'search' && arg1) {
+  if (command === 'jobs') {
     const client = await requireDaemonClient(config);
-    const result = await client.searchMemory({
-      query: arg1,
-      memoryTypes: ['episodic'],
-      limit: 20,
-      includeContent: process.argv.includes('--full'),
-    });
-    console.info(JSON.stringify(result, null, 2));
-    return;
+    return handleJobs({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-
-  if (command === 'jobs' && subcommand === 'list') {
+  if (command === 'sessions') {
     const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.listJobs(), null, 2));
-    return;
+    return handleSessions({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
-  if (command === 'jobs' && subcommand === 'pause') {
-    requireArg(arg1, 'jobId');
-  }
-  if (command === 'jobs' && subcommand === 'pause' && arg1) {
+  if (command === 'profile') {
     const client = await requireDaemonClient(config);
-    const result = await client.pauseJob(arg1);
-    console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not in pauseable state');
-    return;
-  }
-  if (command === 'jobs' && subcommand === 'resume') {
-    requireArg(arg1, 'jobId');
-  }
-  if (command === 'jobs' && subcommand === 'resume' && arg1) {
-    const client = await requireDaemonClient(config);
-    const result = await client.resumeJob(arg1);
-    console.info(result ? JSON.stringify(result, null, 2) : 'No-op: job not paused');
-    return;
-  }
-  if (command === 'sessions' && subcommand === 'list') {
-    const client = await requireDaemonClient(config);
-    console.info(JSON.stringify(await client.listSessionRoots(), null, 2));
-    return;
-  }
-  if (command === 'profile' && subcommand === 'list') {
-    const client = await requireDaemonClient(config);
-    const profiles = await client.listProfiles();
-    if (jsonFlag) {
-      console.info(JSON.stringify(profiles, null, 2));
-    } else if (profiles.length === 0) {
-      console.info('No execution profiles found.');
-    } else {
-      for (const profile of profiles) {
-        console.info(`  ${profile.id.padEnd(18)} ${profile.mode.padEnd(12)} ${profile.name}`);
-      }
-    }
-    return;
-  }
-  if (command === 'profile' && subcommand === 'show') {
-    requireArg(arg1, 'id');
+    return handleProfile({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
   if (command === 'profile' && subcommand === 'show' && arg1) {
     try {

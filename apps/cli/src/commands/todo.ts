@@ -181,7 +181,7 @@ export async function handleTodo(ctx: CommandContext): Promise<void> {
     if (jsonFlag) {
       console.info(JSON.stringify(result, null, 2));
     } else {
-      console.info(`Reconciled: ${result.reconciled} todos`);
+      console.info(`Reconciled: ${result.added} added, ${result.updated} updated, ${result.removed} removed`);
     }
     return;
   }
