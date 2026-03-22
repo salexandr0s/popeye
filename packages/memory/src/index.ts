@@ -120,10 +120,6 @@ export type { InsertChunksInput, ChunkRow } from './chunk-store.js';
 export { selectChunker, markdownChunker, plaintextChunker, DEFAULT_CHUNK_OPTIONS } from './chunkers/index.js';
 export type { Chunker, ChunkResult, ChunkOptions } from './chunkers/index.js';
 
-// Entity extraction
-export { extractEntities, canonicalizeEntityName } from './entity-extraction.js';
-export type { EntityType, ExtractedEntity } from './entity-extraction.js';
-
 // Budget allocation
 export { applyBudgetAllocation } from './budget-allocation.js';
 export type { BudgetConfig } from './budget-allocation.js';

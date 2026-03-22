@@ -684,6 +684,27 @@ describe('MemoryLifecycleService', () => {
       const linkedCount = memoryDb.prepare('SELECT COUNT(*) as c FROM memory_fact_sources').get() as { c: number };
       expect(linkedCount.c).toBeGreaterThan(0);
     });
+
+    it('writes structured artifacts and facts for curated_memory source type', () => {
+      const result = service.insertMemory({
+        description: 'User preference for dark mode',
+        classification: 'embeddable',
+        sourceType: 'curated_memory',
+        content: 'The user prefers dark mode for all editor interfaces and terminal themes.',
+        confidence: 0.9,
+        scope: 'default',
+        memoryType: 'semantic',
+      });
+
+      expect(result.rejected).toBe(false);
+      expect(result.memoryId).toBeTruthy();
+
+      const artifact = memoryDb.prepare("SELECT source_type FROM memory_artifacts WHERE source_type = 'curated_memory'").get() as { source_type: string } | undefined;
+      expect(artifact).toBeTruthy();
+
+      const factCount = memoryDb.prepare("SELECT COUNT(*) as c FROM memory_facts WHERE source_type = 'curated_memory'").get() as { c: number };
+      expect(factCount.c).toBeGreaterThan(0);
+    });
   });
 
   // -----------------------------------------------------------------------
