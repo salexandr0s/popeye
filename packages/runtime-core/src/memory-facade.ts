@@ -124,13 +124,10 @@ export class MemoryFacade {
     return this.memoryLifecycle.runIntegrityCheck(options);
   }
 
-  insertMemory(input: MemoryInsertInput): MemoryRecord {
+  insertMemory(input: MemoryInsertInput): MemoryRecord | null {
     const result = this.memoryLifecycle.insertMemory(input);
-    const memory = this.getMemory(result.memoryId);
-    if (!memory) {
-      throw new Error(`Inserted memory ${result.memoryId} could not be loaded`);
-    }
-    return memory;
+    if (result.rejected) return null;
+    return this.getMemory(result.memoryId);
   }
 
   listMemories(options?: {
@@ -167,7 +164,7 @@ export class MemoryFacade {
     }
     const limit = options?.limit ?? 50;
     params.push(limit);
-    const sql = `SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
+    const sql = `SELECT id, text AS description, classification, source_type, text AS content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp FROM memory_facts WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
     return z.array(MemoryListRowSchema)
       .parse(this.memoryDb.prepare(sql).all(...params))
       .map((row) =>
@@ -221,18 +218,8 @@ export class MemoryFacade {
     return this.memorySearch.expandMemory(memoryId, cap, locationFilter);
   }
 
-  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number; ttlExpired?: number; staleMarked?: number } {
-    const decay = this.memoryLifecycle.runConfidenceDecay();
-    const consolidation = this.memoryLifecycle.runConsolidation();
-    const governance = this.memoryLifecycle.runStructuredGovernance();
-    return {
-      decayed: decay.decayed,
-      archived: decay.archived,
-      merged: consolidation.merged,
-      deduped: consolidation.deduped,
-      ttlExpired: governance.ttlExpired,
-      staleMarked: governance.staleMarked,
-    };
+  triggerMemoryMaintenance(): { ttlExpired: number; staleMarked: number } {
+    return this.memoryLifecycle.runStructuredGovernance();
   }
 
   importMemory(input: {

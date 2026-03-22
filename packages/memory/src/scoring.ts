@@ -3,7 +3,10 @@ import type { MemoryType } from './types.js';
 import { computeConfidenceDecay, computeJaccardRelevance, computeRecencyScore, normalizeRelevanceScore } from './pure-functions.js';
 import { computeLocationScopeMatchScore, type MemoryLocationFilter } from './location.js';
 import type { FtsCandidate } from './fts5-search.js';
-import type { VecCandidate } from './vec-search.js';
+export interface VecCandidate {
+  memoryId: string;
+  distance: number;
+}
 import type { ScoringWeights } from './strategy.js';
 import type { TemporalConstraint } from './types.js';
 import { chooseTemporalReference, computeTemporalFit } from './temporal.js';

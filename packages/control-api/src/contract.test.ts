@@ -33,28 +33,16 @@ function insertMemoryForPromotion(runtime: ReturnType<typeof createRuntimeServic
   const now = new Date().toISOString();
   const memoryId = 'memory-contract-promote';
   runtime.databases.memory
+    .prepare('INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('ns-promote', 'workspace', 'default', 'Workspace default', now, now);
+  runtime.databases.memory
     .prepare(
-      `INSERT INTO memories (
-        id, description, classification, source_type, content, confidence, scope, memory_type,
-        dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO memory_facts (
+        id, namespace_id, scope, classification, source_type, memory_type, fact_kind,
+        text, confidence, source_reliability, extraction_confidence, created_at, domain
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(
-      memoryId,
-      'Promotable memory',
-      'embeddable',
-      'compaction_flush',
-      'Promoted content',
-      0.8,
-      'default',
-      'semantic',
-      null,
-      null,
-      null,
-      now,
-      'run-promote',
-      now,
-    );
+    .run(memoryId, 'ns-promote', 'default', 'embeddable', 'compaction_flush', 'semantic', 'event', 'Promoted content', 0.8, 0.8, 0.8, now, 'general');
   return memoryId;
 }
 

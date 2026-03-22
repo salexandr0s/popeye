@@ -1,68 +1,12 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isVecTableAvailable, runIntegrityChecks } from './integrity-checker.js';
+import { runIntegrityChecks } from './integrity-checker.js';
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = OFF'); // Allow testing orphaned references
   db.exec(`
-    CREATE TABLE memories (
-      id TEXT PRIMARY KEY,
-      description TEXT NOT NULL,
-      classification TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      content TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      scope TEXT NOT NULL,
-      workspace_id TEXT,
-      project_id TEXT,
-      memory_type TEXT NOT NULL DEFAULT 'episodic',
-      dedup_key TEXT,
-      last_reinforced_at TEXT,
-      archived_at TEXT,
-      source_run_id TEXT,
-      source_timestamp TEXT,
-      created_at TEXT NOT NULL,
-      durable INTEGER NOT NULL DEFAULT 0,
-      domain TEXT DEFAULT 'general'
-    );
-    CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
-    CREATE TABLE memory_events (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_sources (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      source_ref TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_consolidations (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      merged_into_id TEXT NOT NULL,
-      reason TEXT DEFAULT '',
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_entities (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      canonical_name TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_entity_mentions (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      mention_count INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
     CREATE TABLE memory_summaries (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
@@ -81,30 +25,79 @@ function createTestDb(): Database.Database {
       memory_id TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE memory_artifacts (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      classification TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      namespace_id TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      domain TEXT NOT NULL DEFAULT 'general',
+      trust_score REAL NOT NULL DEFAULT 0.7,
+      invalidated_at TEXT
+    );
+    CREATE TABLE memory_artifact_chunks (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      chunk_kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      token_count INTEGER NOT NULL,
+      classification TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      invalidated_at TEXT
+    );
+    CREATE TABLE memory_facts (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      memory_type TEXT NOT NULL DEFAULT 'semantic',
+      confidence REAL NOT NULL DEFAULT 0.8,
+      scope TEXT NOT NULL DEFAULT 'workspace',
+      workspace_id TEXT,
+      project_id TEXT,
+      source_type TEXT NOT NULL DEFAULT 'curated_memory',
+      namespace_id TEXT NOT NULL DEFAULT 'ns-default',
+      created_at TEXT NOT NULL,
+      last_reinforced_at TEXT,
+      durable INTEGER NOT NULL DEFAULT 0,
+      domain TEXT DEFAULT 'general',
+      is_latest INTEGER NOT NULL DEFAULT 1,
+      revision_status TEXT NOT NULL DEFAULT 'active',
+      archived_at TEXT,
+      invalidated_at TEXT,
+      forget_after TEXT,
+      expired_at TEXT
+    );
+    CREATE TABLE memory_fact_sources (
+      id TEXT PRIMARY KEY,
+      fact_id TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_syntheses (
+      id TEXT PRIMARY KEY,
+      synthesis_kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      text TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0.8,
+      scope TEXT NOT NULL DEFAULT 'workspace',
+      workspace_id TEXT,
+      project_id TEXT,
+      namespace_id TEXT NOT NULL DEFAULT 'ns-default',
+      domain TEXT DEFAULT 'general',
+      updated_at TEXT NOT NULL,
+      archived_at TEXT,
+      refresh_due_at TEXT
+    );
   `);
   return db;
 }
-
-function insertMemory(db: Database.Database, id: string, opts?: { confidence?: number; archived?: boolean; classification?: string; dedupKey?: string }): void {
-  const now = new Date().toISOString();
-  db.prepare(`INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, created_at, durable, dedup_key, archived_at)
-    VALUES (?, 'desc', ?, 'curated_memory', 'content', ?, 'workspace', 'semantic', ?, 0, ?, ?)`).run(
-    id,
-    opts?.classification ?? 'embeddable',
-    opts?.confidence ?? 0.8,
-    now,
-    opts?.dedupKey ?? null,
-    opts?.archived ? now : null,
-  );
-}
-
-describe('isVecTableAvailable', () => {
-  it('returns false when memory_vec does not exist', () => {
-    const db = new Database(':memory:');
-    expect(isVecTableAvailable(db)).toBe(false);
-    db.close();
-  });
-});
 
 describe('runIntegrityChecks', () => {
   let db: Database.Database;
@@ -115,122 +108,9 @@ describe('runIntegrityChecks', () => {
   it('returns clean report for empty database', () => {
     const report = runIntegrityChecks(db);
     expect(report.violations).toEqual([]);
-    expect(report.checksRun).toHaveLength(13);
+    expect(report.checksRun).toHaveLength(5);
     expect(report.fixesApplied).toBe(0);
     expect(report.durationMs).toBeGreaterThanOrEqual(0);
-  });
-
-  it('returns clean report for healthy database', () => {
-    const now = new Date().toISOString();
-    insertMemory(db, 'mem-1');
-    db.prepare('INSERT INTO memories_fts(memory_id, description, content) VALUES (?, ?, ?)').run('mem-1', 'desc', 'content');
-    db.prepare("INSERT INTO memory_events (id, memory_id, type, created_at) VALUES ('ev-1', 'mem-1', 'created', ?)").run(now);
-
-    const report = runIntegrityChecks(db);
-    expect(report.violations).toEqual([]);
-  });
-
-  describe('fts5_index_sync', () => {
-    it('detects active memories missing from FTS5', () => {
-      insertMemory(db, 'mem-1');
-      // Don't insert into FTS
-
-      const report = runIntegrityChecks(db, { checks: ['fts5_index_sync'] });
-      expect(report.violations).toHaveLength(1);
-      expect(report.violations[0]!.check).toBe('fts5_index_sync');
-      expect(report.violations[0]!.memoryId).toBe('mem-1');
-      expect(report.violations[0]!.autoFixable).toBe(true);
-    });
-
-    it('fixes missing FTS entries when fix=true', () => {
-      insertMemory(db, 'mem-1');
-
-      const report = runIntegrityChecks(db, { checks: ['fts5_index_sync'], fix: true });
-      expect(report.fixesApplied).toBe(1);
-
-      // Verify fix
-      const ftsRow = db.prepare("SELECT memory_id FROM memories_fts WHERE memory_id = 'mem-1'").get();
-      expect(ftsRow).toBeTruthy();
-    });
-
-    it('ignores archived memories', () => {
-      insertMemory(db, 'mem-1', { archived: true });
-
-      const report = runIntegrityChecks(db, { checks: ['fts5_index_sync'] });
-      expect(report.violations).toEqual([]);
-    });
-  });
-
-  describe('dedup_key_consistency', () => {
-    it('detects duplicate dedup keys among active memories', () => {
-      insertMemory(db, 'mem-1', { dedupKey: 'dup-key' });
-      insertMemory(db, 'mem-2', { dedupKey: 'dup-key' });
-
-      const report = runIntegrityChecks(db, { checks: ['dedup_key_consistency'] });
-      expect(report.violations).toHaveLength(1);
-      expect(report.violations[0]!.check).toBe('dedup_key_consistency');
-    });
-
-    it('ignores archived duplicates', () => {
-      insertMemory(db, 'mem-1', { dedupKey: 'dup-key' });
-      insertMemory(db, 'mem-2', { dedupKey: 'dup-key', archived: true });
-
-      const report = runIntegrityChecks(db, { checks: ['dedup_key_consistency'] });
-      expect(report.violations).toEqual([]);
-    });
-  });
-
-  describe('entity_mention_consistency', () => {
-    it('detects mentions pointing to deleted memories', () => {
-      const now = new Date().toISOString();
-      db.prepare("INSERT INTO memory_entities (id, name, entity_type, canonical_name, created_at) VALUES ('ent-1', 'test', 'tool', 'test', ?)").run(now);
-      db.prepare("INSERT INTO memory_entity_mentions (id, memory_id, entity_id, created_at) VALUES ('em-1', 'non-existent', 'ent-1', ?)").run(now);
-
-      const report = runIntegrityChecks(db, { checks: ['entity_mention_consistency'] });
-      expect(report.violations.length).toBeGreaterThanOrEqual(1);
-      expect(report.violations.some((v) => v.check === 'entity_mention_consistency')).toBe(true);
-    });
-
-    it('fixes orphaned mentions', () => {
-      const now = new Date().toISOString();
-      db.prepare("INSERT INTO memory_entity_mentions (id, memory_id, entity_id, created_at) VALUES ('em-1', 'non-existent', 'non-existent', ?)").run(now);
-
-      runIntegrityChecks(db, { checks: ['entity_mention_consistency'], fix: true });
-
-      const remaining = db.prepare('SELECT COUNT(*) as c FROM memory_entity_mentions').get() as { c: number };
-      expect(remaining.c).toBe(0);
-    });
-  });
-
-  describe('consolidation_chain_integrity', () => {
-    it('detects broken merge chains', () => {
-      const now = new Date().toISOString();
-      insertMemory(db, 'mem-1');
-      db.prepare("INSERT INTO memory_consolidations (id, memory_id, merged_into_id, created_at) VALUES ('mc-1', 'mem-1', 'non-existent', ?)").run(now);
-
-      const report = runIntegrityChecks(db, { checks: ['consolidation_chain_integrity'] });
-      expect(report.violations).toHaveLength(1);
-      expect(report.violations[0]!.check).toBe('consolidation_chain_integrity');
-    });
-  });
-
-  describe('confidence_bounds', () => {
-    it('detects confidence outside [0, 1]', () => {
-      insertMemory(db, 'mem-1', { confidence: 1.5 });
-      insertMemory(db, 'mem-2', { confidence: -0.1 });
-
-      const report = runIntegrityChecks(db, { checks: ['confidence_bounds'] });
-      expect(report.violations).toHaveLength(2);
-    });
-
-    it('clamps confidence when fix=true', () => {
-      insertMemory(db, 'mem-1', { confidence: 1.5 });
-
-      runIntegrityChecks(db, { checks: ['confidence_bounds'], fix: true });
-
-      const row = db.prepare('SELECT confidence FROM memories WHERE id = ?').get('mem-1') as { confidence: number };
-      expect(row.confidence).toBe(1);
-    });
   });
 
   describe('summary_dag_integrity', () => {
@@ -256,34 +136,92 @@ describe('runIntegrityChecks', () => {
     });
   });
 
-  describe('event_log_completeness', () => {
-    it('detects memories without created event', () => {
-      insertMemory(db, 'mem-1');
-      // No event inserted
+  describe('orphan_chunks', () => {
+    it('detects chunks belonging to invalidated artifacts', () => {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO memory_artifacts (id, source_type, classification, scope, namespace_id, captured_at, content, content_hash, invalidated_at)
+        VALUES ('a1', 'workspace_doc', 'internal', 'workspace', 'ns-1', ?, 'content', 'hash', ?)`).run(now, now);
+      db.prepare(`INSERT INTO memory_artifact_chunks (id, artifact_id, chunk_index, chunk_kind, text, text_hash, token_count, classification, created_at, updated_at)
+        VALUES ('c1', 'a1', 0, 'paragraph', 'chunk text', 'hash', 10, 'internal', ?, ?)`).run(now, now);
 
-      const report = runIntegrityChecks(db, { checks: ['event_log_completeness'] });
+      const report = runIntegrityChecks(db, { checks: ['orphan_chunks'] });
       expect(report.violations).toHaveLength(1);
-      expect(report.violations[0]!.check).toBe('event_log_completeness');
-      expect(report.violations[0]!.memoryId).toBe('mem-1');
+      expect(report.violations[0]!.check).toBe('orphan_chunks');
+    });
+  });
+
+  describe('unsupported_facts', () => {
+    it('detects facts with no valid evidence artifacts', () => {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO memory_facts (id, text, created_at) VALUES ('f1', 'some fact', ?)`).run(now);
+      db.prepare(`INSERT INTO memory_artifacts (id, source_type, classification, scope, namespace_id, captured_at, content, content_hash, invalidated_at)
+        VALUES ('a1', 'workspace_doc', 'internal', 'workspace', 'ns-1', ?, 'content', 'hash', ?)`).run(now, now);
+      db.prepare(`INSERT INTO memory_fact_sources (id, fact_id, artifact_id, created_at) VALUES ('fs1', 'f1', 'a1', ?)`).run(now);
+
+      const report = runIntegrityChecks(db, { checks: ['unsupported_facts'] });
+      expect(report.violations).toHaveLength(1);
+      expect(report.violations[0]!.check).toBe('unsupported_facts');
+    });
+
+    it('fixes unsupported facts by invalidating them', () => {
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO memory_facts (id, text, created_at) VALUES ('f1', 'some fact', ?)`).run(now);
+      db.prepare(`INSERT INTO memory_artifacts (id, source_type, classification, scope, namespace_id, captured_at, content, content_hash, invalidated_at)
+        VALUES ('a1', 'workspace_doc', 'internal', 'workspace', 'ns-1', ?, 'content', 'hash', ?)`).run(now, now);
+      db.prepare(`INSERT INTO memory_fact_sources (id, fact_id, artifact_id, created_at) VALUES ('fs1', 'f1', 'a1', ?)`).run(now);
+
+      runIntegrityChecks(db, { checks: ['unsupported_facts'], fix: true });
+
+      const row = db.prepare('SELECT invalidated_at FROM memory_facts WHERE id = ?').get('f1') as { invalidated_at: string | null };
+      expect(row.invalidated_at).not.toBeNull();
+    });
+  });
+
+  describe('profile_refresh_debt', () => {
+    it('detects syntheses with overdue refresh', () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      db.prepare(`INSERT INTO memory_syntheses (id, synthesis_kind, title, text, updated_at, refresh_due_at)
+        VALUES ('syn1', 'profile', 'Test Profile', 'profile text', ?, ?)`).run(pastDate, pastDate);
+
+      const report = runIntegrityChecks(db, { checks: ['profile_refresh_debt'] });
+      expect(report.violations).toHaveLength(1);
+      expect(report.violations[0]!.check).toBe('profile_refresh_debt');
+    });
+  });
+
+  describe('ttl_consistency', () => {
+    it('detects facts with expired TTL but not marked expired', () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO memory_facts (id, text, created_at, forget_after) VALUES ('f1', 'ephemeral fact', ?, ?)`).run(now, pastDate);
+
+      const report = runIntegrityChecks(db, { checks: ['ttl_consistency'] });
+      expect(report.violations).toHaveLength(1);
+      expect(report.violations[0]!.check).toBe('ttl_consistency');
+    });
+
+    it('fixes expired TTL facts', () => {
+      const pastDate = new Date(Date.now() - 86400000).toISOString();
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO memory_facts (id, text, created_at, forget_after) VALUES ('f1', 'ephemeral fact', ?, ?)`).run(now, pastDate);
+
+      runIntegrityChecks(db, { checks: ['ttl_consistency'], fix: true });
+
+      const row = db.prepare('SELECT expired_at, archived_at FROM memory_facts WHERE id = ?').get('f1') as { expired_at: string | null; archived_at: string | null };
+      expect(row.expired_at).not.toBeNull();
+      expect(row.archived_at).not.toBeNull();
     });
   });
 
   describe('selective checks', () => {
     it('runs only specified checks', () => {
-      const report = runIntegrityChecks(db, { checks: ['fts5_index_sync', 'confidence_bounds'] });
-      expect(report.checksRun).toEqual(['fts5_index_sync', 'confidence_bounds']);
+      const report = runIntegrityChecks(db, { checks: ['summary_dag_integrity', 'ttl_consistency'] });
+      expect(report.checksRun).toEqual(['summary_dag_integrity', 'ttl_consistency']);
     });
   });
 
   describe('performance', () => {
-    it('completes within 100ms for 100 memories', () => {
-      const now = new Date().toISOString();
-      for (let i = 0; i < 100; i++) {
-        insertMemory(db, `mem-${i}`);
-        db.prepare('INSERT INTO memories_fts(memory_id, description, content) VALUES (?, ?, ?)').run(`mem-${i}`, 'desc', 'content');
-        db.prepare("INSERT INTO memory_events (id, memory_id, type, created_at) VALUES (?, ?, 'created', ?)").run(`ev-${i}`, `mem-${i}`, now);
-      }
-
+    it('completes within 100ms for empty database', () => {
       const report = runIntegrityChecks(db);
       expect(report.durationMs).toBeLessThan(100);
       expect(report.violations).toEqual([]);

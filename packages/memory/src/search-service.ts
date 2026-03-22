@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
 
 import type {
   MemoryRecord,
@@ -7,16 +6,10 @@ import type {
   MemorySearchResult,
   MemoryType,
   RecallExplanation,
-  StoreMemoryResult,
 } from './types.js';
-import { redactText } from '@popeye/observability';
 
 import {
-  assessMemoryQuality,
   classifyMemoryType,
-  computeDedupKey,
-  computeReinforcedConfidence,
-  isDurableMemory,
   sanitizeSearchQuery,
 } from './pure-functions.js';
 import { extractEntities } from './entity-extraction.js';
@@ -24,17 +17,15 @@ import { applyBudgetAllocation, type BudgetConfig } from './budget-allocation.js
 import { classifyExpansionPolicy } from './expansion-policy.js';
 import { getStrategyWeights } from './strategy.js';
 import type { EmbeddingClient } from './embedding-client.js';
-import { searchChunksFts5, searchFactsFts5, searchFts5, searchSynthesesFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
+import { searchChunksFts5, searchFactsFts5, searchSynthesesFts5 } from './fts5-search.js';
 import {
-  canonicalizeMemoryLocation,
   matchesMemoryLocation,
   normalizeMemoryLocation,
   resolveMemoryLocationFilter,
   type MemoryLocationFilter,
 } from './location.js';
 import { rerankAndMerge } from './scoring.js';
-import type { FactMetadata, ScoredCandidate, VecOnlyMetadata } from './scoring.js';
-import { deleteVecEmbedding, insertVecEmbedding, searchVec } from './vec-search.js';
+import type { FactMetadata, ScoredCandidate } from './scoring.js';
 import { buildRecallPlan } from './recall-planner.js';
 import { buildRecallExplanation } from './recall-explainer.js';
 import { applyConsumerProfile, getExcludedDomains } from './consumer-profiles.js';
@@ -56,7 +47,6 @@ export class MemorySearchService {
   private readonly redactionPatterns: string[];
   private readonly logger: MemorySearchLogger | undefined;
   private readonly enableRetrievalLogging: boolean;
-  private readonly legacySearchEnabled: boolean;
 
   constructor(opts: {
     db: Database.Database;
@@ -67,7 +57,6 @@ export class MemorySearchService {
     redactionPatterns?: string[] | undefined;
     logger?: MemorySearchLogger | undefined;
     enableRetrievalLogging?: boolean | undefined;
-    legacySearchEnabled?: boolean | undefined;
   }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
@@ -83,7 +72,6 @@ export class MemorySearchService {
     this.redactionPatterns = opts.redactionPatterns ?? [];
     this.logger = opts.logger;
     this.enableRetrievalLogging = opts.enableRetrievalLogging ?? false;
-    this.legacySearchEnabled = opts.legacySearchEnabled ?? true;
   }
 
   private buildQueryLocation(input: {
@@ -178,18 +166,6 @@ export class MemorySearchService {
     const shouldSearchFacts = !layers || layers.length === 0 || layers.includes('fact');
     const shouldSearchSyntheses = !layers || layers.length === 0 || layers.includes('synthesis') || layers.includes('curated');
     const shouldSearchChunks = !layers || layers.length === 0 || layers.includes('artifact');
-    const shouldSearchLegacy = this.legacySearchEnabled
-      && (!layers || layers.length === 0 || layers.some((layer) => layer !== 'artifact'));
-
-    const legacyFtsFilters = {
-      ...(scopeAliasQuery ? { scope } : {}),
-      ...(queryLocation !== undefined ? { workspaceId: queryLocation.workspaceId, projectId: queryLocation.projectId } : {}),
-      ...(effectiveIncludeGlobal !== undefined ? { includeGlobal: effectiveIncludeGlobal } : {}),
-      ...(memoryTypes !== undefined ? { memoryTypes } : {}),
-      ...(domains !== undefined ? { domains } : {}),
-      minConfidence,
-      limit: overfetch,
-    };
 
     const structuredFtsFilters = {
       ...(scopeAliasQuery ? { scope } : {}),
@@ -284,7 +260,6 @@ export class MemorySearchService {
     };
 
     const rawFtsCandidates = [
-      ...(shouldSearchLegacy ? searchFts5(this.db, queryText, legacyFtsFilters) : []),
       ...(shouldSearchFacts ? searchFactsFts5(this.db, queryText, structuredFtsFilters) : []),
       ...(shouldSearchSyntheses ? searchSynthesesFts5(this.db, queryText, {
         ...(scopeAliasQuery ? { scope } : {}),
@@ -335,79 +310,16 @@ export class MemorySearchService {
       }
     }
 
-    if (this.getVecAvailable() && this.embeddingClient.enabled && shouldSearchLegacy) {
-      searchMode = 'hybrid';
-      const embeddings = await this.embeddingClient.embed([queryText]);
-      const queryEmbedding = embeddings[0];
-      const vecCandidates = queryEmbedding ? searchVec(this.db, queryEmbedding, overfetch) : [];
-
-      const ftsIds = new Set(ftsCandidates.map((candidate) => candidate.memoryId));
-      const vecOnlyIds = vecCandidates.filter((candidate) => !ftsIds.has(candidate.memoryId)).map((candidate) => candidate.memoryId);
-      const vecOnlyMetadata = new Map<string, VecOnlyMetadata>();
-      if (vecOnlyIds.length > 0) {
-        const placeholders = vecOnlyIds.map(() => '?').join(',');
-        const rows = this.db
-          .prepare(`SELECT id, description, content, memory_type, confidence, scope, workspace_id, project_id, source_type, created_at, last_reinforced_at, durable, domain FROM memories WHERE id IN (${placeholders}) AND archived_at IS NULL`)
-          .all(...vecOnlyIds) as Array<{
-            id: string;
-            description: string;
-            content: string;
-            memory_type: string;
-            confidence: number;
-            scope: string;
-            workspace_id: string | null;
-            project_id: string | null;
-            source_type: string;
-            created_at: string;
-            last_reinforced_at: string | null;
-            durable: number;
-            domain: string | null;
-          }>;
-        for (const row of rows) {
-          // Filter out vec-only results that don't match domain constraints
-          if (domains && domains.length > 0 && row.domain && !domains.includes(row.domain)) continue;
-          if (excludedDomains.length > 0 && row.domain && excludedDomains.includes(row.domain)) continue;
-          vecOnlyMetadata.set(row.id, {
-            memoryId: row.id,
-            description: row.description,
-            content: row.content,
-            memoryType: row.memory_type as MemoryType,
-            confidence: row.confidence,
-            scope: row.scope,
-            workspaceId: row.workspace_id,
-            projectId: row.project_id,
-            sourceType: row.source_type,
-            createdAt: row.created_at,
-            lastReinforcedAt: row.last_reinforced_at,
-            durable: Boolean(row.durable),
-            domain: row.domain ?? undefined,
-          });
-        }
-      }
-
-      allScored = rerankAndMerge(ftsCandidates, vecCandidates, {
-        ...rerankParams,
-        vecOnlyMetadata,
-        weights,
-        queryText,
-        entityMatches,
-        factMetadata,
-      });
-      totalCandidates = allScored.length;
-      const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
-      results = limited.map(mapResult);
-    } else {
-      allScored = rerankAndMerge(ftsCandidates, [], {
-        ...rerankParams,
-        weights,
-        queryText,
-        entityMatches,
-        factMetadata,
-      });
-      totalCandidates = allScored.length;
-      const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
-      results = limited.map(mapResult);
-    }
+    allScored = rerankAndMerge(ftsCandidates, [], {
+      ...rerankParams,
+      weights,
+      queryText,
+      entityMatches,
+      factMetadata,
+    });
+    totalCandidates = allScored.length;
+    const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
+    results = limited.map(mapResult);
 
     const latencyMs = performance.now() - start;
 
@@ -469,189 +381,7 @@ export class MemorySearchService {
     };
   }
 
-  storeMemory(input: {
-    description: string;
-    classification: string;
-    sourceType: string;
-    content: string;
-    confidence: number;
-    scope: string;
-    workspaceId?: string | null;
-    projectId?: string | null;
-    memoryType?: MemoryType | undefined;
-    sourceRef?: string | undefined;
-    sourceRefType?: string | undefined;
-  }): StoreMemoryResult {
-    const location = canonicalizeMemoryLocation({
-      scope: input.scope,
-      workspaceId: input.workspaceId,
-      projectId: input.projectId,
-    });
-    const scopeValue = location.scope;
-    const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
-    const dedupKey = computeDedupKey(input.description, input.content, scopeValue);
-    const now = new Date().toISOString();
-
-    const existing = this.db.prepare('SELECT id, confidence FROM memories WHERE dedup_key = ?').get(dedupKey) as { id: string; confidence: number } | undefined;
-
-    if (existing) {
-      const newConfidence = computeReinforcedConfidence(existing.confidence);
-      this.db.prepare('UPDATE memories SET confidence = ?, last_reinforced_at = ? WHERE id = ?').run(newConfidence, now, existing.id);
-      this.db.prepare("INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, 'reinforced', '{}', ?)").run(randomUUID(), existing.id, now);
-      return { memoryId: existing.id, embedded: false };
-    }
-
-    const quality = assessMemoryQuality(input.description, input.content);
-    if (!quality.pass) {
-      return { memoryId: '', embedded: false, rejected: true, rejectionReason: quality.reason };
-    }
-
-    const { text: redactedContent } = redactText(input.content, this.redactionPatterns);
-    const memoryId = randomUUID();
-    const durable = isDurableMemory(redactedContent) ? 1 : 0;
-
-    this.db.prepare(
-      'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, created_at, durable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(
-      memoryId,
-      input.description,
-      input.classification,
-      input.sourceType,
-      redactedContent,
-      input.confidence,
-      scopeValue,
-      location.workspaceId,
-      location.projectId,
-      memoryType,
-      dedupKey,
-      now,
-      now,
-      durable,
-    );
-
-    syncFtsInsert(this.db, memoryId, input.description, redactedContent);
-
-    if (input.sourceRef) {
-      this.db.prepare('INSERT INTO memory_sources (id, memory_id, source_type, source_ref, created_at) VALUES (?, ?, ?, ?, ?)').run(
-        randomUUID(),
-        memoryId,
-        input.sourceRefType ?? input.sourceType,
-        input.sourceRef,
-        now,
-      );
-    }
-
-    this.db.prepare("INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, 'created', '{}', ?)").run(randomUUID(), memoryId, now);
-
-    const entities = extractEntities(redactedContent);
-    if (entities.length > 0) {
-      const persistEntities = this.db.transaction(() => {
-        for (const entity of entities) {
-          const existingEntity = this.db.prepare(
-            'SELECT id FROM memory_entities WHERE canonical_name = ? AND entity_type = ?',
-          ).get(entity.canonicalName, entity.type) as { id: string } | undefined;
-
-          let entityId: string;
-          if (existingEntity) {
-            entityId = existingEntity.id;
-          } else {
-            entityId = randomUUID();
-            this.db.prepare(
-              'INSERT INTO memory_entities (id, name, entity_type, canonical_name, created_at) VALUES (?, ?, ?, ?, ?)',
-            ).run(entityId, entity.name, entity.type, entity.canonicalName, now);
-          }
-
-          this.db.prepare(
-            'INSERT INTO memory_entity_mentions (id, memory_id, entity_id, mention_count, created_at) VALUES (?, ?, ?, 1, ?)',
-          ).run(randomUUID(), memoryId, entityId, now);
-        }
-      });
-      persistEntities();
-    }
-
-    return { memoryId, embedded: false };
-  }
-
-  async storeMemoryWithEmbedding(input: {
-    description: string;
-    classification: string;
-    sourceType: string;
-    content: string;
-    confidence: number;
-    scope: string;
-    workspaceId?: string | null;
-    projectId?: string | null;
-    memoryType?: MemoryType | undefined;
-    sourceRef?: string | undefined;
-    sourceRefType?: string | undefined;
-  }): Promise<StoreMemoryResult> {
-    const result = this.storeMemory(input);
-    if (result.rejected) return result;
-
-    if (input.classification === 'embeddable' && this.getVecAvailable() && this.embeddingClient.enabled) {
-      try {
-        const embeddings = await this.embeddingClient.embed([input.content]);
-        const embedding = embeddings[0];
-        if (embedding) {
-          insertVecEmbedding(this.db, result.memoryId, embedding);
-          return { memoryId: result.memoryId, embedded: true };
-        }
-      } catch {
-        // Embedding failure is non-fatal.
-      }
-    }
-
-    return result;
-  }
-
   getMemoryContent(memoryId: string, locationFilter?: MemoryLocationFilter): MemoryRecord | null {
-    const legacyRow = this.db.prepare(
-      'SELECT id, description, classification, source_type, content, confidence, scope, workspace_id, project_id, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp, durable, domain FROM memories WHERE id = ?',
-    ).get(memoryId) as {
-      id: string;
-      description: string;
-      classification: string;
-      source_type: string;
-      content: string;
-      confidence: number;
-      scope: string;
-      workspace_id: string | null;
-      project_id: string | null;
-      memory_type: string;
-      dedup_key: string | null;
-      last_reinforced_at: string | null;
-      archived_at: string | null;
-      created_at: string;
-      source_run_id: string | null;
-      source_timestamp: string | null;
-      durable: number;
-      domain: string | null;
-    } | undefined;
-
-    if (legacyRow) {
-      const record: MemoryRecord = {
-        id: legacyRow.id,
-        description: legacyRow.description,
-        classification: legacyRow.classification as MemoryRecord['classification'],
-        sourceType: legacyRow.source_type,
-        content: legacyRow.content,
-        confidence: legacyRow.confidence,
-        scope: legacyRow.scope,
-        workspaceId: legacyRow.workspace_id,
-        projectId: legacyRow.project_id,
-        sourceRunId: legacyRow.source_run_id ?? null,
-        sourceTimestamp: legacyRow.source_timestamp ?? null,
-        memoryType: legacyRow.memory_type as MemoryRecord['memoryType'],
-        dedupKey: legacyRow.dedup_key,
-        lastReinforcedAt: legacyRow.last_reinforced_at,
-        archivedAt: legacyRow.archived_at,
-        createdAt: legacyRow.created_at,
-        durable: Boolean(legacyRow.durable),
-        domain: legacyRow.domain ?? undefined,
-      };
-      return matchesMemoryLocation(record, locationFilter) ? record : null;
-    }
-
     let artifactRow: {
       id: string;
       classification: string;
@@ -1079,27 +809,7 @@ export class MemorySearchService {
       };
     }
 
-    const entityCount = (this.db.prepare('SELECT COUNT(*) as c FROM memory_entity_mentions WHERE memory_id = ?').get(memoryId) as { c: number }).c;
-    const sourceCount = (this.db.prepare('SELECT COUNT(*) as c FROM memory_sources WHERE memory_id = ?').get(memoryId) as { c: number }).c;
-    const eventCount = (this.db.prepare('SELECT COUNT(*) as c FROM memory_events WHERE memory_id = ?').get(memoryId) as { c: number }).c;
-
-    return {
-      id: record.id,
-      description: record.description,
-      type: record.memoryType,
-      confidence: record.confidence,
-      scope: record.scope,
-      workspaceId: record.workspaceId,
-      projectId: record.projectId,
-      sourceType: record.sourceType,
-      createdAt: record.createdAt,
-      lastReinforcedAt: record.lastReinforcedAt,
-      durable: record.durable,
-      contentLength: record.content.length,
-      entityCount,
-      sourceCount,
-      eventCount,
-    };
+    return null;
   }
 
   expandMemory(memoryId: string, maxTokens?: number, locationFilter?: MemoryLocationFilter): {
@@ -1124,19 +834,4 @@ export class MemorySearchService {
     };
   }
 
-  syncFtsInsert(memoryId: string, description: string, content: string): void {
-    syncFtsInsert(this.db, memoryId, description, content);
-  }
-
-  syncFtsDelete(memoryId: string, description: string, content: string): void {
-    syncFtsDelete(this.db, memoryId, description, content);
-  }
-
-  insertVecEmbedding(memoryId: string, embedding: Float32Array): void {
-    insertVecEmbedding(this.db, memoryId, embedding);
-  }
-
-  deleteVecEmbedding(memoryId: string): void {
-    deleteVecEmbedding(this.db, memoryId);
-  }
 }

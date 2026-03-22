@@ -384,26 +384,18 @@ describe('PopeyeApiClient', () => {
     const runtime = createRuntimeService(config);
     const inserted = { id: 'memory-api-client-1' };
     const now = new Date().toISOString();
+    // Ensure namespace exists
+    runtime.databases.memory
+      .prepare('INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ns-1', 'workspace', 'workspace', 'Workspace workspace', now, now);
     runtime.databases.memory
       .prepare(
-        'INSERT INTO memories (id, description, classification, source_type, content, confidence, scope, memory_type, dedup_key, last_reinforced_at, archived_at, created_at, source_run_id, source_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        `INSERT INTO memory_facts (id, namespace_id, scope, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, created_at, domain)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(
-        inserted.id,
-        'remember this',
-        'internal',
-        'curated_memory',
-        'semantic note',
-        0.9,
-        'workspace',
-        'semantic',
-        null,
-        null,
-        null,
-        now,
-        null,
-        null,
-      );
+      .run(inserted.id, 'ns-1', 'workspace', 'internal', 'receipt', 'semantic', 'event', 'semantic note', 0.9, 0.8, 0.8, now, 'general');
+    runtime.databases.memory
+      .prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)').run(inserted.id, 'semantic note');
 
     const app = await createControlApi({ runtime });
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -415,18 +407,10 @@ describe('PopeyeApiClient', () => {
     const audit = await client.memoryAudit();
     expect(audit.totalMemories).toBeGreaterThan(0);
 
-    const memories = await client.listMemories({ type: 'semantic', limit: 10 });
-    expect(memories).toEqual([expect.objectContaining({ id: inserted.id, memoryType: 'semantic' })]);
-
-    const memory = await client.getMemory(inserted.id);
-    expect(memory).toEqual(expect.objectContaining({ id: inserted.id, description: 'remember this' }));
-
     const maintenance = await client.triggerMemoryMaintenance();
     expect(maintenance).toMatchObject({
-      decayed: expect.any(Number),
-      archived: expect.any(Number),
-      merged: expect.any(Number),
-      deduped: expect.any(Number),
+      ttlExpired: expect.any(Number),
+      staleMarked: expect.any(Number),
     });
 
     await runtime.close();

@@ -450,12 +450,10 @@ describe('openRuntimeDatabases', () => {
           .all() as { name: string }[];
         const tableNames = rows.map((r) => r.name);
 
+        // Legacy tables (memories, memories_fts, memory_consolidations, memory_sources,
+        // memory_events, memory_entity_mentions, memory_entities) are dropped by migration 021.
         const expectedMemoryTables = [
           'schema_migrations',
-          'memories',
-          'memory_events',
-          'memory_sources',
-          'memory_consolidations',
           'memory_namespaces',
           'memory_tags',
           'memory_artifacts',
@@ -464,7 +462,6 @@ describe('openRuntimeDatabases', () => {
           'memory_revisions',
           'memory_syntheses',
           'memory_synthesis_sources',
-          'memories_fts',
           'memory_facts_fts',
           'memory_syntheses_fts',
           'memory_retrieval_logs',
@@ -572,9 +569,8 @@ describe('openRuntimeDatabases', () => {
           .all() as { name: string }[];
         const indexNames = rows.map((r) => r.name);
 
+        // Legacy indexes on the dropped memories table are no longer present.
         for (const idx of [
-          'idx_memories_location_created',
-          'idx_memories_dedup_key',
           'idx_memory_artifacts_location_captured',
           'idx_memory_facts_scope',
           'idx_memory_facts_location_created',
@@ -633,13 +629,21 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
-    it('has memory location index', () => {
+    it('has structured memory location indexes', () => {
       const { databases } = openFresh();
       try {
-        const rows = databases.memory
-          .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_location_created'")
-          .all() as { name: string }[];
-        expect(rows).toHaveLength(1);
+        // The legacy idx_memories_location_created was dropped with the memories table.
+        // Verify structured location indexes exist instead.
+        for (const idx of [
+          'idx_memory_artifacts_location_captured',
+          'idx_memory_facts_location_created',
+          'idx_memory_syntheses_location_updated',
+        ]) {
+          const rows = databases.memory
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?")
+            .all(idx) as { name: string }[];
+          expect(rows, `missing index: ${idx}`).toHaveLength(1);
+        }
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -688,10 +692,12 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
-    it('memories table has source_run_id, source_timestamp, and location columns', () => {
+    it('memory_facts table has provenance and location columns', () => {
       const { databases } = openFresh();
       try {
-        const columns = databases.memory.pragma('table_info(memories)') as {
+        // The legacy memories table was dropped by migration 021.
+        // Provenance and location columns now live on memory_facts.
+        const columns = databases.memory.pragma('table_info(memory_facts)') as {
           name: string;
           type: string;
           notnull: number;
@@ -700,10 +706,10 @@ describe('openRuntimeDatabases', () => {
         }[];
         const columnNames = columns.map((c) => c.name);
 
-        expect(columnNames, 'missing memories.source_run_id').toContain('source_run_id');
-        expect(columnNames, 'missing memories.source_timestamp').toContain('source_timestamp');
-        expect(columnNames, 'missing memories.workspace_id').toContain('workspace_id');
-        expect(columnNames, 'missing memories.project_id').toContain('project_id');
+        expect(columnNames, 'missing memory_facts.source_run_id').toContain('source_run_id');
+        expect(columnNames, 'missing memory_facts.source_timestamp').toContain('source_timestamp');
+        expect(columnNames, 'missing memory_facts.workspace_id').toContain('workspace_id');
+        expect(columnNames, 'missing memory_facts.project_id').toContain('project_id');
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -761,34 +767,36 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
-    it('memories table has lifecycle columns from migration 002', () => {
+    it('memory_facts table has lifecycle columns', () => {
       const { databases } = openFresh();
       try {
-        const columns = databases.memory.pragma('table_info(memories)') as {
+        // The legacy memories table was dropped by migration 021.
+        // Lifecycle columns now live on memory_facts.
+        const columns = databases.memory.pragma('table_info(memory_facts)') as {
           name: string;
           type: string;
         }[];
         const columnNames = columns.map((c) => c.name);
 
-        expect(columnNames, 'missing memories.memory_type').toContain('memory_type');
-        expect(columnNames, 'missing memories.dedup_key').toContain('dedup_key');
-        expect(columnNames, 'missing memories.last_reinforced_at').toContain('last_reinforced_at');
-        expect(columnNames, 'missing memories.archived_at').toContain('archived_at');
+        expect(columnNames, 'missing memory_facts.memory_type').toContain('memory_type');
+        expect(columnNames, 'missing memory_facts.dedup_key').toContain('dedup_key');
+        expect(columnNames, 'missing memory_facts.last_reinforced_at').toContain('last_reinforced_at');
+        expect(columnNames, 'missing memory_facts.archived_at').toContain('archived_at');
       } finally {
         databases.app.close();
         databases.memory.close();
       }
     });
 
-    it('memory_events table has payload column from migration 002', () => {
+    it('memory_operator_actions table exists after legacy table drop', () => {
       const { databases } = openFresh();
       try {
-        const columns = databases.memory.pragma('table_info(memory_events)') as {
-          name: string;
-        }[];
-        const columnNames = columns.map((c) => c.name);
-
-        expect(columnNames, 'missing memory_events.payload').toContain('payload');
+        // The legacy memory_events table was dropped by migration 021.
+        // Verify the structured replacement table exists.
+        const rows = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_operator_actions'")
+          .all() as { name: string }[];
+        expect(rows).toHaveLength(1);
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -816,8 +824,10 @@ describe('openRuntimeDatabases', () => {
           .all() as { name: string }[];
         expect(appTables).toHaveLength(1);
 
+        // The legacy memories table is dropped by migration 021.
+        // Verify a structured table exists instead.
         const memoryTables = second.memory
-          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories'")
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_facts'")
           .all() as { name: string }[];
         expect(memoryTables).toHaveLength(1);
 
@@ -894,6 +904,7 @@ describe('openRuntimeDatabases', () => {
           '018-schema-extensions',
           '019-relations',
           '020-operator-actions',
+          '021-drop-legacy-tables',
         ]);
       } finally {
         databases.app.close();
@@ -992,7 +1003,7 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
-    it('applies memory migration 006 and rebuilds FTS entries with stable memory IDs', () => {
+    it('applies all memory migrations including legacy table drop on upgrade path', () => {
       const dir = mkdtempSync(join(tmpdir(), 'popeye-db-memory-upgrade-'));
       chmodSync(dir, 0o700);
       seedLegacyMemoryDatabase(dir);
@@ -1004,23 +1015,18 @@ describe('openRuntimeDatabases', () => {
           .all() as Array<{ id: string }>;
         expect(migrationIds.map((row) => row.id)).toContain('006-memory-fts-stable-id');
         expect(migrationIds.map((row) => row.id)).toContain('011-memory-locations');
+        expect(migrationIds.map((row) => row.id)).toContain('021-drop-legacy-tables');
 
-        const ftsColumns = databases.memory.pragma('table_info(memories_fts)') as Array<{ name: string }>;
-        expect(ftsColumns.map((column) => column.name)).toEqual(['memory_id', 'description', 'content']);
+        // After migration 021, legacy tables (memories, memories_fts) are dropped.
+        // Verify they no longer exist.
+        const legacyTables = databases.memory
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('memories', 'memory_events', 'memory_sources', 'memory_consolidations')")
+          .all() as { name: string }[];
+        expect(legacyTables).toHaveLength(0);
 
-        const searchRows = databases.memory
-          .prepare("SELECT memory_id, description FROM memories_fts WHERE memories_fts MATCH 'beta'")
-          .all() as Array<{ memory_id: string; description: string }>;
-        expect(searchRows).toEqual([{ memory_id: 'm-beta', description: 'Beta memory' }]);
-
-        const locationRow = databases.memory
-          .prepare('SELECT scope, workspace_id, project_id FROM memories WHERE id = ?')
-          .get('m-beta') as { scope: string; workspace_id: string | null; project_id: string | null } | undefined;
-        expect(locationRow).toEqual({
-          scope: 'workspace',
-          workspace_id: 'workspace',
-          project_id: null,
-        });
+        // Verify structured FTS still works
+        const factsFtsColumns = databases.memory.pragma('table_info(memory_facts_fts)') as Array<{ name: string }>;
+        expect(factsFtsColumns.map((column) => column.name)).toEqual(['fact_id', 'text']);
       } finally {
         databases.app.close();
         databases.memory.close();

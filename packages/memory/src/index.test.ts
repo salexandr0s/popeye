@@ -6,13 +6,10 @@ import {
   computeConfidenceDecay,
   computeDedupKey,
   computeRecencyScore,
-  computeReinforcedConfidence,
   computeScopeMatchScore,
-  computeTextOverlap,
   decideEmbeddingEligibility,
   normalizeRelevanceScore,
   renderDailySummaryMarkdown,
-  shouldArchive,
   shouldPersistClassification,
 } from './index.js';
 
@@ -106,61 +103,6 @@ describe('computeDedupKey', () => {
   });
 });
 
-describe('computeReinforcedConfidence', () => {
-  it('boosts confidence by default', () => {
-    expect(computeReinforcedConfidence(0.5)).toBeCloseTo(0.6, 5);
-  });
-
-  it('caps at 1.0', () => {
-    expect(computeReinforcedConfidence(0.95)).toBe(1);
-  });
-
-  it('supports custom boost', () => {
-    expect(computeReinforcedConfidence(0.5, 0.3)).toBeCloseTo(0.8, 5);
-  });
-});
-
-describe('shouldArchive', () => {
-  it('archives when below threshold', () => {
-    expect(shouldArchive(0.05)).toBe(true);
-  });
-
-  it('does not archive when above threshold', () => {
-    expect(shouldArchive(0.5)).toBe(false);
-  });
-
-  it('does not archive at exactly the threshold', () => {
-    expect(shouldArchive(0.1)).toBe(false);
-  });
-
-  it('supports custom threshold', () => {
-    expect(shouldArchive(0.3, 0.5)).toBe(true);
-  });
-});
-
-describe('computeTextOverlap', () => {
-  it('returns 1 for identical strings', () => {
-    expect(computeTextOverlap('hello world', 'hello world')).toBe(1);
-  });
-
-  it('returns 0 for completely different strings', () => {
-    expect(computeTextOverlap('hello world', 'foo bar')).toBe(0);
-  });
-
-  it('returns partial overlap', () => {
-    // tokens: {hello, world} vs {hello, there}
-    // intersection = 1, union = 3
-    expect(computeTextOverlap('hello world', 'hello there')).toBeCloseTo(1 / 3, 5);
-  });
-
-  it('returns 1 for two empty strings', () => {
-    expect(computeTextOverlap('', '')).toBe(1);
-  });
-
-  it('returns 0 when one string is empty', () => {
-    expect(computeTextOverlap('hello', '')).toBe(0);
-  });
-});
 
 describe('renderDailySummaryMarkdown', () => {
   it('renders a complete summary', () => {

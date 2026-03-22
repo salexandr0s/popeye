@@ -390,7 +390,6 @@ export class PopeyeRuntimeService {
       budgetConfig: config.memory.budgetAllocation,
       redactionPatterns: config.security.redactionPatterns,
       logger: this.log,
-      legacySearchEnabled: config.memory.legacySearchEnabled,
     });
     const summarizationClient = config.embeddings.provider === 'openai'
       ? createOpenAISummarizationClient({})
@@ -408,7 +407,7 @@ export class PopeyeRuntimeService {
     });
 
     // Try loading sqlite-vec (non-blocking)
-    this.vecInitPromise = loadSqliteVec(this.databases.memory, config.embeddings.dimensions, this.log).then((loaded) => {
+    this.vecInitPromise = loadSqliteVec(this.databases.memory, this.log).then((loaded) => {
       this.vecAvailable = loaded;
     });
 
@@ -1600,7 +1599,7 @@ export class PopeyeRuntimeService {
     return this.memoryOps.checkMemoryIntegrity(options);
   }
 
-  insertMemory(input: MemoryInsertInput): MemoryRecord {
+  insertMemory(input: MemoryInsertInput): MemoryRecord | null {
     return this.memoryOps.insertMemory(input);
   }
 
@@ -1643,7 +1642,7 @@ export class PopeyeRuntimeService {
     return this.memoryOps.expandMemory(memoryId, maxTokens, locationFilter);
   }
 
-  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
+  triggerMemoryMaintenance(): { ttlExpired: number; staleMarked: number } {
     return this.memoryOps.triggerMemoryMaintenance();
   }
 
@@ -2351,8 +2350,6 @@ export class PopeyeRuntimeService {
         for (const ws of this.config.workspaces) {
           this.memoryLifecycle.generateDailySummary(yesterday, ws.id);
         }
-        this.memoryLifecycle.runConfidenceDecay();
-        this.memoryLifecycle.runConsolidation();
       }
 
       // Structured layer governance runs every hour (responsive TTL/staleness)

@@ -5,9 +5,6 @@ export {
   shouldPersistClassification,
   classifyMemoryType,
   computeDedupKey,
-  computeReinforcedConfidence,
-  shouldArchive,
-  computeTextOverlap,
   renderDailySummaryMarkdown,
   buildFts5MatchExpression,
   normalizeRelevanceScore,
@@ -25,12 +22,8 @@ export { MemorySearchService } from './search-service.js';
 export type { MemorySearchLogger } from './search-service.js';
 export { rerankAndMerge } from './scoring.js';
 export type { ScoredCandidate, RerankParams, FactMetadata } from './scoring.js';
-export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
 export type { FtsCandidate } from './fts5-search.js';
 export { searchFactsFts5, searchSynthesesFts5, searchChunksFts5 } from './fts5-search.js';
-export { searchLikeFallback, splitQueryTokens, buildLikeQuery } from './like-fallback.js';
-export { searchVec, insertVecEmbedding, deleteVecEmbedding } from './vec-search.js';
-export type { VecCandidate } from './vec-search.js';
 
 // Summary DAG
 export {
@@ -47,7 +40,7 @@ export {
 } from './summary-dag.js';
 
 // Integrity
-export { runIntegrityChecks, isVecTableAvailable } from './integrity-checker.js';
+export { runIntegrityChecks } from './integrity-checker.js';
 
 // Expansion policy
 export { classifyExpansionPolicy } from './expansion-policy.js';
@@ -93,8 +86,6 @@ export { recallContext } from './context-assembler.js';
 export type { RecallContextInput } from './context-assembler.js';
 export { getProfileContext } from './profile-context.js';
 export type { GetProfileContextInput } from './profile-context.js';
-export { backfillLegacyMemories } from './legacy-backfill.js';
-export type { BackfillResult, BackfillOptions } from './legacy-backfill.js';
 export { parseTemporalConstraint, chooseTemporalReference, computeTemporalFit } from './temporal.js';
 export { buildRecallPlan } from './recall-planner.js';
 export type { BuildRecallPlanInput } from './recall-planner.js';

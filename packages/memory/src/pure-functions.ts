@@ -45,26 +45,6 @@ export function computeDedupKey(description: string, content: string, scope: str
   return sha256(`${scope}:${description.trim().toLowerCase()}:${content.trim().substring(0, 500)}`);
 }
 
-export function computeReinforcedConfidence(current: number, boost = 0.1): number {
-  return Math.min(1, current + boost);
-}
-
-export function shouldArchive(confidence: number, threshold = 0.1): boolean {
-  return confidence < threshold;
-}
-
-export function computeTextOverlap(a: string, b: string): number {
-  const tokensA = new Set(a.split(/\s+/).filter(Boolean));
-  const tokensB = new Set(b.split(/\s+/).filter(Boolean));
-  if (tokensA.size === 0 && tokensB.size === 0) return 1;
-  if (tokensA.size === 0 || tokensB.size === 0) return 0;
-  let intersection = 0;
-  for (const t of tokensA) {
-    if (tokensB.has(t)) intersection++;
-  }
-  const union = tokensA.size + tokensB.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
 
 export function renderDailySummaryMarkdown(input: {
   date: string;

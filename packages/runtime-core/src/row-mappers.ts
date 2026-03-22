@@ -95,7 +95,7 @@ export const MemoryListRowSchema = z.object({
   id: z.string(),
   description: z.string(),
   classification: z.enum(['secret', 'sensitive', 'internal', 'embeddable']),
-  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release', 'file_doc']),
+  source_type: z.enum(['receipt', 'telegram', 'daily_summary', 'curated_memory', 'workspace_doc', 'compaction_flush', 'capability_sync', 'context_release', 'file_doc', 'coding_session', 'code_review', 'debug_session']),
   content: z.string(),
   confidence: z.number(),
   scope: z.string(),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { FtsCandidate } from './fts5-search.js';
-import type { VecCandidate } from './vec-search.js';
+import type { VecCandidate } from './scoring.js';
 import { rerankAndMerge } from './scoring.js';
 
 function makeFtsCandidate(overrides: Partial<FtsCandidate> & { memoryId: string }): FtsCandidate {

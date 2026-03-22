@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
@@ -17,11 +16,8 @@ import {
   captureArtifact,
   extractFacts,
   type StoreMemoryResult,
-  computeConfidenceDecay,
-  computeReinforcedConfidence,
-  computeTextOverlap,
+  computeDedupKey,
   renderDailySummaryMarkdown,
-  shouldArchive,
   type MemorySearchService,
   runIntegrityChecks,
   CompactionEngine,
@@ -38,7 +34,6 @@ import {
   shouldRefreshProfile,
   runTtlExpiry,
   runStalenessMarking,
-  backfillLegacyMemories,
 } from '@popeye/memory';
 import { buildSummarizePrompt, buildRetryPrompt } from './summarize-prompts.js';
 import { redactText, sha256 } from '@popeye/observability';
@@ -76,32 +71,6 @@ function walkMarkdownFiles(rootPath: string, skipDirs: Set<string>): string[] {
   return results;
 }
 
-const MemoryConfidenceRowSchema = z.object({
-  confidence: z.number(),
-  content: z.string(),
-});
-
-const DecayCandidateRowSchema = z.object({
-  id: z.string(),
-  confidence: z.number(),
-  last_reinforced_at: z.string().nullable(),
-  created_at: z.string(),
-  durable: z.number(),
-});
-
-const ConsolidationRowSchema = z.object({
-  id: z.string(),
-  description: z.string(),
-  content: z.string(),
-  memory_type: z.string().nullable(),
-  confidence: z.number(),
-  scope: z.string(),
-  dedup_key: z.string().nullable(),
-});
-
-const IdRowSchema = z.object({
-  id: z.string(),
-});
 
 const ReceiptSummaryRowSchema = z.object({
   status: z.string(),
@@ -135,14 +104,7 @@ const TimestampRowSchema = z.object({
   t: z.string().nullable(),
 });
 
-const PromotionRowSchema = z.object({
-  description: z.string(),
-  content: z.string(),
-});
 
-const MemoryContentRowSchema = z.object({
-  content: z.string(),
-});
 
 function findNearestExistingPath(path: string): string | null {
   let current = path;
@@ -256,9 +218,10 @@ export class MemoryLifecycleService {
     this.summarizationClient = summarizationClient ?? null;
   }
 
-  private captureStructuredMemory(input: MemoryInsertInput, memoryType: MemoryType): void {
-    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary', 'coding_session', 'code_review', 'debug_session']);
-    if (!structuredSources.has(input.sourceType)) return;
+  /** Writes to structured tables. Returns the artifact ID, or null if the write was skipped. */
+  private captureStructuredMemory(input: MemoryInsertInput, memoryType: MemoryType): string | null {
+    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary', 'coding_session', 'code_review', 'debug_session', 'curated_memory']);
+    if (!structuredSources.has(input.sourceType)) return null;
 
     const { text: redactedContent } = redactText(input.content, this.config.security.redactionPatterns);
 
@@ -281,7 +244,7 @@ export class MemoryLifecycleService {
 
     // Content-hash no-op detection
     if (!hasContentChanged(this.databases.memory, sourceStream.id, redactedContent)) {
-      return;
+      return null;
     }
 
     updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'processing');
@@ -333,7 +296,7 @@ export class MemoryLifecycleService {
 
     if (extracted.length === 0) {
       updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'done', sha256(redactedContent));
-      return;
+      return null;
     }
 
     const upserted = upsertFacts(this.databases.memory, {
@@ -414,122 +377,27 @@ export class MemoryLifecycleService {
     }
 
     updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'done', sha256(redactedContent));
+    return artifact.id;
   }
 
   insertMemory(input: MemoryInsertInput): StoreMemoryResult {
     const memoryType = input.memoryType ?? classifyMemoryType(input.sourceType, input.content);
-    const result = this.searchService.storeMemory({
-      description: input.description,
-      classification: input.classification,
-      sourceType: input.sourceType,
-      content: input.content,
-      confidence: input.confidence,
-      scope: input.scope,
-      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
-      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
-      memoryType,
-      ...(input.sourceRef !== undefined ? { sourceRef: input.sourceRef } : {}),
-      ...(input.sourceRefType !== undefined ? { sourceRefType: input.sourceRefType } : {}),
-    });
 
-    // Apply caller-provided domain, contextReleasePolicy, and dedupKey
-    // These fields are not part of the storeMemory interface, so we set them directly.
-    if (!result.rejected) {
-      const updates: string[] = [];
-      const params: unknown[] = [];
-      if (input.domain) { updates.push('domain = ?'); params.push(input.domain); }
-      if (input.contextReleasePolicy) { updates.push('context_release_policy = ?'); params.push(input.contextReleasePolicy); }
-      if (input.dedupKey) { updates.push('dedup_key = ?'); params.push(input.dedupKey); }
-      if (input.sourceRunId) { updates.push('source_run_id = ?'); params.push(input.sourceRunId); }
-      if (input.sourceTimestamp) { updates.push('source_timestamp = ?'); params.push(input.sourceTimestamp); }
-      if (input.durable) { updates.push('durable = ?'); params.push(1); }
-      if (updates.length > 0) {
-        params.push(result.memoryId);
-        this.databases.memory
-          .prepare(`UPDATE memories SET ${updates.join(', ')} WHERE id = ?`)
-          .run(...params);
-      }
+    // Quality gate
+    const quality = assessMemoryQuality(input.description, input.content);
+    if (!quality.pass) {
+      return { memoryId: '', embedded: false, rejected: true, rejectionReason: quality.reason };
     }
 
-    if (!result.rejected) {
-      this.captureStructuredMemory(input, memoryType);
-    }
+    const artifactId = this.captureStructuredMemory(input, memoryType);
 
-    return result;
+    // Return the artifact ID as memoryId for backward compat.
+    // If captureStructuredMemory returned null (no-op for unsupported sourceType
+    // or unchanged content), fall back to a deterministic dedup key.
+    const memoryId = artifactId ?? computeDedupKey(input.description, input.content, input.scope);
+    return { memoryId, embedded: false, rejected: false };
   }
 
-  reinforceMemory(memoryId: string, additionalContent?: string): void {
-    const rawRow = this.databases.memory
-      .prepare('SELECT confidence, content FROM memories WHERE id = ?')
-      .get(memoryId);
-    if (!rawRow) return;
-    const row = MemoryConfidenceRowSchema.parse(rawRow);
-    if (!row) return;
-
-    const newConfidence = computeReinforcedConfidence(row.confidence);
-    const now = nowIso();
-    const updates: Record<string, unknown> = {
-      confidence: newConfidence,
-      last_reinforced_at: now,
-      archived_at: null,
-    };
-
-    if (additionalContent) {
-      updates.content = `${row.content}\n\n---\n\n${additionalContent}`;
-    }
-
-    this.databases.memory
-      .prepare(
-        `UPDATE memories SET confidence = ?, last_reinforced_at = ?, archived_at = NULL${additionalContent ? ', content = ?' : ''} WHERE id = ?`,
-      )
-      .run(...(additionalContent ? [newConfidence, now, updates.content, memoryId] : [newConfidence, now, memoryId]));
-
-    this.databases.memory
-      .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(randomUUID(), memoryId, 'reinforced', JSON.stringify({ previousConfidence: row.confidence, newConfidence }), now);
-  }
-
-  runConfidenceDecay(): { decayed: number; archived: number } {
-    const halfLife = this.config.memory.confidenceHalfLifeDays;
-    const archiveThreshold = this.config.memory.archiveThreshold;
-    const now = new Date();
-    const nowStr = nowIso();
-    let decayed = 0;
-    let archived = 0;
-
-    const rows = z.array(DecayCandidateRowSchema).parse(this.databases.memory
-      .prepare('SELECT id, confidence, last_reinforced_at, created_at, durable FROM memories WHERE archived_at IS NULL')
-      .all());
-
-    const updateStmt = this.databases.memory.prepare('UPDATE memories SET confidence = ? WHERE id = ?');
-    const archiveStmt = this.databases.memory.prepare('UPDATE memories SET confidence = ?, archived_at = ? WHERE id = ?');
-    const eventStmt = this.databases.memory.prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)');
-
-    const tx = this.databases.memory.transaction(() => {
-      for (const row of rows) {
-        const referenceDate = row.last_reinforced_at ?? row.created_at;
-        const daysSince = (now.getTime() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSince <= 0) continue;
-
-        const effectiveHalfLife = row.durable ? halfLife * 10 : halfLife;
-        const newConfidence = computeConfidenceDecay(row.confidence, daysSince, effectiveHalfLife);
-        if (Math.abs(newConfidence - row.confidence) < 0.001) continue;
-
-        if (shouldArchive(newConfidence, archiveThreshold)) {
-          archiveStmt.run(newConfidence, nowStr, row.id);
-          eventStmt.run(randomUUID(), row.id, 'archived', JSON.stringify({ confidence: newConfidence, reason: 'decay' }), nowStr);
-          archived++;
-        } else {
-          updateStmt.run(newConfidence, row.id);
-          eventStmt.run(randomUUID(), row.id, 'decayed', JSON.stringify({ from: row.confidence, to: newConfidence }), nowStr);
-        }
-        decayed++;
-      }
-    });
-    tx();
-
-    return { decayed, archived };
-  }
 
   runStructuredGovernance(): { ttlExpired: number; staleMarked: number } {
     const ttl = runTtlExpiry(this.databases.memory);
@@ -537,123 +405,6 @@ export class MemoryLifecycleService {
     return { ttlExpired: ttl.expired, staleMarked: stale.marked };
   }
 
-  runLegacyBackfill(opts: { scope: string; namespaceId: string; classification: 'secret' | 'sensitive' | 'internal' | 'embeddable' }): { processed: number; skipped: number; errors: number } {
-    return backfillLegacyMemories(this.databases.memory, {
-      scope: opts.scope,
-      namespaceId: opts.namespaceId,
-      classification: opts.classification,
-      batchSize: 100,
-    });
-  }
-
-  runConsolidation(): { merged: number; deduped: number; qualityArchived: number } {
-    if (!this.config.memory.consolidationEnabled) return { merged: 0, deduped: 0, qualityArchived: 0 };
-
-    const nowStr = nowIso();
-    let merged = 0;
-    let deduped = 0;
-
-    const rows = z.array(ConsolidationRowSchema).parse(this.databases.memory
-      .prepare('SELECT id, description, content, memory_type, confidence, scope, dedup_key FROM memories WHERE archived_at IS NULL ORDER BY scope, memory_type, created_at')
-      .all());
-
-    // Group by scope + memory_type
-    const groups = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const key = `${row.scope}:${row.memory_type}`;
-      const group = groups.get(key) ?? [];
-      group.push(row);
-      groups.set(key, group);
-    }
-
-    const tx = this.databases.memory.transaction(() => {
-      for (const group of groups.values()) {
-        if (group.length < 2) continue;
-
-        // Exact dedup by dedup_key
-        const byDedup = new Map<string, typeof rows>();
-        for (const row of group) {
-          if (!row.dedup_key) continue;
-          const existing = byDedup.get(row.dedup_key) ?? [];
-          existing.push(row);
-          byDedup.set(row.dedup_key, existing);
-        }
-
-        for (const dupes of byDedup.values()) {
-          if (dupes.length < 2) continue;
-          // Keep highest confidence
-          dupes.sort((a, b) => b.confidence - a.confidence);
-          const keeper = dupes[0]!;
-          for (let i = 1; i < dupes.length; i++) {
-            const loser = dupes[i]!;
-            this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, loser.id);
-            this.databases.memory
-              .prepare('INSERT INTO memory_consolidations (id, memory_id, merged_into_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
-              .run(randomUUID(), loser.id, keeper.id, 'exact_dedup', nowStr);
-            this.databases.memory
-              .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-              .run(randomUUID(), loser.id, 'consolidated', JSON.stringify({ mergedInto: keeper.id }), nowStr);
-            deduped++;
-          }
-        }
-
-        // Text overlap merge (O(n^2) but groups should be small)
-        // Bulk-fetch archived status to avoid per-row queries
-        const archivedIds = new Set(
-          z.array(IdRowSchema).parse(this.databases.memory
-            .prepare('SELECT id FROM memories WHERE archived_at IS NOT NULL')
-            .all())
-            .map((row) => row.id),
-        );
-        const active = group.filter((r) => !archivedIds.has(r.id));
-        for (let i = 0; i < active.length; i++) {
-          for (let j = i + 1; j < active.length; j++) {
-            const a = active[i]!;
-            const b = active[j]!;
-            const overlap = computeTextOverlap(a.content, b.content);
-            if (overlap > 0.8) {
-              const [keeper, loser] = a.confidence >= b.confidence ? [a, b] : [b, a];
-              this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, loser.id);
-              this.databases.memory
-                .prepare('INSERT INTO memory_consolidations (id, memory_id, merged_into_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
-                .run(randomUUID(), loser.id, keeper.id, `text_overlap_${overlap.toFixed(2)}`, nowStr);
-              this.databases.memory
-                .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-                .run(randomUUID(), loser.id, 'consolidated', JSON.stringify({ mergedInto: keeper.id, overlap }), nowStr);
-              merged++;
-            }
-          }
-        }
-      }
-    });
-    tx();
-
-    // Quality sweep: archive memories that fail quality gates
-    let qualityArchived = 0;
-    if (this.config.memory.qualitySweepEnabled) {
-      const activeRows = z.array(z.object({ id: z.string(), description: z.string(), content: z.string() })).parse(
-        this.databases.memory
-          .prepare('SELECT id, description, content FROM memories WHERE archived_at IS NULL')
-          .all(),
-      );
-
-      const sweepTx = this.databases.memory.transaction(() => {
-        for (const row of activeRows) {
-          const assessment = assessMemoryQuality(row.description, row.content);
-          if (!assessment.pass) {
-            this.databases.memory.prepare('UPDATE memories SET archived_at = ? WHERE id = ?').run(nowStr, row.id);
-            this.databases.memory
-              .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-              .run(randomUUID(), row.id, 'quality_archived', JSON.stringify({ reason: assessment.reason, score: assessment.score }), nowStr);
-            qualityArchived++;
-          }
-        }
-      });
-      sweepTx();
-    }
-
-    return { merged, deduped, qualityArchived };
-  }
 
   generateDailySummary(date: string, workspaceId: string): { markdownPath: string; memoryId: string } | null {
     const dayStart = `${date}T00:00:00.000Z`;
@@ -743,46 +494,27 @@ export class MemoryLifecycleService {
         .get(result.rootSummaryId) as { content: string } | undefined;
 
       if (rootRow) {
-        const memResult = await this.searchService.storeMemoryWithEmbedding({
+        const memoryType = classifyMemoryType('compaction_flush', rootRow.content);
+        const artifactId = this.captureStructuredMemory({
           description: `Compaction summary from run ${runId}`,
           classification: 'embeddable',
           sourceType: 'compaction_flush',
           content: rootRow.content,
           confidence: this.config.memory.compactionFlushConfidence,
           scope: workspaceId,
-          memoryType: classifyMemoryType('compaction_flush', rootRow.content),
+          memoryType,
           sourceRef: runId,
           sourceRefType: 'run',
-        });
+          sourceRunId: runId,
+          sourceTimestamp: now,
+          occurredAt: now,
+          tags: ['compaction-summary'],
+          sourceMetadata: { runId, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels },
+        }, memoryType);
 
-        if (!memResult.rejected) {
-          this.captureStructuredMemory({
-            description: `Compaction summary from run ${runId}`,
-            classification: 'embeddable',
-            sourceType: 'compaction_flush',
-            content: rootRow.content,
-            confidence: this.config.memory.compactionFlushConfidence,
-            scope: workspaceId,
-            memoryType: classifyMemoryType('compaction_flush', rootRow.content),
-            sourceRef: runId,
-            sourceRefType: 'run',
-            sourceRunId: runId,
-            sourceTimestamp: now,
-            occurredAt: now,
-            tags: ['compaction-summary'],
-            sourceMetadata: { runId, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels },
-          }, classifyMemoryType('compaction_flush', rootRow.content));
-
-          this.databases.memory
-            .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
-            .run(runId, now, memResult.memoryId);
-
-          this.databases.memory
-            .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-            .run(randomUUID(), memResult.memoryId, 'compaction_flushed', JSON.stringify({ runId, embedded: memResult.embedded, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels }), now);
-
+        if (artifactId) {
           return [{
-            id: memResult.memoryId,
+            id: artifactId,
             description: `Compaction summary from run ${runId}`,
             classification: 'embeddable',
             sourceType: 'compaction_flush',
@@ -793,7 +525,7 @@ export class MemoryLifecycleService {
             projectId: null,
             sourceRunId: runId,
             sourceTimestamp: now,
-            memoryType: classifyMemoryType('compaction_flush', rootRow.content),
+            memoryType,
             dedupKey: null,
             lastReinforcedAt: null,
             archivedAt: null,
@@ -816,21 +548,7 @@ export class MemoryLifecycleService {
 
     for (const chunk of chunks) {
       const memoryType = classifyMemoryType('compaction_flush', chunk);
-      const result = await this.searchService.storeMemoryWithEmbedding({
-        description: `Compaction flush from run ${runId}`,
-        classification: 'embeddable',
-        sourceType: 'compaction_flush',
-        content: chunk,
-        confidence: this.config.memory.compactionFlushConfidence,
-        scope: workspaceId,
-        memoryType,
-        sourceRef: runId,
-        sourceRefType: 'run',
-      });
-
-      if (result.rejected) continue;
-
-      this.captureStructuredMemory({
+      const artifactId = this.captureStructuredMemory({
         description: `Compaction flush from run ${runId}`,
         classification: 'embeddable',
         sourceType: 'compaction_flush',
@@ -847,16 +565,10 @@ export class MemoryLifecycleService {
         sourceMetadata: { runId },
       }, memoryType);
 
-      this.databases.memory
-        .prepare('UPDATE memories SET source_run_id = ?, source_timestamp = ? WHERE id = ?')
-        .run(runId, now, result.memoryId);
-
-      this.databases.memory
-        .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(randomUUID(), result.memoryId, 'compaction_flushed', JSON.stringify({ runId, embedded: result.embedded }), now);
+      if (!artifactId) continue;
 
       results.push({
-        id: result.memoryId,
+        id: artifactId,
         description: `Compaction flush from run ${runId}`,
         classification: 'embeddable',
         sourceType: 'compaction_flush',
@@ -890,31 +602,31 @@ export class MemoryLifecycleService {
     const files = walkMarkdownFiles(rootPath, SKIP_DIRS);
     for (const filePath of files) {
       const content = readFileSync(filePath, 'utf-8');
-      const contentHash = sha256(content);
-      const dedupKey = `workspace_doc:${sha256(resolve(filePath))}`;
+      const redacted = redactText(content, this.config.security.redactionPatterns);
 
-      // Check if we already have this exact content indexed
-      const rawExisting = this.databases.memory
-        .prepare('SELECT id, content FROM memories WHERE dedup_key = ? AND archived_at IS NULL')
-        .get(dedupKey);
-      const existing = rawExisting
-        ? z.object({ id: z.string(), content: z.string() }).parse(rawExisting)
-        : undefined;
+      // Use memory_source_streams for content-hash dedup
+      const stableKey = buildStableKey('workspace_doc', {
+        workspace: workspaceId,
+        ref: sha256(resolve(filePath)),
+      });
+      const sourceStream = resolveOrCreateSourceStream(this.databases.memory, {
+        stableKey,
+        providerKind: 'runtime',
+        sourceType: 'workspace_doc',
+        scope: workspaceId,
+        workspaceId,
+        projectId: null,
+        classification: 'embeddable',
+        domain: 'general',
+        title: `Workspace doc: ${relative(rootPath, filePath)}`,
+      });
 
-      if (existing) {
-        const existingHash = sha256(existing.content);
-        if (existingHash === contentHash) {
-          skipped++;
-          continue;
-        }
-        // Content changed — archive old, re-index below
-        this.databases.memory
-          .prepare('UPDATE memories SET archived_at = ? WHERE id = ?')
-          .run(nowIso(), existing.id);
+      if (!hasContentChanged(this.databases.memory, sourceStream.id, redacted.text)) {
+        skipped++;
+        continue;
       }
 
       const relPath = relative(rootPath, filePath);
-      const redacted = redactText(content, this.config.security.redactionPatterns);
       const result = this.insertMemory({
         description: `Workspace doc: ${relPath}`,
         classification: 'embeddable',
@@ -927,7 +639,7 @@ export class MemoryLifecycleService {
         sourceRefType: 'file',
         sourceTimestamp: nowIso(),
         tags: ['workspace-doc', `path:${relPath.toLowerCase()}`],
-        sourceMetadata: { relativePath: relPath, contentHash },
+        sourceMetadata: { relativePath: relPath, contentHash: sha256(content) },
       });
 
       // Skip if quality gate rejected
@@ -936,11 +648,8 @@ export class MemoryLifecycleService {
         continue;
       }
 
-      // Override dedup_key to use file-path-based key for stable identity
-      this.databases.memory
-        .prepare('UPDATE memories SET dedup_key = ? WHERE id = ?')
-        .run(dedupKey, result.memoryId);
-
+      // Mark source stream as processed so re-run dedup works
+      updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'done', sha256(redacted.text));
       indexed++;
     }
 
@@ -948,44 +657,42 @@ export class MemoryLifecycleService {
   }
 
   getMemoryAudit(): MemoryAuditResponse {
-    const total = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories').get());
-    const active = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memories WHERE archived_at IS NULL').get());
+    const total = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memory_facts').get());
+    const active = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memory_facts WHERE archived_at IS NULL').get());
     const archived = total - active;
 
-    const avgConf = AvgRowSchema.parse(this.databases.memory.prepare('SELECT COALESCE(AVG(confidence), 0) as a FROM memories WHERE archived_at IS NULL').get()).a;
+    const avgConf = AvgRowSchema.parse(this.databases.memory.prepare('SELECT COALESCE(AVG(confidence), 0) as a FROM memory_facts WHERE archived_at IS NULL').get()).a;
 
     const staleCount = parseCountCRow(
       this.databases.memory
-        .prepare('SELECT COUNT(*) as c FROM memories WHERE archived_at IS NULL AND confidence < 0.3')
+        .prepare('SELECT COUNT(*) as c FROM memory_facts WHERE archived_at IS NULL AND confidence < 0.3')
         .get(),
     );
 
-    const consolidations = parseCountCRow(this.databases.memory.prepare('SELECT COUNT(*) as c FROM memory_consolidations').get());
+    const consolidations = 0;
 
     const byType: Record<string, number> = {};
     const typeRows = z.array(TypeCountRowSchema).parse(this.databases.memory
-      .prepare('SELECT memory_type, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY memory_type')
+      .prepare('SELECT memory_type, COUNT(*) as c FROM memory_facts WHERE archived_at IS NULL GROUP BY memory_type')
       .all());
     for (const row of typeRows) byType[String(row.memory_type)] = row.c;
 
     const byScope: Record<string, number> = {};
     const scopeRows = z.array(ScopeCountRowSchema).parse(this.databases.memory
-      .prepare('SELECT scope, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY scope')
+      .prepare('SELECT scope, COUNT(*) as c FROM memory_facts WHERE archived_at IS NULL GROUP BY scope')
       .all());
     for (const row of scopeRows) byScope[row.scope] = row.c;
 
     const byClassification: Record<string, number> = {};
     const classRows = z.array(ClassificationCountRowSchema).parse(this.databases.memory
-      .prepare('SELECT classification, COUNT(*) as c FROM memories WHERE archived_at IS NULL GROUP BY classification')
+      .prepare('SELECT classification, COUNT(*) as c FROM memory_facts WHERE archived_at IS NULL GROUP BY classification')
       .all());
     for (const row of classRows) byClassification[row.classification] = row.c;
 
-    const lastDecay = parseTimestampRow(this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'decayed'").get());
-    const lastConsolidation = parseTimestampRow(
-      this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memory_events WHERE type = 'consolidated'").get(),
-    );
+    const lastDecay: string | null = null;
+    const lastConsolidation: string | null = null;
     const lastDaily = parseTimestampRow(
-      this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memories WHERE source_type = 'daily_summary'").get(),
+      this.databases.memory.prepare("SELECT MAX(created_at) as t FROM memory_facts WHERE source_type = 'daily_summary'").get(),
     );
 
     return MemoryAuditResponseSchema.parse({
@@ -1009,13 +716,12 @@ export class MemoryLifecycleService {
   }
 
   proposePromotion(memoryId: string, targetPath: string): MemoryPromotionResponse {
-    const rawRow = this.databases.memory.prepare('SELECT description, content FROM memories WHERE id = ?').get(memoryId);
+    const rawRow = this.databases.memory.prepare('SELECT text FROM memory_facts WHERE id = ?').get(memoryId) as { text: string } | undefined;
     if (!rawRow) {
       return { memoryId, targetPath, diff: '', approved: false, promoted: false };
     }
-    const row = PromotionRowSchema.parse(rawRow);
 
-    const diff = `+ ${row.description}\n+ ${row.content}`;
+    const diff = `+ ${rawRow.text}`;
     return { memoryId, targetPath, diff, approved: false, promoted: false };
   }
 
@@ -1027,16 +733,11 @@ export class MemoryLifecycleService {
     const memoryDir = resolve(this.databases.paths.memoryDailyDir, '..');
     const resolvedTargetPath = validatePromotionTargetPath(memoryDir, request.targetPath);
 
-    const rawRow = this.databases.memory.prepare('SELECT content FROM memories WHERE id = ?').get(request.memoryId);
-    const row = rawRow ? MemoryContentRowSchema.parse(rawRow) : null;
-    if (!row) return { ...request, promoted: false };
+    const rawRow = this.databases.memory.prepare('SELECT text FROM memory_facts WHERE id = ?').get(request.memoryId) as { text: string } | undefined;
+    if (!rawRow) return { ...request, promoted: false };
 
     mkdirSync(dirname(resolvedTargetPath), { recursive: true, mode: 0o700 });
-    writeFileSync(resolvedTargetPath, row.content, { mode: 0o600 });
-
-    this.databases.memory
-      .prepare('INSERT INTO memory_events (id, memory_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(randomUUID(), request.memoryId, 'promoted', JSON.stringify({ targetPath: resolvedTargetPath }), nowIso());
+    writeFileSync(resolvedTargetPath, rawRow.text, { mode: 0o600 });
 
     return { ...request, targetPath: resolvedTargetPath, promoted: true };
   }

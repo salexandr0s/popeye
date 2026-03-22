@@ -269,12 +269,8 @@ export interface ListRunsOptions {
 }
 
 const MemoryMaintenanceResultSchema = z.object({
-  decayed: z.number().int().nonnegative(),
-  archived: z.number().int().nonnegative(),
-  merged: z.number().int().nonnegative(),
-  deduped: z.number().int().nonnegative(),
-  ttlExpired: z.number().int().nonnegative().optional(),
-  staleMarked: z.number().int().nonnegative().optional(),
+  ttlExpired: z.number().int().nonnegative(),
+  staleMarked: z.number().int().nonnegative(),
 });
 export type MemoryMaintenanceResult = z.infer<typeof MemoryMaintenanceResultSchema>;
 

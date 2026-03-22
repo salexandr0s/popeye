@@ -1055,6 +1055,18 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_operator_actions_kind ON memory_operator_actions(action_kind);',
     ],
   },
+  {
+    id: '021-drop-legacy-tables',
+    statements: [
+      'DROP TABLE IF EXISTS memories_fts;',
+      'DROP TABLE IF EXISTS memory_consolidations;',
+      'DROP TABLE IF EXISTS memory_sources;',
+      'DROP TABLE IF EXISTS memory_events;',
+      'DROP TABLE IF EXISTS memory_entity_mentions;',
+      'DROP TABLE IF EXISTS memory_entities;',
+      'DROP TABLE IF EXISTS memories;',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

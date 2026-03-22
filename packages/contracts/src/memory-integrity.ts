@@ -1,15 +1,7 @@
 import { z } from 'zod';
 
 export const IntegrityCheckNameSchema = z.enum([
-  'fts5_index_sync',
-  'vec_index_sync',
-  'orphaned_embeddings',
-  'dedup_key_consistency',
-  'entity_mention_consistency',
-  'consolidation_chain_integrity',
-  'confidence_bounds',
   'summary_dag_integrity',
-  'event_log_completeness',
   'orphan_chunks',
   'unsupported_facts',
   'profile_refresh_debt',
