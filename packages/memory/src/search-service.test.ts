@@ -175,28 +175,6 @@ function createTestDb(): Database.Database {
     );
     CREATE VIRTUAL TABLE memory_facts_fts USING fts5(fact_id UNINDEXED, text);
     CREATE VIRTUAL TABLE memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);
-    CREATE TABLE memory_events (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_entities (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      canonical_name TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX idx_memory_entities_canonical ON memory_entities(canonical_name, entity_type);
-    CREATE TABLE memory_entity_mentions (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      mention_count INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
   `);
   // Seed default namespace used by insertTestFact
   db.prepare(
@@ -214,7 +192,7 @@ describe('MemorySearchService', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 
@@ -359,7 +337,7 @@ describe('budgetFit', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 
@@ -434,7 +412,7 @@ describe('structured recall', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 
@@ -541,7 +519,7 @@ describe('describeMemory', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 
@@ -618,7 +596,7 @@ describe('expandMemory', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 
@@ -681,7 +659,7 @@ describe('FTS5-only search path', () => {
     service = new MemorySearchService({
       db,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
   });
 

@@ -1059,6 +1059,7 @@ const MEMORY_MIGRATIONS: Migration[] = [
     id: '021-drop-legacy-tables',
     statements: [
       'DROP TABLE IF EXISTS memories_fts;',
+      'DROP TABLE IF EXISTS memory_vec;',
       'DROP TABLE IF EXISTS memory_consolidations;',
       'DROP TABLE IF EXISTS memory_sources;',
       'DROP TABLE IF EXISTS memory_events;',

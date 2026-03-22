@@ -188,13 +188,8 @@ export interface MemoryInsertInput {
 }
 
 export interface MemoryMaintenanceResult {
-  decayed: number;
-  archived: number;
-  merged: number;
-  deduped: number;
-  qualityArchived: number;
-  ttlExpired?: number | undefined;
-  staleMarked?: number | undefined;
+  ttlExpired: number;
+  staleMarked: number;
 }
 
 export interface MemoryPromotionResponse {

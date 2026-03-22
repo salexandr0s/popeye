@@ -12,7 +12,6 @@ import {
   classifyMemoryType,
   sanitizeSearchQuery,
 } from './pure-functions.js';
-import { extractEntities } from './entity-extraction.js';
 import { applyBudgetAllocation, type BudgetConfig } from './budget-allocation.js';
 import { classifyExpansionPolicy } from './expansion-policy.js';
 import { getStrategyWeights } from './strategy.js';
@@ -41,7 +40,6 @@ export interface MemorySearchLogger {
 export class MemorySearchService {
   private readonly db: Database.Database;
   private readonly embeddingClient: EmbeddingClient;
-  private readonly getVecAvailable: () => boolean;
   private readonly halfLifeDays: number;
   private readonly budgetConfig: BudgetConfig | undefined;
   private readonly redactionPatterns: string[];
@@ -51,7 +49,6 @@ export class MemorySearchService {
   constructor(opts: {
     db: Database.Database;
     embeddingClient: EmbeddingClient;
-    vecAvailable: boolean | (() => boolean);
     halfLifeDays?: number;
     budgetConfig?: BudgetConfig | undefined;
     redactionPatterns?: string[] | undefined;
@@ -60,13 +57,6 @@ export class MemorySearchService {
   }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
-    if (typeof opts.vecAvailable === 'function') {
-      const getVecAvailable = opts.vecAvailable;
-      this.getVecAvailable = () => getVecAvailable();
-    } else {
-      const vecAvailable = opts.vecAvailable;
-      this.getVecAvailable = () => vecAvailable;
-    }
     this.halfLifeDays = opts.halfLifeDays ?? 30;
     this.budgetConfig = opts.budgetConfig;
     this.redactionPatterns = opts.redactionPatterns ?? [];
@@ -204,27 +194,7 @@ export class MemorySearchService {
       };
     }
 
-    const queryEntities = extractEntities(queryText);
     const entityMatches = new Map<string, number>();
-
-    if (queryEntities.length > 0) {
-      const conditions = queryEntities.map(() => '(canonical_name = ? AND entity_type = ?)').join(' OR ');
-      const bindValues = queryEntities.flatMap((qe) => [qe.canonicalName, qe.type]);
-      const entityRows = this.db.prepare(
-        `SELECT id FROM memory_entities WHERE ${conditions}`,
-      ).all(...bindValues) as Array<{ id: string }>;
-      const entityIds = entityRows.map((row) => row.id);
-
-      if (entityIds.length > 0) {
-        const placeholders = entityIds.map(() => '?').join(',');
-        const mentions = this.db.prepare(
-          `SELECT memory_id, COUNT(*) as cnt FROM memory_entity_mentions WHERE entity_id IN (${placeholders}) GROUP BY memory_id`,
-        ).all(...entityIds) as Array<{ memory_id: string; cnt: number }>;
-        for (const mention of mentions) {
-          entityMatches.set(mention.memory_id, mention.cnt);
-        }
-      }
-    }
 
     const mapResult = (candidate: ScoredCandidate): MemorySearchResult => ({
       id: candidate.memoryId,
@@ -725,9 +695,7 @@ export class MemorySearchService {
     lastReinforcedAt: string | null;
     durable: boolean;
     contentLength: number;
-    entityCount: number;
     sourceCount: number;
-    eventCount: number;
     layer?: 'artifact' | 'fact' | 'synthesis' | 'curated' | undefined;
     namespaceId?: string | undefined;
     evidenceCount?: number | undefined;
@@ -751,9 +719,7 @@ export class MemorySearchService {
         lastReinforcedAt: record.lastReinforcedAt,
         durable: record.durable,
         contentLength: record.content.length,
-        entityCount: 0,
         sourceCount,
-        eventCount: 0,
         layer: record.layer,
         namespaceId: record.namespaceId,
       };
@@ -774,9 +740,7 @@ export class MemorySearchService {
         lastReinforcedAt: record.lastReinforcedAt,
         durable: record.durable,
         contentLength: record.content.length,
-        entityCount: 0,
         sourceCount,
-        eventCount: 0,
         layer: record.layer,
         namespaceId: record.namespaceId,
         evidenceCount: record.evidenceCount,
@@ -799,9 +763,7 @@ export class MemorySearchService {
         lastReinforcedAt: record.lastReinforcedAt,
         durable: record.durable,
         contentLength: record.content.length,
-        entityCount: 0,
         sourceCount,
-        eventCount: 0,
         layer: record.layer,
         namespaceId: record.namespaceId,
         evidenceCount: record.evidenceCount,

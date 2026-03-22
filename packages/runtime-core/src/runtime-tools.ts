@@ -29,9 +29,7 @@ export interface MemoryDescription {
   lastReinforcedAt: string | null;
   durable: boolean;
   contentLength: number;
-  entityCount: number;
   sourceCount: number;
-  eventCount: number;
   layer?: 'artifact' | 'fact' | 'synthesis' | 'curated' | undefined;
   namespaceId?: string | undefined;
   evidenceCount?: number | undefined;
@@ -162,7 +160,7 @@ export function buildCoreRuntimeTools(
           `Type: ${desc.type} | Source: ${desc.sourceType}${desc.layer ? ` | Layer: ${desc.layer}` : ''} | Scope: ${desc.scope}`,
           `Confidence: ${desc.confidence.toFixed(2)} | Durable: ${desc.durable}`,
           `Content length: ${desc.contentLength} chars (~${Math.ceil(desc.contentLength / 4)} tokens)`,
-          `Entities: ${desc.entityCount} | Sources: ${desc.sourceCount} | Events: ${desc.eventCount}`,
+          `Sources: ${desc.sourceCount}`,
           `Created: ${desc.createdAt}${desc.lastReinforcedAt ? ` | Last reinforced: ${desc.lastReinforcedAt}` : ''}`,
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }], details: desc };

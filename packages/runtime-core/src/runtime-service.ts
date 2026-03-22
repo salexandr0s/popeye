@@ -287,7 +287,6 @@ export class PopeyeRuntimeService {
   private memoryMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private docIndexTimer: ReturnType<typeof setInterval> | null = null;
   private tokenRotationTimer: ReturnType<typeof setInterval> | null = null;
-  private vecAvailable = false;
   private readonly vecInitPromise: Promise<void>;
 
   private readonly log: PopeyeLogger;
@@ -385,7 +384,6 @@ export class PopeyeRuntimeService {
     this.memorySearch = new MemorySearchService({
       db: this.databases.memory,
       embeddingClient,
-      vecAvailable: () => this.vecAvailable,
       halfLifeDays: config.memory.confidenceHalfLifeDays,
       budgetConfig: config.memory.budgetAllocation,
       redactionPatterns: config.security.redactionPatterns,
@@ -407,9 +405,7 @@ export class PopeyeRuntimeService {
     });
 
     // Try loading sqlite-vec (non-blocking)
-    this.vecInitPromise = loadSqliteVec(this.databases.memory, this.log).then((loaded) => {
-      this.vecAvailable = loaded;
-    });
+    this.vecInitPromise = loadSqliteVec(this.databases.memory, this.log).then(() => {});
 
     // Initialize delegate modules
     this.workspaceRegistry = new WorkspaceRegistry({ app: this.databases.app, paths: this.databases.paths });

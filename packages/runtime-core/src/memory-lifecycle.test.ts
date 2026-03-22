@@ -19,50 +19,6 @@ import { MemoryLifecycleService } from './memory-lifecycle.js';
 function createMemoryDb(): Database.Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE memories (
-      id TEXT PRIMARY KEY,
-      description TEXT NOT NULL,
-      classification TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      content TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      scope TEXT NOT NULL,
-      workspace_id TEXT,
-      project_id TEXT,
-      memory_type TEXT NOT NULL DEFAULT 'episodic',
-      dedup_key TEXT,
-      last_reinforced_at TEXT,
-      archived_at TEXT,
-      created_at TEXT NOT NULL,
-      source_run_id TEXT,
-      source_timestamp TEXT,
-      durable INTEGER NOT NULL DEFAULT 0,
-      domain TEXT DEFAULT 'general'
-    );
-    CREATE INDEX idx_memories_dedup_key ON memories(dedup_key) WHERE dedup_key IS NOT NULL;
-    CREATE VIRTUAL TABLE memories_fts USING fts5(memory_id UNINDEXED, description, content);
-    CREATE TABLE memory_entities (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      canonical_name TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX idx_memory_entities_canonical ON memory_entities(canonical_name, entity_type);
-    CREATE TABLE memory_entity_mentions (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      mention_count INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_sources (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      source_ref TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
     CREATE TABLE memory_namespaces (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -394,54 +350,6 @@ function insertMemoryRow(
   return id;
 }
 
-function _insertFactRow(
-  db: Database.Database,
-  overrides: Partial<{
-    id: string;
-    text: string;
-    classification: string;
-    source_type: string;
-    confidence: number;
-    scope: string;
-    memory_type: string;
-    archived_at: string | null;
-    created_at: string;
-  }> = {},
-): string {
-  const id = overrides.id ?? randomUUID();
-  const text = overrides.text ?? 'test fact content';
-  const now = new Date().toISOString();
-  const nsId = `ns-${randomUUID()}`;
-  db.prepare(
-    'INSERT OR IGNORE INTO memory_namespaces (id, kind, external_ref, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(nsId, 'workspace', 'workspace', 'Test namespace', now, now);
-  db.prepare(
-    `INSERT INTO memory_facts (id, namespace_id, scope, classification, source_type, memory_type, fact_kind, text, confidence, source_reliability, extraction_confidence, created_at, domain)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    nsId,
-    overrides.scope ?? 'workspace',
-    overrides.classification ?? 'internal',
-    overrides.source_type ?? 'receipt',
-    overrides.memory_type ?? 'episodic',
-    'event',
-    text,
-    overrides.confidence ?? 0.8,
-    0.8,
-    0.8,
-    overrides.created_at ?? now,
-    'general',
-  );
-  db.prepare('INSERT INTO memory_facts_fts (fact_id, text) VALUES (?, ?)').run(id, text);
-  return id;
-}
-
-function _daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString();
-}
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -468,7 +376,7 @@ describe('MemoryLifecycleService', () => {
     searchService = new MemorySearchService({
       db: memoryDb,
       embeddingClient: createDisabledEmbeddingClient(),
-      vecAvailable: false,
+
     });
     service = new MemoryLifecycleService(databases, config, searchService);
   });
