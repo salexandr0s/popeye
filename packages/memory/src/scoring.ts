@@ -38,7 +38,22 @@ export interface ScoredCandidate {
     scopeMatch: number;
     entityBoost?: number;
     temporalFit?: number;
+    sourceTrust?: number;
+    salience?: number;
+    latestness?: number;
+    evidenceDensity?: number;
+    operatorBonus?: number;
+    layerPrior?: number;
   };
+}
+
+/** Pre-fetched structured-layer metadata for enhanced scoring. */
+export interface FactMetadata {
+  isLatest: boolean;
+  salience: number;
+  supportCount: number;
+  sourceTrustScore: number;
+  operatorStatus: string;
 }
 
 /** Pre-fetched metadata for vec-only candidates (not in FTS results). */
@@ -83,6 +98,7 @@ export interface RerankParams {
   queryText?: string | undefined;
   entityMatches?: Map<string, number> | undefined;
   temporalConstraint?: TemporalConstraint | null | undefined;
+  factMetadata?: Map<string, FactMetadata> | undefined;
 }
 
 export function rerankAndMerge(
@@ -151,7 +167,27 @@ export function rerankAndMerge(
     const entityMatchCount = params.entityMatches?.get(id) ?? 0;
     const entityBoostScore = Math.min(1, entityMatchCount / 3);
 
-    const score = (w.relevance * relevance) + (w.recency * recencySignal) + (w.confidence * effectiveConfidence) + (w.scopeMatch * scopeMatch) + (w.entityBoost * entityBoostScore);
+    // New structured-layer signals (default to neutral values when not available)
+    const fm = params.factMetadata?.get(id);
+    const sourceTrust = fm?.sourceTrustScore ?? 0.7;
+    const salienceScore = fm?.salience ?? 0.5;
+    const latestness = fm !== undefined && !fm.isLatest ? 0.0 : 1.0;
+    const evidenceDensityScore = Math.min(1, (fm?.supportCount ?? 1) / 5);
+    const operatorBonusScore = fm?.operatorStatus === 'pinned' ? 1.0 : fm?.operatorStatus === 'protected' ? 0.5 : 0.0;
+    const layerPriorScore = 0.5; // Neutral default — caller can override via weights
+
+    const score =
+      (w.relevance * relevance) +
+      (w.recency * recencySignal) +
+      (w.confidence * effectiveConfidence) +
+      (w.scopeMatch * scopeMatch) +
+      (w.entityBoost * entityBoostScore) +
+      ((w.sourceTrust ?? 0) * sourceTrust) +
+      ((w.salience ?? 0) * salienceScore) +
+      ((w.latestness ?? 0) * latestness) +
+      ((w.evidenceDensity ?? 0) * evidenceDensityScore) +
+      ((w.operatorBonus ?? 0) * operatorBonusScore) +
+      ((w.layerPrior ?? 0) * layerPriorScore);
 
     const scoreBreakdown: ScoredCandidate['scoreBreakdown'] = {
       relevance,
@@ -165,6 +201,13 @@ export function rerankAndMerge(
     if (entityBoostScore > 0) {
       scoreBreakdown.entityBoost = entityBoostScore;
     }
+    // Only include new signals when their weights are active
+    if ((w.sourceTrust ?? 0) > 0) scoreBreakdown.sourceTrust = sourceTrust;
+    if ((w.salience ?? 0) > 0) scoreBreakdown.salience = salienceScore;
+    if ((w.latestness ?? 0) > 0) scoreBreakdown.latestness = latestness;
+    if ((w.evidenceDensity ?? 0) > 0) scoreBreakdown.evidenceDensity = evidenceDensityScore;
+    if ((w.operatorBonus ?? 0) > 0) scoreBreakdown.operatorBonus = operatorBonusScore;
+    if ((w.layerPrior ?? 0) > 0) scoreBreakdown.layerPrior = layerPriorScore;
 
     results.push({
       memoryId: meta.memoryId,

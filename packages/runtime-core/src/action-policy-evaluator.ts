@@ -84,6 +84,55 @@ const DEFAULT_ACTION_DEFAULTS: ActionPolicyDefault[] = [
     automationGrantEligible: false,
     reason: 'Delete actions require explicit approval.',
   },
+  // Email domain: drafts auto-run, sends require approval
+  {
+    scope: 'external_write',
+    domain: 'email',
+    actionKind: 'draft',
+    riskClass: 'auto',
+    standingApprovalEligible: false,
+    automationGrantEligible: false,
+    reason: 'Email drafts auto-run under the runtime default policy.',
+  },
+  {
+    scope: 'external_write',
+    domain: 'email',
+    actionKind: 'send',
+    riskClass: 'ask',
+    standingApprovalEligible: true,
+    automationGrantEligible: false,
+    reason: 'Email sends require explicit approval or a standing approval.',
+  },
+  // Calendar domain: writes require approval
+  {
+    scope: 'external_write',
+    domain: 'calendar',
+    actionKind: 'write',
+    riskClass: 'ask',
+    standingApprovalEligible: true,
+    automationGrantEligible: false,
+    reason: 'Calendar writes require explicit approval or a standing approval.',
+  },
+  // GitHub domain: writes require approval, eligible for automation grants
+  {
+    scope: 'external_write',
+    domain: 'github',
+    actionKind: 'write',
+    riskClass: 'ask',
+    standingApprovalEligible: true,
+    automationGrantEligible: true,
+    reason: 'GitHub writes require explicit approval, a standing approval, or an automation grant.',
+  },
+  // Todos domain: writes require approval, eligible for automation grants
+  {
+    scope: 'external_write',
+    domain: 'todos',
+    actionKind: 'write',
+    riskClass: 'ask',
+    standingApprovalEligible: true,
+    automationGrantEligible: true,
+    reason: 'Todo writes require explicit approval, a standing approval, or an automation grant.',
+  },
   {
     scope: 'external_write',
     domain: 'finance',

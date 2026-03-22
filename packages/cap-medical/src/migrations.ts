@@ -1,9 +1,6 @@
-export interface MedicalMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getMedicalMigrations(): MedicalMigration[] {
+export function getMedicalMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'medical-001-imports',

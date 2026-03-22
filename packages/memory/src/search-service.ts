@@ -24,7 +24,7 @@ import { applyBudgetAllocation, type BudgetConfig } from './budget-allocation.js
 import { classifyExpansionPolicy } from './expansion-policy.js';
 import { getStrategyWeights } from './strategy.js';
 import type { EmbeddingClient } from './embedding-client.js';
-import { searchFactsFts5, searchFts5, searchSynthesesFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
+import { searchChunksFts5, searchFactsFts5, searchFts5, searchSynthesesFts5, syncFtsDelete, syncFtsInsert } from './fts5-search.js';
 import {
   canonicalizeMemoryLocation,
   matchesMemoryLocation,
@@ -33,11 +33,12 @@ import {
   type MemoryLocationFilter,
 } from './location.js';
 import { rerankAndMerge } from './scoring.js';
-import type { ScoredCandidate, VecOnlyMetadata } from './scoring.js';
+import type { FactMetadata, ScoredCandidate, VecOnlyMetadata } from './scoring.js';
 import { deleteVecEmbedding, insertVecEmbedding, searchVec } from './vec-search.js';
 import { buildRecallPlan } from './recall-planner.js';
 import { buildRecallExplanation } from './recall-explainer.js';
 import { applyConsumerProfile, getExcludedDomains } from './consumer-profiles.js';
+import { buildRetrievalTrace, logRetrievalTrace } from './retrieval-logging.js';
 
 export interface MemorySearchLogger {
   info(msg: string, details?: Record<string, unknown>): void;
@@ -54,6 +55,8 @@ export class MemorySearchService {
   private readonly budgetConfig: BudgetConfig | undefined;
   private readonly redactionPatterns: string[];
   private readonly logger: MemorySearchLogger | undefined;
+  private readonly enableRetrievalLogging: boolean;
+  private readonly legacySearchEnabled: boolean;
 
   constructor(opts: {
     db: Database.Database;
@@ -63,6 +66,8 @@ export class MemorySearchService {
     budgetConfig?: BudgetConfig | undefined;
     redactionPatterns?: string[] | undefined;
     logger?: MemorySearchLogger | undefined;
+    enableRetrievalLogging?: boolean | undefined;
+    legacySearchEnabled?: boolean | undefined;
   }) {
     this.db = opts.db;
     this.embeddingClient = opts.embeddingClient;
@@ -77,6 +82,8 @@ export class MemorySearchService {
     this.budgetConfig = opts.budgetConfig;
     this.redactionPatterns = opts.redactionPatterns ?? [];
     this.logger = opts.logger;
+    this.enableRetrievalLogging = opts.enableRetrievalLogging ?? false;
+    this.legacySearchEnabled = opts.legacySearchEnabled ?? true;
   }
 
   private buildQueryLocation(input: {
@@ -126,9 +133,13 @@ export class MemorySearchService {
     const includeSuperseded = query.includeSuperseded ?? false;
 
     // Resolve consumer profile into filter defaults
+    const profileQuery: { domains?: string[]; namespaceIds?: string[]; includeGlobal?: boolean } = {};
+    if (query.domains !== undefined) profileQuery.domains = query.domains;
+    if (query.namespaceIds !== undefined) profileQuery.namespaceIds = query.namespaceIds;
+    if (query.includeGlobal !== undefined) profileQuery.includeGlobal = query.includeGlobal;
     const profileFilters = applyConsumerProfile(
       query.consumerProfile,
-      { domains: query.domains, namespaceIds: query.namespaceIds, includeGlobal: query.includeGlobal },
+      profileQuery,
       this.db,
     );
     const domains = query.domains ?? profileFilters.domains;
@@ -159,13 +170,16 @@ export class MemorySearchService {
     let searchMode: 'hybrid' | 'fts_only' | 'vec_only' = 'fts_only';
     let results: MemorySearchResult[];
     let totalCandidates = 0;
+    let allScored: ScoredCandidate[] = [];
     const occurredAfter = query.occurredAfter ?? plan.temporalConstraint?.from ?? undefined;
     const occurredBefore = query.occurredBefore ?? plan.temporalConstraint?.to ?? undefined;
 
     const overfetch = limit * 3;
     const shouldSearchFacts = !layers || layers.length === 0 || layers.includes('fact');
     const shouldSearchSyntheses = !layers || layers.length === 0 || layers.includes('synthesis') || layers.includes('curated');
-    const shouldSearchLegacy = !layers || layers.length === 0 || layers.some((layer) => layer !== 'artifact');
+    const shouldSearchChunks = !layers || layers.length === 0 || layers.includes('artifact');
+    const shouldSearchLegacy = this.legacySearchEnabled
+      && (!layers || layers.length === 0 || layers.some((layer) => layer !== 'artifact'));
 
     const legacyFtsFilters = {
       ...(scopeAliasQuery ? { scope } : {}),
@@ -257,9 +271,17 @@ export class MemorySearchService {
       validTo: candidate.validTo,
       evidenceCount: candidate.evidenceCount,
       revisionStatus: candidate.revisionStatus,
-      domain: candidate.domain,
+      domain: candidate.domain as MemorySearchResult['domain'],
       scoreBreakdown: candidate.scoreBreakdown,
     });
+
+    const chunkFtsFilters = {
+      ...(scopeAliasQuery ? { scope } : {}),
+      ...(queryLocation !== undefined ? { workspaceId: queryLocation.workspaceId, projectId: queryLocation.projectId } : {}),
+      ...(effectiveIncludeGlobal !== undefined ? { includeGlobal: effectiveIncludeGlobal } : {}),
+      ...(domains !== undefined ? { domains } : {}),
+      limit: overfetch,
+    };
 
     const rawFtsCandidates = [
       ...(shouldSearchLegacy ? searchFts5(this.db, queryText, legacyFtsFilters) : []),
@@ -274,6 +296,7 @@ export class MemorySearchService {
         limit: overfetch,
         minConfidence,
       }) : []),
+      ...(shouldSearchChunks ? searchChunksFts5(this.db, queryText, chunkFtsFilters) : []),
     ];
 
     // Apply domain exclusion post-filter (handles the assistant profile's excludedDomains
@@ -281,6 +304,36 @@ export class MemorySearchService {
     const ftsCandidates = excludedDomains.length > 0
       ? rawFtsCandidates.filter((c) => !c.domain || !excludedDomains.includes(c.domain))
       : rawFtsCandidates;
+
+    // Build factMetadata for structured scoring signals
+    const factMetadata = new Map<string, FactMetadata>();
+    const factCandidateIds = ftsCandidates.filter((c) => c.layer === 'fact').map((c) => c.memoryId);
+    if (factCandidateIds.length > 0) {
+      const placeholders = factCandidateIds.map(() => '?').join(',');
+      try {
+        const rows = this.db.prepare(
+          `SELECT id, is_latest, salience, support_count, source_trust_score, operator_status FROM memory_facts WHERE id IN (${placeholders})`,
+        ).all(...factCandidateIds) as Array<{
+          id: string;
+          is_latest: number;
+          salience: number;
+          support_count: number;
+          source_trust_score: number;
+          operator_status: string;
+        }>;
+        for (const row of rows) {
+          factMetadata.set(row.id, {
+            isLatest: Boolean(row.is_latest),
+            salience: row.salience,
+            supportCount: row.support_count,
+            sourceTrustScore: row.source_trust_score,
+            operatorStatus: row.operator_status,
+          });
+        }
+      } catch {
+        // Phase 1 columns may not exist in test DBs — degrade gracefully
+      }
+    }
 
     if (this.getVecAvailable() && this.embeddingClient.enabled && shouldSearchLegacy) {
       searchMode = 'hybrid';
@@ -332,29 +385,78 @@ export class MemorySearchService {
         }
       }
 
-      const scored = rerankAndMerge(ftsCandidates, vecCandidates, {
+      allScored = rerankAndMerge(ftsCandidates, vecCandidates, {
         ...rerankParams,
         vecOnlyMetadata,
         weights,
         queryText,
         entityMatches,
+        factMetadata,
       });
-      totalCandidates = scored.length;
-      const limited = this.budgetConfig ? applyBudgetAllocation(scored, limit, this.budgetConfig) : scored.slice(0, limit);
+      totalCandidates = allScored.length;
+      const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
       results = limited.map(mapResult);
     } else {
-      const scored = rerankAndMerge(ftsCandidates, [], {
+      allScored = rerankAndMerge(ftsCandidates, [], {
         ...rerankParams,
         weights,
         queryText,
         entityMatches,
+        factMetadata,
       });
-      totalCandidates = scored.length;
-      const limited = this.budgetConfig ? applyBudgetAllocation(scored, limit, this.budgetConfig) : scored.slice(0, limit);
+      totalCandidates = allScored.length;
+      const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
       results = limited.map(mapResult);
     }
 
     const latencyMs = performance.now() - start;
+
+    let traceId: string | undefined;
+
+    if (this.enableRetrievalLogging) {
+      // Count candidates from the full pre-limit scored array
+      const candidateCounts: Record<string, number> = { total: totalCandidates };
+      for (const c of allScored) {
+        const layer = c.layer ?? 'legacy';
+        candidateCounts[layer] = (candidateCounts[layer] ?? 0) + 1;
+      }
+
+      const trace = buildRetrievalTrace({
+        queryText: queryText,
+        strategy: plan.strategy,
+        filters: {
+          scope: scope ?? null,
+          workspaceId: queryLocation?.workspaceId ?? null,
+          projectId: queryLocation?.projectId ?? null,
+          includeGlobal: effectiveIncludeGlobal ?? false,
+          searchMode,
+          layers: layers ?? [],
+          domains: domains ?? [],
+        },
+        candidateCounts,
+        selected: results.map((r) => {
+          const bd: Record<string, number> = {};
+          for (const [k, v] of Object.entries(r.scoreBreakdown)) {
+            if (v !== undefined) bd[k] = v;
+          }
+          return {
+            id: r.id,
+            layer: r.layer as string | undefined,
+            score: r.score,
+            scoreBreakdown: bd,
+          };
+        }),
+        latencyMs,
+      });
+
+      traceId = trace.traceId;
+
+      try {
+        logRetrievalTrace(this.db, trace);
+      } catch (err) {
+        this.logger?.warn('Failed to log retrieval trace', { error: String(err) });
+      }
+    }
 
     return {
       results,
@@ -363,6 +465,7 @@ export class MemorySearchService {
       latencyMs,
       searchMode,
       strategy: plan.strategy,
+      ...(traceId !== undefined ? { traceId } : {}),
     };
   }
 

@@ -27,6 +27,18 @@ import {
   CompactionEngine,
   type SummarizationClient,
   upsertFacts,
+  resolveOrCreateSourceStream,
+  hasContentChanged,
+  updateSourceStreamStatus,
+  buildStableKey,
+  insertChunks,
+  selectChunker,
+  buildProfileStatic,
+  buildProfileDynamic,
+  shouldRefreshProfile,
+  runTtlExpiry,
+  runStalenessMarking,
+  backfillLegacyMemories,
 } from '@popeye/memory';
 import { buildSummarizePrompt, buildRetryPrompt } from './summarize-prompts.js';
 import { redactText, sha256 } from '@popeye/observability';
@@ -219,6 +231,8 @@ export interface MemoryMaintenanceResult {
   merged: number;
   deduped: number;
   qualityArchived: number;
+  ttlExpired?: number | undefined;
+  staleMarked?: number | undefined;
 }
 
 export interface MemoryPromotionResponse {
@@ -247,6 +261,31 @@ export class MemoryLifecycleService {
     if (!structuredSources.has(input.sourceType)) return;
 
     const { text: redactedContent } = redactText(input.content, this.config.security.redactionPatterns);
+
+    // Resolve or create source stream
+    const stableKey = buildStableKey(input.sourceType, {
+      workspace: input.workspaceId ?? undefined,
+      ref: input.sourceRef ?? input.sourceRunId ?? undefined,
+    });
+    const sourceStream = resolveOrCreateSourceStream(this.databases.memory, {
+      stableKey,
+      providerKind: 'runtime',
+      sourceType: input.sourceType,
+      scope: input.scope,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      classification: input.classification,
+      domain: input.domain,
+      title: input.description,
+    });
+
+    // Content-hash no-op detection
+    if (!hasContentChanged(this.databases.memory, sourceStream.id, redactedContent)) {
+      return;
+    }
+
+    updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'processing');
+
     const artifact = captureArtifact(this.databases.memory, {
       sourceType: input.sourceType,
       classification: input.classification,
@@ -264,7 +303,21 @@ export class MemoryLifecycleService {
       },
       tags: input.tags,
       domain: input.domain,
+      sourceStreamId: sourceStream.id,
     });
+
+    // Chunk the artifact
+    const chunker = selectChunker(input.sourceType);
+    const chunkResults = chunker.chunk(redactedContent);
+    if (chunkResults.length > 0) {
+      insertChunks(this.databases.memory, {
+        artifactId: artifact.id,
+        sourceStreamId: sourceStream.id,
+        classification: input.classification,
+        contextReleasePolicy: input.contextReleasePolicy,
+        chunks: chunkResults,
+      });
+    }
 
     const extracted = extractFacts({
       description: input.description,
@@ -278,7 +331,10 @@ export class MemoryLifecycleService {
       occurredAt: input.occurredAt ?? input.sourceTimestamp ?? null,
     });
 
-    if (extracted.length === 0) return;
+    if (extracted.length === 0) {
+      updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'done', sha256(redactedContent));
+      return;
+    }
 
     const upserted = upsertFacts(this.databases.memory, {
       artifact,
@@ -330,6 +386,34 @@ export class MemoryLifecycleService {
         domain: input.domain,
       });
     }
+
+    // Refresh profiles when durable facts change
+    if ((upserted.inserted > 0 || upserted.updated > 0) && upserted.records.some((r) => r.durable)) {
+      if (shouldRefreshProfile(this.databases.memory, input.scope, 'profile_static')) {
+        buildProfileStatic(this.databases.memory, {
+          scope: input.scope,
+          workspaceId: input.workspaceId,
+          projectId: input.projectId,
+          namespaceId: artifact.namespaceId,
+          classification: input.classification,
+          domain: input.domain,
+        });
+      }
+    }
+    if (upserted.inserted > 0 || upserted.updated > 0) {
+      if (shouldRefreshProfile(this.databases.memory, input.scope, 'profile_dynamic')) {
+        buildProfileDynamic(this.databases.memory, {
+          scope: input.scope,
+          workspaceId: input.workspaceId,
+          projectId: input.projectId,
+          namespaceId: artifact.namespaceId,
+          classification: input.classification,
+          domain: input.domain,
+        });
+      }
+    }
+
+    updateSourceStreamStatus(this.databases.memory, sourceStream.id, 'done', sha256(redactedContent));
   }
 
   insertMemory(input: MemoryInsertInput): StoreMemoryResult {
@@ -445,6 +529,21 @@ export class MemoryLifecycleService {
     tx();
 
     return { decayed, archived };
+  }
+
+  runStructuredGovernance(): { ttlExpired: number; staleMarked: number } {
+    const ttl = runTtlExpiry(this.databases.memory);
+    const stale = runStalenessMarking(this.databases.memory);
+    return { ttlExpired: ttl.expired, staleMarked: stale.marked };
+  }
+
+  runLegacyBackfill(opts: { scope: string; namespaceId: string; classification: 'secret' | 'sensitive' | 'internal' | 'embeddable' }): { processed: number; skipped: number; errors: number } {
+    return backfillLegacyMemories(this.databases.memory, {
+      scope: opts.scope,
+      namespaceId: opts.namespaceId,
+      classification: opts.classification,
+      batchSize: 100,
+    });
   }
 
   runConsolidation(): { merged: number; deduped: number; qualityArchived: number } {

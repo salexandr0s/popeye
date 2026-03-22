@@ -1,9 +1,6 @@
-export interface PeopleMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getPeopleMigrations(): PeopleMigration[] {
+export function getPeopleMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'people-001-core',

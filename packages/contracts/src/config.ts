@@ -18,8 +18,8 @@ export const SecurityConfigSchema = z.object({
   promptScanSanitizePatterns: z.array(z.object({ pattern: z.string(), replacement: z.string() })).default([]),
   useSecureCookies: z.boolean().default(false),
   tokenRotationDays: z.number().int().positive().default(30),
+  tokenExpiryDays: z.number().int().positive().default(90),
 });
-export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 export const TelegramConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -37,7 +37,6 @@ export const TelegramConfigSchema = z.object({
     });
   }
 });
-export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
 export const EmbeddingConfigSchema = z.object({
   provider: z.enum(['disabled', 'openai']).default('disabled'),
@@ -45,7 +44,6 @@ export const EmbeddingConfigSchema = z.object({
   dimensions: z.number().int().positive().default(1536),
   allowedClassifications: z.array(DataClassificationSchema).default(['embeddable']),
 });
-export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 
 export const EngineConfigSchema = z.object({
   kind: EngineKindSchema.default('fake'),
@@ -57,7 +55,6 @@ export const EngineConfigSchema = z.object({
   runtimeToolTimeoutMs: z.number().int().positive().default(30_000),
   allowRuntimeToolBridgeFallback: z.boolean().default(true),
 });
-export type EngineConfig = z.infer<typeof EngineConfigSchema>;
 
 export const OAuthClientConfigSchema = z.object({
   clientId: z.string().min(1),
@@ -150,6 +147,7 @@ export const MemoryConfigSchema = z.object({
   compactionMaxCondensedTokens: z.number().int().positive().default(4000),
   compactionMaxRetries: z.number().int().nonnegative().default(1),
   expandTokenCap: z.number().int().positive().default(8000),
+  legacySearchEnabled: z.boolean().default(true),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
@@ -169,6 +167,7 @@ const DEFAULT_MEMORY_CONFIG = {
   compactionMaxCondensedTokens: 4000,
   compactionMaxRetries: 1,
   expandTokenCap: 8000,
+  legacySearchEnabled: true,
 };
 
 export const LogLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']);

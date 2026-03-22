@@ -115,7 +115,7 @@ describe('runIntegrityChecks', () => {
   it('returns clean report for empty database', () => {
     const report = runIntegrityChecks(db);
     expect(report.violations).toEqual([]);
-    expect(report.checksRun).toHaveLength(9);
+    expect(report.checksRun).toHaveLength(13);
     expect(report.fixesApplied).toBe(0);
     expect(report.durationMs).toBeGreaterThanOrEqual(0);
   });

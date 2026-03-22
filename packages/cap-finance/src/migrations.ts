@@ -1,9 +1,6 @@
-export interface FinanceMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getFinanceMigrations(): FinanceMigration[] {
+export function getFinanceMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'finance-001-imports',

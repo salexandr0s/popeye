@@ -50,8 +50,7 @@ export const MessageIngressRecordSchema = z.object({
 });
 export type MessageIngressRecord = z.infer<typeof MessageIngressRecordSchema>;
 
-export const TelegramDeliveryStatusSchema = z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']);
-export type TelegramDeliveryStatus = z.infer<typeof TelegramDeliveryStatusSchema>;
+const TelegramDeliveryStatusSchema = z.enum(['pending', 'sending', 'sent', 'uncertain', 'abandoned']);
 
 export const TelegramDeliveryStateSchema = z.object({
   chatId: z.string(),
@@ -91,8 +90,7 @@ export const TelegramDeliveryRecordSchema = z.object({
 });
 export type TelegramDeliveryRecord = z.infer<typeof TelegramDeliveryRecordSchema>;
 
-export const TelegramDeliveryResolutionActionSchema = z.enum(['confirm_sent', 'resend', 'abandon']);
-export type TelegramDeliveryResolutionAction = z.infer<typeof TelegramDeliveryResolutionActionSchema>;
+const TelegramDeliveryResolutionActionSchema = z.enum(['confirm_sent', 'resend', 'abandon']);
 
 export const TelegramDeliveryResolutionRequestSchema = z.object({
   workspaceId: z.string().min(1),
@@ -116,8 +114,7 @@ export const TelegramDeliveryResolutionRecordSchema = z.object({
 });
 export type TelegramDeliveryResolutionRecord = z.infer<typeof TelegramDeliveryResolutionRecordSchema>;
 
-export const TelegramSendAttemptOutcomeSchema = z.enum(['sent', 'retryable_failure', 'permanent_failure', 'ambiguous']);
-export type TelegramSendAttemptOutcome = z.infer<typeof TelegramSendAttemptOutcomeSchema>;
+const TelegramSendAttemptOutcomeSchema = z.enum(['sent', 'retryable_failure', 'permanent_failure', 'ambiguous']);
 
 export const TelegramSendAttemptRecordSchema = z.object({
   id: z.string(),

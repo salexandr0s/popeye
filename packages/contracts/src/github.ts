@@ -39,14 +39,11 @@ export type GithubRepoRecord = z.infer<typeof GithubRepoRecordSchema>;
 
 // --- GitHub Pull Request Record ---
 
-export const GithubPrStateSchema = z.enum(['open', 'closed', 'merged']);
-export type GithubPrState = z.infer<typeof GithubPrStateSchema>;
+const GithubPrStateSchema = z.enum(['open', 'closed', 'merged']);
 
-export const GithubReviewDecisionSchema = z.enum(['approved', 'changes_requested', 'review_required']).nullable().default(null);
-export type GithubReviewDecision = z.infer<typeof GithubReviewDecisionSchema>;
+const GithubReviewDecisionSchema = z.enum(['approved', 'changes_requested', 'review_required']).nullable().default(null);
 
-export const GithubCiStatusSchema = z.enum(['success', 'failure', 'pending']).nullable().default(null);
-export type GithubCiStatus = z.infer<typeof GithubCiStatusSchema>;
+const GithubCiStatusSchema = z.enum(['success', 'failure', 'pending']).nullable().default(null);
 
 export const GithubPullRequestRecordSchema = z.object({
   id: z.string(),
@@ -77,8 +74,7 @@ export type GithubPullRequestRecord = z.infer<typeof GithubPullRequestRecordSche
 
 // --- GitHub Issue Record ---
 
-export const GithubIssueStateSchema = z.enum(['open', 'closed']);
-export type GithubIssueState = z.infer<typeof GithubIssueStateSchema>;
+const GithubIssueStateSchema = z.enum(['open', 'closed']);
 
 export const GithubIssueRecordSchema = z.object({
   id: z.string(),
@@ -137,8 +133,7 @@ export type GithubDigestRecord = z.infer<typeof GithubDigestRecordSchema>;
 
 // --- GitHub Search ---
 
-export const GithubSearchEntityTypeSchema = z.enum(['pr', 'issue', 'all']).default('all');
-export type GithubSearchEntityType = z.infer<typeof GithubSearchEntityTypeSchema>;
+const GithubSearchEntityTypeSchema = z.enum(['pr', 'issue', 'all']).default('all');
 
 export const GithubSearchQuerySchema = z.object({
   query: z.string().min(1),

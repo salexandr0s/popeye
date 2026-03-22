@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -309,7 +309,7 @@ describe('VaultManager encryption round-trip', () => {
     }
   });
 
-  it('close without KEK logs error and leaves plaintext', () => {
+  it('close without KEK deletes plaintext and seals vault', () => {
     const originalKek = process.env['POPEYE_VAULT_KEK'];
     try {
       process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
@@ -324,8 +324,11 @@ describe('VaultManager encryption round-trip', () => {
 
       const reencryptFailed = auditEvents.find((e) => e.eventType === 'vault_reencrypt_failed');
       expect(reencryptFailed).toBeDefined();
+      expect(reencryptFailed!.details['action']).toBe('plaintext_deleted_and_sealed');
 
-      expect(existsSync(record.dbPath)).toBe(true);
+      // Plaintext must be deleted, vault must be sealed
+      expect(existsSync(record.dbPath)).toBe(false);
+      expect(mgr.getVault(record.id)!.status).toBe('sealed');
     } finally {
       if (originalKek !== undefined) {
         process.env['POPEYE_VAULT_KEK'] = originalKek;
@@ -333,5 +336,121 @@ describe('VaultManager encryption round-trip', () => {
         delete process.env['POPEYE_VAULT_KEK'];
       }
     }
+  });
+
+  it('decrypted vault file has 0o600 permissions', () => {
+    const originalKek = process.env['POPEYE_VAULT_KEK'];
+    try {
+      process.env['POPEYE_VAULT_KEK'] = randomBytes(32).toString('hex');
+      const { mgr } = makeFixture();
+      const record = mgr.createVault({ domain: 'finance', name: 'perms', kind: 'restricted' });
+
+      mgr.openVault(record.id);
+      // After open, decrypted file should have restrictive permissions
+      expect(existsSync(record.dbPath)).toBe(true);
+      const mode = statSync(record.dbPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+
+      mgr.closeVault(record.id);
+    } finally {
+      if (originalKek !== undefined) {
+        process.env['POPEYE_VAULT_KEK'] = originalKek;
+      } else {
+        delete process.env['POPEYE_VAULT_KEK'];
+      }
+    }
+  });
+});
+
+describe('VaultHandle SQL identifier validation', () => {
+  it('insert rejects table name with SQL metacharacters', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'sqli' });
+    const handle = mgr.openVault(record.id)!;
+    handle.query('CREATE TABLE items (id TEXT, value TEXT)');
+
+    expect(() => handle.insert('items; DROP TABLE items', { id: '1' })).toThrow('Invalid SQL identifier for table');
+    mgr.closeVault(record.id);
+  });
+
+  it('insert rejects column name with SQL metacharacters', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'sqli2' });
+    const handle = mgr.openVault(record.id)!;
+    handle.query('CREATE TABLE items (id TEXT, value TEXT)');
+
+    expect(() => handle.insert('items', { 'id; --': '1' })).toThrow('Invalid SQL identifier for column');
+    mgr.closeVault(record.id);
+  });
+
+  it('update rejects table name with metacharacters', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'sqli3' });
+    const handle = mgr.openVault(record.id)!;
+
+    expect(() => handle.update('items; DROP TABLE x', { value: 'x' }, 'id = ?', ['1'])).toThrow('Invalid SQL identifier for table');
+    mgr.closeVault(record.id);
+  });
+
+  it('update rejects WHERE clause with semicolons', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'sqli4' });
+    const handle = mgr.openVault(record.id)!;
+    handle.query('CREATE TABLE items (id TEXT, value TEXT)');
+    handle.insert('items', { id: '1', value: 'old' });
+
+    expect(() => handle.update('items', { value: 'x' }, '1=1; DROP TABLE items', [])).toThrow('Unsafe WHERE clause');
+    mgr.closeVault(record.id);
+  });
+
+  it('update rejects WHERE clause with comment markers', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'sqli5' });
+    const handle = mgr.openVault(record.id)!;
+    handle.query('CREATE TABLE items (id TEXT, value TEXT)');
+
+    expect(() => handle.update('items', { value: 'x' }, 'id = ? -- comment', ['1'])).toThrow('Unsafe WHERE clause');
+    mgr.closeVault(record.id);
+  });
+
+  it('insert and update accept valid SQL identifiers', () => {
+    const { mgr } = makeFixture();
+    const record = mgr.createVault({ domain: 'general', name: 'valid' });
+    const handle = mgr.openVault(record.id)!;
+
+    handle.query('CREATE TABLE test_items (_id TEXT PRIMARY KEY, my_value TEXT, Count INTEGER)');
+    expect(() => handle.insert('test_items', { _id: '1', my_value: 'hello', Count: 42 })).not.toThrow();
+    expect(() => handle.update('test_items', { my_value: 'updated' }, '_id = ?', ['1'])).not.toThrow();
+
+    mgr.closeVault(record.id);
+  });
+});
+
+describe('scanExistingVaults DomainKind validation', () => {
+  it('skips directories with invalid domain names', () => {
+    const root = mkdtempSync(join(tmpdir(), 'popeye-vault-scan-'));
+    chmodSync(root, 0o700);
+    const paths = makePaths(root);
+
+    // Create a valid domain directory with a vault
+    const validDir = join(paths.capabilityStoresDir, 'general');
+    mkdirSync(validDir, { recursive: true });
+    const validDb = join(validDir, 'test.db');
+    writeFileSync(validDb, '');
+
+    // Create an invalid domain directory with a vault
+    const invalidDir = join(paths.capabilityStoresDir, 'not-a-domain');
+    mkdirSync(invalidDir, { recursive: true });
+    const invalidDb = join(invalidDir, 'bad.db');
+    writeFileSync(invalidDb, '');
+
+    const db = new Database(':memory:');
+    const log = { info: () => {}, warn: () => {}, error: () => {} };
+    const mgr = new VaultManager(db, log, paths, () => {});
+
+    const vaults = mgr.listVaults();
+    // Only the valid 'general' domain should be registered
+    expect(vaults.some((v) => v.domain === 'general')).toBe(true);
+    expect(vaults.some((v) => (v.domain as string) === 'not-a-domain')).toBe(false);
   });
 });

@@ -1,9 +1,6 @@
-export interface CalendarMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getCalendarMigrations(): CalendarMigration[] {
+export function getCalendarMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'calendar-001-accounts',

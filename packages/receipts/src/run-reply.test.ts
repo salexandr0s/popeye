@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RunEventRecord } from './execution.ts';
+import type { RunEventRecord } from '@popeye/contracts';
 import { buildCanonicalRunReply, buildCanonicalRunReplyText, extractCanonicalRunReply, extractCanonicalRunReplyText } from './run-reply.ts';
 
 function makeRunEvent(overrides: Partial<RunEventRecord>): RunEventRecord {

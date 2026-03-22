@@ -94,7 +94,12 @@ function createMemoryDb(): Database.Database {
       content TEXT NOT NULL,
       content_hash TEXT NOT NULL,
       metadata_json TEXT NOT NULL DEFAULT '{}',
-      domain TEXT DEFAULT 'general'
+      domain TEXT DEFAULT 'general',
+      source_stream_id TEXT,
+      artifact_version INTEGER NOT NULL DEFAULT 1,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      trust_score REAL NOT NULL DEFAULT 0.7,
+      invalidated_at TEXT
     );
     CREATE TABLE memory_facts (
       id TEXT PRIMARY KEY,
@@ -122,9 +127,24 @@ function createMemoryDb(): Database.Database {
       created_at TEXT NOT NULL,
       durable INTEGER NOT NULL DEFAULT 0,
       revision_status TEXT NOT NULL DEFAULT 'active',
-      domain TEXT DEFAULT 'general'
+      domain TEXT DEFAULT 'general',
+      root_fact_id TEXT,
+      parent_fact_id TEXT,
+      is_latest INTEGER NOT NULL DEFAULT 1,
+      claim_key TEXT,
+      salience REAL NOT NULL DEFAULT 0.5,
+      support_count INTEGER NOT NULL DEFAULT 1,
+      source_trust_score REAL NOT NULL DEFAULT 0.7,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      forget_after TEXT,
+      stale_after TEXT,
+      expired_at TEXT,
+      invalidated_at TEXT,
+      operator_status TEXT NOT NULL DEFAULT 'normal'
     );
     CREATE UNIQUE INDEX idx_memory_facts_dedup_key ON memory_facts(dedup_key) WHERE dedup_key IS NOT NULL;
+    CREATE INDEX idx_facts_claim_key ON memory_facts(claim_key);
+    CREATE INDEX idx_facts_is_latest ON memory_facts(is_latest, archived_at);
     CREATE TABLE memory_fact_sources (
       id TEXT PRIMARY KEY,
       fact_id TEXT NOT NULL,
@@ -156,7 +176,15 @@ function createMemoryDb(): Database.Database {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       archived_at TEXT,
-      domain TEXT DEFAULT 'general'
+      domain TEXT DEFAULT 'general',
+      subject_kind TEXT,
+      subject_id TEXT,
+      refresh_due_at TEXT,
+      salience REAL NOT NULL DEFAULT 0.5,
+      quality_score REAL NOT NULL DEFAULT 0.7,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      invalidated_at TEXT,
+      operator_status TEXT NOT NULL DEFAULT 'normal'
     );
     CREATE TABLE memory_synthesis_sources (
       id TEXT PRIMARY KEY,
@@ -183,6 +211,73 @@ function createMemoryDb(): Database.Database {
     CREATE TABLE schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_source_streams (
+      id TEXT PRIMARY KEY,
+      stable_key TEXT NOT NULL,
+      provider_kind TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      external_id TEXT,
+      namespace_id TEXT NOT NULL,
+      workspace_id TEXT,
+      project_id TEXT,
+      title TEXT,
+      canonical_uri TEXT,
+      classification TEXT NOT NULL,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      trust_tier INTEGER NOT NULL DEFAULT 3,
+      trust_score REAL NOT NULL DEFAULT 0.7,
+      ingestion_status TEXT NOT NULL DEFAULT 'ready',
+      last_processed_hash TEXT,
+      last_sync_cursor TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
+    CREATE UNIQUE INDEX idx_source_streams_stable_key ON memory_source_streams(stable_key);
+    CREATE TABLE memory_artifact_chunks (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
+      source_stream_id TEXT,
+      chunk_index INTEGER NOT NULL,
+      section_path TEXT,
+      chunk_kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      token_count INTEGER NOT NULL,
+      language TEXT,
+      classification TEXT NOT NULL,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      invalidated_at TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE VIRTUAL TABLE memory_artifact_chunks_fts USING fts5(chunk_id UNINDEXED, section_path, text);
+    CREATE TABLE memory_relations (
+      id TEXT PRIMARY KEY,
+      relation_type TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_kind TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 1.0,
+      created_by TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_relations_source ON memory_relations(source_kind, source_id);
+    CREATE INDEX idx_relations_target ON memory_relations(target_kind, target_id);
+    CREATE TABLE memory_operator_actions (
+      id TEXT PRIMARY KEY,
+      action_kind TEXT NOT NULL,
+      target_kind TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
     );
   `);
   return db;

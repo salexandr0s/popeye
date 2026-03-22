@@ -15,13 +15,10 @@ export const TaskSourceSchema = z.enum(['manual', 'heartbeat', 'schedule', 'tele
 export type TaskSource = z.infer<typeof TaskSourceSchema>;
 
 export const ExecutionProfileModeSchema = z.enum(['restricted', 'interactive', 'elevated']);
-export type ExecutionProfileMode = z.infer<typeof ExecutionProfileModeSchema>;
 
 export const ExecutionScopeSchema = z.enum(['workspace', 'project', 'global']);
-export type ExecutionScope = z.infer<typeof ExecutionScopeSchema>;
 
 export const FilesystemPolicyClassSchema = z.enum(['workspace', 'project', 'read_only_workspace', 'memory_only']);
-export type FilesystemPolicyClass = z.infer<typeof FilesystemPolicyClassSchema>;
 
 export const ProfileContextReleasePolicySchema = z.enum(['none', 'summary_only', 'excerpt', 'full']);
 export type ProfileContextReleasePolicy = z.infer<typeof ProfileContextReleasePolicySchema>;
@@ -163,13 +160,12 @@ export const AgentProfileRecordSchema = z.object({
 });
 export type AgentProfileRecord = z.infer<typeof AgentProfileRecordSchema>;
 
-export const ExecutionEnvelopeProvenanceSchema = z.object({
+const ExecutionEnvelopeProvenanceSchema = z.object({
   derivedAt: z.string(),
   engineKind: z.string(),
   sessionPolicy: z.enum(['dedicated', 'ephemeral', 'per_task']),
   warnings: z.array(z.string()).default([]),
 });
-export type ExecutionEnvelopeProvenance = z.infer<typeof ExecutionEnvelopeProvenanceSchema>;
 
 export const ExecutionEnvelopeSchema = z.object({
   runId: z.string(),

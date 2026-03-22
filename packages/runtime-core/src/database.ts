@@ -876,6 +876,185 @@ const MEMORY_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_memory_syntheses_domain ON memory_syntheses(domain);',
     ],
   },
+  {
+    id: '014-retrieval-logs',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_retrieval_logs (
+        id TEXT PRIMARY KEY,
+        query_hash TEXT NOT NULL,
+        query_text_redacted TEXT,
+        strategy TEXT NOT NULL,
+        filters_json TEXT NOT NULL DEFAULT '{}',
+        candidate_counts_json TEXT NOT NULL DEFAULT '{}',
+        selected_json TEXT NOT NULL DEFAULT '[]',
+        feature_traces_json TEXT NOT NULL DEFAULT '{}',
+        latency_ms REAL NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_retrieval_logs_created ON memory_retrieval_logs(created_at);',
+      'CREATE INDEX IF NOT EXISTS idx_retrieval_logs_strategy ON memory_retrieval_logs(strategy);',
+      'CREATE INDEX IF NOT EXISTS idx_retrieval_logs_query_hash ON memory_retrieval_logs(query_hash);',
+    ],
+  },
+  {
+    id: '015-source-streams',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_source_streams (
+        id TEXT PRIMARY KEY,
+        stable_key TEXT NOT NULL,
+        provider_kind TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        external_id TEXT,
+        namespace_id TEXT NOT NULL,
+        workspace_id TEXT,
+        project_id TEXT,
+        title TEXT,
+        canonical_uri TEXT,
+        classification TEXT NOT NULL,
+        context_release_policy TEXT NOT NULL DEFAULT 'full',
+        trust_tier INTEGER NOT NULL DEFAULT 3,
+        trust_score REAL NOT NULL DEFAULT 0.7,
+        ingestion_status TEXT NOT NULL DEFAULT 'ready',
+        last_processed_hash TEXT,
+        last_sync_cursor TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_source_streams_stable_key ON memory_source_streams(stable_key);',
+      'CREATE INDEX IF NOT EXISTS idx_source_streams_ns_status ON memory_source_streams(namespace_id, ingestion_status);',
+      'CREATE INDEX IF NOT EXISTS idx_source_streams_location ON memory_source_streams(workspace_id, project_id);',
+    ],
+  },
+  {
+    id: '016-artifact-chunks',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_artifact_chunks (
+        id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL,
+        source_stream_id TEXT,
+        chunk_index INTEGER NOT NULL,
+        section_path TEXT,
+        chunk_kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        text_hash TEXT NOT NULL,
+        token_count INTEGER NOT NULL,
+        language TEXT,
+        classification TEXT NOT NULL,
+        context_release_policy TEXT NOT NULL DEFAULT 'full',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        invalidated_at TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_chunks_artifact_idx ON memory_artifact_chunks(artifact_id, chunk_index);',
+      'CREATE INDEX IF NOT EXISTS idx_artifact_chunks_stream ON memory_artifact_chunks(source_stream_id, invalidated_at);',
+      'CREATE INDEX IF NOT EXISTS idx_artifact_chunks_hash ON memory_artifact_chunks(text_hash);',
+      'CREATE VIRTUAL TABLE IF NOT EXISTS memory_artifact_chunks_fts USING fts5(chunk_id UNINDEXED, section_path, text);',
+    ],
+  },
+  {
+    id: '017-embedding-registry',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_embeddings (
+        id TEXT PRIMARY KEY,
+        owner_kind TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        embedding_version TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_owner ON memory_embeddings(owner_kind, owner_id);',
+      'CREATE INDEX IF NOT EXISTS idx_embeddings_status_kind ON memory_embeddings(status, owner_kind);',
+    ],
+  },
+  {
+    id: '018-schema-extensions',
+    statements: [
+      // memory_artifacts extensions
+      'ALTER TABLE memory_artifacts ADD COLUMN source_stream_id TEXT;',
+      "ALTER TABLE memory_artifacts ADD COLUMN artifact_version INTEGER NOT NULL DEFAULT 1;",
+      "ALTER TABLE memory_artifacts ADD COLUMN context_release_policy TEXT NOT NULL DEFAULT 'full';",
+      'ALTER TABLE memory_artifacts ADD COLUMN trust_score REAL NOT NULL DEFAULT 0.7;',
+      'ALTER TABLE memory_artifacts ADD COLUMN invalidated_at TEXT;',
+
+      // memory_facts extensions
+      'ALTER TABLE memory_facts ADD COLUMN root_fact_id TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN parent_fact_id TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN is_latest INTEGER NOT NULL DEFAULT 1;',
+      'ALTER TABLE memory_facts ADD COLUMN claim_key TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN salience REAL NOT NULL DEFAULT 0.5;',
+      'ALTER TABLE memory_facts ADD COLUMN support_count INTEGER NOT NULL DEFAULT 1;',
+      'ALTER TABLE memory_facts ADD COLUMN source_trust_score REAL NOT NULL DEFAULT 0.7;',
+      "ALTER TABLE memory_facts ADD COLUMN context_release_policy TEXT NOT NULL DEFAULT 'full';",
+      'ALTER TABLE memory_facts ADD COLUMN forget_after TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN stale_after TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN expired_at TEXT;',
+      'ALTER TABLE memory_facts ADD COLUMN invalidated_at TEXT;',
+      "ALTER TABLE memory_facts ADD COLUMN operator_status TEXT NOT NULL DEFAULT 'normal';",
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_latest ON memory_facts(is_latest, archived_at);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_claim_key ON memory_facts(claim_key);',
+      'CREATE INDEX IF NOT EXISTS idx_memory_facts_forget ON memory_facts(forget_after);',
+
+      // memory_fact_sources extensions
+      'ALTER TABLE memory_fact_sources ADD COLUMN chunk_id TEXT;',
+      'ALTER TABLE memory_fact_sources ADD COLUMN source_stream_id TEXT;',
+      'ALTER TABLE memory_fact_sources ADD COLUMN confidence_contribution REAL NOT NULL DEFAULT 1.0;',
+
+      // memory_syntheses extensions
+      'ALTER TABLE memory_syntheses ADD COLUMN subject_kind TEXT;',
+      'ALTER TABLE memory_syntheses ADD COLUMN subject_id TEXT;',
+      'ALTER TABLE memory_syntheses ADD COLUMN refresh_due_at TEXT;',
+      'ALTER TABLE memory_syntheses ADD COLUMN salience REAL NOT NULL DEFAULT 0.5;',
+      'ALTER TABLE memory_syntheses ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.7;',
+      "ALTER TABLE memory_syntheses ADD COLUMN context_release_policy TEXT NOT NULL DEFAULT 'full';",
+      'ALTER TABLE memory_syntheses ADD COLUMN invalidated_at TEXT;',
+      "ALTER TABLE memory_syntheses ADD COLUMN operator_status TEXT NOT NULL DEFAULT 'normal';",
+    ],
+  },
+  {
+    id: '019-relations',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_relations (
+        id TEXT PRIMARY KEY,
+        relation_type TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        created_by TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_relations_source ON memory_relations(source_kind, source_id);',
+      'CREATE INDEX IF NOT EXISTS idx_relations_target ON memory_relations(target_kind, target_id);',
+      'CREATE INDEX IF NOT EXISTS idx_relations_type ON memory_relations(relation_type);',
+    ],
+  },
+  {
+    id: '020-operator-actions',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS memory_operator_actions (
+        id TEXT PRIMARY KEY,
+        action_kind TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_operator_actions_target ON memory_operator_actions(target_kind, target_id);',
+      'CREATE INDEX IF NOT EXISTS idx_operator_actions_kind ON memory_operator_actions(action_kind);',
+    ],
+  },
 ];
 
 function configure(db: Database.Database): void {

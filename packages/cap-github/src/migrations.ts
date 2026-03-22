@@ -1,9 +1,6 @@
-export interface GithubMigration {
-  id: string;
-  statements: string[];
-}
+import type { CapabilityMigration } from '@popeye/cap-common';
 
-export function getGithubMigrations(): GithubMigration[] {
+export function getGithubMigrations(): CapabilityMigration[] {
   return [
     {
       id: 'github-001-accounts',

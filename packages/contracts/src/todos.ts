@@ -2,8 +2,7 @@ import { z } from 'zod';
 
 // --- Todo Account Record ---
 
-export const TodoProviderKindSchema = z.enum(['local', 'todoist']);
-export type TodoProviderKind = z.infer<typeof TodoProviderKindSchema>;
+const TodoProviderKindSchema = z.enum(['local', 'todoist']);
 
 export const TodoAccountRecordSchema = z.object({
   id: z.string(),
@@ -44,8 +43,7 @@ export type TodoistConnectResult = z.infer<typeof TodoistConnectResultSchema>;
 
 // --- Todo Item Record ---
 
-export const TodoStatusSchema = z.enum(['pending', 'completed', 'cancelled']);
-export type TodoStatus = z.infer<typeof TodoStatusSchema>;
+const TodoStatusSchema = z.enum(['pending', 'completed', 'cancelled']);
 
 export const TodoItemRecordSchema = z.object({
   id: z.string(),
@@ -142,17 +140,6 @@ export const TodoCreateInputSchema = z.object({
 });
 export type TodoCreateInput = z.infer<typeof TodoCreateInputSchema>;
 
-export const TodoUpdateInputSchema = z.object({
-  title: z.string().min(1).optional(),
-  description: z.string().optional(),
-  priority: z.number().int().min(1).max(4).optional(),
-  status: TodoStatusSchema.optional(),
-  dueDate: z.string().nullable().optional(),
-  dueTime: z.string().nullable().optional(),
-  labels: z.array(z.string()).optional(),
-  projectName: z.string().nullable().optional(),
-});
-export type TodoUpdateInput = z.infer<typeof TodoUpdateInputSchema>;
 
 // --- Todo mutation inputs ---
 
@@ -184,7 +171,3 @@ export const TodoReconcileResultSchema = z.object({
 });
 export type TodoReconcileResult = z.infer<typeof TodoReconcileResultSchema>;
 
-export const TodoProjectListQuerySchema = z.object({
-  accountId: z.string().min(1),
-});
-export type TodoProjectListQuery = z.infer<typeof TodoProjectListQuerySchema>;

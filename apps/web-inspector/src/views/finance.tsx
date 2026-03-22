@@ -215,7 +215,7 @@ export function Finance() {
                     {tx.date}{tx.category ? ` · ${tx.category}` : ''}{tx.merchantName ? ` · ${tx.merchantName}` : ''}
                   </p>
                 </div>
-                <span className={`text-[14px] font-semibold ${tx.amount >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <span className={`text-[14px] font-semibold ${tx.amount >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
                   {tx.amount >= 0 ? '+' : ''}{tx.currency} {tx.amount.toFixed(2)}
                 </span>
               </div>
@@ -264,11 +264,11 @@ export function Finance() {
             <div className="mt-[12px] space-y-[8px]">
               <div className="grid grid-cols-2 gap-[8px]">
                 <div className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px] text-center">
-                  <p className="text-[20px] font-semibold text-green-600">+${digest.totalIncome.toFixed(2)}</p>
+                  <p className="text-[20px] font-semibold text-[var(--color-success)]">+${digest.totalIncome.toFixed(2)}</p>
                   <p className="text-[12px] text-[var(--color-fg-muted)]">Income</p>
                 </div>
                 <div className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-[10px] text-center">
-                  <p className="text-[20px] font-semibold text-red-600">-${digest.totalExpenses.toFixed(2)}</p>
+                  <p className="text-[20px] font-semibold text-[var(--color-danger)]">-${digest.totalExpenses.toFixed(2)}</p>
                   <p className="text-[12px] text-[var(--color-fg-muted)]">Expenses</p>
                 </div>
               </div>

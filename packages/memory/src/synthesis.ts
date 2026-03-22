@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
-import type { DataClassification, MemoryFactRecord, MemorySynthesisKind, MemorySynthesisRecord } from '@popeye/contracts';
+import type { DataClassification, DomainKind, MemoryFactRecord, MemorySynthesisKind, MemorySynthesisRecord } from '@popeye/contracts';
 
 import { canonicalizeMemoryLocation } from './location.js';
 import { replaceOwnerTags } from './namespace.js';
@@ -23,7 +23,11 @@ export interface CreateSynthesisInput {
   refreshPolicy?: string | undefined;
   sourceFacts: Array<Pick<MemoryFactRecord, 'id'>>;
   tags?: string[] | undefined;
-  domain?: string | undefined;
+  domain?: DomainKind | undefined;
+  subjectKind?: string | null | undefined;
+  subjectId?: string | null | undefined;
+  refreshDueAt?: string | null | undefined;
+  qualityScore?: number | undefined;
 }
 
 export function createSynthesis(db: Database.Database, input: CreateSynthesisInput): MemorySynthesisRecord {
@@ -52,33 +56,44 @@ export function createSynthesis(db: Database.Database, input: CreateSynthesisInp
     createdAt: existing?.created_at ?? now,
     updatedAt: now,
     archivedAt: null,
+    domain: input.domain ?? 'general',
+    subjectKind: input.subjectKind ?? null,
+    subjectId: input.subjectId ?? null,
+    refreshDueAt: input.refreshDueAt ?? null,
+    salience: 0.5,
+    qualityScore: input.qualityScore ?? 0.7,
+    contextReleasePolicy: 'full',
+    invalidatedAt: null,
+    operatorStatus: 'normal',
   };
 
   if (existing) {
     db.prepare(
-      'UPDATE memory_syntheses SET namespace_id = ?, scope = ?, workspace_id = ?, project_id = ?, classification = ?, text = ?, confidence = ?, refresh_policy = ?, updated_at = ?, archived_at = NULL, domain = COALESCE(?, domain) WHERE id = ?',
-    ).run(record.namespaceId, record.scope, record.workspaceId, record.projectId, record.classification, record.text, record.confidence, record.refreshPolicy, record.updatedAt, input.domain, record.id);
+      `UPDATE memory_syntheses SET namespace_id = ?, scope = ?, workspace_id = ?, project_id = ?,
+       classification = ?, text = ?, confidence = ?, refresh_policy = ?, updated_at = ?,
+       archived_at = NULL, domain = COALESCE(?, domain),
+       subject_kind = ?, subject_id = ?, refresh_due_at = ?, quality_score = ?
+       WHERE id = ?`,
+    ).run(
+      record.namespaceId, record.scope, record.workspaceId, record.projectId,
+      record.classification, record.text, record.confidence, record.refreshPolicy, record.updatedAt,
+      input.domain, record.subjectKind, record.subjectId, record.refreshDueAt, record.qualityScore,
+      record.id,
+    );
     db.prepare('DELETE FROM memory_syntheses_fts WHERE synthesis_id = ?').run(record.id);
     db.prepare('DELETE FROM memory_synthesis_sources WHERE synthesis_id = ?').run(record.id);
   } else {
     db.prepare(
-      'INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification, synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at, domain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO memory_syntheses (id, namespace_id, scope, workspace_id, project_id, classification,
+       synthesis_kind, title, text, confidence, refresh_policy, created_at, updated_at, archived_at, domain,
+       subject_kind, subject_id, refresh_due_at, quality_score)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      record.id,
-      record.namespaceId,
-      record.scope,
-      record.workspaceId,
-      record.projectId,
-      record.classification,
-      record.synthesisKind,
-      record.title,
-      record.text,
-      record.confidence,
-      record.refreshPolicy,
-      record.createdAt,
-      record.updatedAt,
-      record.archivedAt,
-      input.domain ?? 'general',
+      record.id, record.namespaceId, record.scope, record.workspaceId, record.projectId,
+      record.classification, record.synthesisKind, record.title, record.text, record.confidence,
+      record.refreshPolicy, record.createdAt, record.updatedAt, record.archivedAt,
+      input.domain ?? 'general', record.subjectKind, record.subjectId, record.refreshDueAt,
+      record.qualityScore,
     );
   }
 

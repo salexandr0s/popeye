@@ -143,19 +143,67 @@ This will:
 The script requires `dist/pkg/` to exist (run `bash scripts/build-pkg.sh` first).
 It is idempotent and can be re-run safely.
 
+## GitHub Actions release workflow
+
+The `.github/workflows/release.yml` workflow automates the full release pipeline:
+
+1. **Trigger:** Manual dispatch with a `version` input
+2. **Verification:** lint, typecheck, tests, contract verification, secret scan
+3. **Build:** `pnpm build` + `build-pkg.sh` (includes tsup bundling)
+4. **Artifacts:** release notes, artifact inventory, checksums
+5. **Signing:** optional (runs `sign-pkg.sh`, skips gracefully without certs)
+6. **Release:** creates a GitHub draft release with all artifacts attached
+
+To run: **Actions → release → Run workflow → enter version (e.g. `0.1.0`)**
+
+### Signing prerequisites
+
+To enable signing and notarization, add these repository secrets:
+
+| Secret | Purpose |
+|--------|---------|
+| `POPEYE_SIGN_IDENTITY` | Developer ID Installer certificate name |
+| `POPEYE_APPLE_ID` | Apple ID email for notarization |
+| `POPEYE_TEAM_ID` | Apple Developer Team ID |
+| `POPEYE_APP_PASSWORD` | App-specific password for notarization |
+
+Without these secrets, the workflow skips signing and produces an unsigned .pkg.
+
+## Pi smoke CI (daily)
+
+The `.github/workflows/pi-smoke.yml` runs nightly at 03:00 UTC. To activate:
+
+1. Go to **Settings → Variables → Repository variables**
+2. Add `PI_REPOSITORY` with the value `owner/repo` for the Pi fork
+3. Go to **Settings → Secrets → Repository secrets**
+4. Add `PI_CHECKOUT_TOKEN` with a PAT that has read access to the Pi repo
+
+The workflow also supports manual dispatch with custom Pi ref, command, and args.
+
+## Version bump checklist
+
+When preparing a release:
+
+1. Bump `"version"` in root `package.json`
+2. Commit: `git commit -am "chore: bump version to X.Y.Z"`
+3. Tag: `git tag vX.Y.Z`
+4. Push: `git push origin main --tags`
+5. Run the release workflow from GitHub Actions
+
 ## Checklist
 
 Before releasing:
 
-- [ ] All tests pass -- `dev-verify`
+- [ ] All tests pass -- `pnpm dev-verify`
 - [ ] No security audit findings -- `pop security audit`
-- [ ] Contracts generated and verified -- `pnpm generate:contracts && pnpm verify:generated-artifacts`
+- [ ] Contracts generated and verified -- `pnpm verify:generated-artifacts`
 - [ ] No source-adjacent build artifacts -- `pnpm verify:src-build-artifacts`
 - [ ] Changelog updated
 - [ ] Breaking changes documented -- `docs/BREAKING-CHANGES.md`
 - [ ] Version bumped in `package.json`
+- [ ] Git tag created -- `git tag vX.Y.Z`
 - [ ] Package built -- `bash scripts/build-pkg.sh`
 - [ ] Release notes generated -- `bash scripts/generate-release-notes.sh`
 - [ ] Artifact inventory produced -- `bash scripts/artifact-inventory.sh`
 - [ ] Smoke test passes -- `bash scripts/smoke-test.sh`
-- [ ] Upgrade verification passes on a test installation -- `bash scripts/verify-upgrade.sh`
+- [ ] Upgrade verification passes -- `bash scripts/verify-upgrade-path.sh --json`

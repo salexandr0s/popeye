@@ -24,7 +24,7 @@ describe('security headers', () => {
       engine: { kind: 'fake', command: 'node', args: [] },
       workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     });
-    const app = await createControlApi({ runtime, cspNonce: 'test-nonce-abc' });
+    const app = await createControlApi({ runtime, generateCspNonce: () => 'test-nonce-abc' });
 
     const res = await app.inject({
       method: 'GET',

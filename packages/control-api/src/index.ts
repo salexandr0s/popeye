@@ -73,6 +73,7 @@ import {
   RuntimeConflictError,
   RuntimeNotFoundError,
   RuntimeValidationError,
+  constantTimeEquals,
   issueCsrfToken,
   resolveBearerPrincipal,
   serializeAuthCookie,
@@ -85,7 +86,10 @@ import type { PopeyeLogger } from '@popeye/observability';
 
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
+  /** @deprecated Use generateCspNonce instead. Static nonce reused for all responses. */
   cspNonce?: string;
+  /** Generate a fresh CSP nonce per request. Preferred over static cspNonce. */
+  generateCspNonce?: () => string;
   validateAuthExchangeNonce?: (nonce: string) => 'accepted' | 'expired' | 'invalid';
   /** When true, emitted Set-Cookie headers include the Secure flag. */
   useSecureCookies?: boolean;
@@ -105,6 +109,7 @@ type RequestAuthContext =
 declare module 'fastify' {
   interface FastifyRequest {
     popeyeAuthContext?: RequestAuthContext;
+    popeyeCspNonce?: string;
   }
 }
 
@@ -519,16 +524,26 @@ export async function createControlApi(
   });
   await app.register(sensible);
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
-  await app.register(helmet, {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: dependencies.cspNonce ? ["'self'", `'nonce-${dependencies.cspNonce}'`] : ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        connectSrc: ["'self'"],
-      },
-    },
-  });
+  // POP-AUD-006: CSP nonce generated per request instead of reused across all responses.
+  // Helmet handles all security headers except CSP, which we set manually per-request.
+  const cspNonceGenerator = dependencies.generateCspNonce
+    ?? (dependencies.cspNonce ? () => dependencies.cspNonce! : undefined);
+  await app.register(helmet, { contentSecurityPolicy: false });
+
+  if (cspNonceGenerator) {
+    app.addHook('onRequest', async (request) => {
+      request.popeyeCspNonce = cspNonceGenerator();
+    });
+    app.addHook('onSend', async (request, reply) => {
+      const nonce = request.popeyeCspNonce;
+      if (nonce) {
+        reply.header(
+          'content-security-policy',
+          `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'`,
+        );
+      }
+    });
+  }
 
   const log = dependencies.logger ?? null;
 
@@ -537,6 +552,9 @@ export async function createControlApi(
     if (!path.startsWith('/v1/')) {
       return undefined;
     }
+    // POP-AUD-003: OAuth callback bypasses auth by design — OAuth redirects carry
+    // state in query params, not auth headers. Protected by: (1) OAuth state parameter
+    // validation in the handler, (2) per-route rate limit (10 req/min), (3) loopback-only binding.
     if (path === '/v1/connections/oauth/callback') {
       return undefined;
     }
@@ -597,7 +615,7 @@ export async function createControlApi(
       const authContext = request.popeyeAuthContext;
       const csrfValid = authContext?.kind === 'bearer'
         ? validateCsrfToken(csrf, authContext.record)
-        : csrf === authContext?.csrfToken;
+        : (csrf !== undefined && authContext?.csrfToken !== undefined && constantTimeEquals(csrf, authContext.csrfToken));
       if (!csrfValid) {
         log?.warn('csrf validation failed', { path, method: request.method });
         recordCsrfFailureAudit(dependencies.runtime, request, 'token_invalid');
@@ -826,18 +844,19 @@ export async function createControlApi(
     const queryText = params.q ?? params.query ?? '';
     if (!queryText) return { query: '', results: [], totalCandidates: 0, latencyMs: 0, searchMode: 'fts_only' };
     const consumerProfile = params.consumerProfile ?? (request.headers['x-consumer-profile'] as string | undefined);
-    return dependencies.runtime.searchMemory({
+    const searchInput: Parameters<typeof dependencies.runtime.searchMemory>[0] = {
       query: queryText,
-      scope: params.scope,
-      workspaceId: params.workspaceId,
-      projectId: params.projectId,
-      ...(params.includeGlobal !== undefined && { includeGlobal: params.includeGlobal === 'true' }),
-      memoryTypes: params.types ? (params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>) : undefined,
       limit: params.limit ?? 20,
       includeContent: params.full === 'true',
-      ...(params.domains !== undefined && { domains: params.domains.split(',') }),
-      ...(consumerProfile !== undefined && { consumerProfile }),
-    });
+    };
+    if (params.scope !== undefined) searchInput.scope = params.scope;
+    if (params.workspaceId !== undefined) searchInput.workspaceId = params.workspaceId;
+    if (params.projectId !== undefined) searchInput.projectId = params.projectId;
+    if (params.includeGlobal !== undefined) searchInput.includeGlobal = params.includeGlobal === 'true';
+    if (params.types !== undefined) searchInput.memoryTypes = params.types.split(',') as Array<'episodic' | 'semantic' | 'procedural'>;
+    if (params.domains !== undefined) searchInput.domains = params.domains.split(',') as typeof searchInput.domains;
+    if (consumerProfile !== undefined) searchInput.consumerProfile = consumerProfile;
+    return dependencies.runtime.searchMemory(searchInput);
   });
 
   app.get('/v1/memory/audit', async () => dependencies.runtime.getMemoryAudit());
@@ -916,6 +935,54 @@ export async function createControlApi(
   });
 
   app.post('/v1/memory/maintenance', async () => dependencies.runtime.triggerMemoryMaintenance());
+
+  app.get('/v1/memory/context', async (request) => {
+    const params = z.object({
+      q: z.string().max(1000),
+      scope: z.string().optional(),
+      workspaceId: z.string().optional(),
+      projectId: z.string().optional(),
+      maxTokens: z.coerce.number().int().positive().max(32000).optional(),
+      consumerProfile: z.string().optional(),
+      includeProvenance: z.enum(['true', 'false']).optional(),
+    }).parse(request.query);
+    const ctxOpts: Parameters<typeof dependencies.runtime.assembleMemoryContext>[0] = {
+      query: params.q,
+    };
+    if (params.scope !== undefined) ctxOpts.scope = params.scope;
+    if (params.workspaceId !== undefined) ctxOpts.workspaceId = params.workspaceId;
+    if (params.projectId !== undefined) ctxOpts.projectId = params.projectId;
+    if (params.maxTokens !== undefined) ctxOpts.maxTokens = params.maxTokens;
+    if (params.consumerProfile !== undefined) ctxOpts.consumerProfile = params.consumerProfile;
+    if (params.includeProvenance !== undefined) ctxOpts.includeProvenance = params.includeProvenance === 'true';
+    return dependencies.runtime.assembleMemoryContext(ctxOpts);
+  });
+
+  app.post('/v1/memory/:id/pin', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({
+      targetKind: z.enum(['fact', 'synthesis']).default('fact'),
+      reason: z.string().default(''),
+    }).parse(request.body);
+    const result = dependencies.runtime.pinMemory(id, body.targetKind, body.reason);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.post('/v1/memory/:id/forget', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ reason: z.string().default('') }).parse(request.body);
+    const result = dependencies.runtime.forgetMemory(id, body.reason);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.get('/v1/memory/:id/history', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const result = dependencies.runtime.getMemoryHistory(id);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
 
   app.post('/v1/memory/import', async (request) => {
     const input = MemoryImportInputSchema.parse(request.body);
@@ -1319,7 +1386,7 @@ export async function createControlApi(
     return session;
   });
 
-  app.get('/v1/connections/oauth/callback', async (request, reply) => {
+  app.get('/v1/connections/oauth/callback', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const query = z.object({
       code: z.string().optional(),
       state: z.string().optional(),
@@ -2404,7 +2471,7 @@ export async function createControlApi(
   app.post('/v1/finance/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
-      importType: z.enum(['csv', 'ofx', 'qfx', 'other']).default('csv'),
+      importType: z.enum(['csv', 'ofx', 'qfx', 'document']).default('csv'),
       fileName: z.string().min(1),
     }).parse(request.body);
     return dependencies.runtime.createFinanceImport(body);
@@ -2416,11 +2483,11 @@ export async function createControlApi(
       date: z.string().min(1),
       description: z.string().min(1),
       amount: z.number(),
-      currency: z.string().optional(),
-      category: z.string().nullable().optional(),
-      merchantName: z.string().nullable().optional(),
-      accountLabel: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      currency: z.string().default('USD'),
+      category: z.string().nullable().default(null),
+      merchantName: z.string().nullable().default(null),
+      accountLabel: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertFinanceTransaction(body);
   });
@@ -2432,11 +2499,11 @@ export async function createControlApi(
         date: z.string().min(1),
         description: z.string().min(1),
         amount: z.number(),
-        currency: z.string().optional(),
-        category: z.string().nullable().optional(),
-        merchantName: z.string().nullable().optional(),
-        accountLabel: z.string().nullable().optional(),
-        redactedSummary: z.string().optional(),
+        currency: z.string().default('USD'),
+        category: z.string().nullable().default(null),
+        merchantName: z.string().nullable().default(null),
+        accountLabel: z.string().nullable().default(null),
+        redactedSummary: z.string().default(''),
       })).max(5000),
     }).parse(request.body);
     return dependencies.runtime.insertFinanceTransactionBatch(body);
@@ -2508,7 +2575,7 @@ export async function createControlApi(
   app.post('/v1/medical/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
-      importType: z.enum(['pdf', 'document', 'other']).default('pdf'),
+      importType: z.enum(['pdf', 'document', 'operator_note']).default('pdf'),
       fileName: z.string().min(1),
     }).parse(request.body);
     return dependencies.runtime.createMedicalImport(body);
@@ -2519,9 +2586,9 @@ export async function createControlApi(
       importId: z.string().min(1),
       date: z.string().min(1),
       provider: z.string().min(1),
-      specialty: z.string().nullable().optional(),
-      location: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      specialty: z.string().nullable().default(null),
+      location: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertMedicalAppointment(body);
   });
@@ -2530,12 +2597,12 @@ export async function createControlApi(
     const body = z.object({
       importId: z.string().min(1),
       name: z.string().min(1),
-      dosage: z.string().nullable().optional(),
-      frequency: z.string().nullable().optional(),
-      prescriber: z.string().nullable().optional(),
-      startDate: z.string().nullable().optional(),
-      endDate: z.string().nullable().optional(),
-      redactedSummary: z.string().optional(),
+      dosage: z.string().nullable().default(null),
+      frequency: z.string().nullable().default(null),
+      prescriber: z.string().nullable().default(null),
+      startDate: z.string().nullable().default(null),
+      endDate: z.string().nullable().default(null),
+      redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertMedicalMedication(body);
   });

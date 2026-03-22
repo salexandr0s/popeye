@@ -7,7 +7,7 @@ import {
   ProfileContextReleasePolicySchema,
 } from './execution.js';
 
-export const ReceiptExecutionSummarySchema = z.object({
+const ReceiptExecutionSummarySchema = z.object({
   mode: ExecutionProfileModeSchema,
   memoryScope: ExecutionScopeSchema,
   recallScope: ExecutionScopeSchema,
@@ -16,20 +16,18 @@ export const ReceiptExecutionSummarySchema = z.object({
   sessionPolicy: z.enum(['dedicated', 'ephemeral', 'per_task']),
   warnings: z.array(z.string()).default([]),
 });
-export type ReceiptExecutionSummary = z.infer<typeof ReceiptExecutionSummarySchema>;
 
-export const ReceiptContextReleaseDomainSummarySchema = z.object({
+const ReceiptContextReleaseDomainSummarySchema = z.object({
   count: z.number().int().nonnegative(),
   tokens: z.number().int().nonnegative(),
 });
 export type ReceiptContextReleaseDomainSummary = z.infer<typeof ReceiptContextReleaseDomainSummarySchema>;
 
-export const ReceiptContextReleaseSummarySchema = z.object({
+const ReceiptContextReleaseSummarySchema = z.object({
   totalReleases: z.number().int().nonnegative(),
   totalTokenEstimate: z.number().int().nonnegative(),
   byDomain: z.record(z.string(), ReceiptContextReleaseDomainSummarySchema),
 });
-export type ReceiptContextReleaseSummary = z.infer<typeof ReceiptContextReleaseSummarySchema>;
 
 export const ReceiptTimelineEventKindSchema = z.enum(['run', 'policy', 'approval', 'context_release', 'warning']);
 export type ReceiptTimelineEventKind = z.infer<typeof ReceiptTimelineEventKindSchema>;

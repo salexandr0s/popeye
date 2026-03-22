@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
-export const PersonIdentityProviderSchema = z.enum(['email', 'calendar', 'github']);
-export type PersonIdentityProvider = z.infer<typeof PersonIdentityProviderSchema>;
+const PersonIdentityProviderSchema = z.enum(['email', 'calendar', 'github']);
 
-export const PersonContactMethodTypeSchema = z.enum(['email', 'github']);
-export type PersonContactMethodType = z.infer<typeof PersonContactMethodTypeSchema>;
+const PersonContactMethodTypeSchema = z.enum(['email', 'github']);
 
 export const PersonIdentityRecordSchema = z.object({
   id: z.string(),
@@ -123,8 +121,7 @@ export type PersonIdentityDetachInput = z.infer<typeof PersonIdentityDetachInput
 
 // --- Merge events, merge suggestions, activity rollups ---
 
-export const PersonMergeEventTypeSchema = z.enum(['merge', 'split', 'attach', 'detach']);
-export type PersonMergeEventType = z.infer<typeof PersonMergeEventTypeSchema>;
+const PersonMergeEventTypeSchema = z.enum(['merge', 'split', 'attach', 'detach']);
 
 export const PersonMergeEventRecordSchema = z.object({
   id: z.string(),

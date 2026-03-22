@@ -1,3 +1,4 @@
+import { authorizeContextRelease } from '@popeye/cap-common';
 import type { CapabilityContext, CapabilityToolDescriptor } from '@popeye/contracts';
 import { z } from 'zod';
 
@@ -12,38 +13,6 @@ export function createCalendarTools(
   ctx: CapabilityContext,
   taskContext: { workspaceId: string; runId?: string },
 ): CapabilityToolDescriptor[] {
-  function authorizeRelease(input: {
-    sourceRef: string;
-    releaseLevel: 'summary';
-    tokenEstimate: number;
-    payloadPreview?: string;
-  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
-    if (!taskContext.runId || !ctx.authorizeContextRelease) {
-      return { ok: true };
-    }
-    const authorization = ctx.authorizeContextRelease({
-      runId: taskContext.runId,
-      domain: 'calendar',
-      sourceRef: input.sourceRef,
-      requestedLevel: input.releaseLevel,
-      tokenEstimate: input.tokenEstimate,
-      resourceType: 'calendar_context',
-      resourceId: input.sourceRef,
-      requestedBy: 'cap-calendar',
-      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
-    });
-    if (authorization.outcome === 'deny') {
-      return { ok: false, text: authorization.reason };
-    }
-    if (authorization.outcome === 'approval_required') {
-      return {
-        ok: false,
-        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
-      };
-    }
-    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
-  }
-
   return [
     {
       name: 'popeye_calendar_today',
@@ -87,10 +56,15 @@ export function createCalendarTools(
         });
         const text = lines.join('\n');
 
-        const release = authorizeRelease({
-          sourceRef: `calendar:today:${account.id}`,
+        const sourceRef = `calendar:today:${account.id}`;
+        const tokenEstimate = Math.ceil(text.length / 4);
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'calendar',
+          sourceRef,
           releaseLevel: 'summary',
-          tokenEstimate: Math.ceil(text.length / 4),
+          tokenEstimate,
+          resourceType: 'calendar_context',
+          requestedBy: 'cap-calendar',
           payloadPreview: `calendar today ${account.id}`,
         });
         if (!release.ok) {
@@ -99,11 +73,11 @@ export function createCalendarTools(
 
         ctx.contextReleaseRecord({
           domain: 'calendar',
-          sourceRef: `calendar:today:${account.id}`,
+          sourceRef,
           releaseLevel: 'summary',
           ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
           ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
-          tokenEstimate: Math.ceil(text.length / 4),
+          tokenEstimate,
         });
 
         return { content: [{ type: 'text', text }], details: { count: events.length } };
@@ -146,10 +120,15 @@ export function createCalendarTools(
         });
         const text = lines.join('\n');
 
-        const release = authorizeRelease({
-          sourceRef: `calendar:search:${parsed.query}`,
+        const sourceRef = `calendar:search:${parsed.query}`;
+        const tokenEstimate = Math.ceil(text.length / 4);
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'calendar',
+          sourceRef,
           releaseLevel: 'summary',
-          tokenEstimate: Math.ceil(text.length / 4),
+          tokenEstimate,
+          resourceType: 'calendar_context',
+          requestedBy: 'cap-calendar',
           payloadPreview: parsed.query,
         });
         if (!release.ok) {
@@ -158,11 +137,11 @@ export function createCalendarTools(
 
         ctx.contextReleaseRecord({
           domain: 'calendar',
-          sourceRef: `calendar:search:${parsed.query}`,
+          sourceRef,
           releaseLevel: 'summary',
           ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
           ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
-          tokenEstimate: Math.ceil(text.length / 4),
+          tokenEstimate,
         });
 
         return { content: [{ type: 'text', text }], details: response };
@@ -222,10 +201,15 @@ export function createCalendarTools(
           `${i + 1}. ${s.startTime.slice(11, 16)} - ${s.endTime.slice(11, 16)} (${s.durationMinutes}min)`,
         );
 
-        const release = authorizeRelease({
-          sourceRef: `calendar:availability:${parsed.date}`,
+        const sourceRef = `calendar:availability:${parsed.date}`;
+        const tokenEstimate = Math.ceil(lines.join('\n').length / 4);
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'calendar',
+          sourceRef,
           releaseLevel: 'summary',
-          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          tokenEstimate,
+          resourceType: 'calendar_context',
+          requestedBy: 'cap-calendar',
           payloadPreview: parsed.date,
         });
         if (!release.ok) {
@@ -234,11 +218,11 @@ export function createCalendarTools(
 
         ctx.contextReleaseRecord({
           domain: 'calendar',
-          sourceRef: `calendar:availability:${parsed.date}`,
+          sourceRef,
           releaseLevel: 'summary',
           ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
           ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
-          tokenEstimate: Math.ceil(lines.join('\n').length / 4),
+          tokenEstimate,
           redacted: false,
         });
 
@@ -280,10 +264,15 @@ export function createCalendarTools(
         if (!parsed.date) {
           const latest = calendarService.getLatestDigest(account.id);
           if (latest && latest.date === new Date().toISOString().slice(0, 10)) {
-            const release = authorizeRelease({
-              sourceRef: `calendar:digest:${account.id}`,
+            const digestSourceRef = `calendar:digest:${account.id}`;
+            const digestTokenEstimate = Math.ceil(latest.summaryMarkdown.length / 4);
+            const release = authorizeContextRelease(ctx, taskContext, {
+              domain: 'calendar',
+              sourceRef: digestSourceRef,
               releaseLevel: 'summary',
-              tokenEstimate: Math.ceil(latest.summaryMarkdown.length / 4),
+              tokenEstimate: digestTokenEstimate,
+              resourceType: 'calendar_context',
+              requestedBy: 'cap-calendar',
               payloadPreview: `calendar digest ${account.id}`,
             });
             if (!release.ok) {
@@ -292,11 +281,11 @@ export function createCalendarTools(
 
             ctx.contextReleaseRecord({
               domain: 'calendar',
-              sourceRef: `calendar:digest:${account.id}`,
+              sourceRef: digestSourceRef,
               releaseLevel: 'summary',
               ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
               ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
-              tokenEstimate: Math.ceil(latest.summaryMarkdown.length / 4),
+              tokenEstimate: digestTokenEstimate,
             });
             return { content: [{ type: 'text', text: latest.summaryMarkdown }], details: latest };
           }
@@ -304,10 +293,15 @@ export function createCalendarTools(
 
         const digest = digestService.generateDigest(account, parsed.date);
 
-        const release = authorizeRelease({
-          sourceRef: `calendar:digest:${account.id}`,
+        const sourceRef = `calendar:digest:${account.id}`;
+        const tokenEstimate = Math.ceil(digest.summaryMarkdown.length / 4);
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'calendar',
+          sourceRef,
           releaseLevel: 'summary',
-          tokenEstimate: Math.ceil(digest.summaryMarkdown.length / 4),
+          tokenEstimate,
+          resourceType: 'calendar_context',
+          requestedBy: 'cap-calendar',
           payloadPreview: `calendar digest ${account.id}`,
         });
         if (!release.ok) {
@@ -316,11 +310,11 @@ export function createCalendarTools(
 
         ctx.contextReleaseRecord({
           domain: 'calendar',
-          sourceRef: `calendar:digest:${account.id}`,
+          sourceRef,
           releaseLevel: 'summary',
           ...(release.approvalId !== undefined ? { approvalId: release.approvalId } : {}),
           ...(taskContext.runId !== undefined ? { runId: taskContext.runId } : {}),
-          tokenEstimate: Math.ceil(digest.summaryMarkdown.length / 4),
+          tokenEstimate,
         });
 
         return { content: [{ type: 'text', text: digest.summaryMarkdown }], details: digest };

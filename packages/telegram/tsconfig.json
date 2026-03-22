@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
   },
   "include": [
     "src/**/*.ts"
@@ -12,6 +14,9 @@
     },
     {
       "path": "../observability"
+    },
+    {
+      "path": "../receipts"
     }
   ],
   "exclude": [

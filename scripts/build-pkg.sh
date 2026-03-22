@@ -8,6 +8,10 @@ echo "==> Building Popeye..."
 pnpm install --frozen-lockfile
 pnpm build
 
+echo "==> Bundling CLI and daemon with tsup..."
+pnpm -w run pack:cli
+pnpm -w run pack:daemon
+
 VERSION=$(node -p "require('./package.json').version")
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE=$(date -u +%Y-%m-%d)

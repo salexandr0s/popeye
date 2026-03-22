@@ -1,4 +1,5 @@
-import type { CapabilityContext } from '@popeye/contracts';
+export { type CapabilityDb, prepareGet, prepareAll, prepareRun } from '@popeye/cap-common';
+import type { CapabilityDb } from '@popeye/cap-common';
 
 export interface MedicalImportRow {
   id: string;
@@ -49,27 +50,4 @@ export interface MedicalDigestRow {
   generated_at: string;
 }
 
-export type MedicalCapabilityDb = CapabilityContext['appDb'];
-
-// --- Typed DB helpers ---
-
-interface PreparedStatement<TRow> {
-  get(...args: unknown[]): TRow | undefined;
-  all(...args: unknown[]): TRow[];
-  run(...args: unknown[]): { changes: number; lastInsertRowid: number | bigint };
-}
-
-export function prepareGet<TRow>(db: MedicalCapabilityDb, sql: string): (...args: unknown[]) => TRow | undefined {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.get(...args);
-}
-
-export function prepareAll<TRow>(db: MedicalCapabilityDb, sql: string): (...args: unknown[]) => TRow[] {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.all(...args);
-}
-
-export function prepareRun(db: MedicalCapabilityDb, sql: string): (...args: unknown[]) => { changes: number } {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<never>)(sql);
-  return (...args: unknown[]) => ({ changes: stmt.run(...args).changes });
-}
+export type MedicalCapabilityDb = CapabilityDb;

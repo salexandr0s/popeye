@@ -26,6 +26,39 @@ test.describe('web inspector smoke', () => {
     await expect(page).toHaveURL(/\/memory/);
   });
 
+  // Smoke tests: verify every major view renders without errors
+  const viewRoutes = [
+    { link: 'Command Center', url: /\/command-center/ },
+    { link: 'Jobs', url: /\/jobs/ },
+    { link: 'Instructions', url: /\/instructions/ },
+    { link: 'Interventions', url: /\/interventions/ },
+    { link: 'Approvals', url: /\/approvals/ },
+    { link: 'Standing Approvals', url: /\/standing-approvals/ },
+    { link: 'Automation Grants', url: /\/automation-grants/ },
+    { link: 'Connections', url: /\/connections/ },
+    { link: 'Email', url: /\/email/ },
+    { link: 'Calendar', url: /\/calendar/ },
+    { link: 'GitHub', url: /\/github/ },
+    { link: 'People', url: /\/people/ },
+    { link: 'Todos', url: /\/todos/ },
+    { link: 'Finance', url: /\/finance/ },
+    { link: 'Medical', url: /\/medical/ },
+    { link: 'Files', url: /\/files/ },
+    { link: 'Vaults', url: /\/vaults/ },
+    { link: 'Security Policy', url: /\/security-policy/ },
+    { link: 'Usage', url: /\/usage/ },
+  ];
+
+  for (const { link, url } of viewRoutes) {
+    test(`navigates to ${link} view`, async ({ page }) => {
+      await unlockInspector(page);
+      await page.getByRole('link', { name: link, exact: true }).click();
+      await expect(page).toHaveURL(url);
+      // Verify the error boundary did not trigger
+      await expect(page.getByText('Something went wrong')).toBeHidden({ timeout: 3_000 });
+    });
+  }
+
   test('browser bootstrap supports csrf-protected mutations', async ({ page }) => {
     await unlockInspector(page);
 

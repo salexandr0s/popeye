@@ -206,7 +206,7 @@ export function Files() {
                       {busyAction === `review:${intent.id}` ? '…' : 'Apply'}
                     </button>
                     <button
-                      className="rounded-[var(--radius-sm)] bg-red-100 px-[10px] py-[6px] text-[12px] font-medium text-red-700"
+                      className="rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-danger)]"
                       onClick={() => void handleReviewIntent(intent.id, 'reject')}
                       type="button"
                     >

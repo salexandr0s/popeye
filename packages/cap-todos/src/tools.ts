@@ -1,4 +1,5 @@
 import type { CapabilityContext, CapabilityToolDescriptor } from '@popeye/contracts';
+import { authorizeContextRelease } from '@popeye/cap-common';
 import { extractRedactionPatterns, redactText } from '@popeye/observability';
 import { z } from 'zod';
 
@@ -19,38 +20,6 @@ export function createTodoTools(
 
   function redact(text: string): string {
     return redactText(text, redactionPatterns).text;
-  }
-
-  function authorizeRelease(input: {
-    sourceRef: string;
-    releaseLevel: 'summary';
-    tokenEstimate: number;
-    payloadPreview?: string;
-  }): { ok: true; approvalId?: string } | { ok: false; text: string } {
-    if (!taskContext.runId || !ctx.authorizeContextRelease) {
-      return { ok: true };
-    }
-    const authorization = ctx.authorizeContextRelease({
-      runId: taskContext.runId,
-      domain: 'todos',
-      sourceRef: input.sourceRef,
-      requestedLevel: input.releaseLevel,
-      tokenEstimate: input.tokenEstimate,
-      resourceType: 'todo_context',
-      resourceId: input.sourceRef,
-      requestedBy: 'cap-todos',
-      ...(input.payloadPreview !== undefined ? { payloadPreview: input.payloadPreview } : {}),
-    });
-    if (authorization.outcome === 'deny') {
-      return { ok: false, text: authorization.reason };
-    }
-    if (authorization.outcome === 'approval_required') {
-      return {
-        ok: false,
-        text: `${authorization.reason} Approval ID: ${authorization.approvalId ?? 'pending'}`,
-      };
-    }
-    return authorization.approvalId ? { ok: true, approvalId: authorization.approvalId } : { ok: true };
   }
 
   return [
@@ -112,10 +81,13 @@ export function createTodoTools(
         });
         const text = lines.join('\n');
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'todos',
           sourceRef: `todos:list:${account.id}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(text.length / 4),
+          resourceType: 'todo_context',
+          requestedBy: 'cap-todos',
           payloadPreview: `todo list ${account.id}`,
         });
         if (!release.ok) {
@@ -175,10 +147,13 @@ export function createTodoTools(
         });
         const text = lines.join('\n');
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'todos',
           sourceRef: `todos:search:${parsed.query}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(text.length / 4),
+          resourceType: 'todo_context',
+          requestedBy: 'cap-todos',
           payloadPreview: parsed.query,
         });
         if (!release.ok) {
@@ -376,10 +351,13 @@ export function createTodoTools(
         if (!parsed.date) {
           const latest = todoService.getLatestDigest(account.id);
           if (latest && latest.date === new Date().toISOString().slice(0, 10)) {
-            const release = authorizeRelease({
+            const release = authorizeContextRelease(ctx, taskContext, {
+              domain: 'todos',
               sourceRef: `todos:digest:${account.id}`,
               releaseLevel: 'summary',
               tokenEstimate: Math.ceil(latest.summaryMarkdown.length / 4),
+              resourceType: 'todo_context',
+              requestedBy: 'cap-todos',
               payloadPreview: `todo digest ${account.id}`,
             });
             if (!release.ok) {
@@ -400,10 +378,13 @@ export function createTodoTools(
 
         const digest = digestService.generateDigest(account, parsed.date);
 
-        const release = authorizeRelease({
+        const release = authorizeContextRelease(ctx, taskContext, {
+          domain: 'todos',
           sourceRef: `todos:digest:${account.id}`,
           releaseLevel: 'summary',
           tokenEstimate: Math.ceil(digest.summaryMarkdown.length / 4),
+          resourceType: 'todo_context',
+          requestedBy: 'cap-todos',
           payloadPreview: `todo digest ${account.id}`,
         });
         if (!release.ok) {

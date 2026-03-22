@@ -17,6 +17,7 @@
     }
   },
   "dependencies": {
+    "@popeye/cap-common": "workspace:*",
     "@popeye/contracts": "workspace:*",
     "@popeye/observability": "workspace:*",
     "better-sqlite3": "^12.6.2",

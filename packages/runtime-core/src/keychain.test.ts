@@ -154,6 +154,25 @@ describe('keychain', () => {
     });
   });
 
+  describe('key validation', () => {
+    it('rejects keys with shell metacharacters', () => {
+      expect(() => keychainGet('key`whoami`')).toThrow('Unsafe keychain key');
+      expect(() => keychainGet('key$(cmd)')).toThrow('Unsafe keychain key');
+      expect(() => keychainGet('key;rm')).toThrow('Unsafe keychain key');
+      expect(() => keychainGet('key with spaces')).toThrow('Unsafe keychain key');
+      expect(() => keychainSet('key"quote', 'val')).toThrow('Unsafe keychain key');
+      expect(() => keychainDelete("key'quote")).toThrow('Unsafe keychain key');
+    });
+
+    it('accepts valid keys with alphanumeric, dots, hyphens, underscores', () => {
+      setPlatform('darwin');
+      mockSpawnSync.mockReturnValue(fakeResult({ status: 0, stdout: 'val\n' }));
+      expect(() => keychainGet('vault-kek')).not.toThrow();
+      expect(() => keychainGet('my_key.v2')).not.toThrow();
+      expect(() => keychainGet('API-Key-123')).not.toThrow();
+    });
+  });
+
   describe('on non-darwin platforms', () => {
     beforeEach(() => {
       setPlatform('linux');

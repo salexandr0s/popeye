@@ -28,8 +28,7 @@ export type CalendarAccountRegistrationInput = z.infer<typeof CalendarAccountReg
 
 // --- Calendar Event Record ---
 
-export const CalendarEventStatusSchema = z.enum(['confirmed', 'tentative', 'cancelled']);
-export type CalendarEventStatus = z.infer<typeof CalendarEventStatusSchema>;
+const CalendarEventStatusSchema = z.enum(['confirmed', 'tentative', 'cancelled']);
 
 export const CalendarEventRecordSchema = z.object({
   id: z.string(),
@@ -69,7 +68,8 @@ export type CalendarDigestRecord = z.infer<typeof CalendarDigestRecordSchema>;
 
 // --- Calendar Search ---
 
-export const CalendarSearchQuerySchema = z.object({
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used via z.infer for CalendarSearchQuery
+const CalendarSearchQuerySchema = z.object({
   query: z.string().min(1),
   accountId: z.string().optional(),
   limit: z.number().int().positive().max(100).default(20),
@@ -108,14 +108,6 @@ export const CalendarAvailabilitySlotSchema = z.object({
 });
 export type CalendarAvailabilitySlot = z.infer<typeof CalendarAvailabilitySlotSchema>;
 
-export const CalendarAvailabilityQuerySchema = z.object({
-  accountId: z.string().optional(),
-  date: z.string(),
-  startHour: z.number().int().min(0).max(23).default(9),
-  endHour: z.number().int().min(1).max(24).default(17),
-  slotMinutes: z.number().int().positive().default(30),
-});
-export type CalendarAvailabilityQuery = z.infer<typeof CalendarAvailabilityQuerySchema>;
 
 export const CalendarEventCreateInputSchema = z.object({
   accountId: z.string().min(1),

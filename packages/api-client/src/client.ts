@@ -229,6 +229,12 @@ import {
   MedicalDigestRecordSchema,
   MedicalSearchResultSchema,
   type MedicalSearchResult,
+  type ContextAssemblyResult,
+  ContextAssemblyResultSchema,
+  type MemoryOperatorActionRecord,
+  MemoryOperatorActionRecordSchema,
+  type MemoryHistoryResult,
+  MemoryHistoryResultSchema,
 } from '@popeye/contracts';
 
 export interface PopeyeApiClientOptions {
@@ -267,6 +273,8 @@ const MemoryMaintenanceResultSchema = z.object({
   archived: z.number().int().nonnegative(),
   merged: z.number().int().nonnegative(),
   deduped: z.number().int().nonnegative(),
+  ttlExpired: z.number().int().nonnegative().optional(),
+  staleMarked: z.number().int().nonnegative().optional(),
 });
 export type MemoryMaintenanceResult = z.infer<typeof MemoryMaintenanceResultSchema>;
 
@@ -668,6 +676,37 @@ export class PopeyeApiClient {
 
   async importMemory(input: z.input<typeof MemoryImportInputSchema>): Promise<MemoryImportResponse> {
     return this.post('/v1/memory/import', input, MemoryImportResponseSchema);
+  }
+
+  async assembleMemoryContext(opts: {
+    q: string;
+    scope?: string;
+    workspaceId?: string;
+    projectId?: string;
+    maxTokens?: number;
+    consumerProfile?: string;
+    includeProvenance?: boolean;
+  }): Promise<ContextAssemblyResult> {
+    const params = new URLSearchParams({ q: opts.q });
+    if (opts.scope) params.set('scope', opts.scope);
+    if (opts.workspaceId) params.set('workspaceId', opts.workspaceId);
+    if (opts.projectId) params.set('projectId', opts.projectId);
+    if (opts.maxTokens) params.set('maxTokens', String(opts.maxTokens));
+    if (opts.consumerProfile) params.set('consumerProfile', opts.consumerProfile);
+    if (opts.includeProvenance !== undefined) params.set('includeProvenance', String(opts.includeProvenance));
+    return this.get(`/v1/memory/context?${params.toString()}`, ContextAssemblyResultSchema);
+  }
+
+  async pinMemory(id: string, opts?: { targetKind?: 'fact' | 'synthesis'; reason?: string }): Promise<MemoryOperatorActionRecord> {
+    return this.post(`/v1/memory/${encodeURIComponent(id)}/pin`, { targetKind: opts?.targetKind ?? 'fact', reason: opts?.reason ?? '' }, MemoryOperatorActionRecordSchema);
+  }
+
+  async forgetMemory(id: string, reason?: string): Promise<MemoryOperatorActionRecord> {
+    return this.post(`/v1/memory/${encodeURIComponent(id)}/forget`, { reason: reason ?? '' }, MemoryOperatorActionRecordSchema);
+  }
+
+  async getMemoryHistory(id: string): Promise<MemoryHistoryResult> {
+    return this.get(`/v1/memory/${encodeURIComponent(id)}/history`, MemoryHistoryResultSchema);
   }
 
   async listSessionRoots(): Promise<SessionRootRecord[]> {

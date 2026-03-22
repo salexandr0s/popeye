@@ -10,6 +10,10 @@ export const IntegrityCheckNameSchema = z.enum([
   'confidence_bounds',
   'summary_dag_integrity',
   'event_log_completeness',
+  'orphan_chunks',
+  'unsupported_facts',
+  'profile_refresh_debt',
+  'ttl_consistency',
 ]);
 export type IntegrityCheckName = z.infer<typeof IntegrityCheckNameSchema>;
 

@@ -1,4 +1,5 @@
-import type { CapabilityContext } from '@popeye/contracts';
+export { type CapabilityDb, prepareGet, prepareAll, prepareRun } from '@popeye/cap-common';
+import type { CapabilityDb } from '@popeye/cap-common';
 
 export interface PersonRow {
   id: string;
@@ -49,25 +50,4 @@ export interface PersonActivityRollupRow {
   updated_at: string;
 }
 
-export type PeopleCapabilityDb = CapabilityContext['appDb'];
-
-interface PreparedStatement<TRow> {
-  get(...args: unknown[]): TRow | undefined;
-  all(...args: unknown[]): TRow[];
-  run(...args: unknown[]): { changes: number; lastInsertRowid: number | bigint };
-}
-
-export function prepareGet<TRow>(db: PeopleCapabilityDb, sql: string): (...args: unknown[]) => TRow | undefined {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.get(...args);
-}
-
-export function prepareAll<TRow>(db: PeopleCapabilityDb, sql: string): (...args: unknown[]) => TRow[] {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<TRow>)(sql);
-  return (...args: unknown[]) => stmt.all(...args);
-}
-
-export function prepareRun(db: PeopleCapabilityDb, sql: string): (...args: unknown[]) => { changes: number } {
-  const stmt = (db.prepare as (input: string) => PreparedStatement<never>)(sql);
-  return (...args: unknown[]) => ({ changes: stmt.run(...args).changes });
-}
+export type PeopleCapabilityDb = CapabilityDb;

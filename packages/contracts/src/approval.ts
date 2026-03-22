@@ -2,19 +2,17 @@ import { z } from 'zod';
 import { DomainKindSchema } from './domain.js';
 import { TaskSourceSchema } from './execution.js';
 
-export const ApprovalScopeSchema = z.enum(['secret_access', 'vault_open', 'context_release', 'data_source_connect', 'external_write']);
+const ApprovalScopeSchema = z.enum(['secret_access', 'vault_open', 'context_release', 'data_source_connect', 'external_write']);
 export type ApprovalScope = z.infer<typeof ApprovalScopeSchema>;
 
 export const ApprovalRiskClassSchema = z.enum(['auto', 'ask', 'deny']);
 export type ApprovalRiskClass = z.infer<typeof ApprovalRiskClassSchema>;
 
-export const ApprovalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired']);
-export type ApprovalStatus = z.infer<typeof ApprovalStatusSchema>;
+const ApprovalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired']);
 
-export const ApprovalResolvedBySchema = z.enum(['operator', 'policy', 'standing_approval', 'automation_grant', 'expiry']);
-export type ApprovalResolvedBy = z.infer<typeof ApprovalResolvedBySchema>;
+const ApprovalResolvedBySchema = z.enum(['operator', 'policy', 'standing_approval', 'automation_grant', 'expiry']);
 
-export const ActionKindSchema = z.enum([
+const ActionKindSchema = z.enum([
   'read',
   'search',
   'sync',
@@ -32,7 +30,7 @@ export const ActionKindSchema = z.enum([
 ]);
 export type ActionKind = z.infer<typeof ActionKindSchema>;
 
-export const ActionResourceScopeSchema = z.enum(['global', 'workspace', 'project', 'run', 'connection', 'resource']);
+const ActionResourceScopeSchema = z.enum(['global', 'workspace', 'project', 'run', 'connection', 'resource']);
 export type ActionResourceScope = z.infer<typeof ActionResourceScopeSchema>;
 
 export const ApprovalRecordSchema = z.object({
@@ -127,8 +125,7 @@ export const ActionPolicyDefaultSchema = z.object({
 });
 export type ActionPolicyDefault = z.infer<typeof ActionPolicyDefaultSchema>;
 
-export const ActionPolicyEvaluationSourceSchema = z.enum(['rule', 'default', 'fallback']);
-export type ActionPolicyEvaluationSource = z.infer<typeof ActionPolicyEvaluationSourceSchema>;
+const ActionPolicyEvaluationSourceSchema = z.enum(['rule', 'default', 'fallback']);
 
 export const ActionPolicyEvaluationSchema = z.object({
   scope: ApprovalScopeSchema,
@@ -143,8 +140,7 @@ export const ActionPolicyEvaluationSchema = z.object({
 });
 export type ActionPolicyEvaluation = z.infer<typeof ActionPolicyEvaluationSchema>;
 
-export const PolicyGrantStatusSchema = z.enum(['active', 'revoked', 'expired']);
-export type PolicyGrantStatus = z.infer<typeof PolicyGrantStatusSchema>;
+const PolicyGrantStatusSchema = z.enum(['active', 'revoked', 'expired']);
 
 const PolicyGrantBaseSchema = z.object({
   scope: ApprovalScopeSchema,

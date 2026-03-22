@@ -1,8 +1,8 @@
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { openCapabilityDb } from '@popeye/cap-common';
 import type { CapabilityContext, CapabilityModule } from '@popeye/contracts';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 
 import { CalendarService } from './calendar-service.js';
 import { CalendarSyncService } from './calendar-sync.js';
@@ -32,21 +32,6 @@ export function createCalendarCapability(): CapabilityModule {
   let ctx: CapabilityContext | null = null;
   let calendarDb: Database.Database | null = null;
 
-  function applyCalendarMigrations(db: Database.Database): void {
-    db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL);');
-    const getMigration = db.prepare('SELECT id FROM schema_migrations WHERE id = ?');
-    const addMigration = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
-
-    for (const migration of getCalendarMigrations()) {
-      if (getMigration.get(migration.id)) continue;
-      const tx = db.transaction(() => {
-        for (const statement of migration.statements) db.exec(statement);
-        addMigration.run(migration.id, new Date().toISOString());
-      });
-      tx();
-    }
-  }
-
   return {
     descriptor: {
       id: 'calendar',
@@ -60,13 +45,7 @@ export function createCalendarCapability(): CapabilityModule {
       ctx = context;
 
       const storesDir = context.paths.capabilityStoresDir;
-      mkdirSync(storesDir, { recursive: true });
-      const dbPath = join(storesDir, 'calendar.db');
-      calendarDb = new Database(dbPath);
-      calendarDb.pragma('journal_mode = WAL');
-      calendarDb.pragma('foreign_keys = ON');
-
-      applyCalendarMigrations(calendarDb);
+      calendarDb = openCapabilityDb(storesDir, 'calendar.db', getCalendarMigrations());
 
       const dbHandle = calendarDb as unknown as CapabilityContext['appDb'];
       calendarService = new CalendarService(dbHandle);
@@ -74,7 +53,7 @@ export function createCalendarCapability(): CapabilityModule {
       digestService = new CalendarDigestService(calendarService, context);
       searchService = new CalendarSearchService(dbHandle);
 
-      context.log.info('cap-calendar initialized', { dbPath });
+      context.log.info('cap-calendar initialized', { dbPath: join(storesDir, 'calendar.db') });
     },
 
     shutdown(): void {

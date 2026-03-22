@@ -14,7 +14,7 @@ export type MemoryNamespaceKind = z.infer<typeof MemoryNamespaceKindSchema>;
 export const MemoryFactKindSchema = z.enum(['event', 'preference', 'identity', 'procedure', 'relationship', 'state', 'summary']);
 export type MemoryFactKind = z.infer<typeof MemoryFactKindSchema>;
 
-export const MemorySynthesisKindSchema = z.enum(['daily', 'weekly', 'profile', 'procedure', 'project_state']);
+export const MemorySynthesisKindSchema = z.enum(['daily', 'weekly', 'profile', 'procedure', 'project_state', 'profile_static', 'profile_dynamic']);
 export type MemorySynthesisKind = z.infer<typeof MemorySynthesisKindSchema>;
 
 export const MemoryRevisionRelationSchema = z.enum(['supersedes', 'confirmed_by']);
@@ -24,7 +24,6 @@ export const RevisionStatusSchema = z.enum(['active', 'superseded']);
 export type RevisionStatus = z.infer<typeof RevisionStatusSchema>;
 
 export const EvidenceKindSchema = z.enum(['artifact', 'fact', 'synthesis']);
-export type EvidenceKind = z.infer<typeof EvidenceKindSchema>;
 
 export const MemorySourceTypeSchema = z.enum([
   'receipt',
@@ -41,6 +40,107 @@ export const MemorySourceTypeSchema = z.enum([
   'debug_session',
 ]);
 export type MemorySourceType = z.infer<typeof MemorySourceTypeSchema>;
+
+export const MemoryRelationTypeSchema = z.enum(['updates', 'extends', 'confirmed_by', 'contradicts', 'derives', 'related_to']);
+export type MemoryRelationType = z.infer<typeof MemoryRelationTypeSchema>;
+
+export const IngestionStatusSchema = z.enum(['ready', 'queued', 'processing', 'done', 'failed', 'deleted']);
+export type IngestionStatus = z.infer<typeof IngestionStatusSchema>;
+
+export const OperatorStatusSchema = z.enum(['normal', 'pinned', 'protected', 'rejected']);
+export type OperatorStatus = z.infer<typeof OperatorStatusSchema>;
+
+export const EmbeddingOwnerKindSchema = z.enum(['artifact_chunk', 'fact', 'synthesis']);
+export type EmbeddingOwnerKind = z.infer<typeof EmbeddingOwnerKindSchema>;
+
+export const EmbeddingStatusSchema = z.enum(['active', 'stale', 'deleted']);
+export type EmbeddingStatus = z.infer<typeof EmbeddingStatusSchema>;
+
+export const MemorySourceStreamRecordSchema = z.object({
+  id: z.string(),
+  stableKey: z.string(),
+  providerKind: z.string(),
+  sourceType: MemorySourceTypeSchema,
+  externalId: z.string().nullable().default(null),
+  namespaceId: z.string(),
+  workspaceId: z.string().nullable().default(null),
+  projectId: z.string().nullable().default(null),
+  title: z.string().nullable().default(null),
+  canonicalUri: z.string().nullable().default(null),
+  classification: DataClassificationSchema,
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
+  trustTier: z.number().int().min(1).max(5).default(3),
+  trustScore: z.number().min(0).max(1).default(0.7),
+  ingestionStatus: IngestionStatusSchema.default('ready'),
+  lastProcessedHash: z.string().nullable().default(null),
+  lastSyncCursor: z.string().nullable().default(null),
+  metadataJson: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  deletedAt: z.string().nullable().default(null),
+});
+export type MemorySourceStreamRecord = z.infer<typeof MemorySourceStreamRecordSchema>;
+
+export const MemoryArtifactChunkRecordSchema = z.object({
+  id: z.string(),
+  artifactId: z.string(),
+  sourceStreamId: z.string().nullable().default(null),
+  chunkIndex: z.number().int().nonnegative(),
+  sectionPath: z.string().nullable().default(null),
+  chunkKind: z.string(),
+  text: z.string(),
+  textHash: z.string(),
+  tokenCount: z.number().int().nonnegative(),
+  language: z.string().nullable().default(null),
+  classification: DataClassificationSchema,
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  invalidatedAt: z.string().nullable().default(null),
+  metadataJson: z.record(z.string(), z.unknown()).default({}),
+});
+export type MemoryArtifactChunkRecord = z.infer<typeof MemoryArtifactChunkRecordSchema>;
+
+export const MemoryEmbeddingRecordSchema = z.object({
+  id: z.string(),
+  ownerKind: EmbeddingOwnerKindSchema,
+  ownerId: z.string(),
+  model: z.string(),
+  dim: z.number().int().positive(),
+  contentHash: z.string(),
+  status: EmbeddingStatusSchema.default('active'),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  embeddingVersion: z.string(),
+  metadataJson: z.record(z.string(), z.unknown()).default({}),
+});
+export type MemoryEmbeddingRecord = z.infer<typeof MemoryEmbeddingRecordSchema>;
+
+export const MemoryRelationRecordSchema = z.object({
+  id: z.string(),
+  relationType: MemoryRelationTypeSchema,
+  sourceKind: z.string(),
+  sourceId: z.string(),
+  targetKind: z.string(),
+  targetId: z.string(),
+  confidence: z.number().min(0).max(1).default(1.0),
+  createdBy: z.string(),
+  reason: z.string().default(''),
+  metadataJson: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string(),
+});
+export type MemoryRelationRecord = z.infer<typeof MemoryRelationRecordSchema>;
+
+export const MemoryOperatorActionRecordSchema = z.object({
+  id: z.string(),
+  actionKind: z.string(),
+  targetKind: z.string(),
+  targetId: z.string(),
+  reason: z.string().default(''),
+  payloadJson: z.record(z.string(), z.unknown()).default({}),
+  createdAt: z.string(),
+});
+export type MemoryOperatorActionRecord = z.infer<typeof MemoryOperatorActionRecordSchema>;
 
 export const MemoryRecordSchema = z.object({
   id: z.string(),
@@ -75,15 +175,6 @@ export const MemoryNamespaceRecordSchema = z.object({
 });
 export type MemoryNamespaceRecord = z.infer<typeof MemoryNamespaceRecordSchema>;
 
-export const MemoryTagRecordSchema = z.object({
-  id: z.string(),
-  ownerKind: EvidenceKindSchema,
-  ownerId: z.string(),
-  tag: z.string(),
-  createdAt: z.string(),
-});
-export type MemoryTagRecord = z.infer<typeof MemoryTagRecordSchema>;
-
 export const MemoryArtifactRecordSchema = z.object({
   id: z.string(),
   sourceType: MemorySourceTypeSchema,
@@ -101,6 +192,12 @@ export const MemoryArtifactRecordSchema = z.object({
   contentHash: z.string(),
   metadataJson: z.record(z.string(), z.unknown()).default({}),
   domain: DomainKindSchema.default('general'),
+  // Phase 1 extensions (optional for backward compat with pre-migration reads)
+  sourceStreamId: z.string().nullable().default(null),
+  artifactVersion: z.number().int().positive().default(1),
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
+  trustScore: z.number().min(0).max(1).default(0.7),
+  invalidatedAt: z.string().nullable().default(null),
 });
 export type MemoryArtifactRecord = z.infer<typeof MemoryArtifactRecordSchema>;
 
@@ -131,6 +228,20 @@ export const MemoryFactRecordSchema = z.object({
   durable: z.boolean().default(false),
   revisionStatus: RevisionStatusSchema.default('active'),
   domain: DomainKindSchema.default('general'),
+  // Phase 1 extensions (defaults match SQL NOT NULL DEFAULT values)
+  rootFactId: z.string().nullable().default(null),
+  parentFactId: z.string().nullable().default(null),
+  isLatest: z.boolean().default(true),
+  claimKey: z.string().nullable().default(null),
+  salience: z.number().min(0).max(1).default(0.5),
+  supportCount: z.number().int().nonnegative().default(1),
+  sourceTrustScore: z.number().min(0).max(1).default(0.7),
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
+  forgetAfter: z.string().nullable().default(null),
+  staleAfter: z.string().nullable().default(null),
+  expiredAt: z.string().nullable().default(null),
+  invalidatedAt: z.string().nullable().default(null),
+  operatorStatus: OperatorStatusSchema.default('normal'),
 });
 export type MemoryFactRecord = z.infer<typeof MemoryFactRecordSchema>;
 
@@ -150,6 +261,15 @@ export const MemorySynthesisRecordSchema = z.object({
   updatedAt: z.string(),
   archivedAt: z.string().nullable().default(null),
   domain: DomainKindSchema.default('general'),
+  // Phase 1 extensions (defaults match SQL NOT NULL DEFAULT values)
+  subjectKind: z.string().nullable().default(null),
+  subjectId: z.string().nullable().default(null),
+  refreshDueAt: z.string().nullable().default(null),
+  salience: z.number().min(0).max(1).default(0.5),
+  qualityScore: z.number().min(0).max(1).default(0.7),
+  contextReleasePolicy: ContextReleasePolicySchema.default('full'),
+  invalidatedAt: z.string().nullable().default(null),
+  operatorStatus: OperatorStatusSchema.default('normal'),
 });
 export type MemorySynthesisRecord = z.infer<typeof MemorySynthesisRecordSchema>;
 
@@ -210,11 +330,17 @@ export const MemorySearchResultSchema = z.object({
     scopeMatch: z.number(),
     entityBoost: z.number().optional(),
     temporalFit: z.number().optional(),
+    sourceTrust: z.number().optional(),
+    salience: z.number().optional(),
+    latestness: z.number().optional(),
+    evidenceDensity: z.number().optional(),
+    operatorBonus: z.number().optional(),
+    layerPrior: z.number().optional(),
   }),
 });
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>;
 
-export const QueryStrategySchema = z.enum(['factual', 'temporal', 'procedural', 'exploratory']);
+export const QueryStrategySchema = z.enum(['factual', 'temporal', 'procedural', 'exploratory', 'project_state', 'profile', 'audit']);
 export type QueryStrategy = z.infer<typeof QueryStrategySchema>;
 
 export const MemorySearchResponseSchema = z.object({
@@ -224,8 +350,69 @@ export const MemorySearchResponseSchema = z.object({
   latencyMs: z.number().nonnegative(),
   searchMode: z.enum(['hybrid', 'fts_only', 'vec_only']),
   strategy: QueryStrategySchema.optional(),
+  traceId: z.string().optional(),
 });
 export type MemorySearchResponse = z.infer<typeof MemorySearchResponseSchema>;
+
+// Context assembly
+export const ContextLayerItemSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  score: z.number(),
+  tokenCount: z.number(),
+  sourceType: z.string().optional(),
+  occurredAt: z.string().nullable().optional(),
+});
+export type ContextLayerItem = z.infer<typeof ContextLayerItemSchema>;
+
+export const ContextLayerSchema = z.object({
+  layer: MemoryLayerSchema,
+  items: z.array(ContextLayerItemSchema),
+  totalTokens: z.number(),
+});
+export type ContextLayer = z.infer<typeof ContextLayerSchema>;
+
+export const ContextAssemblyResultSchema = z.object({
+  profileStatic: z.string().nullable(),
+  profileDynamic: z.string().nullable(),
+  layers: z.array(ContextLayerSchema),
+  totalTokens: z.number(),
+  budgetUsed: z.number(),
+  budgetMax: z.number(),
+  query: z.string(),
+  strategy: QueryStrategySchema.optional(),
+  traceId: z.string().optional(),
+});
+export type ContextAssemblyResult = z.infer<typeof ContextAssemblyResultSchema>;
+
+export const ProfileContextResultSchema = z.object({
+  staticProfile: z.string().nullable(),
+  dynamicProfile: z.string().nullable(),
+  totalTokens: z.number(),
+});
+export type ProfileContextResult = z.infer<typeof ProfileContextResultSchema>;
+
+export const MemoryHistoryResultSchema = z.object({
+  memoryId: z.string(),
+  versionChain: z.array(z.object({
+    factId: z.string(),
+    text: z.string(),
+    createdAt: z.string(),
+    isLatest: z.boolean(),
+    relation: z.string().optional(),
+  })),
+  evidenceLinks: z.array(z.object({
+    artifactId: z.string(),
+    excerpt: z.string().nullable(),
+    createdAt: z.string(),
+  })),
+  operatorActions: z.array(z.object({
+    actionKind: z.string(),
+    reason: z.string(),
+    createdAt: z.string(),
+  })),
+});
+export type MemoryHistoryResult = z.infer<typeof MemoryHistoryResultSchema>;
 
 export const RecallPlanSchema = z.object({
   query: z.string(),
@@ -261,32 +448,6 @@ export const RecallExplanationSchema = z.object({
   evidence: z.array(EvidenceLinkSchema).default([]),
 });
 export type RecallExplanation = z.infer<typeof RecallExplanationSchema>;
-
-export const MemoryEventRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  type: z.string(),
-  createdAt: z.string(),
-});
-export type MemoryEventRecord = z.infer<typeof MemoryEventRecordSchema>;
-
-export const MemorySourceRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  sourceType: z.string(),
-  sourceRef: z.string(),
-  createdAt: z.string(),
-});
-export type MemorySourceRecord = z.infer<typeof MemorySourceRecordSchema>;
-
-export const MemoryConsolidationRecordSchema = z.object({
-  id: z.string(),
-  memoryId: z.string(),
-  mergedIntoId: z.string(),
-  reason: z.string().default(''),
-  createdAt: z.string(),
-});
-export type MemoryConsolidationRecord = z.infer<typeof MemoryConsolidationRecordSchema>;
 
 export const MemoryAuditResponseSchema = z.object({
   totalMemories: z.number().int().nonnegative(),
@@ -325,48 +486,3 @@ export const MemorySearchQuerySchema = z.object({
   consumerProfile: z.string().optional(),
 });
 export type MemorySearchQuery = z.infer<typeof MemorySearchQuerySchema>;
-
-export const BudgetFitResultSchema = z.object({
-  results: z.array(MemorySearchResultSchema),
-  totalTokensUsed: z.number().int().nonnegative(),
-  totalTokensBudget: z.number().int().positive(),
-  truncatedCount: z.number().int().nonnegative(),
-  droppedCount: z.number().int().nonnegative(),
-  expansionPolicy: z.object({
-    risk: z.enum(['low', 'moderate', 'high']),
-    route: z.enum(['answer_directly', 'expand_shallow', 'expand_deep']),
-    warning: z.string().optional(),
-  }).optional(),
-});
-export type BudgetFitResult = z.infer<typeof BudgetFitResultSchema>;
-
-export const MemoryDescribeResultSchema = z.object({
-  id: z.string(),
-  description: z.string(),
-  type: z.string(),
-  confidence: z.number(),
-  scope: z.string(),
-  workspaceId: z.string().nullable().default(null),
-  projectId: z.string().nullable().default(null),
-  sourceType: z.string(),
-  createdAt: z.string(),
-  lastReinforcedAt: z.string().nullable(),
-  durable: z.boolean(),
-  contentLength: z.number().int().nonnegative(),
-  entityCount: z.number().int().nonnegative(),
-  sourceCount: z.number().int().nonnegative(),
-  eventCount: z.number().int().nonnegative(),
-  layer: MemoryLayerSchema.optional(),
-  namespaceId: z.string().optional(),
-  evidenceCount: z.number().int().nonnegative().optional(),
-  revisionStatus: RevisionStatusSchema.optional(),
-});
-export type MemoryDescribeResult = z.infer<typeof MemoryDescribeResultSchema>;
-
-export const MemoryExpandResultSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  tokenEstimate: z.number().int().nonnegative(),
-  truncated: z.boolean(),
-});
-export type MemoryExpandResult = z.infer<typeof MemoryExpandResultSchema>;
