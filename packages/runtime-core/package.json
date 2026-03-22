@@ -23,7 +23,7 @@
     "@popeye/cap-people": "workspace:*",
     "@popeye/cap-finance": "workspace:*",
     "@popeye/cap-medical": "workspace:*",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.8.0",
     "safe-regex2": "^4.0.0"
   },
   "scripts": {
