@@ -39,8 +39,8 @@ importers:
         specifier: ^9.23.0
         version: 9.39.4(jiti@2.6.1)
       globals:
-        specifier: ^15.15.0
-        version: 15.15.0
+        specifier: ^17.4.0
+        version: 17.4.0
       node-gyp:
         specifier: ^12.2.0
         version: 12.2.0
@@ -2028,8 +2028,8 @@ packages:
     resolution: {integrity: sha512-oahGvuMGQlPw/ivIYBjVSrWAfWLBeku5tpPE2fOPLi+WHffIWbuh2tCjhyQhTBPMf5E9jDEH4FOmTYgYwbKwtQ==}
     engines: {node: '>=18'}
 
-  globals@15.15.0:
-    resolution: {integrity: sha512-7ACyT3wmyp3I61S4fG682L0VA2RGD9otkqGJIwNUMF1SWUombIIk+af1unuDYgMm082aHYwD+mzJvv9Iu8dsgg==}
+  globals@17.4.0:
+    resolution: {integrity: sha512-hjrNztw/VajQwOLsMNT1cbJiH2muO3OROCHnbehc8eY5JyD2gqz4AcMHPqgaOR59DjgUjYAYLeH699g/eWi2jw==}
     engines: {node: '>=18'}
 
   graceful-fs@4.2.11:
@@ -4788,7 +4788,7 @@ snapshots:
 
   globals@14.0.0: {}
 
-  globals@15.15.0: {}
+  globals@17.4.0: {}
 
   graceful-fs@4.2.11: {}
 
