@@ -76,7 +76,7 @@ function makeResult(id: string, opts: {
     layer: opts.layer ?? 'fact',
     scoreBreakdown: {
       relevance: 0.5, recency: 0.3, confidence: 0.2,
-      scopeMatch: 0.0, entityBoost: 0.0,
+      scopeMatch: 0.0,
     },
   };
 }

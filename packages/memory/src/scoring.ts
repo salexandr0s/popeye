@@ -39,7 +39,6 @@ export interface ScoredCandidate {
     recency: number;
     confidence: number;
     scopeMatch: number;
-    entityBoost?: number;
     temporalFit?: number;
     sourceTrust?: number;
     salience?: number;
@@ -65,7 +64,6 @@ const DEFAULT_WEIGHTS: ScoringWeights = {
   recency: 0.25,
   confidence: 0.20,
   scopeMatch: 0.15,
-  entityBoost: 0.00,
 };
 
 export interface RerankParams {
@@ -75,7 +73,6 @@ export interface RerankParams {
   now?: Date | undefined;
   weights?: ScoringWeights | undefined;
   queryText?: string | undefined;
-  entityMatches?: Map<string, number> | undefined;
   temporalConstraint?: TemporalConstraint | null | undefined;
   factMetadata?: Map<string, FactMetadata> | undefined;
 }
@@ -139,10 +136,7 @@ export function rerankAndMerge(
       params.queryLocation,
     );
 
-    const entityMatchCount = params.entityMatches?.get(id) ?? 0;
-    const entityBoostScore = Math.min(1, entityMatchCount / 3);
-
-    // New structured-layer signals (default to neutral values when not available)
+    // Structured-layer signals (default to neutral values when not available)
     const fm = params.factMetadata?.get(id);
     const sourceTrust = fm?.sourceTrustScore ?? 0.7;
     const salienceScore = fm?.salience ?? 0.5;
@@ -156,7 +150,6 @@ export function rerankAndMerge(
       (w.recency * recencySignal) +
       (w.confidence * effectiveConfidence) +
       (w.scopeMatch * scopeMatch) +
-      (w.entityBoost * entityBoostScore) +
       ((w.sourceTrust ?? 0) * sourceTrust) +
       ((w.salience ?? 0) * salienceScore) +
       ((w.latestness ?? 0) * latestness) +
@@ -172,9 +165,6 @@ export function rerankAndMerge(
     };
     if (temporalFit > 0) {
       scoreBreakdown.temporalFit = temporalFit;
-    }
-    if (entityBoostScore > 0) {
-      scoreBreakdown.entityBoost = entityBoostScore;
     }
     // Only include new signals when their weights are active
     if ((w.sourceTrust ?? 0) > 0) scoreBreakdown.sourceTrust = sourceTrust;

@@ -122,8 +122,7 @@ describe('rerankAndMerge', () => {
     const results = rerankAndMerge(ftsCandidates, [], {
       halfLifeDays: 30,
       weights: {
-        relevance: 0.20, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
-        sourceTrust: 0.15, salience: 0.15, latestness: 0.10, evidenceDensity: 0.10,
+        relevance: 0.20, recency: 0.10, confidence: 0.10, scopeMatch: 0.10,        sourceTrust: 0.15, salience: 0.15, latestness: 0.10, evidenceDensity: 0.10,
       },
       factMetadata: new Map([['f1', {
         isLatest: true,
@@ -150,8 +149,7 @@ describe('rerankAndMerge', () => {
     const results = rerankAndMerge(ftsCandidates, [], {
       halfLifeDays: 30,
       weights: {
-        relevance: 0.30, recency: 0.20, confidence: 0.20, scopeMatch: 0.10, entityBoost: 0,
-        latestness: 0.20,
+        relevance: 0.30, recency: 0.20, confidence: 0.20, scopeMatch: 0.10,        latestness: 0.20,
       },
       factMetadata: new Map([['old-ver', {
         isLatest: false,
@@ -175,8 +173,7 @@ describe('rerankAndMerge', () => {
     const results = rerankAndMerge(ftsCandidates, [], {
       halfLifeDays: 30,
       weights: {
-        relevance: 0.30, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
-        operatorBonus: 0.40,
+        relevance: 0.30, recency: 0.10, confidence: 0.10, scopeMatch: 0.10,        operatorBonus: 0.40,
       },
       factMetadata: new Map([
         ['pinned', { isLatest: true, salience: 0.5, supportCount: 1, sourceTrustScore: 0.7, operatorStatus: 'pinned' }],
@@ -204,8 +201,7 @@ describe('rerankAndMerge', () => {
     const results = rerankAndMerge(ftsCandidates, [], {
       halfLifeDays: 30,
       weights: {
-        relevance: 0.50, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
-        evidenceDensity: 0.20,
+        relevance: 0.50, recency: 0.10, confidence: 0.10, scopeMatch: 0.10,        evidenceDensity: 0.20,
       },
       factMetadata: new Map([['dense', {
         isLatest: true, salience: 0.5, supportCount: 10, sourceTrustScore: 0.7, operatorStatus: 'normal',

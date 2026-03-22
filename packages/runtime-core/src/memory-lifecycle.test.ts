@@ -150,20 +150,6 @@ function createMemoryDb(): Database.Database {
     );
     CREATE VIRTUAL TABLE memory_facts_fts USING fts5(fact_id UNINDEXED, text);
     CREATE VIRTUAL TABLE memory_syntheses_fts USING fts5(synthesis_id UNINDEXED, title, text);
-    CREATE TABLE memory_events (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE memory_consolidations (
-      id TEXT PRIMARY KEY,
-      memory_id TEXT NOT NULL,
-      merged_into_id TEXT NOT NULL,
-      reason TEXT DEFAULT '',
-      created_at TEXT NOT NULL
-    );
     CREATE TABLE schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL

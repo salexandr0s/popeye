@@ -2,9 +2,8 @@
  * Type definitions for the memory package.
  *
  * Contract schemas remain the source of truth for public shapes. The local
- * MemoryRecord shape is broader because the compatibility layer still serves
- * legacy `memories` rows while newer recall records can expose optional layered
- * metadata.
+ * MemoryRecord shape is broader because it accommodates facts, artifacts, and
+ * syntheses with varying field availability.
  */
 
 export type {

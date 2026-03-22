@@ -58,7 +58,7 @@ describe('getStrategyWeights', () => {
   it('returns weights that sum to 1.0 for each strategy', () => {
     for (const strategy of ['factual', 'temporal', 'procedural', 'exploratory', 'project_state', 'profile', 'audit'] as const) {
       const w = getStrategyWeights(strategy);
-      const sum = w.relevance + w.recency + w.confidence + w.scopeMatch + w.entityBoost
+      const sum = w.relevance + w.recency + w.confidence + w.scopeMatch
         + (w.sourceTrust ?? 0) + (w.salience ?? 0) + (w.latestness ?? 0)
         + (w.evidenceDensity ?? 0) + (w.operatorBonus ?? 0) + (w.layerPrior ?? 0);
       expect(sum).toBeCloseTo(1.0, 5);
@@ -71,7 +71,6 @@ describe('getStrategyWeights', () => {
     expect(w.recency).toBe(0.25);
     expect(w.confidence).toBe(0.20);
     expect(w.scopeMatch).toBe(0.15);
-    expect(w.entityBoost).toBe(0.00);
   });
 
   it('temporal weights recency highest', () => {

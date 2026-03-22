@@ -328,7 +328,6 @@ export const MemorySearchResultSchema = z.object({
     recency: z.number(),
     confidence: z.number(),
     scopeMatch: z.number(),
-    entityBoost: z.number().optional(),
     temporalFit: z.number().optional(),
     sourceTrust: z.number().optional(),
     salience: z.number().optional(),

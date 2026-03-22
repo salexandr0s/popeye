@@ -6,7 +6,6 @@ export interface ScoringWeights {
   recency: number;
   confidence: number;
   scopeMatch: number;
-  entityBoost: number;
   sourceTrust?: number | undefined;
   salience?: number | undefined;
   latestness?: number | undefined;
@@ -33,13 +32,13 @@ export function classifyQueryStrategy(query: string): QueryStrategy {
 }
 
 const STRATEGY_WEIGHTS: Record<QueryStrategy, ScoringWeights> = {
-  factual:       { relevance: 0.30, recency: 0.10, confidence: 0.40, scopeMatch: 0.15, entityBoost: 0.05 },
-  temporal:      { relevance: 0.30, recency: 0.45, confidence: 0.10, scopeMatch: 0.15, entityBoost: 0.00 },
-  procedural:    { relevance: 0.45, recency: 0.10, confidence: 0.25, scopeMatch: 0.15, entityBoost: 0.05 },
-  exploratory:   { relevance: 0.40, recency: 0.25, confidence: 0.20, scopeMatch: 0.15, entityBoost: 0.00 },
-  project_state: { relevance: 0.25, recency: 0.30, confidence: 0.15, scopeMatch: 0.15, entityBoost: 0.00, salience: 0.10, latestness: 0.05 },
-  profile:       { relevance: 0.20, recency: 0.05, confidence: 0.20, scopeMatch: 0.15, entityBoost: 0.00, salience: 0.15, latestness: 0.10, layerPrior: 0.10, operatorBonus: 0.05 },
-  audit:         { relevance: 0.35, recency: 0.10, confidence: 0.15, scopeMatch: 0.15, entityBoost: 0.00, evidenceDensity: 0.15, sourceTrust: 0.10 },
+  factual:       { relevance: 0.35, recency: 0.10, confidence: 0.40, scopeMatch: 0.15 },
+  temporal:      { relevance: 0.30, recency: 0.45, confidence: 0.10, scopeMatch: 0.15 },
+  procedural:    { relevance: 0.50, recency: 0.10, confidence: 0.25, scopeMatch: 0.15 },
+  exploratory:   { relevance: 0.40, recency: 0.25, confidence: 0.20, scopeMatch: 0.15 },
+  project_state: { relevance: 0.25, recency: 0.30, confidence: 0.15, scopeMatch: 0.15, salience: 0.10, latestness: 0.05 },
+  profile:       { relevance: 0.20, recency: 0.05, confidence: 0.20, scopeMatch: 0.15, salience: 0.15, latestness: 0.10, layerPrior: 0.10, operatorBonus: 0.05 },
+  audit:         { relevance: 0.35, recency: 0.10, confidence: 0.15, scopeMatch: 0.15, evidenceDensity: 0.15, sourceTrust: 0.10 },
 };
 
 export function getStrategyWeights(strategy: QueryStrategy): ScoringWeights {

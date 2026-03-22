@@ -18,8 +18,8 @@ export interface GoldenQueryFixture {
   query: string;
   /** Expected strategy classification. */
   expectedStrategy: 'factual' | 'temporal' | 'procedural' | 'exploratory';
-  /** Layers that MUST appear in results (at least one result with this layer). 'legacy' = no layer set. */
-  expectedLayers: Array<'fact' | 'synthesis' | 'artifact' | 'curated' | 'legacy'>;
+  /** Layers that MUST appear in results (at least one result with this layer). */
+  expectedLayers: Array<'fact' | 'synthesis' | 'artifact' | 'curated'>;
   /** Minimum number of results expected. */
   minResults: number;
   /** Maximum number of results expected (upper bound sanity check). */
@@ -28,8 +28,8 @@ export interface GoldenQueryFixture {
 
 /**
  * Seed data for a minimal golden test database.
- * Each entry has the fields needed to insert into both legacy `memories`
- * and structured tables (facts/syntheses) for coverage.
+ * Each entry has the fields needed to insert into structured tables
+ * (facts/syntheses) for coverage.
  */
 export interface GoldenSeedMemory {
   id: string;
@@ -145,7 +145,7 @@ export const GOLDEN_QUERY_FIXTURES: GoldenQueryFixture[] = [
     name: 'temporal query — daily summary',
     query: 'What did I do today?',
     expectedStrategy: 'temporal',
-    expectedLayers: ['legacy', 'synthesis'],
+    expectedLayers: ['synthesis'],
     minResults: 1,
     maxResults: 20,
   },

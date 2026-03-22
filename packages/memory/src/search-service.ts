@@ -194,8 +194,6 @@ export class MemorySearchService {
       };
     }
 
-    const entityMatches = new Map<string, number>();
-
     const mapResult = (candidate: ScoredCandidate): MemorySearchResult => ({
       id: candidate.memoryId,
       description: candidate.description,
@@ -284,7 +282,6 @@ export class MemorySearchService {
       ...rerankParams,
       weights,
       queryText,
-      entityMatches,
       factMetadata,
     });
     totalCandidates = allScored.length;
@@ -299,7 +296,7 @@ export class MemorySearchService {
       // Count candidates from the full pre-limit scored array
       const candidateCounts: Record<string, number> = { total: totalCandidates };
       for (const c of allScored) {
-        const layer = c.layer ?? 'legacy';
+        const layer = c.layer ?? 'unknown';
         candidateCounts[layer] = (candidateCounts[layer] ?? 0) + 1;
       }
 
