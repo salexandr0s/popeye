@@ -82,8 +82,32 @@ function createTestDb(): Database.Database {
       content TEXT NOT NULL,
       content_hash TEXT NOT NULL,
       metadata_json TEXT NOT NULL DEFAULT '{}',
-      domain TEXT NOT NULL DEFAULT 'general'
+      domain TEXT NOT NULL DEFAULT 'general',
+      source_stream_id TEXT,
+      artifact_version INTEGER NOT NULL DEFAULT 1,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      trust_score REAL NOT NULL DEFAULT 0.7,
+      invalidated_at TEXT
     );
+    CREATE TABLE memory_artifact_chunks (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
+      source_stream_id TEXT,
+      chunk_index INTEGER NOT NULL,
+      section_path TEXT,
+      chunk_kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      token_count INTEGER NOT NULL,
+      language TEXT,
+      classification TEXT NOT NULL,
+      context_release_policy TEXT NOT NULL DEFAULT 'full',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      invalidated_at TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE VIRTUAL TABLE memory_artifact_chunks_fts USING fts5(chunk_id UNINDEXED, section_path, text);
     CREATE TABLE memory_facts (
       id TEXT PRIMARY KEY,
       namespace_id TEXT NOT NULL,
@@ -110,7 +134,12 @@ function createTestDb(): Database.Database {
       created_at TEXT NOT NULL,
       durable INTEGER NOT NULL DEFAULT 0,
       revision_status TEXT NOT NULL DEFAULT 'active',
-      domain TEXT DEFAULT 'general'
+      domain TEXT DEFAULT 'general',
+      is_latest INTEGER NOT NULL DEFAULT 1,
+      salience REAL NOT NULL DEFAULT 0.5,
+      support_count INTEGER NOT NULL DEFAULT 1,
+      source_trust_score REAL NOT NULL DEFAULT 0.7,
+      operator_status TEXT NOT NULL DEFAULT 'normal'
     );
     CREATE TABLE memory_fact_sources (
       id TEXT PRIMARY KEY,

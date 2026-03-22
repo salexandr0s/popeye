@@ -1,6 +1,9 @@
 import type {
+  ContextAssemblyResult,
   IntegrityReport,
   MemoryAuditResponse,
+  MemoryHistoryResult,
+  MemoryOperatorActionRecord,
   MemoryRecord,
   MemorySearchQuery,
   MemorySearchResponse,
@@ -14,8 +17,14 @@ import {
   buildLocationCondition,
   formatMemoryScope,
   resolveMemoryLocationFilter,
+  recallContext,
+  pinFact,
+  pinSynthesis,
+  forgetFact,
+  getRelationsForSource,
 } from '@popeye/memory';
 import { redactText } from '@popeye/observability';
+import type Database from 'better-sqlite3';
 import { z } from 'zod';
 
 import type { MemoryLifecycleService, MemoryInsertInput } from './memory-lifecycle.js';
@@ -212,10 +221,18 @@ export class MemoryFacade {
     return this.memorySearch.expandMemory(memoryId, cap, locationFilter);
   }
 
-  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number } {
+  triggerMemoryMaintenance(): { decayed: number; archived: number; merged: number; deduped: number; ttlExpired?: number; staleMarked?: number } {
     const decay = this.memoryLifecycle.runConfidenceDecay();
     const consolidation = this.memoryLifecycle.runConsolidation();
-    return { decayed: decay.decayed, archived: decay.archived, merged: consolidation.merged, deduped: consolidation.deduped };
+    const governance = this.memoryLifecycle.runStructuredGovernance();
+    return {
+      decayed: decay.decayed,
+      archived: decay.archived,
+      merged: consolidation.merged,
+      deduped: consolidation.deduped,
+      ttlExpired: governance.ttlExpired,
+      staleMarked: governance.staleMarked,
+    };
   }
 
   importMemory(input: {
@@ -269,5 +286,99 @@ export class MemoryFacade {
 
   executeMemoryPromotion(request: { memoryId: string; targetPath: string; diff: string; approved: boolean; promoted: boolean }) {
     return this.memoryLifecycle.executePromotion(request);
+  }
+
+  async assembleContext(opts: {
+    query: string;
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    maxTokens?: number;
+    consumerProfile?: string;
+    includeProvenance?: boolean;
+  }): Promise<ContextAssemblyResult> {
+    return recallContext({
+      db: this.memoryDb as unknown as Database.Database,
+      searchService: this.memorySearch,
+      query: opts.query,
+      scope: opts.scope,
+      workspaceId: opts.workspaceId,
+      projectId: opts.projectId,
+      maxTokens: opts.maxTokens,
+      consumerProfile: opts.consumerProfile,
+      includeProvenance: opts.includeProvenance,
+    });
+  }
+
+  pinMemory(memoryId: string, targetKind: 'fact' | 'synthesis', reason: string): MemoryOperatorActionRecord | null {
+    const db = this.memoryDb as unknown as Database.Database;
+    if (targetKind === 'synthesis') {
+      const exists = db.prepare('SELECT 1 FROM memory_syntheses WHERE id = ?').get(memoryId);
+      if (!exists) return null;
+      return pinSynthesis(db, memoryId, reason);
+    }
+    const exists = db.prepare('SELECT 1 FROM memory_facts WHERE id = ?').get(memoryId);
+    if (!exists) return null;
+    return pinFact(db, memoryId, reason);
+  }
+
+  forgetMemory(memoryId: string, reason: string): MemoryOperatorActionRecord | null {
+    const db = this.memoryDb as unknown as Database.Database;
+    const exists = db.prepare('SELECT 1 FROM memory_facts WHERE id = ?').get(memoryId);
+    if (!exists) return null;
+    return forgetFact(db, memoryId, reason);
+  }
+
+  getMemoryHistory(memoryId: string): MemoryHistoryResult | null {
+    const db = this.memoryDb as unknown as Database.Database;
+
+    // Check existence
+    const exists = db.prepare('SELECT 1 FROM memory_facts WHERE id = ?').get(memoryId);
+    if (!exists) return null;
+
+    // Version chain: find all facts with same root_fact_id
+    const rootRow = db.prepare(
+      'SELECT root_fact_id FROM memory_facts WHERE id = ?',
+    ).get(memoryId) as { root_fact_id: string | null } | undefined;
+
+    const rootId = rootRow?.root_fact_id ?? memoryId;
+    const versionChain = db.prepare(
+      `SELECT id AS factId, text, created_at AS createdAt, is_latest AS isLatest
+       FROM memory_facts
+       WHERE id = ? OR root_fact_id = ?
+       ORDER BY created_at ASC`,
+    ).all(rootId, rootId) as Array<{ factId: string; text: string; createdAt: string; isLatest: number }>;
+
+    // Evidence links
+    const evidenceLinks = db.prepare(
+      `SELECT artifact_id AS artifactId, excerpt, created_at AS createdAt
+       FROM memory_fact_sources
+       WHERE fact_id = ?
+       ORDER BY created_at ASC`,
+    ).all(memoryId) as Array<{ artifactId: string; excerpt: string | null; createdAt: string }>;
+
+    // Operator actions
+    const operatorActions = db.prepare(
+      `SELECT action_kind AS actionKind, reason, created_at AS createdAt
+       FROM memory_operator_actions
+       WHERE target_id = ?
+       ORDER BY created_at ASC`,
+    ).all(memoryId) as Array<{ actionKind: string; reason: string; createdAt: string }>;
+
+    // Relations for version chain context
+    const relations = getRelationsForSource(db, 'fact', memoryId);
+
+    return {
+      memoryId,
+      versionChain: versionChain.map((v) => ({
+        factId: v.factId,
+        text: v.text,
+        createdAt: v.createdAt,
+        isLatest: Boolean(v.isLatest),
+        relation: relations.find((r) => r.targetId === v.factId)?.relationType,
+      })),
+      evidenceLinks,
+      operatorActions,
+    };
   }
 }

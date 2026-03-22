@@ -18,12 +18,14 @@ export type {
   MemorySynthesisRecord,
   MemoryRevisionRecord,
   MemorySearchResult,
-  MemorySearchResponse,
   RecallExplanation,
   RecallPlan,
   TemporalConstraint,
   RevisionStatus,
 } from '@popeye/contracts';
+
+// Re-export with traceId support — the contract now includes optional traceId
+export type { MemorySearchResponse } from '@popeye/contracts';
 
 export interface MemoryRecord {
   id: string;

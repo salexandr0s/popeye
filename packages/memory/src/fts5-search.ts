@@ -196,6 +196,7 @@ export function searchFactsFts5(
   }
   if (!filters.includeSuperseded) {
     conditions.push("f.revision_status = 'active'");
+    conditions.push('f.is_latest = 1');
   }
   if (filters.memoryTypes && filters.memoryTypes.length > 0) {
     const placeholders = filters.memoryTypes.map(() => '?').join(', ');
@@ -449,6 +450,114 @@ export function searchSynthesesFts5(
         namespaceId: row.namespace_id,
         evidenceCount: row.evidence_count,
         revisionStatus: 'active',
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function searchChunksFts5(
+  db: Database.Database,
+  query: string,
+  filters: {
+    scope?: string;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    includeGlobal?: boolean;
+    domains?: string[];
+    limit?: number;
+  },
+  limit = 40,
+): FtsCandidate[] {
+  const matchExpr = buildFts5MatchExpression(query);
+  if (matchExpr === '""') return [];
+
+  const effectiveLimit = filters.limit ?? limit;
+  const hasExplicitLocation = filters.workspaceId !== undefined || filters.projectId !== undefined;
+  const params: unknown[] = [matchExpr];
+  const conditions: string[] = [
+    'memory_artifact_chunks_fts MATCH ?',
+    'c.invalidated_at IS NULL',
+    'a.invalidated_at IS NULL',
+  ];
+
+  if (hasExplicitLocation || (filters.scope === undefined && filters.includeGlobal !== undefined)) {
+    const location = buildLocationCondition('a', {
+      workspaceId: filters.workspaceId ?? null,
+      projectId: filters.projectId ?? null,
+      includeGlobal: filters.includeGlobal,
+    });
+    if (location.sql) {
+      conditions.push(location.sql);
+      params.push(...location.params);
+    }
+  } else if (filters.scope !== undefined) {
+    conditions.push('a.scope = ?');
+    params.push(filters.scope);
+  }
+  if (filters.domains && filters.domains.length > 0) {
+    const placeholders = filters.domains.map(() => '?').join(', ');
+    conditions.push(`a.domain IN (${placeholders})`);
+    params.push(...filters.domains);
+  }
+
+  params.push(effectiveLimit);
+
+  const sql = `SELECT
+    c.id,
+    substr(c.text, 1, 160) AS description,
+    c.text AS content,
+    a.source_type,
+    a.scope,
+    a.workspace_id,
+    a.project_id,
+    a.domain,
+    a.trust_score,
+    c.created_at,
+    rank
+  FROM memory_artifact_chunks_fts
+  JOIN memory_artifact_chunks c ON c.id = memory_artifact_chunks_fts.chunk_id
+  JOIN memory_artifacts a ON a.id = c.artifact_id
+  WHERE ${conditions.join(' AND ')}
+  ORDER BY rank
+  LIMIT ?`;
+
+  try {
+    return (db.prepare(sql).all(...params) as Array<{
+      id: string;
+      description: string;
+      content: string;
+      source_type: string;
+      scope: string;
+      workspace_id: string | null;
+      project_id: string | null;
+      domain: string | null;
+      trust_score: number | null;
+      created_at: string;
+      rank: number;
+    }>).map((row) => {
+      const location = normalizeMemoryLocation({
+        scope: row.scope,
+        workspaceId: row.workspace_id,
+        projectId: row.project_id,
+      });
+      return {
+        memoryId: row.id,
+        description: row.description,
+        content: row.content,
+        memoryType: 'semantic' as MemoryType,
+        confidence: row.trust_score ?? 0.7,
+        scope: row.scope,
+        workspaceId: location.workspaceId,
+        projectId: location.projectId,
+        sourceType: row.source_type,
+        createdAt: row.created_at,
+        lastReinforcedAt: null,
+        durable: true,
+        domain: row.domain ?? undefined,
+        ftsRank: row.rank,
+        layer: 'artifact' as const,
       };
     });
   } catch {

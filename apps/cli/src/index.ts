@@ -142,6 +142,10 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     list: { desc: 'List memories', usage: 'pop memory list [type]' },
     show: { desc: 'Show memory by ID', usage: 'pop memory show <id>' },
     maintenance: { desc: 'Trigger memory maintenance', usage: 'pop memory maintenance' },
+    inspect: { desc: 'Inspect memory with full history', usage: 'pop memory inspect <id>' },
+    history: { desc: 'Show memory version history', usage: 'pop memory history <id>' },
+    pin: { desc: 'Pin a memory as important', usage: 'pop memory pin <id>' },
+    forget: { desc: 'Forget a memory', usage: 'pop memory forget <id>' },
   },
   knowledge: {
     search: { desc: 'Search knowledge memories', usage: 'pop knowledge search <query> [--full]' },

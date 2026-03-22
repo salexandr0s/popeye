@@ -147,6 +147,7 @@ export const MemoryConfigSchema = z.object({
   compactionMaxCondensedTokens: z.number().int().positive().default(4000),
   compactionMaxRetries: z.number().int().nonnegative().default(1),
   expandTokenCap: z.number().int().positive().default(8000),
+  legacySearchEnabled: z.boolean().default(true),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
@@ -166,6 +167,7 @@ const DEFAULT_MEMORY_CONFIG = {
   compactionMaxCondensedTokens: 4000,
   compactionMaxRetries: 1,
   expandTokenCap: 8000,
+  legacySearchEnabled: true,
 };
 
 export const LogLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']);

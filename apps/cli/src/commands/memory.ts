@@ -34,6 +34,35 @@ export async function handleMemory(ctx: CommandContext): Promise<void> {
     console.info(JSON.stringify(await client.triggerMemoryMaintenance(), null, 2));
     return;
   }
+
+  if (subcommand === 'inspect') {
+    requireArg(arg1, 'id');
+    const memory = await client.getMemory(arg1);
+    const history = await client.getMemoryHistory(arg1);
+    console.info(JSON.stringify({ memory, history }, null, 2));
+    return;
+  }
+
+  if (subcommand === 'history') {
+    requireArg(arg1, 'id');
+    const history = await client.getMemoryHistory(arg1);
+    console.info(JSON.stringify(history, null, 2));
+    return;
+  }
+
+  if (subcommand === 'pin') {
+    requireArg(arg1, 'id');
+    const result = await client.pinMemory(arg1, { reason: 'Pinned via CLI' });
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (subcommand === 'forget') {
+    requireArg(arg1, 'id');
+    const result = await client.forgetMemory(arg1, 'Forgotten via CLI');
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
 }
 
 export async function handleKnowledge(ctx: CommandContext): Promise<void> {

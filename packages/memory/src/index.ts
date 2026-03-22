@@ -24,10 +24,10 @@ export type { QualityAssessment } from './pure-functions.js';
 export { MemorySearchService } from './search-service.js';
 export type { MemorySearchLogger } from './search-service.js';
 export { rerankAndMerge } from './scoring.js';
-export type { ScoredCandidate, RerankParams } from './scoring.js';
+export type { ScoredCandidate, RerankParams, FactMetadata } from './scoring.js';
 export { searchFts5, syncFtsInsert, syncFtsDelete } from './fts5-search.js';
 export type { FtsCandidate } from './fts5-search.js';
-export { searchFactsFts5, searchSynthesesFts5 } from './fts5-search.js';
+export { searchFactsFts5, searchSynthesesFts5, searchChunksFts5 } from './fts5-search.js';
 export { searchLikeFallback, splitQueryTokens, buildLikeQuery } from './like-fallback.js';
 export { searchVec, insertVecEmbedding, deleteVecEmbedding } from './vec-search.js';
 export type { VecCandidate } from './vec-search.js';
@@ -73,11 +73,61 @@ export type { UpsertFactsInput, UpsertFactsResult } from './fact-store.js';
 export { createSynthesis } from './synthesis.js';
 export type { CreateSynthesisInput } from './synthesis.js';
 export { recordRevision } from './revision.js';
+export { createRelation, getRelationsForSource, getRelationsForTarget, countRelationsForSource } from './relations.js';
+export { computeClaimKey, resolveFact } from './fact-resolver.js';
+export type { FactResolution } from './fact-resolver.js';
+export { buildProfileStatic, buildProfileDynamic, shouldRefreshProfile } from './profile-builder.js';
+export type { BuildProfileInput } from './profile-builder.js';
+export {
+  runTtlExpiry,
+  runStalenessMarking,
+  runSourceDeletionCascade,
+  pinFact,
+  protectFact,
+  forgetFact,
+  unpinFact,
+  pinSynthesis,
+} from './memory-governance.js';
+export type { CascadeResult } from './memory-governance.js';
+export { recallContext } from './context-assembler.js';
+export type { RecallContextInput } from './context-assembler.js';
+export { getProfileContext } from './profile-context.js';
+export type { GetProfileContextInput } from './profile-context.js';
+export { backfillLegacyMemories } from './legacy-backfill.js';
+export type { BackfillResult, BackfillOptions } from './legacy-backfill.js';
 export { parseTemporalConstraint, chooseTemporalReference, computeTemporalFit } from './temporal.js';
 export { buildRecallPlan } from './recall-planner.js';
 export type { BuildRecallPlanInput } from './recall-planner.js';
 export { buildRecallExplanation } from './recall-explainer.js';
 export type { BuildRecallExplanationInput } from './recall-explainer.js';
+
+// Retrieval logging
+export {
+  logRetrievalTrace,
+  queryRetrievalLogs,
+  pruneRetrievalLogs,
+  buildRetrievalTrace,
+  hashQueryText,
+} from './retrieval-logging.js';
+export type { RetrievalTrace, RetrievalLogQuery, RetrievalLogRecord } from './retrieval-logging.js';
+
+// Source streams
+export {
+  resolveOrCreateSourceStream,
+  hasContentChanged,
+  updateSourceStreamStatus,
+  markSourceStreamDeleted,
+  buildStableKey,
+} from './source-streams.js';
+export type { ResolveSourceStreamInput, SourceStreamRecord } from './source-streams.js';
+
+// Chunk store
+export { insertChunks, getChunksByArtifact, invalidateChunksByArtifact } from './chunk-store.js';
+export type { InsertChunksInput, ChunkRow } from './chunk-store.js';
+
+// Chunkers
+export { selectChunker, markdownChunker, plaintextChunker, DEFAULT_CHUNK_OPTIONS } from './chunkers/index.js';
+export type { Chunker, ChunkResult, ChunkOptions } from './chunkers/index.js';
 
 // Entity extraction
 export { extractEntities, canonicalizeEntityName } from './entity-extraction.js';

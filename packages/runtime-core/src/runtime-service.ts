@@ -390,6 +390,7 @@ export class PopeyeRuntimeService {
       budgetConfig: config.memory.budgetAllocation,
       redactionPatterns: config.security.redactionPatterns,
       logger: this.log,
+      legacySearchEnabled: config.memory.legacySearchEnabled,
     });
     const summarizationClient = config.embeddings.provider === 'openai'
       ? createOpenAISummarizationClient({})
@@ -1674,6 +1675,22 @@ export class PopeyeRuntimeService {
     return this.memoryOps.executeMemoryPromotion(request);
   }
 
+  async assembleMemoryContext(opts: { query: string; scope?: string; workspaceId?: string | null; projectId?: string | null; maxTokens?: number; consumerProfile?: string; includeProvenance?: boolean }) {
+    return this.memoryOps.assembleContext(opts);
+  }
+
+  pinMemory(memoryId: string, targetKind: 'fact' | 'synthesis', reason: string) {
+    return this.memoryOps.pinMemory(memoryId, targetKind, reason);
+  }
+
+  forgetMemory(memoryId: string, reason: string) {
+    return this.memoryOps.forgetMemory(memoryId, reason);
+  }
+
+  getMemoryHistory(memoryId: string) {
+    return this.memoryOps.getMemoryHistory(memoryId);
+  }
+
   // --- Delegated: SecretStore ---
 
   setSecret(input: Parameters<SecretStore['setSecret']>[0]): SecretRefRecord {
@@ -2337,6 +2354,9 @@ export class PopeyeRuntimeService {
         this.memoryLifecycle.runConfidenceDecay();
         this.memoryLifecycle.runConsolidation();
       }
+
+      // Structured layer governance runs every hour (responsive TTL/staleness)
+      this.memoryLifecycle.runStructuredGovernance();
     }, 3600_000); // 1 hour
   }
 

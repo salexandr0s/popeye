@@ -936,6 +936,54 @@ export async function createControlApi(
 
   app.post('/v1/memory/maintenance', async () => dependencies.runtime.triggerMemoryMaintenance());
 
+  app.get('/v1/memory/context', async (request) => {
+    const params = z.object({
+      q: z.string().max(1000),
+      scope: z.string().optional(),
+      workspaceId: z.string().optional(),
+      projectId: z.string().optional(),
+      maxTokens: z.coerce.number().int().positive().max(32000).optional(),
+      consumerProfile: z.string().optional(),
+      includeProvenance: z.enum(['true', 'false']).optional(),
+    }).parse(request.query);
+    const ctxOpts: Parameters<typeof dependencies.runtime.assembleMemoryContext>[0] = {
+      query: params.q,
+    };
+    if (params.scope !== undefined) ctxOpts.scope = params.scope;
+    if (params.workspaceId !== undefined) ctxOpts.workspaceId = params.workspaceId;
+    if (params.projectId !== undefined) ctxOpts.projectId = params.projectId;
+    if (params.maxTokens !== undefined) ctxOpts.maxTokens = params.maxTokens;
+    if (params.consumerProfile !== undefined) ctxOpts.consumerProfile = params.consumerProfile;
+    if (params.includeProvenance !== undefined) ctxOpts.includeProvenance = params.includeProvenance === 'true';
+    return dependencies.runtime.assembleMemoryContext(ctxOpts);
+  });
+
+  app.post('/v1/memory/:id/pin', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({
+      targetKind: z.enum(['fact', 'synthesis']).default('fact'),
+      reason: z.string().default(''),
+    }).parse(request.body);
+    const result = dependencies.runtime.pinMemory(id, body.targetKind, body.reason);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.post('/v1/memory/:id/forget', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = z.object({ reason: z.string().default('') }).parse(request.body);
+    const result = dependencies.runtime.forgetMemory(id, body.reason);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
+  app.get('/v1/memory/:id/history', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const result = dependencies.runtime.getMemoryHistory(id);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return result;
+  });
+
   app.post('/v1/memory/import', async (request) => {
     const input = MemoryImportInputSchema.parse(request.body);
     return dependencies.runtime.importMemory(stripUndefined(input));

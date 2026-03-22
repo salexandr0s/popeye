@@ -113,4 +113,127 @@ describe('rerankAndMerge', () => {
     const results = rerankAndMerge([], [], { halfLifeDays: 30 });
     expect(results).toHaveLength(0);
   });
+
+  it('applies factMetadata signals when weights are set', () => {
+    const ftsCandidates: FtsCandidate[] = [
+      makeFtsCandidate({ memoryId: 'f1', ftsRank: -1 }),
+    ];
+
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      weights: {
+        relevance: 0.20, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
+        sourceTrust: 0.15, salience: 0.15, latestness: 0.10, evidenceDensity: 0.10,
+      },
+      factMetadata: new Map([['f1', {
+        isLatest: true,
+        salience: 0.9,
+        supportCount: 4,
+        sourceTrustScore: 0.95,
+        operatorStatus: 'normal',
+      }]]),
+    });
+
+    expect(results).toHaveLength(1);
+    const bd = results[0]!.scoreBreakdown;
+    expect(bd.sourceTrust).toBe(0.95);
+    expect(bd.salience).toBe(0.9);
+    expect(bd.latestness).toBe(1.0);
+    expect(bd.evidenceDensity).toBeCloseTo(0.8, 5); // min(1, 4/5) = 0.8
+  });
+
+  it('latestness is 0 when fact is not latest', () => {
+    const ftsCandidates: FtsCandidate[] = [
+      makeFtsCandidate({ memoryId: 'old-ver', ftsRank: -1 }),
+    ];
+
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      weights: {
+        relevance: 0.30, recency: 0.20, confidence: 0.20, scopeMatch: 0.10, entityBoost: 0,
+        latestness: 0.20,
+      },
+      factMetadata: new Map([['old-ver', {
+        isLatest: false,
+        salience: 0.5,
+        supportCount: 1,
+        sourceTrustScore: 0.7,
+        operatorStatus: 'normal',
+      }]]),
+    });
+
+    expect(results[0]!.scoreBreakdown.latestness).toBe(0.0);
+  });
+
+  it('operatorBonus differentiates pinned vs protected vs normal', () => {
+    const ftsCandidates: FtsCandidate[] = [
+      makeFtsCandidate({ memoryId: 'pinned', ftsRank: -1 }),
+      makeFtsCandidate({ memoryId: 'protected', ftsRank: -1 }),
+      makeFtsCandidate({ memoryId: 'normal', ftsRank: -1 }),
+    ];
+
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      weights: {
+        relevance: 0.30, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
+        operatorBonus: 0.40,
+      },
+      factMetadata: new Map([
+        ['pinned', { isLatest: true, salience: 0.5, supportCount: 1, sourceTrustScore: 0.7, operatorStatus: 'pinned' }],
+        ['protected', { isLatest: true, salience: 0.5, supportCount: 1, sourceTrustScore: 0.7, operatorStatus: 'protected' }],
+        ['normal', { isLatest: true, salience: 0.5, supportCount: 1, sourceTrustScore: 0.7, operatorStatus: 'normal' }],
+      ]),
+    });
+
+    const pinned = results.find((r) => r.memoryId === 'pinned')!;
+    const protected_ = results.find((r) => r.memoryId === 'protected')!;
+    const normal = results.find((r) => r.memoryId === 'normal')!;
+
+    expect(pinned.scoreBreakdown.operatorBonus).toBe(1.0);
+    expect(protected_.scoreBreakdown.operatorBonus).toBe(0.5);
+    expect(normal.scoreBreakdown.operatorBonus).toBe(0.0);
+    expect(pinned.score).toBeGreaterThan(protected_.score);
+    expect(protected_.score).toBeGreaterThan(normal.score);
+  });
+
+  it('evidenceDensity saturates at supportCount >= 5', () => {
+    const ftsCandidates: FtsCandidate[] = [
+      makeFtsCandidate({ memoryId: 'dense', ftsRank: -1 }),
+    ];
+
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      weights: {
+        relevance: 0.50, recency: 0.10, confidence: 0.10, scopeMatch: 0.10, entityBoost: 0,
+        evidenceDensity: 0.20,
+      },
+      factMetadata: new Map([['dense', {
+        isLatest: true, salience: 0.5, supportCount: 10, sourceTrustScore: 0.7, operatorStatus: 'normal',
+      }]]),
+    });
+
+    expect(results[0]!.scoreBreakdown.evidenceDensity).toBe(1.0); // min(1, 10/5) = 1.0
+  });
+
+  it('new signals have zero impact when weights are not set', () => {
+    const ftsCandidates: FtsCandidate[] = [
+      makeFtsCandidate({ memoryId: 'f1', ftsRank: -1 }),
+    ];
+
+    // Default weights — no new signal weights set
+    const results = rerankAndMerge(ftsCandidates, [], {
+      halfLifeDays: 30,
+      factMetadata: new Map([['f1', {
+        isLatest: true, salience: 0.9, supportCount: 5, sourceTrustScore: 0.99, operatorStatus: 'pinned',
+      }]]),
+    });
+
+    // Even with extreme factMetadata values, new signals should not appear in breakdown
+    const bd = results[0]!.scoreBreakdown;
+    expect(bd.sourceTrust).toBeUndefined();
+    expect(bd.salience).toBeUndefined();
+    expect(bd.latestness).toBeUndefined();
+    expect(bd.evidenceDensity).toBeUndefined();
+    expect(bd.operatorBonus).toBeUndefined();
+  });
 });

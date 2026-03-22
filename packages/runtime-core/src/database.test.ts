@@ -427,17 +427,15 @@ describe('openRuntimeDatabases', () => {
       }
     });
 
-    it('does not contain dropped memory_embeddings and retrieval_cache tables', () => {
+    it('does not contain dropped retrieval_cache table', () => {
       const { databases } = openFresh();
       try {
-        const embeddings = databases.memory
-          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_embeddings'")
-          .all();
         const cache = databases.memory
           .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='retrieval_cache'")
           .all();
-        expect(embeddings).toHaveLength(0);
         expect(cache).toHaveLength(0);
+        // Note: memory_embeddings was dropped in migration 005 but recreated with
+        // a completely different schema (embedding registry) in migration 017.
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -469,6 +467,12 @@ describe('openRuntimeDatabases', () => {
           'memories_fts',
           'memory_facts_fts',
           'memory_syntheses_fts',
+          'memory_retrieval_logs',
+          'memory_source_streams',
+          'memory_artifact_chunks',
+          'memory_artifact_chunks_fts',
+          'memory_embeddings',
+          'memory_relations',
         ];
 
         for (const table of expectedMemoryTables) {
@@ -576,6 +580,21 @@ describe('openRuntimeDatabases', () => {
           'idx_memory_facts_location_created',
           'idx_memory_syntheses_scope',
           'idx_memory_syntheses_location_updated',
+          // Phase 1 indexes
+          'idx_source_streams_stable_key',
+          'idx_source_streams_ns_status',
+          'idx_artifact_chunks_artifact_idx',
+          'idx_artifact_chunks_stream',
+          'idx_embeddings_owner',
+          'idx_memory_facts_latest',
+          'idx_memory_facts_claim_key',
+          'idx_relations_source',
+          'idx_relations_target',
+          'idx_source_streams_location',
+          'idx_artifact_chunks_hash',
+          'idx_embeddings_status_kind',
+          'idx_memory_facts_forget',
+          'idx_relations_type',
         ]) {
           expect(indexNames, `missing memory index: ${idx}`).toContain(idx);
         }
@@ -701,6 +720,41 @@ describe('openRuntimeDatabases', () => {
         expect(artifactColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
         expect(factColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
         expect(synthesisColumns.map((column) => column.name)).toEqual(expect.arrayContaining(['workspace_id', 'project_id']));
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('Phase 1 schema extensions add version/lifecycle columns to structured tables', () => {
+      const { databases } = openFresh();
+      try {
+        const cols = (table: string) =>
+          (databases.memory.pragma(`table_info(${table})`) as Array<{ name: string }>).map((c) => c.name);
+
+        // memory_artifacts extensions
+        const artCols = cols('memory_artifacts');
+        for (const col of ['source_stream_id', 'artifact_version', 'context_release_policy', 'trust_score', 'invalidated_at']) {
+          expect(artCols, `missing memory_artifacts.${col}`).toContain(col);
+        }
+
+        // memory_facts extensions
+        const factCols = cols('memory_facts');
+        for (const col of ['root_fact_id', 'parent_fact_id', 'is_latest', 'claim_key', 'salience', 'support_count', 'source_trust_score', 'context_release_policy', 'forget_after', 'stale_after', 'expired_at', 'invalidated_at', 'operator_status']) {
+          expect(factCols, `missing memory_facts.${col}`).toContain(col);
+        }
+
+        // memory_fact_sources extensions
+        const fsCols = cols('memory_fact_sources');
+        for (const col of ['chunk_id', 'source_stream_id', 'confidence_contribution']) {
+          expect(fsCols, `missing memory_fact_sources.${col}`).toContain(col);
+        }
+
+        // memory_syntheses extensions
+        const synCols = cols('memory_syntheses');
+        for (const col of ['subject_kind', 'subject_id', 'refresh_due_at', 'salience', 'quality_score', 'context_release_policy', 'invalidated_at', 'operator_status']) {
+          expect(synCols, `missing memory_syntheses.${col}`).toContain(col);
+        }
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -833,6 +887,13 @@ describe('openRuntimeDatabases', () => {
           '011-memory-locations',
           '012-structured-memory-locations',
           '013-coding-domain',
+          '014-retrieval-logs',
+          '015-source-streams',
+          '016-artifact-chunks',
+          '017-embedding-registry',
+          '018-schema-extensions',
+          '019-relations',
+          '020-operator-actions',
         ]);
       } finally {
         databases.app.close();
