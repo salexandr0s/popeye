@@ -505,6 +505,9 @@ export class MemoryLifecycleService {
           occurredAt: now,
           tags: ['compaction-summary'],
           sourceMetadata: { runId, summaryIds: result.summaryIds.length, condensedLevels: result.condensedLevels },
+          // dedupKey is not consumed by captureStructuredMemory for dedup enforcement
+          // (source stream content hashing handles that). Passed for the returned MemoryRecord shape.
+          dedupKey: `compaction:${runId}:${sha256(rootRow.content)}`,
         }, memoryType);
 
         if (artifactId) {
@@ -521,7 +524,7 @@ export class MemoryLifecycleService {
             sourceRunId: runId,
             sourceTimestamp: now,
             memoryType,
-            dedupKey: null,
+            dedupKey: `compaction:${runId}:${sha256(rootRow.content)}`,
             lastReinforcedAt: null,
             archivedAt: null,
             createdAt: now,
@@ -558,6 +561,9 @@ export class MemoryLifecycleService {
         occurredAt: now,
         tags: ['compaction-flush'],
         sourceMetadata: { runId },
+        // dedupKey is not consumed by captureStructuredMemory for dedup enforcement
+        // (source stream content hashing handles that). Passed for the returned MemoryRecord shape.
+        dedupKey: `compaction:${runId}:${sha256(chunk)}`,
       }, memoryType);
 
       if (!artifactId) continue;
@@ -575,7 +581,7 @@ export class MemoryLifecycleService {
         sourceRunId: runId,
         sourceTimestamp: now,
         memoryType,
-        dedupKey: null,
+        dedupKey: `compaction:${runId}:${sha256(chunk)}`,
         lastReinforcedAt: null,
         archivedAt: null,
         createdAt: now,

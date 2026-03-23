@@ -457,8 +457,15 @@ export function mapRunEventDetail(record: RunEventRecord): string {
       return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
     case 'tool_result':
       return typeof payload.toolName === 'string' ? `Tool: ${payload.toolName}` : '';
-    case 'compaction':
-      return typeof payload.content === 'string' ? 'Compaction flush captured before context loss.' : '';
+    case 'compaction': {
+      const contentLen = typeof payload.content === 'string' ? payload.content.length : 0;
+      const tokensBefore = typeof payload.tokensBefore === 'number' ? payload.tokensBefore : null;
+      const tokensAfter = typeof payload.tokensAfter === 'number' ? payload.tokensAfter : null;
+      if (tokensBefore !== null && tokensAfter !== null) {
+        return `Context compacted: ${tokensBefore} \u2192 ${tokensAfter} tokens (${contentLen} chars captured)`;
+      }
+      return contentLen > 0 ? `Compaction flush captured (${contentLen} chars)` : '';
+    }
     default:
       return '';
   }

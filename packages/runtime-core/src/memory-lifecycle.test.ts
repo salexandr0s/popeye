@@ -512,6 +512,22 @@ describe('MemoryLifecycleService', () => {
       expect(artifact!.source_run_id).toBe('run-prov');
       expect(artifact!.source_ref).toBe('run-prov');
     });
+
+    it('sets dedup key on compaction memories', async () => {
+      const results = await service.processCompactionFlush('run-dk', 'Content for dedup key verification in compaction flush', 'default');
+      expect(results).toHaveLength(1);
+      expect(results[0].dedupKey).toMatch(/^compaction:run-dk:/);
+    });
+
+    it('skips duplicate compaction flush with identical content', async () => {
+      const content = 'Identical compaction content for dedup testing purposes';
+      const first = await service.processCompactionFlush('run-dedup', content, 'default');
+      expect(first).toHaveLength(1);
+
+      // Second call with same runId + content is skipped by source stream content hash
+      const second = await service.processCompactionFlush('run-dedup', content, 'default');
+      expect(second).toHaveLength(0);
+    });
   });
 
   // -----------------------------------------------------------------------
