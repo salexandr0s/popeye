@@ -126,6 +126,7 @@ export interface RunExecutorDeps {
   memoryLifecycle: {
     processCompactionFlush: (runId: string, content: string, workspaceId: string) => Promise<unknown>;
   };
+  pluginTools: RuntimeToolDescriptor[];
 
   // --- Memory operation callbacks ---
   searchMemory: (query: MemorySearchQuery) => Promise<MemorySearchResponse>;
@@ -202,10 +203,11 @@ export class RunExecutor {
       startedAt: nowIso(),
       finishedAt: null,
       error: null,
+      iterationsUsed: null,
     };
 
     this.deps.db.prepare('UPDATE jobs SET status = ?, updated_at = ?, last_run_id = ? WHERE id = ?').run('running', nowIso(), run.id, job.id);
-    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       run.id,
       run.jobId,
       run.taskId,
@@ -217,6 +219,7 @@ export class RunExecutor {
       run.startedAt,
       run.finishedAt,
       run.error,
+      run.iterationsUsed,
     );
 
     const instructionBundle = this.deps.resolveInstructionsForRun(task);
@@ -423,6 +426,7 @@ export class RunExecutor {
     return [
       ...this.createCoreRuntimeTools(task, runId).filter((tool) => envelope.allowedRuntimeTools.includes(tool.name)),
       ...capabilityTools,
+      ...this.deps.pluginTools,
     ];
   }
 

@@ -47,6 +47,7 @@ export function deriveRuntimePaths(runtimeDataDir: string): RuntimePaths {
     memoryDailyDir: join(root, 'memory', 'daily'),
     capabilityStoresDir: join(root, 'capabilities'),
     vaultsDir: join(root, 'vaults'),
+    pluginsDir: join(root, 'plugins'),
   };
 }
 
@@ -73,6 +74,7 @@ export function ensureRuntimePaths(config: AppConfig): RuntimePaths {
     paths.memoryDailyDir,
     paths.capabilityStoresDir,
     paths.vaultsDir,
+    paths.pluginsDir,
     dirname(resolve(config.authFile)),
   ];
 

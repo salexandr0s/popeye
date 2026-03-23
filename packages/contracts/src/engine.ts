@@ -31,7 +31,7 @@ export const EngineFailureClassificationSchema = z.enum([
 export type EngineFailureClassification = z.infer<typeof EngineFailureClassificationSchema>;
 
 export const NormalizedEngineEventSchema = z.object({
-  type: z.enum(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage', 'compaction']),
+  type: z.enum(['started', 'session', 'message', 'tool_call', 'tool_result', 'completed', 'failed', 'usage', 'compaction', 'model_routing', 'budget_warning', 'budget_exhausted']),
   payload: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
   raw: z.string().optional(),
 });

@@ -45,6 +45,14 @@ export const EmbeddingConfigSchema = z.object({
   allowedClassifications: z.array(DataClassificationSchema).default(['embeddable']),
 });
 
+export const ModelRoutingConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  simpleModel: z.string().optional(),
+  standardModel: z.string().optional(),
+  complexModel: z.string().optional(),
+});
+export type ModelRoutingConfig = z.infer<typeof ModelRoutingConfigSchema>;
+
 export const EngineConfigSchema = z.object({
   kind: EngineKindSchema.default('fake'),
   piPath: z.string().optional(),
@@ -54,6 +62,9 @@ export const EngineConfigSchema = z.object({
   timeoutMs: z.number().int().positive().default(300_000),
   runtimeToolTimeoutMs: z.number().int().positive().default(30_000),
   allowRuntimeToolBridgeFallback: z.boolean().default(true),
+  modelRouting: ModelRoutingConfigSchema.default({ enabled: false }),
+  maxIterationsPerRun: z.number().int().positive().default(200),
+  budgetWarningThreshold: z.number().min(0).max(1).default(0.8),
 });
 
 export const OAuthClientConfigSchema = z.object({
@@ -75,6 +86,9 @@ const DEFAULT_ENGINE_CONFIG = {
   timeoutMs: 300_000,
   runtimeToolTimeoutMs: 30_000,
   allowRuntimeToolBridgeFallback: true,
+  modelRouting: { enabled: false },
+  maxIterationsPerRun: 200,
+  budgetWarningThreshold: 0.8,
 };
 
 export const ProjectConfigSchema = z.object({
@@ -210,6 +224,10 @@ export const AppConfigSchema = z.object({
   approvalPolicy: ApprovalPolicyConfigSchema.default(DEFAULT_APPROVAL_POLICY_CONFIG),
   providerAuth: ProviderAuthConfigSchema.default(DEFAULT_PROVIDER_AUTH_CONFIG),
   vaults: VaultConfigSchema.default(DEFAULT_VAULT_CONFIG),
+  plugins: z.object({
+    enabled: z.boolean().default(false),
+    directory: z.string().optional(),
+  }).default({ enabled: false }),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
@@ -236,5 +254,6 @@ export const RuntimePathsSchema = z.object({
   memoryDailyDir: z.string(),
   capabilityStoresDir: z.string(),
   vaultsDir: z.string(),
+  pluginsDir: z.string(),
 });
 export type RuntimePaths = z.infer<typeof RuntimePathsSchema>;

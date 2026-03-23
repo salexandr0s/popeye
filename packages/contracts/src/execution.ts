@@ -30,6 +30,7 @@ export const InterventionCodeSchema = z.enum([
   'needs_workspace_fix',
   'needs_operator_input',
   'retry_budget_exhausted',
+  'iteration_budget_exhausted',
   'auth_failure',
   'prompt_injection_quarantined',
   'failed_final',
@@ -101,6 +102,7 @@ export const RunRecordSchema = z.object({
   startedAt: z.string(),
   finishedAt: z.string().nullable(),
   error: z.string().nullable(),
+  iterationsUsed: z.number().int().nonnegative().nullable().default(null),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 

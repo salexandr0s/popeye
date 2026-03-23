@@ -7,12 +7,15 @@ import { isAbsolute, join, resolve } from 'node:path';
 import {
   type AppConfig,
   type EngineCapabilities,
+  type ModelRoutingConfig,
   NormalizedEngineEventSchema,
   type EngineFailureClassification,
   type NormalizedEngineEvent,
   type UsageMetrics,
 } from '@popeye/contracts';
 import { z } from 'zod';
+
+import { resolveModelForPrompt } from './classify-complexity.js';
 
 export type { EngineFailureClassification } from '@popeye/contracts';
 
@@ -76,6 +79,7 @@ export interface EngineRunResult {
   failureClassification: EngineFailureClassification | null;
   failureMessage?: string | undefined;
   warnings?: string | undefined;
+  iterationsUsed?: number | undefined;
 }
 
 export interface EngineRunCompletion {
@@ -83,6 +87,7 @@ export interface EngineRunCompletion {
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
   warnings?: string | undefined;
+  iterationsUsed?: number | undefined;
 }
 
 export interface EngineExecution {
@@ -130,6 +135,7 @@ export interface EngineRunRequest {
   modelOverride?: string;
   trigger?: EngineTriggerDescriptor;
   runtimeTools?: RuntimeToolDescriptor[];
+  maxIterations?: number;
 }
 
 export interface EngineAdapter {
@@ -146,6 +152,9 @@ export interface PiAdapterConfig {
   timeoutMs?: number;
   runtimeToolTimeoutMs?: number;
   allowRuntimeToolBridgeFallback?: boolean;
+  modelRouting?: ModelRoutingConfig;
+  maxIterationsPerRun?: number;
+  budgetWarningThreshold?: number;
 }
 
 export interface PiCheckoutStatus {
@@ -727,7 +736,7 @@ function executeWithTimeout<T>(
 }
 
 export interface FakeEngineConfig {
-  mode?: 'success' | 'transient_failure' | 'permanent_failure' | 'timeout' | 'protocol_error';
+  mode?: 'success' | 'transient_failure' | 'permanent_failure' | 'timeout' | 'protocol_error' | 'iteration_budget';
   delayMs?: number;
 }
 
@@ -825,6 +834,24 @@ export class FakeEngineAdapter implements EngineAdapter {
         return;
       }
 
+      if (mode === 'iteration_budget') {
+        await emitAsync({ type: 'session', payload: { sessionRef } });
+        for (let i = 0; i < 5; i++) {
+          await emitAsync({ type: 'tool_call', payload: { toolCallId: `call-${i}`, toolName: 'test_tool' } });
+          await emitAsync({ type: 'tool_result', payload: { toolCallId: `call-${i}`, toolName: 'test_tool', isError: false } });
+        }
+        await emitAsync({ type: 'budget_exhausted', payload: { iterationsUsed: 5, maxIterations: 5 } });
+        await emitAsync({ type: 'failed', payload: { classification: 'policy_failure' } });
+        await emitAsync({ type: 'usage', payload: { provider: usage.provider, model: usage.model, tokensIn: usage.tokensIn, tokensOut: 0, estimatedCostUsd: 0 } });
+        completionResolve?.({
+          engineSessionRef: sessionRef,
+          usage: { ...usage, tokensOut: 0 },
+          failureClassification: 'policy_failure',
+          iterationsUsed: 5,
+        });
+        return;
+      }
+
       await emitAsync({ type: 'session', payload: { sessionRef } });
       await emitAsync({ type: 'message', payload: { text: `echo:${prompt}` } });
       await emitAsync({ type: 'completed', payload: { output: `echo:${prompt}` } });
@@ -868,6 +895,7 @@ export class FakeEngineAdapter implements EngineAdapter {
       })(),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
+      iterationsUsed: completion.iterationsUsed,
     };
   }
 
@@ -944,6 +972,7 @@ export class FailingFakeEngineAdapter implements EngineAdapter {
       })(),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
+      iterationsUsed: completion.iterationsUsed,
     };
   }
 
@@ -969,6 +998,9 @@ export class PiEngineAdapter implements EngineAdapter {
   private readonly runtimeToolTimeoutMs: number;
   private readonly expectedPiVersion: string | undefined;
   private readonly allowRuntimeToolBridgeFallback: boolean;
+  private readonly modelRouting: ModelRoutingConfig | undefined;
+  private readonly maxIterationsPerRun: number;
+  private readonly budgetWarningThreshold: number;
 
   constructor(config: PiAdapterConfig = {}) {
     const status = assertPiCheckoutAvailable(config.piPath);
@@ -979,6 +1011,9 @@ export class PiEngineAdapter implements EngineAdapter {
     this.runtimeToolTimeoutMs = config.runtimeToolTimeoutMs ?? DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
     this.expectedPiVersion = config.piVersion;
     this.allowRuntimeToolBridgeFallback = config.allowRuntimeToolBridgeFallback ?? true;
+    this.modelRouting = config.modelRouting;
+    this.maxIterationsPerRun = config.maxIterationsPerRun ?? 200;
+    this.budgetWarningThreshold = config.budgetWarningThreshold ?? 0.8;
     if (config.piVersion) {
       const versionCheck = checkPiVersion(config.piVersion, config.piPath);
       if (!versionCheck.ok) {
@@ -996,13 +1031,17 @@ export class PiEngineAdapter implements EngineAdapter {
           cleanup() {},
           toolsByName: new Map<string, RuntimeToolDescriptor>(),
         };
+    const routingDecision = request.modelOverride === undefined
+      ? resolveModelForPrompt(this.modelRouting, request.prompt)
+      : undefined;
+    const effectiveModelOverride = request.modelOverride ?? routingDecision?.model;
     const launch = buildPiCommand(
       this.piPath,
       this.command,
       this.args,
-      request.modelOverride === undefined
+      effectiveModelOverride === undefined
         ? { extensionPaths: runtimeToolBridge.extensionPaths }
-        : { extensionPaths: runtimeToolBridge.extensionPaths, modelOverride: request.modelOverride },
+        : { extensionPaths: runtimeToolBridge.extensionPaths, modelOverride: effectiveModelOverride },
     );
     const child = spawn(launch.command, launch.args, {
       cwd: resolveSpawnCwd(this.piPath, request.cwd),
@@ -1033,6 +1072,10 @@ export class PiEngineAdapter implements EngineAdapter {
     let hostToolRegistrationTimeout: ReturnType<typeof setTimeout> | undefined;
     const promptState: PromptState = { requested: false, accepted: false, completed: false };
     const diagnosticWarnings: string[] = [];
+    let iterationCount = 0;
+    let budgetWarningEmitted = false;
+    const maxIterations = request.maxIterations ?? this.maxIterationsPerRun;
+    const warningAt = Math.floor(maxIterations * this.budgetWarningThreshold);
 
     const appendWarning = (warning: string): void => {
       if (!diagnosticWarnings.includes(warning)) {
@@ -1063,6 +1106,15 @@ export class PiEngineAdapter implements EngineAdapter {
       emitEvent(events, event, options.onEvent);
     };
 
+    if (routingDecision) {
+      safeEmit(normalizeStructuredEvent('model_routing', {
+        classification: routingDecision.classification,
+        score: routingDecision.score,
+        signals: routingDecision.signals.join(','),
+        selectedModel: routingDecision.model ?? 'default',
+      }));
+    }
+
     const markFailure = (classification: EngineFailureClassification, message?: string, raw?: string): void => {
       if (failureClassification === null || failureClassification === 'cancelled') {
         failureClassification = classification;
@@ -1092,6 +1144,27 @@ export class PiEngineAdapter implements EngineAdapter {
       if (shutdownRequested || child.exitCode !== null) return;
       shutdownRequested = true;
       child.kill(signal);
+    };
+
+    const checkBudget = (): boolean => {
+      if (!budgetWarningEmitted && iterationCount >= warningAt) {
+        budgetWarningEmitted = true;
+        safeEmit(normalizeStructuredEvent('budget_warning', {
+          iterationsUsed: iterationCount,
+          maxIterations,
+          threshold: this.budgetWarningThreshold,
+        }));
+      }
+      if (iterationCount >= maxIterations) {
+        safeEmit(normalizeStructuredEvent('budget_exhausted', {
+          iterationsUsed: iterationCount,
+          maxIterations,
+        }));
+        markFailure('policy_failure', `Iteration budget exhausted: ${iterationCount}/${maxIterations} tool calls completed`);
+        requestShutdown();
+        return true;
+      }
+      return false;
     };
 
     const sendCommand = (command: Record<string, unknown>): void => {
@@ -1135,6 +1208,8 @@ export class PiEngineAdapter implements EngineAdapter {
         contentItems: payload.contentItems ?? null,
         detailsPresent: payload.detailsPresent ?? null,
       }, raw));
+      iterationCount++;
+      checkBudget();
     };
 
     const respondToRuntimeToolRequest = async (
@@ -1375,6 +1450,8 @@ export class PiEngineAdapter implements EngineAdapter {
             isError: record.isError ?? false,
             result: record.result ?? null,
           }, rawLine));
+          iterationCount++;
+          if (checkBudget()) return;
           return;
         }
         case 'auto_compaction_end': {
@@ -1609,6 +1686,7 @@ export class PiEngineAdapter implements EngineAdapter {
           usage,
           failureClassification,
           warnings: collectWarnings(),
+          iterationsUsed: iterationCount,
         });
       });
     });
@@ -1650,6 +1728,7 @@ export class PiEngineAdapter implements EngineAdapter {
       failureClassification: completion.failureClassification,
       failureMessage,
       warnings: completion.warnings,
+      iterationsUsed: completion.iterationsUsed,
     };
   }
 
@@ -1711,6 +1790,9 @@ export function createEngineAdapter(config: AppConfig): EngineAdapter {
       ...(config.engine.allowRuntimeToolBridgeFallback === undefined
         ? {}
         : { allowRuntimeToolBridgeFallback: config.engine.allowRuntimeToolBridgeFallback }),
+      maxIterationsPerRun: config.engine.maxIterationsPerRun,
+      budgetWarningThreshold: config.engine.budgetWarningThreshold,
+      modelRouting: config.engine.modelRouting,
     });
   }
   return new FakeEngineAdapter();

@@ -623,6 +623,7 @@ describe('Enum coverage', () => {
       'needs_workspace_fix',
       'needs_operator_input',
       'retry_budget_exhausted',
+      'iteration_budget_exhausted',
       'auth_failure',
       'prompt_injection_quarantined',
       'failed_final',
@@ -1129,6 +1130,7 @@ describe('Additional schema smoke tests', () => {
       memoryDailyDir: '/tmp/popeye/memory/daily',
       capabilityStoresDir: '/tmp/popeye/capabilities',
       vaultsDir: '/tmp/popeye/vaults',
+      pluginsDir: '/tmp/popeye/plugins',
     });
     expect(result.appDbPath).toBe('/tmp/popeye/state/app.db');
   });

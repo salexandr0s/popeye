@@ -154,6 +154,7 @@ import {
   createEngineAdapter,
   type EngineAdapter,
   type EngineRunCompletion,
+  type RuntimeToolDescriptor,
 } from '@popeye/engine-pi';
 import {
   MemorySearchService,
@@ -183,6 +184,7 @@ import { type VaultHandle, VaultManager } from './vault-manager.js';
 import { ContextReleaseService } from './context-release-service.js';
 import { ReceiptBuilder } from './receipt-builder.js';
 import { RunExecutor, type RunExecutorDeps } from './run-executor.js';
+import { loadPlugins } from './plugin-loader.js';
 import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
@@ -329,6 +331,7 @@ export class PopeyeRuntimeService {
   private readonly githubOps: GithubFacade;
   private readonly calendarOps: CalendarFacade;
   private readonly todoOps: TodoFacade;
+  private readonly pluginTools: RuntimeToolDescriptor[] = [];
   private capabilityInitPromise: Promise<void> | null = null;
   private approvalExpiryTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -639,6 +642,20 @@ export class PopeyeRuntimeService {
       this.log.error('capability initialization failed', { error: err instanceof Error ? err.message : String(err) });
     });
 
+    // Load operator plugins
+    if (this.config.plugins?.enabled) {
+      const pluginsDir = this.config.plugins.directory ?? this.databases.paths.pluginsDir;
+      try {
+        const loaded = loadPlugins(pluginsDir, this.log);
+        for (const plugin of loaded) {
+          this.pluginTools.push(...plugin.tools);
+        }
+        this.log.info('plugins loaded', { count: this.pluginTools.length });
+      } catch (err) {
+        this.log.error('plugin loading failed', { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     this.runExecutor = new RunExecutor({
       // better-sqlite3's Statement union type requires a structural cast here
       db: this.databases.app as RunExecutorDeps['db'],
@@ -675,6 +692,7 @@ export class PopeyeRuntimeService {
       describeMemory: (id, scope) => this.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.expandMemory(id, maxTokens, scope),
       explainMemoryRecall: (input, filter) => this.explainMemoryRecall(input, filter),
+      pluginTools: this.pluginTools,
     });
 
     this.seedReferenceData();
