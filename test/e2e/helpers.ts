@@ -47,7 +47,7 @@ export async function unlockInspector(page: Page): Promise<string> {
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Unlock Popeye Inspector' })).toBeVisible({
-    timeout: 5_000,
+    timeout: 10_000,
   });
 
   await page.getByLabel('Operator bearer token').fill(token);

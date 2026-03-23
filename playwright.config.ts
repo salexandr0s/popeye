@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: './test/e2e',
   timeout: 30_000,
   retries: 0,
+  workers: 1,
   use: {
     baseURL: 'http://127.0.0.1:3210',
     headless: true,
