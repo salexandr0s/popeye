@@ -410,7 +410,7 @@ struct DTODecodingTests {
         let data = try loadFixture("telegram_relay_checkpoint")
         let dto = try decoder.decode(TelegramRelayCheckpointDTO.self, from: data)
 
-        #expect(dto.relayKey == "default:long-poll")
+        #expect(dto.relayKey == "telegram_long_poll")
         #expect(dto.workspaceId == "default")
         #expect(dto.lastAcknowledgedUpdateId == 98765432)
         #expect(dto.updatedAt.isEmpty == false)

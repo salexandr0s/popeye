@@ -135,6 +135,11 @@ struct MutationEligibilityTests {
         #expect(MutationEligibility.canResolveTelegramDelivery(status: "pending"))
     }
 
+    @Test("Cannot resolve sending telegram delivery")
+    func cannotResolveSendingDelivery() {
+        #expect(!MutationEligibility.canResolveTelegramDelivery(status: "sending"))
+    }
+
     @Test("Cannot resolve sent telegram delivery")
     func cannotResolveSentDelivery() {
         #expect(!MutationEligibility.canResolveTelegramDelivery(status: "sent"))

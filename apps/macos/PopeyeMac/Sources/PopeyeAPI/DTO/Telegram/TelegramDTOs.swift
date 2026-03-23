@@ -73,11 +73,13 @@ public struct TelegramRelayCheckpointDTO: Codable, Sendable {
 /// Request body for resolving a Telegram delivery.
 /// Matches TelegramDeliveryResolutionRequestSchema in @popeye/contracts (minus workspaceId path param).
 public struct TelegramDeliveryResolveInput: Codable, Sendable {
+    public let workspaceId: String
     public let action: String // confirm_sent|resend|abandon
     public let operatorNote: String?
     public let sentTelegramMessageId: Int?
 
-    public init(action: String, operatorNote: String? = nil, sentTelegramMessageId: Int? = nil) {
+    public init(workspaceId: String = "default", action: String, operatorNote: String? = nil, sentTelegramMessageId: Int? = nil) {
+        self.workspaceId = workspaceId
         self.action = action
         self.operatorNote = operatorNote
         self.sentTelegramMessageId = sentTelegramMessageId

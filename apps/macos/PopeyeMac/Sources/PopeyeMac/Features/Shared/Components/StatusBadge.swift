@@ -24,13 +24,13 @@ struct StatusBadge: View {
 
     static func colorForState(_ state: String) -> Color {
         switch state.lowercased() {
-        case "running", "starting", "active":
+        case "running", "starting", "active", "sending":
             .blue
-        case "succeeded", "approved", "resolved", "connected":
+        case "succeeded", "approved", "resolved", "connected", "sent":
             .green
-        case "failed", "failed_retryable", "failed_final", "failed_permanent", "failed_transient", "denied", "revoked", "stuck-risk", "error":
+        case "failed", "failed_retryable", "failed_final", "failed_permanent", "failed_transient", "permanent_failure", "denied", "revoked", "stuck-risk", "error":
             .red
-        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn":
+        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn", "uncertain", "ambiguous", "retryable_failure":
             .orange
         case "cancelled", "abandoned", "queued", "waiting_retry", "leased", "expired", "closed", "info":
             .secondary

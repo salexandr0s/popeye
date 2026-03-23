@@ -2,6 +2,7 @@ import SwiftUI
 import PopeyeAPI
 
 struct TelegramDeliveryInspector: View {
+    @Environment(AppModel.self) private var appModel
     let delivery: TelegramDeliveryDTO
     let store: TelegramStore
 
@@ -110,7 +111,9 @@ struct TelegramDeliveryInspector: View {
             }
             CopyableRow(label: "Ingress ID", value: delivery.messageIngressId)
             if let runId = delivery.runId {
-                CopyableRow(label: "Run ID", value: runId)
+                NavigableIDRow(label: "Run", id: runId) {
+                    appModel.navigateToRun(id: runId)
+                }
             }
             if let taskId = delivery.taskId {
                 CopyableRow(label: "Task ID", value: taskId)

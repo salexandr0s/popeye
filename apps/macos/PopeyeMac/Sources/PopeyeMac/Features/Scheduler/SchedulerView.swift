@@ -23,8 +23,10 @@ struct SchedulerView: View {
         }
         .navigationTitle("Scheduler")
         .task {
-            async let _ = jobsStore.load()
-            async let _ = dashboardStore.load()
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await jobsStore.load() }
+                group.addTask { await dashboardStore.load() }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
             Task {
