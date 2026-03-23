@@ -523,7 +523,11 @@ export async function createControlApi(
     logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
   });
   await app.register(sensible);
-  await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    allowList: (request) => !request.url.startsWith('/v1/'),
+  });
   // POP-AUD-006: CSP nonce generated per request instead of reused across all responses.
   // Helmet handles all security headers except CSP, which we set manually per-request.
   const cspNonceGenerator = dependencies.generateCspNonce
