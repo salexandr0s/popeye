@@ -3,6 +3,7 @@ import PopeyeAPI
 
 struct ReceiptInspectorView: View {
     let receipt: ReceiptRecordDTO
+    @Environment(AppModel.self) private var appModel
 
     var body: some View {
         ScrollView {
@@ -25,7 +26,9 @@ struct ReceiptInspectorView: View {
         InspectorSection(title: "Receipt Details") {
             DetailRow(label: "Receipt ID", value: receipt.id)
             DetailRow(label: "Status", value: receipt.status)
-            DetailRow(label: "Run ID", value: IdentifierFormatting.formatShortID(receipt.runId))
+            NavigableIDRow(label: "Run ID", id: receipt.runId) {
+                appModel.navigateToRun(id: receipt.runId)
+            }
             DetailRow(label: "Job ID", value: IdentifierFormatting.formatShortID(receipt.jobId))
             DetailRow(label: "Task ID", value: IdentifierFormatting.formatShortID(receipt.taskId))
             DetailRow(label: "Workspace", value: IdentifierFormatting.formatShortID(receipt.workspaceId))

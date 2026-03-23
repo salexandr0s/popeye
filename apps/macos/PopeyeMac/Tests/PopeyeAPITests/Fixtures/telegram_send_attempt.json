@@ -1,0 +1,15 @@
+{
+  "id": "tsa-001",
+  "delivery_id": "tdel-001",
+  "workspace_id": "default",
+  "attempt_number": 1,
+  "started_at": "2026-03-22T10:01:00.000Z",
+  "finished_at": "2026-03-22T10:01:02.000Z",
+  "run_id": "run-ghi",
+  "content_hash": "abc123def456",
+  "outcome": "ambiguous",
+  "sent_telegram_message_id": null,
+  "error_summary": "Network timeout after 2000ms",
+  "source": "relay",
+  "created_at": "2026-03-22T10:01:00.000Z"
+}

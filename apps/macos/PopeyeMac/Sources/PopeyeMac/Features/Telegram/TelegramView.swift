@@ -1,0 +1,84 @@
+import SwiftUI
+import PopeyeAPI
+
+struct TelegramView: View {
+    @Bindable var store: TelegramStore
+    @State private var debouncer = ReloadDebouncer()
+
+    var body: some View {
+        Group {
+            if store.isLoading && store.deliveries.isEmpty {
+                LoadingStateView(title: "Loading deliveries...")
+            } else if store.deliveries.isEmpty {
+                EmptyStateView(
+                    icon: "paperplane",
+                    title: "No deliveries",
+                    description: "Telegram deliveries appear when messages are sent to chats."
+                )
+            } else {
+                deliveriesContent
+            }
+        }
+        .navigationTitle("Telegram")
+        .searchable(text: $store.searchText, prompt: "Filter deliveries...")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Picker("Status", selection: $store.statusFilter) {
+                    Text("All Statuses").tag(String?.none)
+                    Divider()
+                    ForEach(store.availableStatuses, id: \.self) { status in
+                        Text(status.capitalized).tag(Optional(status))
+                    }
+                }
+                .frame(width: 140)
+            }
+        }
+        .task {
+            await store.load()
+        }
+        .onChange(of: store.selectedId) { _, newId in
+            if let id = newId {
+                Task { await store.loadDetail(id: id) }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
+            Task { await store.load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
+            if let signal = notification.object as? InvalidationSignal, [.telegram, .general].contains(signal) {
+                debouncer.schedule { [store] in await store.load() }
+            }
+        }
+    }
+
+    private var deliveriesContent: some View {
+        HSplitView {
+            deliveriesList
+                .frame(minWidth: 350)
+            inspectorColumn
+                .frame(minWidth: 300)
+        }
+    }
+
+    private var deliveriesList: some View {
+        VStack(spacing: 0) {
+            TelegramRelayCheckpointCard(checkpoint: store.relayCheckpoint)
+                .padding(.vertical, 8)
+            List(store.filteredDeliveries, selection: $store.selectedId) { delivery in
+                TelegramDeliveryRow(delivery: delivery)
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorColumn: some View {
+        if let delivery = store.selectedDelivery {
+            TelegramDeliveryInspector(delivery: delivery, store: store)
+        } else {
+            Text("Select a delivery to inspect")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}

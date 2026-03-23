@@ -54,6 +54,7 @@ final class AppModel {
     private var _memoryStore: MemoryStore?
     private var _agentProfilesStore: AgentProfilesStore?
     private var _instructionPreviewStore: InstructionPreviewStore?
+    private var _telegramStore: TelegramStore?
 
     struct BadgeCounts {
         var openInterventions: Int = 0
@@ -168,6 +169,20 @@ final class AppModel {
         return s
     }
 
+    func telegramStore() -> TelegramStore {
+        if let s = _telegramStore { return s }
+        let s = TelegramStore(client: connectedClient)
+        _telegramStore = s
+        return s
+    }
+
+    // MARK: - Cross-Navigation
+
+    func navigateToRun(id: String) {
+        runsStore().selectedRunId = id
+        selectedRoute = .runs
+    }
+
     // MARK: - Connection
 
     func connect(baseURL: String, token: String) async {
@@ -220,6 +235,7 @@ final class AppModel {
         _memoryStore = nil
         _agentProfilesStore = nil
         _instructionPreviewStore = nil
+        _telegramStore = nil
     }
 
     // MARK: - SSE

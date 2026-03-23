@@ -232,6 +232,32 @@ public actor ControlAPIClient {
         try await get(.instructionPreview(scope: scope))
     }
 
+    // MARK: - Telegram
+
+    public func telegramRelayCheckpoint(workspaceId: String = "default") async throws -> TelegramRelayCheckpointDTO? {
+        try await get(.telegramRelayCheckpoint(workspaceId: workspaceId))
+    }
+
+    public func listUncertainDeliveries(workspaceId: String = "default") async throws -> [TelegramDeliveryDTO] {
+        try await get(.telegramUncertainDeliveries(workspaceId: workspaceId))
+    }
+
+    public func getTelegramDelivery(id: String) async throws -> TelegramDeliveryDTO {
+        try await get(.telegramDelivery(id: id))
+    }
+
+    public func listDeliveryResolutions(id: String) async throws -> [TelegramResolutionDTO] {
+        try await get(.telegramDeliveryResolutions(id: id))
+    }
+
+    public func listDeliverySendAttempts(id: String) async throws -> [TelegramSendAttemptDTO] {
+        try await get(.telegramDeliveryAttempts(id: id))
+    }
+
+    public func resolveTelegramDelivery(id: String, input: TelegramDeliveryResolveInput) async throws -> TelegramResolutionDTO {
+        try await post(.telegramResolveDelivery(id: id), body: input)
+    }
+
     // MARK: - SSE Stream
 
     public func eventStreamBytes() async throws -> (URLSession.AsyncBytes, URLResponse) {

@@ -4,6 +4,7 @@ import PopeyeAPI
 struct InterventionInspector: View {
     let intervention: InterventionDTO
     let store: InterventionsStore
+    @Environment(AppModel.self) private var appModel
 
     @State private var pendingAction: Action?
     @State private var resolutionNote = ""
@@ -73,7 +74,9 @@ struct InterventionInspector: View {
 
     private func relatedSection(runId: String) -> some View {
         InspectorSection(title: "Related") {
-            DetailRow(label: "Run ID", value: IdentifierFormatting.formatShortID(runId))
+            NavigableIDRow(label: "Run ID", id: runId) {
+                appModel.navigateToRun(id: runId)
+            }
         }
     }
 

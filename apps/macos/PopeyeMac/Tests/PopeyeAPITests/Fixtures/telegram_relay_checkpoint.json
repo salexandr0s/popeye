@@ -1,0 +1,6 @@
+{
+  "relay_key": "default:long-poll",
+  "workspace_id": "default",
+  "last_acknowledged_update_id": 98765432,
+  "updated_at": "2026-03-22T10:15:00.000Z"
+}

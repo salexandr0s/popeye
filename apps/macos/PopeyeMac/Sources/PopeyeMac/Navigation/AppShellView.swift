@@ -39,6 +39,10 @@ struct AppShellView: View {
                         InstructionPreviewView(store: appModel.instructionPreviewStore())
                     case .agentProfiles:
                         AgentProfilesView(store: appModel.agentProfilesStore())
+                    case .telegram:
+                        TelegramView(store: appModel.telegramStore())
+                    case .scheduler:
+                        SchedulerView(jobsStore: appModel.jobsStore(), dashboardStore: appModel.dashboardStore())
                     }
                 } else {
                     PlaceholderView(route: .dashboard)

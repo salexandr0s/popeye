@@ -125,3 +125,35 @@ public extension Endpoint {
         Endpoint(path: "/v1/instruction-previews/\(scope)")
     }
 }
+
+// MARK: - Telegram
+
+public extension Endpoint {
+    static func telegramRelayCheckpoint(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/relay/checkpoint", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
+
+    static func telegramUncertainDeliveries(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/deliveries/uncertain", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
+
+    static func telegramDelivery(id: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/deliveries/\(id)")
+    }
+
+    static func telegramDeliveryResolutions(id: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/deliveries/\(id)/resolutions")
+    }
+
+    static func telegramDeliveryAttempts(id: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/deliveries/\(id)/attempts")
+    }
+
+    static func telegramResolveDelivery(id: String) -> Endpoint {
+        Endpoint(path: "/v1/telegram/deliveries/\(id)/resolve", method: .post)
+    }
+}

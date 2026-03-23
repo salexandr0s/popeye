@@ -122,6 +122,28 @@ struct MutationEligibilityTests {
     func cannotResolveDenied() {
         #expect(!MutationEligibility.canResolveApproval(status: "denied"))
     }
+
+    // MARK: - Telegram Delivery Mutations
+
+    @Test("Can resolve uncertain telegram delivery")
+    func resolveUncertainDelivery() {
+        #expect(MutationEligibility.canResolveTelegramDelivery(status: "uncertain"))
+    }
+
+    @Test("Can resolve pending telegram delivery")
+    func resolvePendingDelivery() {
+        #expect(MutationEligibility.canResolveTelegramDelivery(status: "pending"))
+    }
+
+    @Test("Cannot resolve sent telegram delivery")
+    func cannotResolveSentDelivery() {
+        #expect(!MutationEligibility.canResolveTelegramDelivery(status: "sent"))
+    }
+
+    @Test("Cannot resolve abandoned telegram delivery")
+    func cannotResolveAbandonedDelivery() {
+        #expect(!MutationEligibility.canResolveTelegramDelivery(status: "abandoned"))
+    }
 }
 
 @Suite("Mutation Inputs Encoding")

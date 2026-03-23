@@ -358,6 +358,64 @@ struct DTODecodingTests {
         #expect(dto.warnings.isEmpty)
     }
 
+    // MARK: - Telegram DTOs
+
+    @Test("Decode TelegramDeliveryDTO from fixture")
+    func decodeTelegramDelivery() throws {
+        let data = try loadFixture("telegram_delivery")
+        let dto = try decoder.decode(TelegramDeliveryDTO.self, from: data)
+
+        #expect(dto.id == "tdel-001")
+        #expect(dto.workspaceId == "default")
+        #expect(dto.chatId == "123456789")
+        #expect(dto.telegramMessageId == 42)
+        #expect(dto.messageIngressId == "ming-001")
+        #expect(dto.taskId == "task-abc")
+        #expect(dto.runId == "run-ghi")
+        #expect(dto.status == "uncertain")
+        #expect(dto.sentAt == nil)
+        #expect(dto.sentTelegramMessageId == nil)
+    }
+
+    @Test("Decode TelegramSendAttemptDTO from fixture")
+    func decodeTelegramSendAttempt() throws {
+        let data = try loadFixture("telegram_send_attempt")
+        let dto = try decoder.decode(TelegramSendAttemptDTO.self, from: data)
+
+        #expect(dto.id == "tsa-001")
+        #expect(dto.deliveryId == "tdel-001")
+        #expect(dto.attemptNumber == 1)
+        #expect(dto.outcome == "ambiguous")
+        #expect(dto.errorSummary == "Network timeout after 2000ms")
+        #expect(dto.source == "relay")
+        #expect(dto.sentTelegramMessageId == nil)
+    }
+
+    @Test("Decode TelegramResolutionDTO from fixture")
+    func decodeTelegramResolution() throws {
+        let data = try loadFixture("telegram_resolution")
+        let dto = try decoder.decode(TelegramResolutionDTO.self, from: data)
+
+        #expect(dto.id == "tres-001")
+        #expect(dto.deliveryId == "tdel-001")
+        #expect(dto.action == "confirm_sent")
+        #expect(dto.operatorNote?.contains("Verified") == true)
+        #expect(dto.sentTelegramMessageId == 43)
+        #expect(dto.previousStatus == "uncertain")
+        #expect(dto.newStatus == "sent")
+    }
+
+    @Test("Decode TelegramRelayCheckpointDTO from fixture")
+    func decodeTelegramRelayCheckpoint() throws {
+        let data = try loadFixture("telegram_relay_checkpoint")
+        let dto = try decoder.decode(TelegramRelayCheckpointDTO.self, from: data)
+
+        #expect(dto.relayKey == "default:long-poll")
+        #expect(dto.workspaceId == "default")
+        #expect(dto.lastAcknowledgedUpdateId == 98765432)
+        #expect(dto.updatedAt.isEmpty == false)
+    }
+
     // MARK: - Connection DTOs
 
     @Test("Decode ConnectionDTO from fixture with policy, health, sync")

@@ -14,6 +14,8 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case memory
     case instructionPreview
     case agentProfiles
+    case telegram
+    case scheduler
 
     var id: String { rawValue }
 
@@ -32,6 +34,8 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .memory: "Memory"
         case .instructionPreview: "Instructions"
         case .agentProfiles: "Agent Profiles"
+        case .telegram: "Telegram"
+        case .scheduler: "Scheduler"
         }
     }
 
@@ -50,16 +54,18 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .memory: "brain"
         case .instructionPreview: "doc.plaintext"
         case .agentProfiles: "person.2"
+        case .telegram: "paperplane"
+        case .scheduler: "clock.arrow.2.circlepath"
         }
     }
 
     var group: RouteGroup {
         switch self {
-        case .dashboard, .commandCenter, .usage: .overview
+        case .dashboard, .commandCenter, .usage, .scheduler: .overview
         case .runs, .jobs, .receipts: .operations
         case .interventions, .approvals, .usageSecurity: .governance
         case .memory, .instructionPreview: .knowledge
-        case .connections, .agentProfiles: .platform
+        case .connections, .agentProfiles, .telegram: .platform
         }
     }
 }

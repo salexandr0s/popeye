@@ -9,6 +9,7 @@ public enum InvalidationSignal: Sendable {
     case connections
     case security
     case memory
+    case telegram
     case general
 }
 
@@ -56,6 +57,7 @@ public actor InvalidationBus {
         case "connection": return .connections
         case "security", "audit": return .security
         case "memory": return .memory
+        case "telegram": return .telegram
         default: return .general
         }
     }

@@ -36,4 +36,10 @@ public enum MutationEligibility {
     public static func canResolveApproval(status: String) -> Bool {
         status == "pending"
     }
+
+    // MARK: - Telegram Deliveries
+
+    public static func canResolveTelegramDelivery(status: String) -> Bool {
+        ["uncertain", "pending"].contains(status)
+    }
 }
