@@ -1074,6 +1074,7 @@ export class PiEngineAdapter implements EngineAdapter {
     const diagnosticWarnings: string[] = [];
     let iterationCount = 0;
     let budgetWarningEmitted = false;
+    let budgetExhausted = false;
     const maxIterations = request.maxIterations ?? this.maxIterationsPerRun;
     const warningAt = Math.floor(maxIterations * this.budgetWarningThreshold);
 
@@ -1147,6 +1148,7 @@ export class PiEngineAdapter implements EngineAdapter {
     };
 
     const checkBudget = (): boolean => {
+      if (budgetExhausted) return true;
       if (!budgetWarningEmitted && iterationCount >= warningAt) {
         budgetWarningEmitted = true;
         safeEmit(normalizeStructuredEvent('budget_warning', {
@@ -1156,6 +1158,7 @@ export class PiEngineAdapter implements EngineAdapter {
         }));
       }
       if (iterationCount >= maxIterations) {
+        budgetExhausted = true;
         safeEmit(normalizeStructuredEvent('budget_exhausted', {
           iterationsUsed: iterationCount,
           maxIterations,
@@ -1208,8 +1211,10 @@ export class PiEngineAdapter implements EngineAdapter {
         contentItems: payload.contentItems ?? null,
         detailsPresent: payload.detailsPresent ?? null,
       }, raw));
-      iterationCount++;
-      checkBudget();
+      if (!budgetExhausted) {
+        iterationCount++;
+        checkBudget();
+      }
     };
 
     const respondToRuntimeToolRequest = async (
@@ -1450,8 +1455,10 @@ export class PiEngineAdapter implements EngineAdapter {
             isError: record.isError ?? false,
             result: record.result ?? null,
           }, rawLine));
-          iterationCount++;
-          if (checkBudget()) return;
+          if (!budgetExhausted) {
+            iterationCount++;
+            if (checkBudget()) return;
+          }
           return;
         }
         case 'auto_compaction_end': {

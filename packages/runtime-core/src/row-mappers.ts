@@ -58,6 +58,7 @@ export const RunRowSchema = z.object({
   started_at: z.string(),
   finished_at: z.string().nullable(),
   error: z.string().nullable(),
+  iterations_used: z.number().int().nonnegative().nullable().default(null),
 });
 
 export const RunEventRowSchema = z.object({
@@ -258,6 +259,7 @@ export function mapRunRow(row: unknown): RunRecord {
     startedAt: parsed.started_at,
     finishedAt: parsed.finished_at,
     error: parsed.error,
+    iterationsUsed: parsed.iterations_used,
   });
 }
 
@@ -430,6 +432,10 @@ export function mapRunEventTitle(type: RunEventRecord['type']): string {
       return 'Usage reported';
     case 'compaction':
       return 'Compaction captured';
+    case 'budget_warning':
+      return 'Iteration budget warning';
+    case 'budget_exhausted':
+      return 'Iteration budget exhausted';
     default:
       return titleCase(type);
   }
@@ -465,6 +471,12 @@ export function mapRunEventDetail(record: RunEventRecord): string {
         return `Context compacted: ${tokensBefore} \u2192 ${tokensAfter} tokens (${contentLen} chars captured)`;
       }
       return contentLen > 0 ? `Compaction flush captured (${contentLen} chars)` : '';
+    }
+    case 'budget_warning':
+    case 'budget_exhausted': {
+      const used = typeof payload.iterationsUsed === 'number' ? payload.iterationsUsed : '?';
+      const max = typeof payload.maxIterations === 'number' ? payload.maxIterations : '?';
+      return `${used}/${max} iterations`;
     }
     default:
       return '';

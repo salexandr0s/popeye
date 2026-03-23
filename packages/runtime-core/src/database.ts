@@ -558,6 +558,12 @@ const APP_MIGRATIONS: Migration[] = [
       "ALTER TABLE connections ADD COLUMN resource_rules_json TEXT NOT NULL DEFAULT '[]';",
     ],
   },
+  {
+    id: '019-run-iterations',
+    statements: [
+      'ALTER TABLE runs ADD COLUMN iterations_used INTEGER;',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

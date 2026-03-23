@@ -1506,4 +1506,112 @@ describe('engine-pi', () => {
       rmSync(safeDir, { recursive: true, force: true });
     });
   });
+
+  describe('iteration budget', () => {
+    it('fake adapter iteration_budget mode emits budget events and policy_failure', async () => {
+      const adapter = new FakeEngineAdapter({ mode: 'iteration_budget' });
+      const result = await adapter.run(runRequest('budget-test'));
+      expect(result.failureClassification).toBe('policy_failure');
+      expect(result.iterationsUsed).toBe(5);
+      expect(result.events.some((e) => e.type === 'budget_exhausted')).toBe(true);
+      expect(result.events.some((e) => e.type === 'tool_result')).toBe(true);
+      expect(result.events.filter((e) => e.type === 'tool_call').length).toBe(5);
+      expect(result.events.filter((e) => e.type === 'tool_result').length).toBe(5);
+    });
+
+    it('PiEngineAdapter enforces iteration budget and emits warning then exhausted', async () => {
+      const maxIterations = 3;
+      const script = `
+        const readline = require('readline');
+        const rl = readline.createInterface({ input: process.stdin, terminal: false });
+        const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+        rl.on('line', (line) => {
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:budget-test', sessionFile: '/tmp/budget.jsonl', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            for (let i = 0; i < 10; i++) {
+              write({ type: 'tool_execution_start', toolCallId: 'tool-' + i, toolName: 'read' });
+              write({ type: 'tool_execution_end', toolCallId: 'tool-' + i, toolName: 'read', result: { text: 'ok' }, isError: false });
+            }
+            write({ type: 'agent_end', messages: [{ role: 'assistant', provider: 'anthropic', model: 'claude-sonnet', stopReason: 'stop', usage: { input: 10, output: 20, cost: { total: 0.01 } }, content: [{ type: 'text', text: 'done' }] }] });
+          }
+        });
+      `;
+      const piPath = createFakePiRepo(script, { defaultCli: false });
+      const adapter = new PiEngineAdapter({
+        ...explicitConfig(piPath),
+        maxIterationsPerRun: maxIterations,
+        budgetWarningThreshold: 0.5,
+      });
+
+      const events: NormalizedEngineEvent[] = [];
+      const handle = await adapter.startRun(runRequest('budget-enforce'), {
+        onEvent: (e) => events.push(e),
+      });
+      const completion = await handle.wait();
+
+      expect(completion.failureClassification).toBe('policy_failure');
+      expect(completion.iterationsUsed).toBe(maxIterations);
+
+      const warningEvents = events.filter((e) => e.type === 'budget_warning');
+      expect(warningEvents.length).toBe(1);
+      expect(warningEvents[0]?.payload.iterationsUsed).toBe(Math.floor(maxIterations * 0.5));
+
+      const exhaustedEvents = events.filter((e) => e.type === 'budget_exhausted');
+      expect(exhaustedEvents.length).toBe(1);
+      expect(exhaustedEvents[0]?.payload.iterationsUsed).toBe(maxIterations);
+      expect(exhaustedEvents[0]?.payload.maxIterations).toBe(maxIterations);
+
+      rmSync(piPath, { recursive: true, force: true });
+    });
+
+    it('per-request maxIterations override works', async () => {
+      const script = `
+        const readline = require('readline');
+        const rl = readline.createInterface({ input: process.stdin, terminal: false });
+        const write = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+        rl.on('line', (line) => {
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:override-test', sessionFile: '/tmp/override.jsonl', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            for (let i = 0; i < 10; i++) {
+              write({ type: 'tool_execution_start', toolCallId: 'tool-' + i, toolName: 'read' });
+              write({ type: 'tool_execution_end', toolCallId: 'tool-' + i, toolName: 'read', result: { text: 'ok' }, isError: false });
+            }
+            write({ type: 'agent_end', messages: [{ role: 'assistant', provider: 'anthropic', model: 'claude-sonnet', stopReason: 'stop', usage: { input: 10, output: 20, cost: { total: 0.01 } }, content: [{ type: 'text', text: 'done' }] }] });
+          }
+        });
+      `;
+      const piPath = createFakePiRepo(script, { defaultCli: false });
+      const adapter = new PiEngineAdapter({
+        ...explicitConfig(piPath),
+        maxIterationsPerRun: 100,
+      });
+
+      const events: NormalizedEngineEvent[] = [];
+      const handle = await adapter.startRun(runRequest('override-test', { maxIterations: 2 }), {
+        onEvent: (e) => events.push(e),
+      });
+      const completion = await handle.wait();
+
+      expect(completion.failureClassification).toBe('policy_failure');
+      expect(completion.iterationsUsed).toBe(2);
+      expect(events.some((e) => e.type === 'budget_exhausted')).toBe(true);
+
+      rmSync(piPath, { recursive: true, force: true });
+    });
+
+    it('iteration count is 0 for runs with no tool calls', async () => {
+      const adapter = new FakeEngineAdapter();
+      const result = await adapter.run(runRequest('no-tools'));
+      expect(result.failureClassification).toBeNull();
+      expect(result.iterationsUsed).toBeUndefined();
+    });
+  });
 });

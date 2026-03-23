@@ -489,6 +489,10 @@ export class RunExecutor {
       sessionRootId: run.sessionRootId,
     });
 
+    if (completion.iterationsUsed !== undefined) {
+      this.deps.db.prepare('UPDATE runs SET iterations_used = ? WHERE id = ?').run(completion.iterationsUsed, run.id);
+    }
+
     const failure = completion.failureClassification;
     if (failure === null) {
       this.deps.db.prepare('UPDATE runs SET state = ?, engine_session_ref = ?, finished_at = ?, error = ? WHERE id = ?').run('succeeded', completion.engineSessionRef, nowIso(), null, run.id);
@@ -557,7 +561,16 @@ export class RunExecutor {
     runLog.error('run failed (final)', { failure });
     this.deps.emit('run_completed', receipt);
     this.deps.recordSecurityAudit({ code: 'run_failed', severity: 'error', message: failure, component: 'runtime-core', timestamp: nowIso(), details: { runId: run.id } });
-    this.deps.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
+    const maxIter = this.deps.config.engine.maxIterationsPerRun ?? 200;
+    const isBudgetExhaustion = failure === 'policy_failure'
+      && completion.iterationsUsed != null
+      && completion.iterationsUsed >= maxIter;
+    if (isBudgetExhaustion) {
+      this.deps.createIntervention('iteration_budget_exhausted', run.id,
+        `Run ${run.id} terminated: iteration budget exhausted (${completion.iterationsUsed} tool calls)`);
+    } else {
+      this.deps.createIntervention('failed_final', run.id, `Run ${run.id} failed with ${failure}`);
+    }
     this.cleanupActiveRun(activeRun);
   }
 
