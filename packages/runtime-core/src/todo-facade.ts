@@ -70,7 +70,7 @@ export interface TodoFacadeDeps {
   updateConnection: (id: string, input: ConnectionUpdateInput) => ConnectionRecord | null;
 
   // Secret store callbacks (needed by connectTodoist and adapter resolution)
-  setSecret: (input: { provider: string; key: string; value: string; connectionId: string; description: string }) => SecretRefRecord;
+  setSecret: (input: { provider?: string; key: string; value: string; connectionId: string; description: string }) => SecretRefRecord;
   rotateSecret: (id: string, newValue: string) => SecretRefRecord | null;
   getSecretValue: (id: string) => string | null;
 }
