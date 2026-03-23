@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "id": "mem-001",
+      "description": "User prefers concise commit messages",
+      "content": null,
+      "type": "semantic",
+      "confidence": 0.85,
+      "effectiveConfidence": 0.82,
+      "scope": "workspace",
+      "workspaceId": "ws-default",
+      "projectId": null,
+      "sourceType": "receipt",
+      "createdAt": "2026-03-15T09:00:00Z",
+      "lastReinforcedAt": "2026-03-22T10:00:00Z",
+      "score": 0.91,
+      "layer": "fact",
+      "domain": "coding",
+      "scoreBreakdown": {
+        "relevance": 0.9,
+        "recency": 0.8,
+        "confidence": 0.85,
+        "scopeMatch": 1.0,
+        "temporalFit": null,
+        "sourceTrust": 0.7,
+        "salience": 0.6,
+        "latestness": null,
+        "evidenceDensity": null,
+        "operatorBonus": null,
+        "layerPrior": null
+      }
+    }
+  ],
+  "query": "commit preferences",
+  "totalCandidates": 5,
+  "latencyMs": 42.5,
+  "searchMode": "hybrid",
+  "strategy": "factual",
+  "traceId": "trace-xyz"
+}

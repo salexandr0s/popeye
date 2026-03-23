@@ -8,6 +8,7 @@ public enum InvalidationSignal: Sendable {
     case approvals
     case connections
     case security
+    case memory
     case general
 }
 
@@ -54,6 +55,7 @@ public actor InvalidationBus {
         case "approval": return .approvals
         case "connection": return .connections
         case "security", "audit": return .security
+        case "memory": return .memory
         default: return .general
         }
     }

@@ -46,6 +46,7 @@ struct DashboardView: View {
                     healthSection(snap)
                     schedulerSection(snap)
                     engineSection(snap)
+                    memorySection(snap)
                 }
                 .padding(20)
             }
@@ -105,6 +106,20 @@ struct DashboardView: View {
                 CompactionCard(capabilities: snap.capabilities)
                 if let audit = snap.securityAudit {
                     SecurityCard(audit: audit)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func memorySection(_ snap: DashboardSnapshot) -> some View {
+        if let audit = snap.memoryAudit {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Memory")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: columns, spacing: 16) {
+                    MemoryAuditCard(audit: audit)
                 }
             }
         }

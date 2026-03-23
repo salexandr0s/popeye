@@ -233,6 +233,131 @@ struct DTODecodingTests {
         #expect(dto.resolvedAt == nil)
     }
 
+    // MARK: - Memory DTOs
+
+    @Test("Decode MemoryRecordDTO from fixture")
+    func decodeMemoryRecord() throws {
+        let data = try loadFixture("memory_record")
+        let dto = try decoder.decode(MemoryRecordDTO.self, from: data)
+
+        #expect(dto.id == "mem-001")
+        #expect(dto.description == "User prefers concise commit messages")
+        #expect(dto.memoryType == "semantic")
+        #expect(dto.classification == "embeddable")
+        #expect(dto.sourceType == "receipt")
+        #expect(dto.confidence == 0.85)
+        #expect(dto.scope == "workspace")
+        #expect(dto.workspaceId == "ws-default")
+        #expect(dto.projectId == nil)
+        #expect(dto.sourceRunId == "run-abc123")
+        #expect(dto.durable == false)
+        #expect(dto.domain == "coding")
+        #expect(dto.archivedAt == nil)
+        #expect(dto.lastReinforcedAt != nil)
+    }
+
+    @Test("Decode MemorySearchResponseDTO from fixture")
+    func decodeMemorySearchResponse() throws {
+        let data = try loadFixture("memory_search_response")
+        let dto = try decoder.decode(MemorySearchResponseDTO.self, from: data)
+
+        #expect(dto.query == "commit preferences")
+        #expect(dto.totalCandidates == 5)
+        #expect(dto.latencyMs == 42.5)
+        #expect(dto.searchMode == "hybrid")
+        #expect(dto.strategy == "factual")
+        #expect(dto.results.count == 1)
+
+        let hit = dto.results[0]
+        #expect(hit.id == "mem-001")
+        #expect(hit.type == "semantic")
+        #expect(hit.score == 0.91)
+        #expect(hit.effectiveConfidence == 0.82)
+        #expect(hit.layer == "fact")
+        #expect(hit.scoreBreakdown.relevance == 0.9)
+        #expect(hit.scoreBreakdown.scopeMatch == 1.0)
+    }
+
+    @Test("Decode MemoryAuditDTO from fixture")
+    func decodeMemoryAudit() throws {
+        let data = try loadFixture("memory_audit")
+        let dto = try decoder.decode(MemoryAuditDTO.self, from: data)
+
+        #expect(dto.totalMemories == 142)
+        #expect(dto.activeMemories == 120)
+        #expect(dto.archivedMemories == 22)
+        #expect(dto.byType["episodic"] == 80)
+        #expect(dto.byType["semantic"] == 45)
+        #expect(dto.averageConfidence == 0.72)
+        #expect(dto.staleCount == 8)
+        #expect(dto.consolidationsPerformed == 3)
+        #expect(dto.lastDecayRunAt != nil)
+    }
+
+    @Test("Decode MemoryPromotionProposalDTO from fixture")
+    func decodeMemoryPromotionProposal() throws {
+        let data = try loadFixture("memory_promotion_proposal")
+        let dto = try decoder.decode(MemoryPromotionProposalDTO.self, from: data)
+
+        #expect(dto.memoryId == "mem-001")
+        #expect(dto.targetPath == "MEMORY.md")
+        #expect(dto.diff.contains("commit messages"))
+        #expect(dto.approved == false)
+        #expect(dto.promoted == false)
+    }
+
+    @Test("Decode MemoryHistoryDTO from fixture")
+    func decodeMemoryHistory() throws {
+        let data = try loadFixture("memory_history")
+        let dto = try decoder.decode(MemoryHistoryDTO.self, from: data)
+
+        #expect(dto.memoryId == "mem-001")
+        #expect(dto.versionChain.count == 2)
+        #expect(dto.versionChain[0].isLatest == true)
+        #expect(dto.versionChain[1].isLatest == false)
+        #expect(dto.evidenceLinks.count == 1)
+        #expect(dto.operatorActions.count == 1)
+        #expect(dto.operatorActions[0].actionKind == "pin")
+    }
+
+    // MARK: - Agent Profile DTOs
+
+    @Test("Decode AgentProfileDTO from fixture")
+    func decodeAgentProfile() throws {
+        let data = try loadFixture("agent_profile")
+        let dto = try decoder.decode(AgentProfileDTO.self, from: data)
+
+        #expect(dto.id == "default")
+        #expect(dto.name == "Default Agent")
+        #expect(dto.mode == "interactive")
+        #expect(dto.modelPolicy == "inherit")
+        #expect(dto.allowedRuntimeTools.count == 2)
+        #expect(dto.allowedCapabilityIds.contains("files"))
+        #expect(dto.memoryScope == "workspace")
+        #expect(dto.recallScope == "workspace")
+        #expect(dto.filesystemPolicyClass == "workspace")
+        #expect(dto.contextReleasePolicy == "summary_only")
+        #expect(dto.updatedAt != nil)
+    }
+
+    // MARK: - Instruction Preview DTOs
+
+    @Test("Decode InstructionPreviewDTO from fixture")
+    func decodeInstructionPreview() throws {
+        let data = try loadFixture("instruction_preview")
+        let dto = try decoder.decode(InstructionPreviewDTO.self, from: data)
+
+        #expect(dto.id == "bundle-abc123")
+        #expect(dto.sources.count == 2)
+        #expect(dto.sources[0].type == "pi_base")
+        #expect(dto.sources[0].precedence == 1)
+        #expect(dto.sources[1].type == "workspace")
+        #expect(dto.sources[1].path == "WORKSPACE.md")
+        #expect(dto.compiledText.contains("helpful assistant"))
+        #expect(dto.bundleHash == "bundlehash-xyz")
+        #expect(dto.warnings.isEmpty)
+    }
+
     // MARK: - Connection DTOs
 
     @Test("Decode ConnectionDTO from fixture with policy, health, sync")

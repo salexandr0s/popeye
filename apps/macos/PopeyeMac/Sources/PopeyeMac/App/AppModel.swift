@@ -50,6 +50,10 @@ final class AppModel {
     private var _approvalsStore: ApprovalsStore?
     private var _connectionsStore: ConnectionsStore?
     private var _usageSecurityStore: UsageSecurityStore?
+    private var _usageStore: UsageStore?
+    private var _memoryStore: MemoryStore?
+    private var _agentProfilesStore: AgentProfilesStore?
+    private var _instructionPreviewStore: InstructionPreviewStore?
 
     struct BadgeCounts {
         var openInterventions: Int = 0
@@ -63,66 +67,104 @@ final class AppModel {
 
     // MARK: - Store Accessors
 
+    /// Asserts a connected client exists. All store accessors are gated behind
+    /// `AppShellView`'s `if appModel.client != nil` check, so this should never
+    /// fail in practice.
+    private var connectedClient: ControlAPIClient {
+        guard let client else {
+            fatalError("Store accessor called before connection established")
+        }
+        return client
+    }
+
     func dashboardStore() -> DashboardStore {
         if let s = _dashboardStore { return s }
-        let s = DashboardStore(service: SystemService(client: client!), pollIntervalSeconds: pollIntervalSeconds)
+        let s = DashboardStore(service: SystemService(client: connectedClient), pollIntervalSeconds: pollIntervalSeconds)
         _dashboardStore = s
         return s
     }
 
     func commandCenterStore() -> CommandCenterStore {
         if let s = _commandCenterStore { return s }
-        let s = CommandCenterStore(client: client!, pollIntervalSeconds: pollIntervalSeconds)
+        let s = CommandCenterStore(client: connectedClient, pollIntervalSeconds: pollIntervalSeconds)
         _commandCenterStore = s
         return s
     }
 
     func runsStore() -> RunsStore {
         if let s = _runsStore { return s }
-        let s = RunsStore(client: client!)
+        let s = RunsStore(client: connectedClient)
         _runsStore = s
         return s
     }
 
     func jobsStore() -> JobsStore {
         if let s = _jobsStore { return s }
-        let s = JobsStore(client: client!)
+        let s = JobsStore(client: connectedClient)
         _jobsStore = s
         return s
     }
 
     func receiptsStore() -> ReceiptsStore {
         if let s = _receiptsStore { return s }
-        let s = ReceiptsStore(client: client!)
+        let s = ReceiptsStore(client: connectedClient)
         _receiptsStore = s
         return s
     }
 
     func interventionsStore() -> InterventionsStore {
         if let s = _interventionsStore { return s }
-        let s = InterventionsStore(client: client!)
+        let s = InterventionsStore(client: connectedClient)
         _interventionsStore = s
         return s
     }
 
     func approvalsStore() -> ApprovalsStore {
         if let s = _approvalsStore { return s }
-        let s = ApprovalsStore(client: client!)
+        let s = ApprovalsStore(client: connectedClient)
         _approvalsStore = s
         return s
     }
 
     func connectionsStore() -> ConnectionsStore {
         if let s = _connectionsStore { return s }
-        let s = ConnectionsStore(client: client!)
+        let s = ConnectionsStore(client: connectedClient)
         _connectionsStore = s
         return s
     }
 
     func usageSecurityStore() -> UsageSecurityStore {
         if let s = _usageSecurityStore { return s }
-        let s = UsageSecurityStore(client: client!)
+        let s = UsageSecurityStore(client: connectedClient)
         _usageSecurityStore = s
+        return s
+    }
+
+    func usageStore() -> UsageStore {
+        if let s = _usageStore { return s }
+        let s = UsageStore(client: connectedClient)
+        _usageStore = s
+        return s
+    }
+
+    func memoryStore() -> MemoryStore {
+        if let s = _memoryStore { return s }
+        let s = MemoryStore(client: connectedClient)
+        _memoryStore = s
+        return s
+    }
+
+    func agentProfilesStore() -> AgentProfilesStore {
+        if let s = _agentProfilesStore { return s }
+        let s = AgentProfilesStore(client: connectedClient)
+        _agentProfilesStore = s
+        return s
+    }
+
+    func instructionPreviewStore() -> InstructionPreviewStore {
+        if let s = _instructionPreviewStore { return s }
+        let s = InstructionPreviewStore(client: connectedClient)
+        _instructionPreviewStore = s
         return s
     }
 
@@ -174,6 +216,10 @@ final class AppModel {
         _approvalsStore = nil
         _connectionsStore = nil
         _usageSecurityStore = nil
+        _usageStore = nil
+        _memoryStore = nil
+        _agentProfilesStore = nil
+        _instructionPreviewStore = nil
     }
 
     // MARK: - SSE

@@ -1,0 +1,7 @@
+{
+  "memoryId": "mem-001",
+  "targetPath": "MEMORY.md",
+  "diff": "--- a/MEMORY.md\n+++ b/MEMORY.md\n@@ -1,3 +1,5 @@\n # Memory Index\n \n+## Preferences\n+- User prefers concise commit messages (type(scope): description format)\n+\n",
+  "approved": false,
+  "promoted": false
+}

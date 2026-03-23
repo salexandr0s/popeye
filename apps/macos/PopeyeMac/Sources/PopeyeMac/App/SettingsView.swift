@@ -1,7 +1,10 @@
 import SwiftUI
+import PopeyeAPI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var appModel
+    @State private var diagnosticsResult: DiagnosticsResult?
+    @State private var isTesting = false
 
     var body: some View {
         @Bindable var model = appModel
@@ -46,6 +49,35 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Diagnostics") {
+                Button(isTesting ? "Testing..." : "Test Connection") {
+                    Task { await testConnection() }
+                }
+                .disabled(isTesting || !appModel.isConnected)
+
+                if let result = diagnosticsResult {
+                    LabeledContent("Health") {
+                        Label(
+                            result.healthy ? "OK" : "Unhealthy",
+                            systemImage: result.healthy ? "checkmark.circle.fill" : "xmark.circle.fill"
+                        )
+                        .foregroundStyle(result.healthy ? .green : .red)
+                    }
+
+                    LabeledContent("Latency") {
+                        Text("\(result.latencyMs)ms")
+                            .monospacedDigit()
+                    }
+
+                    if let error = result.error {
+                        LabeledContent("Error") {
+                            Text(error)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+
             Section("Refresh") {
                 Toggle("Enable SSE live updates", isOn: $model.sseEnabled)
                 Picker("Fallback poll interval", selection: $model.pollIntervalSeconds) {
@@ -63,12 +95,38 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 450, height: 380)
+        .frame(width: 450, height: 480)
     }
 
     private func disconnect() {
         appModel.disconnect()
+        diagnosticsResult = nil
     }
+
+    private func testConnection() async {
+        guard let client = appModel.client else { return }
+        isTesting = true
+        let start = ContinuousClock.now
+        do {
+            _ = try await client.health()
+            let elapsed = ContinuousClock.now - start
+            let ms = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+            diagnosticsResult = DiagnosticsResult(healthy: true, latencyMs: ms, error: nil)
+        } catch let error as APIError {
+            let elapsed = ContinuousClock.now - start
+            let ms = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+            diagnosticsResult = DiagnosticsResult(healthy: false, latencyMs: ms, error: error.userMessage)
+        } catch {
+            diagnosticsResult = DiagnosticsResult(healthy: false, latencyMs: 0, error: error.localizedDescription)
+        }
+        isTesting = false
+    }
+}
+
+private struct DiagnosticsResult {
+    let healthy: Bool
+    let latencyMs: Int
+    let error: String?
 }
 
 extension Bundle {

@@ -1,0 +1,25 @@
+{
+  "id": "bundle-abc123",
+  "sources": [
+    {
+      "precedence": 1,
+      "type": "pi_base",
+      "path": null,
+      "inlineId": "pi-base-v1",
+      "contentHash": "hash1",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "precedence": 3,
+      "type": "workspace",
+      "path": "WORKSPACE.md",
+      "inlineId": null,
+      "contentHash": "hash2",
+      "content": "# Workspace Instructions\nUse conventional commits."
+    }
+  ],
+  "compiledText": "You are a helpful assistant.\n\n# Workspace Instructions\nUse conventional commits.",
+  "bundleHash": "bundlehash-xyz",
+  "warnings": [],
+  "createdAt": "2026-03-23T12:00:00Z"
+}

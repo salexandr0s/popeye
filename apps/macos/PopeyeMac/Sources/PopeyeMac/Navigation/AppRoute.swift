@@ -3,6 +3,7 @@ import Foundation
 enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case dashboard
     case commandCenter
+    case usage
     case runs
     case jobs
     case receipts
@@ -10,6 +11,9 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case approvals
     case connections
     case usageSecurity
+    case memory
+    case instructionPreview
+    case agentProfiles
 
     var id: String { rawValue }
 
@@ -17,6 +21,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .dashboard: "Dashboard"
         case .commandCenter: "Command Center"
+        case .usage: "Usage"
         case .runs: "Runs"
         case .jobs: "Jobs"
         case .receipts: "Receipts"
@@ -24,6 +29,9 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .approvals: "Approvals"
         case .connections: "Connections"
         case .usageSecurity: "Usage & Security"
+        case .memory: "Memory"
+        case .instructionPreview: "Instructions"
+        case .agentProfiles: "Agent Profiles"
         }
     }
 
@@ -31,6 +39,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .dashboard: "gauge.with.dots.needle.33percent"
         case .commandCenter: "command.square.fill"
+        case .usage: "dollarsign.circle"
         case .runs: "play.circle"
         case .jobs: "tray.2"
         case .receipts: "doc.text"
@@ -38,15 +47,19 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .approvals: "checkmark.shield"
         case .connections: "link"
         case .usageSecurity: "chart.bar.xaxis"
+        case .memory: "brain"
+        case .instructionPreview: "doc.plaintext"
+        case .agentProfiles: "person.2"
         }
     }
 
     var group: RouteGroup {
         switch self {
-        case .dashboard, .commandCenter: .overview
+        case .dashboard, .commandCenter, .usage: .overview
         case .runs, .jobs, .receipts: .operations
         case .interventions, .approvals, .usageSecurity: .governance
-        case .connections: .integrations
+        case .memory, .instructionPreview: .knowledge
+        case .connections, .agentProfiles: .platform
         }
     }
 }
@@ -55,7 +68,8 @@ enum RouteGroup: String, CaseIterable, Identifiable {
     case overview
     case operations
     case governance
-    case integrations
+    case knowledge
+    case platform
 
     var id: String { rawValue }
 
@@ -64,7 +78,8 @@ enum RouteGroup: String, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .operations: "Operations"
         case .governance: "Governance"
-        case .integrations: "Integrations"
+        case .knowledge: "Knowledge"
+        case .platform: "Platform"
         }
     }
 

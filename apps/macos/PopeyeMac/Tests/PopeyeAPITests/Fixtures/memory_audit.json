@@ -1,0 +1,26 @@
+{
+  "totalMemories": 142,
+  "activeMemories": 120,
+  "archivedMemories": 22,
+  "byType": {
+    "episodic": 80,
+    "semantic": 45,
+    "procedural": 17
+  },
+  "byScope": {
+    "workspace": 100,
+    "global": 30,
+    "project": 12
+  },
+  "byClassification": {
+    "embeddable": 130,
+    "restricted": 10,
+    "redacted": 2
+  },
+  "averageConfidence": 0.72,
+  "staleCount": 8,
+  "consolidationsPerformed": 3,
+  "lastDecayRunAt": "2026-03-23T02:00:00Z",
+  "lastConsolidationRunAt": "2026-03-22T02:00:00Z",
+  "lastDailySummaryAt": "2026-03-23T00:00:00Z"
+}

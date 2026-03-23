@@ -17,6 +17,8 @@ struct AppShellView: View {
                         DashboardView(store: appModel.dashboardStore())
                     case .commandCenter:
                         CommandCenterView(store: appModel.commandCenterStore())
+                    case .usage:
+                        UsageView(store: appModel.usageStore())
                     case .runs:
                         RunsView(store: appModel.runsStore())
                     case .jobs:
@@ -31,6 +33,12 @@ struct AppShellView: View {
                         ConnectionsOverviewView(store: appModel.connectionsStore())
                     case .usageSecurity:
                         UsageSecurityView(store: appModel.usageSecurityStore())
+                    case .memory:
+                        MemoryView(store: appModel.memoryStore())
+                    case .instructionPreview:
+                        InstructionPreviewView(store: appModel.instructionPreviewStore())
+                    case .agentProfiles:
+                        AgentProfilesView(store: appModel.agentProfilesStore())
                     }
                 } else {
                     PlaceholderView(route: .dashboard)

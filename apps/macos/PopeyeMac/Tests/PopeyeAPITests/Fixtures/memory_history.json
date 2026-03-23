@@ -1,0 +1,33 @@
+{
+  "memoryId": "mem-001",
+  "versionChain": [
+    {
+      "factId": "fact-v2",
+      "text": "User prefers concise commit messages using type(scope): description format.",
+      "createdAt": "2026-03-20T14:30:00Z",
+      "isLatest": true,
+      "relation": "supersedes"
+    },
+    {
+      "factId": "fact-v1",
+      "text": "User likes short commit messages.",
+      "createdAt": "2026-03-15T09:00:00Z",
+      "isLatest": false,
+      "relation": null
+    }
+  ],
+  "evidenceLinks": [
+    {
+      "artifactId": "art-001",
+      "excerpt": "Please use conventional commits format",
+      "createdAt": "2026-03-15T09:00:00Z"
+    }
+  ],
+  "operatorActions": [
+    {
+      "actionKind": "pin",
+      "reason": "Important preference",
+      "createdAt": "2026-03-21T10:00:00Z"
+    }
+  ]
+}

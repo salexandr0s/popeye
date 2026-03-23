@@ -174,6 +174,64 @@ public actor ControlAPIClient {
         try await post(.resolveApproval(id: id), body: ApprovalResolveInput(decision: decision, decisionReason: reason))
     }
 
+    // MARK: - Memory
+
+    public func searchMemories(query: String, limit: Int = 20, scope: String? = nil, types: String? = nil, domains: String? = nil) async throws -> MemorySearchResponseDTO {
+        try await get(.memorySearch(query: query, limit: limit, scope: scope, types: types, domains: domains))
+    }
+
+    public func listMemories() async throws -> [MemoryRecordDTO] {
+        try await get(.memories)
+    }
+
+    public func getMemory(id: String) async throws -> MemoryRecordDTO {
+        try await get(.memory(id: id))
+    }
+
+    public func getMemoryHistory(id: String) async throws -> MemoryHistoryDTO {
+        try await get(.memoryHistory(id: id))
+    }
+
+    public func memoryAudit() async throws -> MemoryAuditDTO {
+        try await get(.memoryAudit)
+    }
+
+    public func pinMemory(id: String, targetKind: String, reason: String? = nil) async throws -> MemoryRecordDTO {
+        try await post(.memoryPin(id: id), body: MemoryPinInput(targetKind: targetKind, reason: reason))
+    }
+
+    public func forgetMemory(id: String, reason: String? = nil) async throws -> MemoryRecordDTO {
+        try await post(.memoryForget(id: id), body: MemoryForgetInput(reason: reason))
+    }
+
+    public func proposePromotion(id: String, targetPath: String) async throws -> MemoryPromotionProposalDTO {
+        try await post(.memoryPromotePropose(id: id), body: MemoryPromotionProposeInput(targetPath: targetPath))
+    }
+
+    public func executePromotion(id: String, input: MemoryPromotionExecuteInput) async throws -> MemoryPromotionProposalDTO {
+        try await post(.memoryPromoteExecute(id: id), body: input)
+    }
+
+    public func triggerMemoryMaintenance() async throws -> EmptyResponseDTO {
+        try await post(.memoryMaintenance)
+    }
+
+    // MARK: - Agent Profiles
+
+    public func listAgentProfiles() async throws -> [AgentProfileDTO] {
+        try await get(.agentProfiles)
+    }
+
+    public func getAgentProfile(id: String) async throws -> AgentProfileDTO {
+        try await get(.agentProfile(id: id))
+    }
+
+    // MARK: - Instruction Previews
+
+    public func instructionPreview(scope: String) async throws -> InstructionPreviewDTO {
+        try await get(.instructionPreview(scope: scope))
+    }
+
     // MARK: - SSE Stream
 
     public func eventStreamBytes() async throws -> (URLSession.AsyncBytes, URLResponse) {
@@ -255,3 +313,5 @@ public actor ControlAPIClient {
 struct ErrorResponseDTO: Decodable, Sendable {
     let error: String
 }
+
+public struct EmptyResponseDTO: Decodable, Sendable {}

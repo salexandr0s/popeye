@@ -79,3 +79,49 @@ public extension Endpoint {
 public extension Endpoint {
     static let connections = Endpoint(path: "/v1/connections")
 }
+
+// MARK: - Memory Endpoints
+
+public extension Endpoint {
+    static let memories = Endpoint(path: "/v1/memory")
+
+    static func memorySearch(query: String, limit: Int = 20, scope: String? = nil, types: String? = nil, domains: String? = nil, full: Bool = false) -> Endpoint {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        if full { items.append(URLQueryItem(name: "full", value: "true")) }
+        if let scope { items.append(URLQueryItem(name: "scope", value: scope)) }
+        if let types { items.append(URLQueryItem(name: "types", value: types)) }
+        if let domains { items.append(URLQueryItem(name: "domains", value: domains)) }
+        return Endpoint(path: "/v1/memory/search", queryItems: items)
+    }
+
+    static func memory(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)") }
+    static func memoryDescribe(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/describe") }
+    static func memoryExpand(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/expand") }
+    static func memoryHistory(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/history") }
+    static func memoryPin(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/pin", method: .post) }
+    static func memoryForget(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/forget", method: .post) }
+    static func memoryPromotePropose(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/promote/propose", method: .post) }
+    static func memoryPromoteExecute(id: String) -> Endpoint { Endpoint(path: "/v1/memory/\(id)/promote/execute", method: .post) }
+
+    static let memoryAudit = Endpoint(path: "/v1/memory/audit")
+    static let memoryIntegrity = Endpoint(path: "/v1/memory/integrity")
+    static let memoryMaintenance = Endpoint(path: "/v1/memory/maintenance", method: .post)
+}
+
+// MARK: - Agent Profiles
+
+public extension Endpoint {
+    static let agentProfiles = Endpoint(path: "/v1/agent-profiles")
+    static func agentProfile(id: String) -> Endpoint { Endpoint(path: "/v1/agent-profiles/\(id)") }
+}
+
+// MARK: - Instruction Previews
+
+public extension Endpoint {
+    static func instructionPreview(scope: String) -> Endpoint {
+        Endpoint(path: "/v1/instruction-previews/\(scope)")
+    }
+}

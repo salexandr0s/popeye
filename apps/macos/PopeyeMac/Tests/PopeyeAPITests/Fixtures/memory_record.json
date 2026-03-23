@@ -1,0 +1,21 @@
+{
+  "id": "mem-001",
+  "description": "User prefers concise commit messages",
+  "classification": "embeddable",
+  "sourceType": "receipt",
+  "content": "The operator has repeatedly stated preference for short, conventional commit messages using the type(scope): description format.",
+  "confidence": 0.85,
+  "scope": "workspace",
+  "workspaceId": "ws-default",
+  "projectId": null,
+  "sourceRunId": "run-abc123",
+  "sourceTimestamp": "2026-03-20T14:30:00Z",
+  "memoryType": "semantic",
+  "dedupKey": "pref-commit-style",
+  "lastReinforcedAt": "2026-03-22T10:00:00Z",
+  "archivedAt": null,
+  "createdAt": "2026-03-15T09:00:00Z",
+  "durable": false,
+  "domain": "coding",
+  "contextReleasePolicy": "full"
+}
