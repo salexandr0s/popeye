@@ -1,0 +1,71 @@
+import SwiftUI
+import PopeyeAPI
+
+struct ReceiptsView: View {
+    @Bindable var store: ReceiptsStore
+    @State private var debouncer = ReloadDebouncer()
+
+    var body: some View {
+        Group {
+            if store.isLoading && store.receipts.isEmpty {
+                LoadingStateView(title: "Loading receipts...")
+            } else if store.receipts.isEmpty {
+                EmptyStateView(
+                    icon: "doc.text",
+                    title: "No receipts yet",
+                    description: "Receipts are generated after each run completes."
+                )
+            } else {
+                receiptsContent
+            }
+        }
+        .navigationTitle("Receipts")
+        .searchable(text: $store.searchText, prompt: "Filter receipts…")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Picker("Status", selection: $store.statusFilter) {
+                    Text("All Statuses").tag(String?.none)
+                    Divider()
+                    ForEach(store.availableStatuses, id: \.self) { status in
+                        Text(status.replacing("_", with: " ").capitalized)
+                            .tag(Optional(status))
+                    }
+                }
+                .frame(width: 140)
+            }
+        }
+        .task {
+            await store.load()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
+            Task { await store.load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
+            if let signal = notification.object as? InvalidationSignal, [.receipts, .general].contains(signal) {
+                debouncer.schedule { [store] in await store.load() }
+            }
+        }
+    }
+
+    private var receiptsContent: some View {
+        HSplitView {
+            ReceiptsTableView(store: store)
+                .frame(minWidth: 400)
+            inspectorColumn
+                .frame(minWidth: 300)
+        }
+    }
+
+    @ViewBuilder
+    private var inspectorColumn: some View {
+        if let receipt = store.selectedReceipt {
+            ReceiptInspectorView(receipt: receipt)
+        } else if store.isLoadingDetail {
+            LoadingStateView(title: "Loading receipt details...")
+        } else {
+            Text("Select a receipt to inspect")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}

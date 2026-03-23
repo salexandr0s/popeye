@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {
+      "code": "file_permissions",
+      "severity": "info",
+      "message": "Data directory permissions are correct (700)",
+      "component": "filesystem"
+    },
+    {
+      "code": "auth_token_strength",
+      "severity": "warn",
+      "message": "Operator token is below recommended entropy",
+      "component": "auth",
+      "details": {
+        "recommendation": "Regenerate with openssl rand -hex 32"
+      }
+    }
+  ]
+}

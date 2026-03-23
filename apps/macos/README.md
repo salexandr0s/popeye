@@ -1,27 +1,55 @@
-# Popeye macOS Client (Deferred)
+# Popeye macOS Client
 
-Native Swift macOS client for the Popeye agent platform. **Deferred until the web inspector validates the API boundary.**
-
-## Planned Approach
-
-- `ControlAPIClient` using `URLSession` + `Codable` structs
-- Generated from JSON Schema once the API is stable
-- Daemon management (start/stop/restart via control API)
-- Read-only views matching web inspector scope
-
-## Architecture
-
-- Separate API client layer (`Sources/PopeyeAPI/`)
-- No business logic in views
-- No direct file or DB reads — all data flows through the control API
-- SwiftUI views matching the web inspector's 8 view areas
-
-## Prerequisites
-
-- Phase 9 web inspector validated and stable
-- API contracts finalized with response schemas
-- OpenAPI or JSON Schema export available
+Native Swift macOS operator console for the Popeye agent platform.
 
 ## Status
 
-Not started. See `docs/ui-surface.md` for the web inspector that ships first.
+**Active development** — Phase 1 (app shell + API client foundation) complete.
+
+## Requirements
+
+- macOS 15+ (Sequoia)
+- Swift 6.0+
+- Xcode 16+
+
+## Build
+
+```bash
+cd apps/macos/PopeyeMac
+swift build
+```
+
+## Test
+
+```bash
+cd apps/macos/PopeyeMac
+swift test
+```
+
+## Open in Xcode
+
+```bash
+cd apps/macos/PopeyeMac
+open Package.swift
+```
+
+## Architecture
+
+- **PopeyeAPI** — reusable library: `ControlAPIClient` actor, DTOs, services, auth, SSE
+- **PopeyeMac** — SwiftUI app: `NavigationSplitView` shell, feature stores, views
+- All data flows through the loopback control API (`http://127.0.0.1:3210/v1/`)
+- No direct SQLite or runtime file access
+- Bearer auth + CSRF for mutations
+- `@Observable` + Swift Concurrency throughout
+
+## Scope (v1)
+
+- Dashboard home
+- Command Center (live operational cockpit)
+- Runs / Jobs / Receipts investigation
+- Interventions / Approvals
+- Connections overview (read-only)
+- Usage & Security summary
+- Narrow mutation set: retry/cancel run, pause/resume/enqueue job, resolve intervention, approve/deny
+
+See `docs/internal/dashboard/` for detailed planning documents.

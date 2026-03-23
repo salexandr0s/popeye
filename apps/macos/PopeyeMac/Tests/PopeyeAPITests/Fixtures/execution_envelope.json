@@ -1,0 +1,26 @@
+{
+  "run_id": "run-abc123",
+  "task_id": "task-ghi789",
+  "profile_id": "profile-default",
+  "workspace_id": "ws-main",
+  "project_id": "proj-popeye",
+  "mode": "interactive",
+  "model_policy": "claude-sonnet-4-20250514",
+  "allowed_runtime_tools": ["file_read", "file_write", "shell_exec"],
+  "allowed_capability_ids": ["cap-code-review", "cap-memory-write"],
+  "memory_scope": "workspace",
+  "recall_scope": "workspace",
+  "filesystem_policy_class": "workspace",
+  "context_release_policy": "summary_only",
+  "read_roots": ["/Users/nationalbank/GitHub/popeye"],
+  "write_roots": ["/Users/nationalbank/GitHub/popeye"],
+  "protected_paths": [".env", "WORKSPACE.md"],
+  "scratch_root": "/tmp/popeye/scratch/run-abc123",
+  "cwd": "/Users/nationalbank/GitHub/popeye",
+  "provenance": {
+    "derived_at": "2026-03-22T10:00:00.000Z",
+    "engine_kind": "pi",
+    "session_policy": "dedicated",
+    "warnings": []
+  }
+}

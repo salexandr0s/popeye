@@ -1,0 +1,10 @@
+{
+  "engine_kind": "pi",
+  "persistent_session_support": true,
+  "resume_by_session_ref_support": true,
+  "host_tool_mode": "native",
+  "compaction_event_support": true,
+  "cancellation_mode": "rpc_abort",
+  "accepted_request_metadata": [],
+  "warnings": []
+}

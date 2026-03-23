@@ -1,0 +1,13 @@
+{
+  "id": "run-abc123",
+  "job_id": "job-def456",
+  "task_id": "task-ghi789",
+  "workspace_id": "ws-main",
+  "profile_id": "profile-default",
+  "session_root_id": "sess-root-001",
+  "engine_session_ref": "pi-sess-ref-42",
+  "state": "running",
+  "started_at": "2026-03-22T10:00:00.000Z",
+  "finished_at": null,
+  "error": null
+}

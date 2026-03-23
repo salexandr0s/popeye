@@ -1,0 +1,22 @@
+import SwiftUI
+
+struct InspectorSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            content
+        }
+    }
+}
+
+#Preview {
+    InspectorSection(title: "Details") {
+        Text("Sample content")
+    }
+    .padding()
+}

@@ -1,0 +1,30 @@
+{
+  "id": "conn-gh-001",
+  "domain": "github",
+  "provider_kind": "oauth",
+  "label": "GitHub (nationalbank)",
+  "mode": "read_write",
+  "enabled": true,
+  "last_sync_at": "2026-03-22T09:30:00.000Z",
+  "last_sync_status": "success",
+  "policy": {
+    "status": "ready",
+    "secret_status": "configured",
+    "mutating_requires_approval": true
+  },
+  "health": {
+    "status": "healthy",
+    "auth_state": "configured",
+    "checked_at": "2026-03-22T09:30:00.000Z",
+    "last_error": null,
+    "remediation": null
+  },
+  "sync": {
+    "last_attempt_at": "2026-03-22T09:30:00.000Z",
+    "last_success_at": "2026-03-22T09:30:00.000Z",
+    "status": "success",
+    "lag_summary": "0s"
+  },
+  "created_at": "2026-03-20T08:00:00.000Z",
+  "updated_at": "2026-03-22T09:30:00.000Z"
+}

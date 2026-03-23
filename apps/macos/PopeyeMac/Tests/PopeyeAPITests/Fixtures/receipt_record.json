@@ -1,0 +1,71 @@
+{
+  "id": "rcpt-001",
+  "run_id": "run-abc123",
+  "job_id": "job-def456",
+  "task_id": "task-ghi789",
+  "workspace_id": "ws-main",
+  "status": "succeeded",
+  "summary": "Completed code review task",
+  "details": "Reviewed 3 files, found 2 issues",
+  "usage": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "tokens_in": 12000,
+    "tokens_out": 4500,
+    "estimated_cost_usd": 0.087
+  },
+  "runtime": {
+    "project_id": "proj-popeye",
+    "profile_id": "profile-default",
+    "execution": {
+      "mode": "interactive",
+      "session_policy": "dedicated",
+      "memory_scope": "workspace",
+      "recall_scope": "workspace",
+      "filesystem_policy_class": "workspace",
+      "context_release_policy": "summary_only",
+      "warnings": []
+    },
+    "context_releases": {
+      "total_releases": 2,
+      "total_token_estimate": 8500,
+      "by_domain": {
+        "memory": {
+          "count": 1,
+          "tokens": 3500
+        },
+        "files": {
+          "count": 1,
+          "tokens": 5000
+        }
+      }
+    },
+    "timeline": [
+      {
+        "id": "evt-t1",
+        "at": "2026-03-22T10:00:00.000Z",
+        "kind": "run",
+        "severity": "info",
+        "code": "run_started",
+        "title": "Run started",
+        "detail": "Run abc123 started for task ghi789",
+        "source": "run_event",
+        "metadata": {}
+      },
+      {
+        "id": "evt-t2",
+        "at": "2026-03-22T10:05:30.000Z",
+        "kind": "context_release",
+        "severity": "info",
+        "code": "context_released",
+        "title": "Context released",
+        "detail": "Released 8500 tokens across 2 domains",
+        "source": "context_release",
+        "metadata": {
+          "domains": "memory,files"
+        }
+      }
+    ]
+  },
+  "created_at": "2026-03-22T10:06:00.000Z"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "intv-001",
+  "code": "needs_credentials",
+  "run_id": "run-abc123",
+  "status": "open",
+  "reason": "GitHub API token required for repository access",
+  "created_at": "2026-03-22T10:01:00.000Z",
+  "resolved_at": null,
+  "updated_at": "2026-03-22T10:01:00.000Z",
+  "resolution_note": null
+}
