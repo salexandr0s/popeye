@@ -316,7 +316,7 @@ export class VaultManager {
     const iv = raw.subarray(0, 12);
     const authTag = raw.subarray(12, 28);
     const encrypted = raw.subarray(28);
-    const decipher = createDecipheriv('aes-256-gcm', kek, iv);
+    const decipher = createDecipheriv('aes-256-gcm', kek, iv, { authTagLength: 16 });
     decipher.setAuthTag(authTag);
     return Buffer.concat([decipher.update(encrypted), decipher.final()]);
   }
@@ -341,7 +341,7 @@ export class VaultManager {
     const iv = raw.subarray(0, 12);
     const authTag = raw.subarray(12, 28);
     const encrypted = raw.subarray(28);
-    const decipher = createDecipheriv('aes-256-gcm', dek, iv);
+    const decipher = createDecipheriv('aes-256-gcm', dek, iv, { authTagLength: 16 });
     decipher.setAuthTag(authTag);
     const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
     writeFileSync(outputPath, plaintext, { mode: 0o600 });

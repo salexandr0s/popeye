@@ -244,14 +244,12 @@ export class TodoFacade {
 
     const secretRef = connection.secretRefId
       ? (this.rotateSecret(connection.secretRefId, input.apiToken) ?? this.setSecret({
-        provider: 'keychain',
         key: 'todoist-api-token',
         value: input.apiToken,
         connectionId: connection.id,
         description: 'Todoist API token',
       }))
       : this.setSecret({
-        provider: 'keychain',
         key: 'todoist-api-token',
         value: input.apiToken,
         connectionId: connection.id,

@@ -326,7 +326,6 @@ export class ConnectionService {
       }
     }
     return this.secretStore.setSecret({
-      provider: 'keychain',
       key: `${providerKind}-oauth`,
       value: serialized,
       ...(connectionId ? { connectionId } : {}),
