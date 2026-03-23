@@ -24,7 +24,7 @@ describe('rate limiting', () => {
       engine: { kind: 'fake', command: 'node', args: [] },
       workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     });
-    const app = await createControlApi({ runtime });
+    const app = await createControlApi({ runtime, rateLimitMax: 100 });
 
     const responses = [];
     for (let i = 0; i <= 100; i++) {

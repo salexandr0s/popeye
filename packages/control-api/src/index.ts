@@ -95,6 +95,8 @@ export interface ControlApiDependencies {
   useSecureCookies?: boolean;
   /** Maximum concurrent SSE connections. Defaults to 10. */
   maxSseConnections?: number;
+  /** Maximum API requests per minute per IP. Defaults to 600. */
+  rateLimitMax?: number;
   /** Optional structured logger for security and operational events. */
   logger?: PopeyeLogger;
 }
@@ -524,7 +526,7 @@ export async function createControlApi(
   });
   await app.register(sensible);
   await app.register(rateLimit, {
-    max: 100,
+    max: dependencies.rateLimitMax ?? 600,
     timeWindow: '1 minute',
     allowList: (request) => !request.url.startsWith('/v1/'),
   });
