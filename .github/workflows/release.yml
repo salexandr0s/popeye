@@ -18,6 +18,8 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,8 +37,8 @@ jobs:
       - name: Verify version matches input
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "$PKG_VERSION" != "${{ inputs.version }}" ]; then
-            echo "ERROR: package.json version ($PKG_VERSION) does not match input (${{ inputs.version }})"
+          if [ "$PKG_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "ERROR: package.json version ($PKG_VERSION) does not match input ($RELEASE_VERSION)"
             exit 1
           fi
 
@@ -85,11 +87,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ inputs.version }}" \
+          gh release create "v$RELEASE_VERSION" \
             --draft \
-            --title "Popeye v${{ inputs.version }}" \
+            --title "Popeye v$RELEASE_VERSION" \
             --notes-file dist/pkg/RELEASE-NOTES.md \
-            dist/pkg/popeye-${{ inputs.version }}-darwin.pkg \
-            dist/pkg/popeye-${{ inputs.version }}-darwin.tar.gz \
+            "dist/pkg/popeye-${RELEASE_VERSION}-darwin.pkg" \
+            "dist/pkg/popeye-${RELEASE_VERSION}-darwin.tar.gz" \
             dist/pkg/CHECKSUMS.sha256 \
             dist/pkg/INVENTORY.md
