@@ -1614,4 +1614,99 @@ describe('engine-pi', () => {
       expect(result.iterationsUsed).toBeUndefined();
     });
   });
+
+  describe('cacheRetention forwarding', () => {
+    it('forwards cacheRetention in the RPC prompt command when set', async () => {
+      const piPath = createFakePiRepo(`
+        let buffer = '';
+        function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+        process.stdin.setEncoding('utf8');
+        process.on('SIGTERM', () => process.exit(0));
+        process.stdin.on('data', (chunk) => {
+          buffer += chunk;
+          const lines = buffer.split('\\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const message = JSON.parse(line);
+            if (message.type === 'get_state') {
+              write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:cache-session', isStreaming: false } });
+            }
+            if (message.type === 'prompt') {
+              write({ id: message.id, type: 'response', command: 'prompt', success: true });
+              const retention = message.cacheRetention ?? 'absent';
+              write({
+                type: 'agent_end',
+                messages: [{
+                  role: 'assistant',
+                  provider: 'pi',
+                  model: 'stub',
+                  stopReason: 'stop',
+                  usage: { input: 1, output: 1, cost: { total: 0 } },
+                  content: [{ type: 'text', text: 'cacheRetention=' + retention }],
+                }],
+              });
+            }
+          }
+        });
+      `, { defaultCli: false });
+
+      const adapter = new PiEngineAdapter(explicitConfig(piPath));
+      const result = await adapter.run(runRequest('cache-test', { cacheRetention: 'long' }));
+
+      expect(result.failureClassification).toBeNull();
+      expect(result.events.find((e) => e.type === 'completed')?.payload.output).toContain('cacheRetention=long');
+
+      rmSync(piPath, { recursive: true, force: true });
+    });
+
+    it('omits cacheRetention from the RPC prompt command when undefined', async () => {
+      const piPath = createFakePiRepo(`
+        let buffer = '';
+        function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+        process.stdin.setEncoding('utf8');
+        process.on('SIGTERM', () => process.exit(0));
+        process.stdin.on('data', (chunk) => {
+          buffer += chunk;
+          const lines = buffer.split('\\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const message = JSON.parse(line);
+            if (message.type === 'get_state') {
+              write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:no-cache-session', isStreaming: false } });
+            }
+            if (message.type === 'prompt') {
+              write({ id: message.id, type: 'response', command: 'prompt', success: true });
+              const hasCacheRetention = 'cacheRetention' in message;
+              write({
+                type: 'agent_end',
+                messages: [{
+                  role: 'assistant',
+                  provider: 'pi',
+                  model: 'stub',
+                  stopReason: 'stop',
+                  usage: { input: 1, output: 1, cost: { total: 0 } },
+                  content: [{ type: 'text', text: 'hasCacheRetention=' + hasCacheRetention }],
+                }],
+              });
+            }
+          }
+        });
+      `, { defaultCli: false });
+
+      const adapter = new PiEngineAdapter(explicitConfig(piPath));
+      const result = await adapter.run(runRequest('no-cache-test'));
+
+      expect(result.failureClassification).toBeNull();
+      expect(result.events.find((e) => e.type === 'completed')?.payload.output).toContain('hasCacheRetention=false');
+
+      rmSync(piPath, { recursive: true, force: true });
+    });
+
+    it('defaultCacheRetention defaults to short in EngineConfigSchema', () => {
+      const config = EngineConfigSchema.parse({});
+      expect(config.defaultCacheRetention).toBe('short');
+    });
+  });
 });

@@ -65,6 +65,7 @@ export const EngineConfigSchema = z.object({
   modelRouting: ModelRoutingConfigSchema.default({ enabled: false }),
   maxIterationsPerRun: z.number().int().positive().default(200),
   budgetWarningThreshold: z.number().min(0).max(1).default(0.8),
+  defaultCacheRetention: z.enum(['none', 'short', 'long']).default('short'),
 });
 
 export const OAuthClientConfigSchema = z.object({
@@ -89,6 +90,7 @@ const DEFAULT_ENGINE_CONFIG = {
   modelRouting: { enabled: false },
   maxIterationsPerRun: 200,
   budgetWarningThreshold: 0.8,
+  defaultCacheRetention: 'short' as const,
 };
 
 export const ProjectConfigSchema = z.object({

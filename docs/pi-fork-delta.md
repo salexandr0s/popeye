@@ -8,7 +8,7 @@
 - `config/example.json` is the repo-visible Pi pin and must match the Pi `packages/coding-agent/package.json` version
 - Current local upstream shape observed during this rebuild:
   - repo root version: `0.0.3`
-  - `packages/coding-agent` version: `0.57.1`
+  - `packages/coding-agent` version: `0.62.0`
 - `security-audit` reports `pi_version_not_pinned` (warn) when no `piVersion` is set, and `pi_version_mismatch` (warn) when the configured coding-agent version differs
 - `security-audit` also warns when `config.engine.allowRuntimeToolBridgeFallback` remains enabled in Pi mode
 
@@ -22,7 +22,8 @@
 - Popeye starts the configured Pi command from `config.engine.piPath` and appends `--mode rpc`.
 - If `engine.command === "node"` and `engine.args` is empty, `@popeye/engine-pi` defaults to `packages/coding-agent/dist/cli.js` inside the Pi checkout.
 - The runtime now passes a structured `EngineRunRequest` into `@popeye/engine-pi`, but the Pi RPC bridge still submits a prompt-oriented RPC flow underneath.
-- Structured request execution controls currently honored by `@popeye/engine-pi`: `cwd`, `modelOverride`, and `runtimeTools`.
+- Structured request execution controls currently honored by `@popeye/engine-pi`: `cwd`, `modelOverride`, `cacheRetention`, and `runtimeTools`.
+- `cacheRetention` is forwarded as an optional field in the RPC `prompt` command. When present, Pi's Anthropic provider uses it for prompt cache control. When absent, Pi falls back to `PI_CACHE_RETENTION` env var (default: `"short"`).
 - Runtime metadata fields such as `workspaceId`, `projectId`, `sessionPolicy`, `instructionSnapshotId`, and `trigger` are accepted but not yet forwarded into Pi RPC semantics.
 - Popeye speaks strict JSONL over stdin/stdout.
 - Popeye sends:

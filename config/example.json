@@ -25,9 +25,10 @@
   "engine": {
     "kind": "fake",
     "piPath": "../pi",
-    "piVersion": "0.57.1",
+    "piVersion": "0.62.0",
     "command": "node",
-    "args": []
+    "args": [],
+    "defaultCacheRetention": "short"
   },
   "logging": {
     "level": "info"

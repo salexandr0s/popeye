@@ -133,6 +133,7 @@ export interface EngineRunRequest {
   instructionSnapshotId?: string;
   cwd?: string;
   modelOverride?: string;
+  cacheRetention?: 'none' | 'short' | 'long';
   trigger?: EngineTriggerDescriptor;
   runtimeTools?: RuntimeToolDescriptor[];
   maxIterations?: number;
@@ -1344,7 +1345,12 @@ export class PiEngineAdapter implements EngineAdapter {
             if (this.allowRuntimeToolBridgeFallback) {
               if (!promptState.requested) {
                 promptState.requested = true;
-                sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+                sendCommand({
+                id: INTERNAL_IDS.prompt,
+                type: 'prompt',
+                message: request.prompt,
+                ...(request.cacheRetention ? { cacheRetention: request.cacheRetention } : {}),
+              });
               }
               return;
             }
@@ -1359,7 +1365,12 @@ export class PiEngineAdapter implements EngineAdapter {
         }
         if (!promptState.requested) {
           promptState.requested = true;
-          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+          sendCommand({
+                id: INTERNAL_IDS.prompt,
+                type: 'prompt',
+                message: request.prompt,
+                ...(request.cacheRetention ? { cacheRetention: request.cacheRetention } : {}),
+              });
         }
         return;
       }
@@ -1383,7 +1394,12 @@ export class PiEngineAdapter implements EngineAdapter {
         // Proceed to prompt regardless of registration outcome (fallback to extension bridge)
         if (!promptState.requested) {
           promptState.requested = true;
-          sendCommand({ id: INTERNAL_IDS.prompt, type: 'prompt', message: request.prompt });
+          sendCommand({
+                id: INTERNAL_IDS.prompt,
+                type: 'prompt',
+                message: request.prompt,
+                ...(request.cacheRetention ? { cacheRetention: request.cacheRetention } : {}),
+              });
         }
         return;
       }

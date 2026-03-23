@@ -302,6 +302,7 @@ export class RunExecutor {
         instructionSnapshotId: instructionBundle.id,
         ...(envelope.cwd ? { cwd: envelope.cwd } : {}),
         sessionPolicy: { type: 'dedicated' as const, rootId: sessionRoot.id },
+        cacheRetention: this.deps.config.engine.defaultCacheRetention,
         trigger: {
           source: task.source,
           timestamp: run.startedAt,

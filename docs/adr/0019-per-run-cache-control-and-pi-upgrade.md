@@ -1,7 +1,7 @@
 # ADR 0019: Per-run cache control and Pi fork upgrade to v0.58+
 
 **Date:** 2026-03-23
-**Status:** pending
+**Status:** accepted
 **Classification:** Pi wrapper (cache control forwarding) + Pi fork modification (RPC protocol extension)
 
 ## Context
