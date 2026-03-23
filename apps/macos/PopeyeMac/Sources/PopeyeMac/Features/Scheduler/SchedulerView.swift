@@ -30,15 +30,19 @@ struct SchedulerView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
             Task {
-                await jobsStore.load()
-                await dashboardStore.load()
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await jobsStore.load() }
+                    group.addTask { await dashboardStore.load() }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
             if let signal = notification.object as? InvalidationSignal, [.jobs, .general].contains(signal) {
                 debouncer.schedule { [jobsStore, dashboardStore] in
-                    await jobsStore.load()
-                    await dashboardStore.load()
+                    await withTaskGroup(of: Void.self) { group in
+                        group.addTask { await jobsStore.load() }
+                        group.addTask { await dashboardStore.load() }
+                    }
                 }
             }
         }

@@ -235,7 +235,11 @@ public actor ControlAPIClient {
     // MARK: - Telegram
 
     public func telegramRelayCheckpoint(workspaceId: String = "default") async throws -> TelegramRelayCheckpointDTO? {
-        try await get(.telegramRelayCheckpoint(workspaceId: workspaceId))
+        do {
+            return try await get(.telegramRelayCheckpoint(workspaceId: workspaceId))
+        } catch APIError.notFound {
+            return nil
+        }
     }
 
     public func listUncertainDeliveries(workspaceId: String = "default") async throws -> [TelegramDeliveryDTO] {
