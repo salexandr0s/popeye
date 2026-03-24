@@ -42,6 +42,7 @@ import {
 import type { MemoryDescription, MemoryExpansion } from './runtime-tools.js';
 import { RuntimeValidationError } from './errors.js';
 import { buildCoreRuntimeTools } from './runtime-tools.js';
+import { buildDelegationTool } from './delegation-tool.js';
 import {
   classifyFailureFromMessage,
   isTerminalRunState,
@@ -436,13 +437,30 @@ export class RunExecutor {
   }
 
   private createCoreRuntimeTools(_task: TaskRecord, runId: string): RuntimeToolDescriptor[] {
-    return buildCoreRuntimeTools({
+    const memoryTools = buildCoreRuntimeTools({
       getExecutionEnvelope: (id) => this.deps.getExecutionEnvelope(id),
       searchMemory: (query) => this.deps.searchMemory(query),
       describeMemory: (id, scope) => this.deps.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.deps.expandMemory(id, maxTokens, scope),
       explainMemoryRecall: (input, scope) => this.deps.explainMemoryRecall(input, scope),
     }, runId);
+
+    const delegationTool = buildDelegationTool({
+      getRun: (id) => this.deps.getRun(id),
+      countToolCallEvents: (id) => {
+        const row = this.deps.db.prepare("SELECT COUNT(*) as cnt FROM run_events WHERE run_id = ? AND type = 'tool_call'").get(id) as { cnt: number } | undefined;
+        return row?.cnt ?? 0;
+      },
+      getEngineConfig: () => ({
+        maxIterationsPerRun: this.deps.config.engine.maxIterationsPerRun,
+        maxDelegationDepth: this.deps.config.engine.maxDelegationDepth,
+      }),
+      startDelegateRun: async () => {
+        throw new Error('Delegation execution not yet implemented — startDelegateRun requires engine spawning logic in RunExecutor');
+      },
+    }, runId);
+
+    return [...memoryTools, delegationTool];
   }
 
   private persistEngineEvent(runId: string, event: NormalizedEngineEvent): void {
