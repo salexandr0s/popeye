@@ -253,6 +253,7 @@ export class ReceiptBuilder {
         ? contextReleases
         : null,
       timeline,
+      delegationSummary: null,
     };
 
     if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.timeline.length === 0) {
@@ -286,6 +287,7 @@ export class ReceiptBuilder {
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
       timeline: mergedTimeline,
+      delegationSummary: receipt.runtime.delegationSummary ?? derived.delegationSummary ?? null,
     };
   }
 

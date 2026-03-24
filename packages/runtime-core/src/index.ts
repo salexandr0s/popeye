@@ -16,8 +16,11 @@ export * from './vault-manager.js';
 export * from './context-release-service.js';
 export * from './capability-facade.js';
 export * from './capability-registry.js';
+export * from './run-event-search.js';
 export * from './migration-manager.js';
 export * from './vault-backup.js';
+export * from './trajectory-export.js';
+export * from './delegation-tool.js';
 
 // Backward-compat re-exports from domain packages
 export { evaluateCriticalFileMutation } from '@popeye/workspace';

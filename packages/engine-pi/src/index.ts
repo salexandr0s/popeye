@@ -102,7 +102,7 @@ export type EngineSessionPolicy =
   | { type: 'per_task'; taskId: string };
 
 export interface EngineTriggerDescriptor {
-  source: 'manual' | 'heartbeat' | 'schedule' | 'telegram' | 'api';
+  source: 'manual' | 'heartbeat' | 'schedule' | 'telegram' | 'api' | 'delegation';
   originId?: string;
   timestamp: string;
 }

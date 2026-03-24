@@ -8,3 +8,13 @@ export {
   buildCanonicalRunReply,
   buildCanonicalRunReplyText,
 } from './run-reply.js';
+export {
+  queryTimeBucketedUsage,
+  queryModelBreakdown,
+  queryStatusBreakdown,
+  queryProjectCosts,
+  type TimeBucketedUsageOptions,
+  type ModelBreakdownOptions,
+  type StatusBreakdownOptions,
+  type ProjectCostsOptions,
+} from './analytics-queries.js';

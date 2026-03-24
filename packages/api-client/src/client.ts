@@ -73,6 +73,16 @@ import {
   TelegramSendAttemptRecordSchema,
   type UsageSummary,
   UsageSummarySchema,
+  type AnalyticsUsageResponse,
+  AnalyticsUsageResponseSchema,
+  type AnalyticsModelsResponse,
+  AnalyticsModelsResponseSchema,
+  type AnalyticsProjectsResponse,
+  AnalyticsProjectsResponseSchema,
+  type SessionSearchResponse,
+  SessionSearchResponseSchema,
+  type DelegationTreeNode,
+  DelegationTreeNodeSchema,
   type WorkspaceListItem,
   WorkspaceListItemSchema,
   type IngestMessageInput,
@@ -521,6 +531,44 @@ export class PopeyeApiClient {
 
   async getReceipt(id: string): Promise<ReceiptRecord> {
     return this.get(`/v1/receipts/${encodeURIComponent(id)}`, ReceiptRecordSchema);
+  }
+
+  // --- Analytics ---
+
+  async analyticsUsage(options: { from?: string; to?: string; granularity?: string; workspaceId?: string } = {}): Promise<AnalyticsUsageResponse> {
+    return this.get(`/v1/analytics/usage${this.buildQuery(options)}`, AnalyticsUsageResponseSchema);
+  }
+
+  async analyticsModels(options: { from?: string; to?: string; workspaceId?: string } = {}): Promise<AnalyticsModelsResponse> {
+    return this.get(`/v1/analytics/models${this.buildQuery(options)}`, AnalyticsModelsResponseSchema);
+  }
+
+  async analyticsProjects(options: { from?: string; to?: string } = {}): Promise<AnalyticsProjectsResponse> {
+    return this.get(`/v1/analytics/projects${this.buildQuery(options)}`, AnalyticsProjectsResponseSchema);
+  }
+
+  // --- Session search ---
+
+  async searchSessions(query: string, options: { type?: string; workspaceId?: string; from?: string; to?: string; limit?: number } = {}): Promise<SessionSearchResponse> {
+    return this.get(`/v1/sessions/search${this.buildQuery({ q: query, ...options })}`, SessionSearchResponseSchema);
+  }
+
+  // --- Trajectory ---
+
+  async getRunTrajectory(runId: string, options: { format?: string; types?: string } = {}): Promise<string> {
+    const response = await fetch(`${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/trajectory${this.buildQuery(options)}`, { headers: this.headers() });
+    if (!response.ok) throw new ApiError(response.status, await response.text());
+    return response.text();
+  }
+
+  // --- Delegation ---
+
+  async listDelegateRuns(runId: string): Promise<RunRecord[]> {
+    return this.getArray(`/v1/runs/${encodeURIComponent(runId)}/delegates`, RunRecordSchema);
+  }
+
+  async getDelegationTree(runId: string): Promise<DelegationTreeNode> {
+    return this.get(`/v1/runs/${encodeURIComponent(runId)}/delegation-tree`, DelegationTreeNodeSchema);
   }
 
   async ingestMessage(input: IngestMessageInput): Promise<MessageIngressResponse> {

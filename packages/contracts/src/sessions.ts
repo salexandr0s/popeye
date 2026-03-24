@@ -6,6 +6,7 @@ export const SessionRootKindSchema = z.enum([
   'scheduled_task',
   'recovery',
   'telegram_user',
+  'delegation',
 ]);
 export type SessionRootKind = z.infer<typeof SessionRootKindSchema>;
 

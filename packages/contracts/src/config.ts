@@ -66,6 +66,7 @@ export const EngineConfigSchema = z.object({
   maxIterationsPerRun: z.number().int().positive().default(200),
   budgetWarningThreshold: z.number().min(0).max(1).default(0.8),
   defaultCacheRetention: z.enum(['none', 'short', 'long']).default('short'),
+  maxDelegationDepth: z.number().int().positive().default(3),
 });
 
 export const OAuthClientConfigSchema = z.object({
@@ -91,6 +92,7 @@ const DEFAULT_ENGINE_CONFIG = {
   maxIterationsPerRun: 200,
   budgetWarningThreshold: 0.8,
   defaultCacheRetention: 'short' as const,
+  maxDelegationDepth: 3,
 };
 
 export const ProjectConfigSchema = z.object({

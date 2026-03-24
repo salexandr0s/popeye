@@ -564,6 +564,28 @@ const APP_MIGRATIONS: Migration[] = [
       'ALTER TABLE runs ADD COLUMN iterations_used INTEGER;',
     ],
   },
+  {
+    id: '020-app-analytics-indexes',
+    statements: [
+      'CREATE INDEX IF NOT EXISTS idx_receipts_created_at ON receipts(created_at);',
+      'CREATE INDEX IF NOT EXISTS idx_receipts_workspace_created ON receipts(workspace_id, created_at);',
+    ],
+  },
+  {
+    id: '021-app-run-events-fts5',
+    statements: [
+      'CREATE VIRTUAL TABLE IF NOT EXISTS run_events_fts USING fts5(event_id UNINDEXED, run_id UNINDEXED, type, payload);',
+      'INSERT INTO run_events_fts(event_id, run_id, type, payload) SELECT id, run_id, type, payload FROM run_events;',
+    ],
+  },
+  {
+    id: '022-app-delegation',
+    statements: [
+      'ALTER TABLE runs ADD COLUMN parent_run_id TEXT REFERENCES runs(id);',
+      'ALTER TABLE runs ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;',
+      'CREATE INDEX idx_runs_parent_run_id ON runs(parent_run_id);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

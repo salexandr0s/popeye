@@ -59,6 +59,8 @@ export const RunRowSchema = z.object({
   finished_at: z.string().nullable(),
   error: z.string().nullable(),
   iterations_used: z.number().int().nonnegative().nullable().default(null),
+  parent_run_id: z.string().nullable().default(null),
+  delegation_depth: z.number().int().nonnegative().default(0),
 });
 
 export const RunEventRowSchema = z.object({
@@ -260,6 +262,8 @@ export function mapRunRow(row: unknown): RunRecord {
     finishedAt: parsed.finished_at,
     error: parsed.error,
     iterationsUsed: parsed.iterations_used,
+    parentRunId: parsed.parent_run_id,
+    delegationDepth: parsed.delegation_depth,
   });
 }
 

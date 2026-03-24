@@ -48,12 +48,21 @@ export const ReceiptTimelineEventSchema = z.object({
 });
 export type ReceiptTimelineEvent = z.infer<typeof ReceiptTimelineEventSchema>;
 
+export const DelegationReceiptSummarySchema = z.object({
+  parentRunId: z.string().nullable(),
+  childRunIds: z.array(z.string()),
+  totalDelegatedIterations: z.number().int().nonnegative(),
+  aggregatedUsage: UsageMetricsSchema,
+});
+export type DelegationReceiptSummary = z.infer<typeof DelegationReceiptSummarySchema>;
+
 export const ReceiptRuntimeSummarySchema = z.object({
   projectId: z.string().nullable().default(null),
   profileId: z.string().nullable().default(null),
   execution: ReceiptExecutionSummarySchema.nullable().default(null),
   contextReleases: ReceiptContextReleaseSummarySchema.nullable().default(null),
   timeline: z.array(ReceiptTimelineEventSchema).default([]),
+  delegationSummary: DelegationReceiptSummarySchema.nullable().default(null),
 });
 export type ReceiptRuntimeSummary = z.infer<typeof ReceiptRuntimeSummarySchema>;
 

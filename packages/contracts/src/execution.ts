@@ -11,7 +11,7 @@ export type RetryPolicy = z.infer<typeof RetryPolicySchema>;
 export const TaskSideEffectProfileSchema = z.enum(['read_only', 'external_side_effect']);
 export type TaskSideEffectProfile = z.infer<typeof TaskSideEffectProfileSchema>;
 
-export const TaskSourceSchema = z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']);
+export const TaskSourceSchema = z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api', 'delegation']);
 export type TaskSource = z.infer<typeof TaskSourceSchema>;
 
 export const ExecutionProfileModeSchema = z.enum(['restricted', 'interactive', 'elevated']);
@@ -34,6 +34,7 @@ export const InterventionCodeSchema = z.enum([
   'auth_failure',
   'prompt_injection_quarantined',
   'failed_final',
+  'delegation_budget_exhausted',
 ]);
 export type InterventionCode = z.infer<typeof InterventionCodeSchema>;
 
@@ -103,6 +104,8 @@ export const RunRecordSchema = z.object({
   finishedAt: z.string().nullable(),
   error: z.string().nullable(),
   iterationsUsed: z.number().int().nonnegative().nullable().default(null),
+  parentRunId: z.string().nullable().default(null),
+  delegationDepth: z.number().int().nonnegative().default(0),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 

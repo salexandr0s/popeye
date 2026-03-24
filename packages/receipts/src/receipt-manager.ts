@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
+  AnalyticsModelBreakdown,
+  AnalyticsProjectCost,
+  AnalyticsTimeBucket,
   AppConfig,
   ReceiptRecord,
   UsageSummary,
@@ -11,6 +14,14 @@ import {
 } from '@popeye/contracts';
 import { redactText } from '@popeye/observability';
 
+import {
+  queryModelBreakdown,
+  queryProjectCosts,
+  queryTimeBucketedUsage,
+  type ModelBreakdownOptions,
+  type ProjectCostsOptions,
+  type TimeBucketedUsageOptions,
+} from './analytics-queries.js';
 import { readReceiptArtifact, writeReceiptArtifact } from './receipt-artifacts.js';
 import { mapReceiptRow, ReceiptIdRowSchema, UsageSummaryRowSchema } from './row-mappers.js';
 import { renderReceipt } from './render-receipt.js';
@@ -137,5 +148,17 @@ export class ReceiptManager {
       tokensOut: row.tokensOut,
       estimatedCostUsd: row.estimatedCostUsd,
     };
+  }
+
+  getAnalyticsUsage(options: TimeBucketedUsageOptions): AnalyticsTimeBucket[] {
+    return queryTimeBucketedUsage(this.databases.app, options);
+  }
+
+  getAnalyticsModels(options: ModelBreakdownOptions): AnalyticsModelBreakdown[] {
+    return queryModelBreakdown(this.databases.app, options);
+  }
+
+  getAnalyticsProjects(options: ProjectCostsOptions): AnalyticsProjectCost[] {
+    return queryProjectCosts(this.databases.app, options);
   }
 }

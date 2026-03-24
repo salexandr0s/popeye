@@ -1214,6 +1214,79 @@ export async function createControlApi(
   });
 
   app.get('/v1/usage/summary', async () => dependencies.runtime.getUsageSummary());
+
+  // --- Analytics routes ---
+
+  app.get('/v1/analytics/usage', async (request) => {
+    const query = z.object({
+      from: z.string().optional(),
+      to: z.string().optional(),
+      granularity: z.enum(['hourly', 'daily', 'weekly', 'monthly']).default('daily'),
+      workspaceId: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.getAnalyticsUsage(query);
+  });
+
+  app.get('/v1/analytics/models', async (request) => {
+    const query = z.object({
+      from: z.string().optional(),
+      to: z.string().optional(),
+      workspaceId: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.getAnalyticsModels(query);
+  });
+
+  app.get('/v1/analytics/projects', async (request) => {
+    const query = z.object({
+      from: z.string().optional(),
+      to: z.string().optional(),
+    }).parse(request.query);
+    return dependencies.runtime.getAnalyticsProjects(query);
+  });
+
+  // --- Session search route ---
+
+  app.get('/v1/sessions/search', async (request) => {
+    const query = z.object({
+      q: z.string().min(1),
+      type: z.string().optional(),
+      workspaceId: z.string().optional(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+    }).parse(request.query);
+    return dependencies.runtime.searchRunEvents(query);
+  });
+
+  // --- Trajectory route ---
+
+  app.get('/v1/runs/:id/trajectory', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const query = z.object({
+      format: z.enum(['jsonl', 'sharegpt']).default('jsonl'),
+      types: z.string().optional(),
+    }).parse(request.query);
+    const result = dependencies.runtime.getRunTrajectory(id, query);
+    if (!result) return reply.code(404).send({ error: 'not_found' });
+    return reply.type(result.contentType).send(result.body);
+  });
+
+  // --- Delegation routes ---
+
+  app.get('/v1/runs/:id/delegates', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const run = dependencies.runtime.getRun(id);
+    if (!run) return reply.code(404).send({ error: 'not_found' });
+    return dependencies.runtime.listDelegateRuns(id);
+  });
+
+  app.get('/v1/runs/:id/delegation-tree', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const tree = dependencies.runtime.getDelegationTree(id);
+    if (!tree) return reply.code(404).send({ error: 'not_found' });
+    return tree;
+  });
+
   app.get('/v1/security/audit', async () => ({
     findings: dependencies.runtime.getSecurityAuditFindings(),
   }));

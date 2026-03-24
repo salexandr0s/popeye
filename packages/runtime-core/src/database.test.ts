@@ -69,6 +69,8 @@ function seedLegacyAppDatabase(dir: string): void {
       CREATE TABLE tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT, title TEXT NOT NULL, prompt TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL, retry_policy_json TEXT NOT NULL, side_effect_profile TEXT NOT NULL, created_at TEXT NOT NULL, coalesce_key TEXT);
       CREATE TABLE jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, status TEXT NOT NULL, retry_count INTEGER NOT NULL, available_at TEXT NOT NULL, last_run_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE runs (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, session_root_id TEXT NOT NULL, engine_session_ref TEXT, state TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, error TEXT);
+      CREATE TABLE run_events (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE receipts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, job_id TEXT NOT NULL, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL, details TEXT NOT NULL, usage_json TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE interventions (id TEXT PRIMARY KEY, code TEXT NOT NULL, run_id TEXT, status TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT);
       CREATE TABLE message_ingress (
         id TEXT PRIMARY KEY,
@@ -878,6 +880,9 @@ describe('openRuntimeDatabases', () => {
           '017-provider-oauth-and-connection-rollups',
           '018-connection-resource-rules',
           '019-run-iterations',
+          '020-app-analytics-indexes',
+          '021-app-run-events-fts5',
+          '022-app-delegation',
         ]);
 
         const memMigrations = databases.memory

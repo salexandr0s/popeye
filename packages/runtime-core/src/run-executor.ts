@@ -204,10 +204,12 @@ export class RunExecutor {
       finishedAt: null,
       error: null,
       iterationsUsed: null,
+      parentRunId: null,
+      delegationDepth: 0,
     };
 
     this.deps.db.prepare('UPDATE jobs SET status = ?, updated_at = ?, last_run_id = ? WHERE id = ?').run('running', nowIso(), run.id, job.id);
-    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       run.id,
       run.jobId,
       run.taskId,
@@ -220,6 +222,8 @@ export class RunExecutor {
       run.finishedAt,
       run.error,
       run.iterationsUsed,
+      run.parentRunId,
+      run.delegationDepth,
     );
 
     const instructionBundle = this.deps.resolveInstructionsForRun(task);
@@ -450,6 +454,7 @@ export class RunExecutor {
       createdAt: nowIso(),
     });
     this.deps.db.prepare('INSERT INTO run_events (id, run_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)').run(record.id, record.runId, record.type, record.payload, record.createdAt);
+    this.deps.db.prepare('INSERT INTO run_events_fts(event_id, run_id, type, payload) VALUES (?, ?, ?, ?)').run(record.id, record.runId, record.type, record.payload);
     this.log.debug('engine event persisted', { runId, eventType: event.type });
     if (event.type === 'session' && event.payload?.sessionRef) {
       this.deps.db.prepare('UPDATE runs SET engine_session_ref = ? WHERE id = ?').run(event.payload.sessionRef, runId);

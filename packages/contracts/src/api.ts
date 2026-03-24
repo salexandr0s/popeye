@@ -31,7 +31,7 @@ export const TaskCreateInputSchema = z.object({
   profileId: z.string().default('default'),
   title: z.string(),
   prompt: z.string(),
-  source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api']).default('manual'),
+  source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api', 'delegation']).default('manual'),
   coalesceKey: z.string().nullable().default(null),
   autoEnqueue: z.boolean().default(true),
 });

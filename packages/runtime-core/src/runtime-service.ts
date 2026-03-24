@@ -56,6 +56,14 @@ import type {
   TelegramRelayCheckpointCommitRequest,
   TelegramSendAttemptRecord,
   UsageSummary,
+  AnalyticsGranularity,
+  AnalyticsUsageResponse,
+  AnalyticsModelsResponse,
+  AnalyticsProjectsResponse,
+  SessionSearchQuery,
+  SessionSearchResponse,
+  TrajectoryFormat,
+  DelegationTreeNode,
   VaultRecord,
   WorkspaceRecord,
   WorkspaceRegistrationInput,
@@ -185,6 +193,8 @@ import { ContextReleaseService } from './context-release-service.js';
 import { ReceiptBuilder } from './receipt-builder.js';
 import { RunExecutor, type RunExecutorDeps } from './run-executor.js';
 import { loadPlugins } from './plugin-loader.js';
+import { searchRunEvents as searchRunEventsFn } from './run-event-search.js';
+import { formatTrajectoryJsonl, formatTrajectoryShareGPT } from './trajectory-export.js';
 import { TelegramDeliveryService } from './telegram-delivery.js';
 import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
@@ -1012,6 +1022,7 @@ export class PopeyeRuntimeService {
         ? contextReleases
         : null,
       timeline,
+      delegationSummary: null,
     };
 
     if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.timeline.length === 0) {
@@ -1045,6 +1056,7 @@ export class PopeyeRuntimeService {
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
       timeline: mergedTimeline,
+      delegationSummary: receipt.runtime.delegationSummary ?? derived.delegationSummary ?? null,
     };
   }
 
@@ -1082,6 +1094,69 @@ export class PopeyeRuntimeService {
 
   getUsageSummary(): UsageSummary {
     return this.receiptManager.getUsageSummary();
+  }
+
+  // --- Analytics ---
+
+  getAnalyticsUsage(options: { from?: string | undefined; to?: string | undefined; granularity: AnalyticsGranularity; workspaceId?: string | undefined }): AnalyticsUsageResponse {
+    const buckets = this.receiptManager.getAnalyticsUsage(options);
+    return { granularity: options.granularity, buckets };
+  }
+
+  getAnalyticsModels(options: { from?: string | undefined; to?: string | undefined; workspaceId?: string | undefined }): AnalyticsModelsResponse {
+    return { models: this.receiptManager.getAnalyticsModels(options) };
+  }
+
+  getAnalyticsProjects(options: { from?: string | undefined; to?: string | undefined }): AnalyticsProjectsResponse {
+    return { projects: this.receiptManager.getAnalyticsProjects(options) };
+  }
+
+  // --- Session search ---
+
+  searchRunEvents(query: SessionSearchQuery): SessionSearchResponse {
+    return searchRunEventsFn(this.databases.app, query);
+  }
+
+  // --- Trajectory ---
+
+  getRunTrajectory(runId: string, options: { format: TrajectoryFormat; types?: string | undefined }): { contentType: string; body: string } | null {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    const events = this.listRunEvents(runId);
+    const filterTypes = options.types ? options.types.split(',').map(t => t.trim()) : undefined;
+    if (options.format === 'sharegpt') {
+      const receipt = this.getReceiptByRunId(runId);
+      const usage = receipt ? { model: receipt.usage.model, tokensIn: receipt.usage.tokensIn, tokensOut: receipt.usage.tokensOut, estimatedCostUsd: receipt.usage.estimatedCostUsd } : undefined;
+      const conv = formatTrajectoryShareGPT(events, runId, run.state, usage, filterTypes);
+      return { contentType: 'application/json', body: JSON.stringify(conv) };
+    }
+    return { contentType: 'application/x-ndjson', body: formatTrajectoryJsonl(events, filterTypes) };
+  }
+
+  // --- Delegation queries ---
+
+  listDelegateRuns(runId: string): RunRecord[] {
+    return z.array(RunRowSchema)
+      .parse(this.databases.app.prepare('SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at ASC').all(runId))
+      .map(mapRunRow);
+  }
+
+  getDelegationTree(runId: string): DelegationTreeNode | null {
+    const run = this.getRun(runId);
+    if (!run) return null;
+    const buildNode = (r: RunRecord): DelegationTreeNode => {
+      const children = this.listDelegateRuns(r.id);
+      return {
+        runId: r.id,
+        parentRunId: r.parentRunId,
+        depth: r.delegationDepth,
+        state: r.state,
+        iterationsUsed: r.iterationsUsed,
+        title: null,
+        children: children.map(buildNode),
+      };
+    };
+    return buildNode(run);
   }
 
   // --- Delegated: QueryService ---
@@ -1487,6 +1562,13 @@ export class PopeyeRuntimeService {
     const run = this.getRun(runId);
     if (!run) return null;
     if (isTerminalRunState(run.state)) return run;
+
+    // Cascade: cancel active delegate runs first
+    const activeDelegates = this.listDelegateRuns(runId).filter(d => !isTerminalRunState(d.state));
+    for (const delegate of activeDelegates) {
+      await this.cancelRun(delegate.id);
+    }
+
     const activeRun = this.runExecutor.getActiveRun(runId);
     if (activeRun) {
       await activeRun.handle.cancel();

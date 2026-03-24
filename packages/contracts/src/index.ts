@@ -32,3 +32,4 @@ export * from './people.js';
 export * from './finance.js';
 export * from './medical.js';
 export * from './plugins.js';
+export * from './analytics.js';
