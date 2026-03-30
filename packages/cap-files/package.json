@@ -19,7 +19,7 @@
   "dependencies": {
     "@popeye/contracts": "workspace:*",
     "@popeye/observability": "workspace:*",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.8.0",
     "minimatch": "^10.0.1"
   }
 }

@@ -20,9 +20,9 @@
     "@popeye/cap-common": "workspace:*",
     "@popeye/contracts": "workspace:*",
     "@popeye/observability": "workspace:*",
-    "better-sqlite3": "^12.6.2",
-    "imapflow": "^1.2.15",
-    "mailparser": "^3.9.4",
+    "better-sqlite3": "^12.8.0",
+    "imapflow": "^1.2.18",
+    "mailparser": "^3.9.6",
     "zod": "^4.3.6"
   },
   "devDependencies": {

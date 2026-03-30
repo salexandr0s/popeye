@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-03-21
+// Generated: 2026-03-30
 import Foundation
 
 // MARK: - Enums
@@ -33,9 +33,11 @@ public enum InterventionCode: String, Codable, Sendable {
     case needsWorkspaceFix = "needs_workspace_fix"
     case needsOperatorInput = "needs_operator_input"
     case retryBudgetExhausted = "retry_budget_exhausted"
+    case iterationBudgetExhausted = "iteration_budget_exhausted"
     case authFailure = "auth_failure"
     case promptInjectionQuarantined = "prompt_injection_quarantined"
     case failedFinal = "failed_final"
+    case delegationBudgetExhausted = "delegation_budget_exhausted"
 }
 
 public enum TaskSideEffectProfile: String, Codable, Sendable {
@@ -96,6 +98,9 @@ public struct RunRecord: Codable, Sendable {
     public let startedAt: String
     public let finishedAt: String
     public let error: String
+    public let iterationsUsed: String
+    public let parentRunId: String
+    public let delegationDepth: String
 }
 
 public struct RunEventRecord: Codable, Sendable {
