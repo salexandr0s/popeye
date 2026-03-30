@@ -57,6 +57,12 @@ Success criteria:
 - `pnpm build` passes
 - `pnpm dev-verify` passes
 
+Observed repo-specific adjustments while landing this branch:
+
+- keep `baseUrl` for current repo-wide path aliasing, but add `ignoreDeprecations: "6.0"` in `tsconfig.base.json` because TypeScript 6 now errors on the deprecation
+- add `types: ["vite/client"]` in `apps/web-inspector/tsconfig.json` so the CSS side-effect import in `src/main.tsx` remains typed
+- expect `@typescript-eslint` 8.57.2 to warn about an unsupported TypeScript 6 peer range even though the current lint config still runs green; revisit that in the later ESLint branch rather than mixing it into the TS6 change
+
 ### 2) `chore/toolchain-vite-vitest-4`
 
 Upgrade together:
