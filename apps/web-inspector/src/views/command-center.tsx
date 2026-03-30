@@ -433,8 +433,8 @@ export function CommandCenter() {
     : null;
 
   const detailPaneUpdatedAt = selectedRunEvents.updatedAt
-    ?? (selectedIntervention?.createdAt ?? null)
-    ?? (selectedJob?.updatedAt ?? null)
+    ?? selectedIntervention?.createdAt
+    ?? selectedJob?.updatedAt
     ?? null;
 
   const mainColumnsClassName = layout.panels.attention
