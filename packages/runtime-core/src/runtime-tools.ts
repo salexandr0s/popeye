@@ -1,4 +1,12 @@
-import type { ExecutionEnvelope, MemorySearchQuery, MemorySearchResponse, RecallExplanation } from '@popeye/contracts';
+import type {
+  ExecutionEnvelope,
+  MemorySearchQuery,
+  MemorySearchResponse,
+  RecallExplanation,
+  RecallQuery,
+  RecallSearchResponse,
+  RecallSourceKind,
+} from '@popeye/contracts';
 import type { RuntimeToolDescriptor } from '@popeye/engine-pi';
 import { z } from 'zod';
 import { resolveAgentMemoryScopeFilter } from './execution-envelopes.js';
@@ -47,6 +55,7 @@ export interface MemoryExpansion {
 /** Dependencies injected from RuntimeService into the tool builder. */
 export interface RuntimeToolsDeps {
   getExecutionEnvelope(runId: string): ExecutionEnvelope | null;
+  searchRecall(query: RecallQuery): Promise<RecallSearchResponse>;
   searchMemory(query: MemorySearchQuery): Promise<MemorySearchResponse>;
   describeMemory(memoryId: string, locationFilter?: MemoryLocationFilter): MemoryDescription | null;
   expandMemory(memoryId: string, maxTokens: number | undefined, locationFilter?: MemoryLocationFilter): MemoryExpansion | null;
@@ -78,6 +87,56 @@ export function buildCoreRuntimeTools(
   const requireEnvelope = (): ExecutionEnvelope | null => deps.getExecutionEnvelope(runId);
 
   return [
+    {
+      name: 'popeye_recall_search',
+      label: 'Popeye Recall Search',
+      description: 'Search Popeye runtime history across receipts, run events, messages, interventions, and durable memory references.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          limit: { type: 'number', description: 'Maximum results to return (1-10)' },
+          kinds: {
+            type: 'array',
+            description: 'Optional subset of source kinds to search',
+            items: { type: 'string', enum: ['receipt', 'run_event', 'message', 'message_ingress', 'intervention', 'memory'] },
+          },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      execute: async (params) => {
+        const parsed = z.object({
+          query: z.string().min(1),
+          limit: z.number().int().positive().max(10).optional(),
+          kinds: z.array(z.enum(['receipt', 'run_event', 'message', 'message_ingress', 'intervention', 'memory'])).optional(),
+        }).parse(params ?? {});
+        const envelope = requireEnvelope();
+        if (!envelope) {
+          return { content: [{ type: 'text', text: 'Execution envelope not found for this run.' }] };
+        }
+        const scopeResolution = resolveAgentMemoryScopeFilter(envelope);
+        const response = await deps.searchRecall({
+          query: parsed.query,
+          workspaceId: scopeResolution.workspaceId,
+          projectId: scopeResolution.projectId,
+          includeGlobal: scopeResolution.includeGlobal,
+          limit: parsed.limit ?? 5,
+          ...(parsed.kinds !== undefined ? { kinds: parsed.kinds as RecallSourceKind[] } : {}),
+        });
+        const lines = response.results.length === 0
+          ? ['No matching Popeye recall results found.']
+          : response.results.map((result, index) => {
+              const scope = result.projectId ? `${result.workspaceId}/${result.projectId}` : (result.workspaceId ?? 'global');
+              const subtype = result.subtype ? `/${result.subtype}` : '';
+              return `${index + 1}. [${result.sourceKind}:${result.sourceId}] ${result.title} [${scope}${subtype}] score:${result.score.toFixed(2)} — ${result.snippet}`;
+            });
+        return {
+          content: [{ type: 'text', text: lines.join('\n') }],
+          details: response,
+        };
+      },
+    },
     {
       name: 'popeye_memory_search',
       label: 'Popeye Memory Search',

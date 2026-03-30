@@ -883,6 +883,7 @@ describe('openRuntimeDatabases', () => {
           '020-app-analytics-indexes',
           '021-app-run-events-fts5',
           '022-app-delegation',
+          '023-app-unified-recall-fts',
         ]);
 
         const memMigrations = databases.memory
@@ -935,6 +936,7 @@ describe('openRuntimeDatabases', () => {
         expect(migrationIds.map((row) => row.id)).toContain('010-telegram-reply-delivery-observability');
         expect(migrationIds.map((row) => row.id)).toContain('014-execution-profiles');
         expect(migrationIds.map((row) => row.id)).toContain('015-execution-envelopes');
+        expect(migrationIds.map((row) => row.id)).toContain('023-app-unified-recall-fts');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');

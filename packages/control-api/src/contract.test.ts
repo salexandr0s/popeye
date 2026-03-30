@@ -17,6 +17,8 @@ import {
   JobRecordSchema,
   MemoryPromotionResponseSchema,
   ProjectRecordSchema,
+  RecallDetailResponseSchema,
+  RecallSearchResponseApiSchema,
   ReceiptRecordSchema,
   RunRecordSchema,
   SchedulerStatusResponseSchema,
@@ -346,6 +348,60 @@ describe('API contract tests', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/recall/search and GET /v1/recall/:kind/:id conform to recall schemas', async () => {
+    const { store, runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const now = new Date().toISOString();
+
+    runtime.databases.app.prepare(
+      'INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('task-recall-contract', 'default', null, 'default', 'Recall contract', 'noop', 'manual', 'completed', JSON.stringify({ maxAttempts: 1 }), 'read_only', now);
+    runtime.databases.app.prepare(
+      'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('job-recall-contract', 'task-recall-contract', 'default', 'completed', 0, now, 'run-recall-contract', now, now);
+    runtime.databases.app.prepare(
+      'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('run-recall-contract', 'job-recall-contract', 'task-recall-contract', 'default', 'default', 'session-recall-contract', null, 'completed', now, now, null, null, null, 0);
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('receipt-recall-contract', 'run-recall-contract', 'job-recall-contract', 'task-recall-contract', 'default', 'failed', 'Recall contract summary', 'Recall contract details mention credentials.', '{}', now);
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts_fts (receipt_id, run_id, workspace_id, status, summary, details) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('receipt-recall-contract', 'run-recall-contract', 'default', 'failed', 'Recall contract summary', 'Recall contract details mention credentials.');
+
+    const searchResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/recall/search?q=credentials&workspaceId=default',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(searchResponse.statusCode).toBe(200);
+    const parsedSearch = RecallSearchResponseApiSchema.parse(searchResponse.json());
+    expect(parsedSearch.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceKind: 'receipt',
+          sourceId: 'receipt-recall-contract',
+        }),
+      ]),
+    );
+
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/recall/receipt/receipt-recall-contract',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    const parsedDetail = RecallDetailResponseSchema.parse(detailResponse.json());
+    expect(parsedDetail).toMatchObject({
+      sourceKind: 'receipt',
+      sourceId: 'receipt-recall-contract',
+      workspaceId: 'default',
+    });
 
     await runtime.close();
     await app.close();

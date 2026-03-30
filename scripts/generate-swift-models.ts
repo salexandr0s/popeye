@@ -21,6 +21,9 @@ import {
   MessageIngressDecisionCodeSchema,
   MessageIngressResponseSchema,
   MessageRecordSchema,
+  RecallDetailSchema,
+  RecallSearchResponseSchema,
+  RecallSourceKindSchema,
   ReceiptRecordSchema,
   RunEventRecordSchema,
   RunRecordSchema,
@@ -127,6 +130,7 @@ const enums: Array<[string, z.ZodEnum<[string, ...string[]]>]> = [
   ['InterventionCode', InterventionCodeSchema],
   ['TaskSideEffectProfile', TaskSideEffectProfileSchema],
   ['MessageIngressDecisionCode', MessageIngressDecisionCodeSchema],
+  ['RecallSourceKind', RecallSourceKindSchema],
 ];
 
 // Struct schemas
@@ -136,6 +140,8 @@ const structs: Array<[string, z.ZodObject<z.ZodRawShape>]> = [
   ['RunRecord', RunRecordSchema as z.ZodObject<z.ZodRawShape>],
   ['RunEventRecord', RunEventRecordSchema as z.ZodObject<z.ZodRawShape>],
   ['ReceiptRecord', ReceiptRecordSchema as z.ZodObject<z.ZodRawShape>],
+  ['RecallSearchResponse', RecallSearchResponseSchema as z.ZodObject<z.ZodRawShape>],
+  ['RecallDetail', RecallDetailSchema as z.ZodObject<z.ZodRawShape>],
   [
     'InterventionRecord',
     InterventionRecordSchema as z.ZodObject<z.ZodRawShape>,

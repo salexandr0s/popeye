@@ -74,6 +74,7 @@ export class ApprovalService {
     let interventionId: string | null = null;
     if (shouldCreateIntervention) {
       interventionId = randomUUID();
+      const interventionReason = `Approval needed: ${parsed.scope} for ${parsed.resourceType}/${parsed.resourceId}`;
       this.db
         .prepare(
           `INSERT INTO interventions (id, run_id, code, status, reason, created_at)
@@ -83,8 +84,19 @@ export class ApprovalService {
           interventionId,
           parsed.runId ?? null,
           'needs_policy_decision',
-          `Approval needed: ${parsed.scope} for ${parsed.resourceType}/${parsed.resourceId}`,
+          interventionReason,
           now,
+        );
+      this.db
+        .prepare(
+          'INSERT INTO interventions_fts (intervention_id, run_id, code, status, reason) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run(
+          interventionId,
+          parsed.runId ?? null,
+          'needs_policy_decision',
+          'pending',
+          interventionReason,
         );
     }
 

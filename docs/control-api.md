@@ -35,10 +35,10 @@ Routes are role-gated in addition to authentication:
 
 Routes default to `operator` unless explicitly downgraded.
 
-Memory routes are explicitly operator-only in this phase, including
-search/read/maintenance/promotion surfaces. Browser sessions remain
-operator-authority only, and legacy single-token auth files still normalize to
-`operator`.
+Memory and recall routes are explicitly operator-only in this phase, including
+memory search/read/maintenance/promotion surfaces plus unified recall search and
+detail reads. Browser sessions remain operator-authority only, and legacy
+single-token auth files still normalize to `operator`.
 
 ## CSRF Protection
 
@@ -118,6 +118,23 @@ Receipt reads may include an additive `runtime` section with:
 - `contextReleases` summary
 - `timeline` entries with normalized `kind`, `severity`, `code`, `title`,
   `detail`, `source`, and operator-safe `metadata`
+
+### Recall
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/recall/search` | Search a normalized historical recall surface across receipts, run events, messages, ingress decisions, interventions, and durable memory references. Query params: `q` (or `query`), optional `workspaceId`, `projectId`, `includeGlobal`, comma-separated `kinds`, and `limit`. |
+| GET | `/v1/recall/:kind/:id` | Get normalized detail for one recall artifact. `kind` is one of `receipt`, `run_event`, `message`, `message_ingress`, `intervention`, or `memory`. Returns 404 if not found. |
+
+Unified recall is intentionally distinct from the durable memory API:
+
+- **memory** remains the durable truth substrate with promotion, provenance, and lifecycle controls
+- **recall** is the product-level history surface over runtime artifacts plus memory references
+
+This first slice is operator-only because it can expose full artifact bodies and
+durable memory content. Agent access goes through the runtime-owned
+`popeye_recall_search` tool, which still enforces execution-envelope recall
+scope.
 
 ### Instructions
 

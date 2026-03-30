@@ -15,6 +15,14 @@ Storage remains two-surface:
 - **Markdown layer** (human-readable): curated files and `memory/daily/YYYY-MM-DD.md`
 - **SQLite layer** (machine-queryable): legacy `memories` plus structured artifact/fact/synthesis tables
 
+Popeye now also distinguishes **memory** from **recall**:
+
+- **memory** = durable structured truth with provenance, confidence, and lifecycle controls
+- **recall** = first-class retrieval over runtime history (receipts, run events, messages, ingress decisions, interventions) plus memory references
+
+The new recall surface does not replace memory. Durable memory remains the
+truth substrate; recall is the retrieval surface over what actually happened.
+
 ## Durable SQLite tables
 
 ### Compatibility / existing
@@ -172,6 +180,29 @@ Results can expose:
 - evidence count
 
 Recall explanations can include score breakdown plus evidence links.
+
+## Unified recall surface
+
+The runtime now exposes an additive unified recall substrate over real runtime
+artifacts:
+
+- `receipt`
+- `run_event`
+- `message`
+- `message_ingress`
+- `intervention`
+- `memory`
+
+Key properties:
+
+- normalized result cards with source kind, source id, location, run/session
+  references, snippet, and score
+- deterministic ranking (source-local relevance, light recency normalization,
+  scope fit)
+- existing durable memory search reused for `memory` hits rather than creating a
+  second truth store
+- agent access remains scope-gated through execution envelopes
+- no external search service and no silent memory mutation
 
 ### Location filtering
 

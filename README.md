@@ -113,15 +113,16 @@ Popeye is designed as a local control plane, not a remote service:
 - **secrets are redacted before durable writes**
 - runtime data is stored outside the workspace
 
-## Memory model
+## Memory and recall model
 
-Popeye uses a layered memory system:
+Popeye now separates **durable memory** from **historical recall**:
 
-- **legacy compatibility layer** in `memories`
-- **structured durable memory** via artifacts, facts, and syntheses
-- **curated markdown memory** for explicit operator-managed long-term context
+- **memory** = structured durable truth in artifacts, facts, syntheses, and
+  curated markdown
+- **recall** = first-class retrieval over real runtime artifacts like receipts,
+  run events, messages, interventions, plus durable memory references
 
-Durable recall is:
+Durable memory remains:
 
 - provenance-aware
 - confidence-scored

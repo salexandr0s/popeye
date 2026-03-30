@@ -39,6 +39,8 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/runs/:id/cancel` | `RunRecordSchema` |
 | GET | `/v1/receipts` | `ReceiptRecordSchema[]` |
 | GET | `/v1/receipts/:id` | `ReceiptRecordSchema` |
+| GET | `/v1/recall/search` | `RecallSearchResponseApiSchema` |
+| GET | `/v1/recall/:kind/:id` | `RecallDetailResponseSchema` |
 | GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` (`projectId` query optional; `400 { error: "invalid_context" }` on cross-workspace mismatch) |
 | GET | `/v1/interventions` | `InterventionRecordSchema[]` |
 | POST | `/v1/interventions/:id/resolve` | `InterventionRecordSchema` |

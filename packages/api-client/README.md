@@ -33,6 +33,7 @@ New platform implementation.
 - `listJobs()`, `getJobLease()`, `pauseJob()`, `resumeJob()`, `enqueueJob()`
 - `listRuns()`, `getRun()`, `listRunEvents()`, `retryRun()`, `cancelRun()`
 - `listReceipts()`, `getReceipt()`
+- `searchRecall()`, `getRecallDetail()`
 - `getInstructionPreview()`, `listInterventions()`, `resolveIntervention()`
 - `searchMemory()`, `usageSummary()`, `securityAudit()`
 - `subscribeEvents()` -- SSE stream subscription returning an unsubscribe function

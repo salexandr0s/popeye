@@ -332,6 +332,69 @@ describe('PopeyeApiClient', () => {
     );
   });
 
+  it('encodes recall search filters and parses detail payloads', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, {
+      query: 'credentials',
+      totalMatches: 1,
+      results: [{
+        sourceKind: 'receipt',
+        sourceId: 'receipt-1',
+        title: 'Credential failure',
+        snippet: 'Missing deploy credentials.',
+        score: 0.91,
+        createdAt: '2026-03-30T00:00:00Z',
+        workspaceId: 'default',
+        projectId: 'proj-1',
+        runId: 'run-1',
+        taskId: 'task-1',
+        sessionRootId: 'session-1',
+        subtype: 'failed',
+        status: 'failed',
+      }],
+    });
+    mockFetch(200, {
+      sourceKind: 'receipt',
+      sourceId: 'receipt-1',
+      title: 'Credential failure',
+      snippet: 'Missing deploy credentials.',
+      score: 0.91,
+      createdAt: '2026-03-30T00:00:00Z',
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+      sessionRootId: 'session-1',
+      subtype: 'failed',
+      status: 'failed',
+      content: 'Deploy failed because credentials were missing.',
+      metadata: { status: 'failed' },
+    });
+
+    await expect(client.searchRecall({
+      query: 'credentials',
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      includeGlobal: true,
+      kinds: ['receipt', 'memory'],
+      limit: 5,
+    })).resolves.toMatchObject({ totalMatches: 1 });
+
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:3210/v1/recall/search?q=credentials&workspaceId=default&projectId=proj-1&includeGlobal=true&kinds=receipt%2Cmemory&limit=5',
+      expect.anything(),
+    );
+
+    await expect(client.getRecallDetail('receipt', 'receipt-1')).resolves.toMatchObject({
+      sourceId: 'receipt-1',
+      content: 'Deploy failed because credentials were missing.',
+    });
+  });
+
   it('returns null for missing memory records', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',

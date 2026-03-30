@@ -13,6 +13,8 @@ import type {
   NormalizedEngineEvent,
   ProjectRecord,
   ReceiptRecord,
+  RecallQuery,
+  RecallSearchResponse,
   RecallExplanation,
   RunEventRecord,
   RunRecord,
@@ -130,6 +132,7 @@ export interface RunExecutorDeps {
   pluginTools: RuntimeToolDescriptor[];
 
   // --- Memory operation callbacks ---
+  searchRecall: (query: RecallQuery) => Promise<RecallSearchResponse>;
   searchMemory: (query: MemorySearchQuery) => Promise<MemorySearchResponse>;
   describeMemory: (id: string, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => MemoryDescription | null;
   expandMemory: (id: string, maxTokens?: number, scope?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => MemoryExpansion | null;
@@ -439,6 +442,7 @@ export class RunExecutor {
   private createCoreRuntimeTools(_task: TaskRecord, runId: string): RuntimeToolDescriptor[] {
     const memoryTools = buildCoreRuntimeTools({
       getExecutionEnvelope: (id) => this.deps.getExecutionEnvelope(id),
+      searchRecall: (query) => this.deps.searchRecall(query),
       searchMemory: (query) => this.deps.searchMemory(query),
       describeMemory: (id, scope) => this.deps.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.deps.expandMemory(id, maxTokens, scope),

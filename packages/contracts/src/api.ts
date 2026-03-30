@@ -24,6 +24,7 @@ import { GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRec
 import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema, CalendarEventCreateInputSchema, CalendarEventUpdateInputSchema } from './calendar.js';
 import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoReconcileResultSchema } from './todos.js';
 import { PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonMergeInputSchema, PersonRecordSchema, PersonSplitInputSchema, PersonUpdateInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema } from './people.js';
+import { RecallDetailSchema, RecallSearchResponseSchema, RecallSourceKindSchema } from './recall.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -196,6 +197,27 @@ export const MemoryPromotionResponseSchema = z.object({
 export const MemoryPromotionExecuteRequestSchema = MemoryPromotionResponseSchema.omit({
   memoryId: true,
 });
+
+export const RecallSearchQueryParamsSchema = z.object({
+  q: z.string().max(1_000).optional(),
+  query: z.string().max(1_000).optional(),
+  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
+  includeGlobal: z.enum(['true', 'false']).optional(),
+  kinds: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+});
+
+export const RecallDetailParamsSchema = z.object({
+  kind: RecallSourceKindSchema,
+  id: z.string().min(1),
+});
+
+export const RecallSearchResponseApiSchema = RecallSearchResponseSchema;
+export type RecallSearchResponseApi = z.infer<typeof RecallSearchResponseApiSchema>;
+
+export const RecallDetailResponseSchema = RecallDetailSchema;
+export type RecallDetailResponse = z.infer<typeof RecallDetailResponseSchema>;
 
 export const WorkspaceRegistrationInputSchema = z.object({
   id: z.string().min(1),

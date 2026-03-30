@@ -27,6 +27,9 @@ import {
   GithubCommentCreateInputSchema,
   GithubNotificationMarkReadInputSchema,
   MemoryImportInputSchema,
+  RecallDetailParamsSchema,
+  RecallSearchQueryParamsSchema,
+  RecallSourceKindSchema,
   AuthExchangeRequestSchema,
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
@@ -1242,6 +1245,39 @@ export async function createControlApi(
       to: z.string().optional(),
     }).parse(request.query);
     return dependencies.runtime.getAnalyticsProjects(query);
+  });
+
+  // --- Unified recall routes ---
+
+  app.get('/v1/recall/search', async (request) => {
+    const parsed = RecallSearchQueryParamsSchema.parse(request.query);
+    const rawQuery = parsed.query ?? parsed.q;
+    if (!rawQuery) {
+      return { query: '', results: [], totalMatches: 0 };
+    }
+    const parsedKinds = parsed.kinds !== undefined
+      ? z.array(RecallSourceKindSchema).parse(
+          parsed.kinds
+            .split(',')
+            .map((kind) => kind.trim())
+            .filter(Boolean),
+        )
+      : undefined;
+    return dependencies.runtime.searchRecall(stripUndefined({
+      query: rawQuery,
+      ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
+      ...(parsed.projectId !== undefined ? { projectId: parsed.projectId } : {}),
+      ...(parsed.includeGlobal !== undefined ? { includeGlobal: parsed.includeGlobal === 'true' } : {}),
+      ...(parsedKinds !== undefined ? { kinds: parsedKinds } : {}),
+      limit: parsed.limit ?? 20,
+    }));
+  });
+
+  app.get('/v1/recall/:kind/:id', async (request, reply) => {
+    const { kind, id } = RecallDetailParamsSchema.parse(request.params);
+    const detail = dependencies.runtime.getRecallDetail(kind, id);
+    if (!detail) return reply.code(404).send({ error: 'not_found' });
+    return detail;
   });
 
   // --- Session search route ---

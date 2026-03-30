@@ -37,6 +37,10 @@ import type {
   MessageRecord,
   ProjectRecord,
   ProjectRegistrationInput,
+  RecallDetail,
+  RecallQuery,
+  RecallSearchResponse,
+  RecallSourceKind,
   ReceiptRecord,
   ReceiptTimelineEvent,
   RunEventRecord,
@@ -200,6 +204,7 @@ import { CapabilityFacade } from './capability-facade.js';
 import { CapabilityRegistry } from './capability-registry.js';
 import { ConnectionService, type ConnectionServiceDeps } from './connection-service.js';
 import { MemoryFacade } from './memory-facade.js';
+import { RecallService } from './recall-service.js';
 import { PeopleFacade } from './people-facade.js';
 import { EmailFacade } from './email-facade.js';
 import { GithubFacade } from './github-facade.js';
@@ -336,6 +341,7 @@ export class PopeyeRuntimeService {
   private readonly connectionService: ConnectionService;
   private readonly oauthConnect: OAuthConnectService;
   private readonly memoryOps: MemoryFacade;
+  private readonly recallService: RecallService;
   private readonly peopleOps: PeopleFacade;
   private readonly emailOps: EmailFacade;
   private readonly githubOps: GithubFacade;
@@ -415,6 +421,11 @@ export class PopeyeRuntimeService {
       redactionPatterns: config.security.redactionPatterns,
       expandTokenCap: config.memory.expandTokenCap,
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+    });
+    this.recallService = new RecallService({
+      appDb: this.databases.app,
+      searchMemory: (query) => this.searchMemory(query),
+      getMemory: (memoryId) => this.getMemory(memoryId),
     });
 
     // Try loading sqlite-vec (non-blocking)
@@ -698,6 +709,7 @@ export class PopeyeRuntimeService {
       resolveInstructionsForRun: (task) => this.queryService.resolveInstructionsForRun(task),
       capabilityRegistry: this.capabilityRegistry,
       memoryLifecycle: this.memoryLifecycle,
+      searchRecall: (query) => this.searchRecall(query),
       searchMemory: (query) => this.searchMemory(query),
       describeMemory: (id, scope) => this.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.expandMemory(id, maxTokens, scope),
@@ -1115,6 +1127,14 @@ export class PopeyeRuntimeService {
 
   searchRunEvents(query: SessionSearchQuery): SessionSearchResponse {
     return searchRunEventsFn(this.databases.app, query);
+  }
+
+  async searchRecall(query: RecallQuery): Promise<RecallSearchResponse> {
+    return this.recallService.search(query);
+  }
+
+  getRecallDetail(kind: RecallSourceKind, id: string): RecallDetail | null {
+    return this.recallService.getDetail(kind, id);
   }
 
   // --- Trajectory ---
@@ -2246,6 +2266,15 @@ export class PopeyeRuntimeService {
 
   private createIntervention(code: InterventionRecord['code'], runId: string | null, reason: string): void {
     const intervention = this.sessionService.createIntervention(code, runId, reason);
+    this.databases.app.prepare(
+      'INSERT INTO interventions_fts (intervention_id, run_id, code, status, reason) VALUES (?, ?, ?, ?, ?)',
+    ).run(
+      intervention.id,
+      intervention.runId,
+      intervention.code,
+      intervention.status,
+      intervention.reason,
+    );
     this.emit('intervention_created', intervention);
   }
 

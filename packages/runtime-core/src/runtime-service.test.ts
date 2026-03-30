@@ -1190,6 +1190,174 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('scopes popeye_recall_search to the execution envelope recall location', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-recall-tool-gate-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project One', path: projectRoot }],
+      }],
+    });
+
+    const now = new Date().toISOString();
+    runtime.databases.app.prepare(`
+      INSERT INTO agent_profiles (
+        id, name, description, mode, model_policy, allowed_runtime_tools_json,
+        allowed_capability_ids_json, memory_scope, recall_scope,
+        filesystem_policy_class, context_release_policy, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'project-recall-tools',
+      'Project recall tools',
+      'Project profile with unified recall',
+      'restricted',
+      'inherit',
+      JSON.stringify(['popeye_recall_search']),
+      JSON.stringify([]),
+      'project',
+      'project',
+      'project',
+      'summary_only',
+      now,
+      now,
+    );
+
+    let capturedRequest: EngineRunRequest | null = null;
+    const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId'],
+          warnings: [],
+        };
+      },
+      async startRun(input, options) {
+        capturedRequest = typeof input === 'string' ? { prompt: input } : input;
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return {
+              engineSessionRef: 'fake:recall-gate',
+              usage: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+              failureClassification: null,
+            };
+          },
+          isAlive: () => false,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input: capturedRequest?.prompt ?? '' } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:recall-gate' } });
+        options?.onEvent?.({ type: 'completed', payload: { output: 'ok' } });
+        options?.onEvent?.({
+          type: 'usage',
+          payload: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+        });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    Object.defineProperty(runtime, 'engine', { value: capturingAdapter, writable: false });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      profileId: 'project-recall-tools',
+      title: 'recall-gate',
+      prompt: 'hello recall gate',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
+
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      'receipt-proj1',
+      terminal!.run!.id,
+      terminal!.run!.jobId,
+      terminal!.run!.taskId,
+      'default',
+      'failed',
+      'Project credentials issue',
+      'Project credentials are missing for the active project.',
+      '{}',
+      now,
+    );
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts_fts (receipt_id, run_id, workspace_id, status, summary, details) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      'receipt-proj1',
+      terminal!.run!.id,
+      'default',
+      'failed',
+      'Project credentials issue',
+      'Project credentials are missing for the active project.',
+    );
+
+    runtime.databases.app.prepare('INSERT INTO projects (id, workspace_id, name, created_at, path) VALUES (?, ?, ?, ?, ?)')
+      .run('proj-2', 'default', 'Project Two', now, join(workspaceRoot, 'project-two'));
+    runtime.databases.app.prepare('INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('task-proj2', 'default', 'proj-2', 'default', 'Sibling task', 'noop', 'manual', 'completed', JSON.stringify({ maxAttempts: 1 }), 'read_only', now);
+    runtime.databases.app.prepare('INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('job-proj2', 'task-proj2', 'default', 'completed', 0, now, 'run-proj2', now, now);
+    runtime.databases.app.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('run-proj2', 'job-proj2', 'task-proj2', 'default', 'default', 'session-proj2', null, 'completed', now, now, null, null, null, 0);
+    runtime.databases.app.prepare('INSERT INTO execution_envelopes (run_id, task_id, profile_id, workspace_id, project_id, mode, model_policy, allowed_runtime_tools_json, allowed_capability_ids_json, memory_scope, recall_scope, filesystem_policy_class, context_release_policy, read_roots_json, write_roots_json, protected_paths_json, scratch_root, cwd, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('run-proj2', 'task-proj2', 'default', 'default', 'proj-2', 'interactive', 'inherit', '[]', '[]', 'workspace', 'workspace', 'workspace', 'summary_only', '[]', '[]', '[]', join(dir, 'scratch-proj2'), null, '{}', now);
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      'receipt-proj2',
+      'run-proj2',
+      'job-proj2',
+      'task-proj2',
+      'default',
+      'failed',
+      'Sibling credentials issue',
+      'Sibling project credentials must remain hidden.',
+      '{}',
+      now,
+    );
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts_fts (receipt_id, run_id, workspace_id, status, summary, details) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      'receipt-proj2',
+      'run-proj2',
+      'default',
+      'failed',
+      'Sibling credentials issue',
+      'Sibling project credentials must remain hidden.',
+    );
+
+    const recallTool = capturedRequest?.runtimeTools?.find((tool) => tool.name === 'popeye_recall_search');
+    expect(recallTool).toBeTruthy();
+
+    const recallResult = await recallTool!.execute({ query: 'credentials' });
+    expect(recallResult.details?.results.map((result: { sourceId: string }) => result.sourceId)).toContain('receipt-proj1');
+    expect(recallResult.details?.results.map((result: { sourceId: string }) => result.sourceId)).not.toContain('receipt-proj2');
+
+    await runtime.close();
+  });
+
   it('rejects cross-workspace instruction previews before writing snapshots', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-preview-validation-'));
     chmodSync(dir, 0o700);

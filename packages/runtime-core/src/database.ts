@@ -15,7 +15,14 @@ export interface RuntimeDatabases {
 
 export interface Migration {
   id: string;
-  statements: string[];
+  statements?: string[];
+  apply?: (db: Database.Database) => void;
+}
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName),
+  );
 }
 
 const APP_MIGRATIONS: Migration[] = [
@@ -586,6 +593,30 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX idx_runs_parent_run_id ON runs(parent_run_id);',
     ],
   },
+  {
+    id: '023-app-unified-recall-fts',
+    apply: (db) => {
+      db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS receipts_fts USING fts5(receipt_id UNINDEXED, run_id UNINDEXED, workspace_id UNINDEXED, status, summary, details);');
+      if (tableExists(db, 'receipts')) {
+        db.exec('INSERT INTO receipts_fts(receipt_id, run_id, workspace_id, status, summary, details) SELECT id, run_id, workspace_id, status, summary, details FROM receipts;');
+      }
+
+      db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(message_id UNINDEXED, source, sender_id, body);');
+      if (tableExists(db, 'messages')) {
+        db.exec('INSERT INTO messages_fts(message_id, source, sender_id, body) SELECT id, source, sender_id, body FROM messages;');
+      }
+
+      db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS message_ingress_fts USING fts5(ingress_id UNINDEXED, workspace_id UNINDEXED, source, sender_id, decision_code, decision_reason, body);');
+      if (tableExists(db, 'message_ingress')) {
+        db.exec('INSERT INTO message_ingress_fts(ingress_id, workspace_id, source, sender_id, decision_code, decision_reason, body) SELECT id, workspace_id, source, sender_id, decision_code, decision_reason, body FROM message_ingress;');
+      }
+
+      db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS interventions_fts USING fts5(intervention_id UNINDEXED, run_id UNINDEXED, code, status, reason);');
+      if (tableExists(db, 'interventions')) {
+        db.exec('INSERT INTO interventions_fts(intervention_id, run_id, code, status, reason) SELECT id, run_id, code, status, reason FROM interventions;');
+      }
+    },
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [
@@ -1111,7 +1142,8 @@ export function applyMigrations(db: Database.Database, migrations: Migration[]):
   for (const migration of migrations) {
     if (getMigration.get(migration.id)) continue;
     const tx = db.transaction(() => {
-      for (const statement of migration.statements) db.exec(statement);
+      for (const statement of migration.statements ?? []) db.exec(statement);
+      migration.apply?.(db);
       addMigration.run(migration.id, new Date().toISOString());
     });
     tx();

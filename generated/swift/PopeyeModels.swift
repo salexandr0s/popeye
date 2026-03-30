@@ -57,6 +57,15 @@ public enum MessageIngressDecisionCode: String, Codable, Sendable {
     case promptInjectionQuarantined = "prompt_injection_quarantined"
 }
 
+public enum RecallSourceKind: String, Codable, Sendable {
+    case receipt = "receipt"
+    case runEvent = "run_event"
+    case message = "message"
+    case messageIngress = "message_ingress"
+    case intervention = "intervention"
+    case memory = "memory"
+}
+
 // MARK: - Models
 
 public struct TaskRecord: Codable, Sendable {
@@ -123,6 +132,32 @@ public struct ReceiptRecord: Codable, Sendable {
     public let usage: String
     public let runtime: String
     public let createdAt: String
+}
+
+public struct RecallSearchResponse: Codable, Sendable {
+    public let query: String
+    public let results: String
+    public let totalMatches: String
+}
+
+public struct RecallDetail: Codable, Sendable {
+    public let sourceKind: String
+    public let sourceId: String
+    public let title: String
+    public let snippet: String
+    public let score: String
+    public let createdAt: String
+    public let workspaceId: String
+    public let projectId: String
+    public let runId: String
+    public let taskId: String
+    public let sessionRootId: String
+    public let subtype: String
+    public let status: String
+    public let memoryLayer: String
+    public let memorySourceType: String
+    public let content: String
+    public let metadata: String
 }
 
 public struct InterventionRecord: Codable, Sendable {

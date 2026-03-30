@@ -40,6 +40,11 @@ import {
   ProjectListItemSchema,
   type ReceiptRecord,
   ReceiptRecordSchema,
+  type RecallDetail,
+  RecallDetailSchema,
+  type RecallSearchResponse,
+  RecallSearchResponseSchema,
+  type RecallSourceKind,
   type RunEventRecord,
   RunEventRecordSchema,
   type RunReply,
@@ -276,6 +281,15 @@ export interface MemoryListOptions {
 
 export interface ListRunsOptions {
   state?: RunState | RunState[];
+}
+
+export interface RecallSearchOptions {
+  query: string;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  includeGlobal?: boolean;
+  kinds?: RecallSourceKind[];
+  limit?: number;
 }
 
 const MemoryMaintenanceResultSchema = z.object({
@@ -551,6 +565,24 @@ export class PopeyeApiClient {
 
   async searchSessions(query: string, options: { type?: string; workspaceId?: string; from?: string; to?: string; limit?: number } = {}): Promise<SessionSearchResponse> {
     return this.get(`/v1/sessions/search${this.buildQuery({ q: query, ...options })}`, SessionSearchResponseSchema);
+  }
+
+  async searchRecall(options: RecallSearchOptions): Promise<RecallSearchResponse> {
+    return this.get(
+      `/v1/recall/search${this.buildQuery({
+        q: options.query,
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        includeGlobal: options.includeGlobal,
+        kinds: options.kinds?.join(','),
+        limit: options.limit,
+      })}`,
+      RecallSearchResponseSchema,
+    );
+  }
+
+  async getRecallDetail(kind: RecallSourceKind, id: string): Promise<RecallDetail> {
+    return this.get(`/v1/recall/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, RecallDetailSchema);
   }
 
   // --- Trajectory ---

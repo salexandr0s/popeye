@@ -226,6 +226,20 @@
       },
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
+    "RecallSearchResponse": {
+      "$ref": "#/definitions/RecallSearchResponse",
+      "definitions": {
+        "RecallSearchResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "RecallDetailResponse": {
+      "$ref": "#/definitions/RecallDetailResponse",
+      "definitions": {
+        "RecallDetailResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
     "FileRootResponse": {
       "$ref": "#/definitions/FileRootResponse",
       "definitions": {

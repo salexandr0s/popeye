@@ -1472,6 +1472,84 @@ describe('control api', () => {
     await app.close();
   });
 
+  it('keeps unified recall routes operator-only while serving operator callers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-recall-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    initAuthStore(authFile, 'readonly');
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const now = new Date().toISOString();
+    runtime.databases.app.prepare(
+      'INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('task-recall', 'default', null, 'default', 'Recall task', 'noop', 'manual', 'completed', JSON.stringify({ maxAttempts: 1 }), 'read_only', now);
+    runtime.databases.app.prepare(
+      'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('job-recall', 'task-recall', 'default', 'completed', 0, now, 'run-recall', now, now);
+    runtime.databases.app.prepare(
+      'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('run-recall', 'job-recall', 'task-recall', 'default', 'default', 'session-recall', null, 'completed', now, now, null, null, null, 0);
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts (id, run_id, job_id, task_id, workspace_id, status, summary, details, usage_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('receipt-recall', 'run-recall', 'job-recall', 'task-recall', 'default', 'failed', 'Recall credentials issue', 'Credentials were missing during deploy.', '{}', now);
+    runtime.databases.app.prepare(
+      'INSERT INTO receipts_fts (receipt_id, run_id, workspace_id, status, summary, details) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('receipt-recall', 'run-recall', 'default', 'failed', 'Recall credentials issue', 'Credentials were missing during deploy.');
+
+    const readonlyToken = readAuthStore(authFile, 'readonly').current.token;
+    const readonlyResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/recall/search?q=credentials&workspaceId=default',
+      headers: { authorization: `Bearer ${readonlyToken}` },
+    });
+    expect(readonlyResponse.statusCode).toBe(403);
+
+    const operatorToken = readAuthStore(authFile).current.token;
+    const searchResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/recall/search?q=credentials&workspaceId=default',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(searchResponse.statusCode).toBe(200);
+    expect(searchResponse.json()).toMatchObject({
+      query: 'credentials',
+      results: expect.arrayContaining([
+        expect.objectContaining({
+          sourceKind: 'receipt',
+          sourceId: 'receipt-recall',
+          workspaceId: 'default',
+        }),
+      ]),
+    });
+
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/recall/receipt/receipt-recall',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      sourceKind: 'receipt',
+      sourceId: 'receipt-recall',
+      workspaceId: 'default',
+      content: 'Credentials were missing during deploy.',
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('filters runs by state query param', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-runs-'));
     chmodSync(dir, 0o700);

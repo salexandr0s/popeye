@@ -32,7 +32,7 @@ New platform implementation.
 | `createControlApi()`  | Build and configure the Fastify server instance    |
 | `ControlApiDependencies` | Input type requiring a `PopeyeRuntimeService`   |
 
-## Endpoints (~80 routes)
+## Endpoints (~82 routes)
 
 | Area           | Routes                                                       |
 | -------------- | ------------------------------------------------------------ |
@@ -44,6 +44,7 @@ New platform implementation.
 | Jobs           | `GET /v1/jobs`, `POST /v1/jobs/:id/pause|resume|enqueue`     |
 | Runs           | `GET /v1/runs`, `GET /v1/runs/:id`, `GET /v1/runs/:id/envelope`, `POST /v1/runs/:id/retry|cancel` |
 | Receipts       | `GET /v1/receipts`, `GET /v1/receipts/:id`                   |
+| Recall         | `GET /v1/recall/search`, `GET /v1/recall/:kind/:id`          |
 | Instructions   | `GET /v1/instruction-previews/:scope`                        |
 | Interventions  | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve`|
 | Connections    | `GET /v1/connections`, `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`, `GET /v1/connections/oauth/callback`, `POST /v1/connections`, `PATCH /v1/connections/:id`, `DELETE /v1/connections/:id` |
@@ -97,8 +98,8 @@ and is not persisted in browser cookies or browser storage by the control API.
 
 - `readonly`: non-mutating observability routes and SSE
 - `service`: readonly + local automation mutations (task/job/run/message relay)
-- `operator`: full access, including browser-session minting, profiles, memory
-  maintenance, and security surfaces
+- `operator`: full access, including browser-session minting, profiles, unified
+  recall, memory maintenance, and security surfaces
 
 Legacy auth files with a single rotating token are still accepted and treated
 as `operator`.
@@ -186,3 +187,20 @@ return `400` errors rather than creating partially runnable tasks.
 `projectId`, and `includeGlobal` filters in addition to the legacy `scope`
 string. Responses include `workspaceId` and `projectId` so callers can enforce
 project-aware retrieval without inferring location solely from `scope`.
+
+### Unified recall
+
+`GET /v1/recall/search` and `GET /v1/recall/:kind/:id` expose a normalized
+historical retrieval surface over runtime artifacts:
+
+- receipts
+- run events
+- accepted messages
+- ingress decisions
+- interventions
+- durable memory references
+
+The routes are intentionally operator-only in this slice because recall can
+surface durable memory references and full artifact content. Agent-facing recall
+stays scoped through the runtime-owned `popeye_recall_search` tool instead of
+direct interface bypasses.

@@ -50,6 +50,16 @@ export class ReceiptManager {
       JSON.stringify(receipt.usage),
       receipt.createdAt,
     );
+    this.databases.app.prepare(
+      'INSERT INTO receipts_fts (receipt_id, run_id, workspace_id, status, summary, details) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      receipt.id,
+      receipt.runId,
+      receipt.workspaceId,
+      receipt.status,
+      receipt.summary,
+      receipt.details,
+    );
     writeReceiptArtifact(this.databases.paths, receipt.id, JSON.stringify({ receipt, rendered: renderReceipt(receipt) }, null, 2));
     return receipt;
   }

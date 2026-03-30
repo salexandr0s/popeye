@@ -217,6 +217,21 @@ export class MessageIngestionService {
         record.createdAt,
         record.updatedAt,
       );
+    this.databases.app
+      .prepare(`
+        INSERT INTO message_ingress_fts (
+          ingress_id, workspace_id, source, sender_id, decision_code, decision_reason, body
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        record.id,
+        record.workspaceId,
+        record.source,
+        record.senderId,
+        record.decisionCode,
+        record.decisionReason,
+        record.body,
+      );
   }
 
   updateMessageIngressLinks(recordId: string, updates: Pick<MessageIngressRecord, 'messageId' | 'taskId' | 'jobId' | 'runId'>): void {
@@ -571,6 +586,12 @@ export class MessageIngestionService {
         message.relatedRunId,
         message.createdAt,
       );
+      this.databases.app.prepare('INSERT INTO messages_fts (message_id, source, sender_id, body) VALUES (?, ?, ?, ?)').run(
+        message.id,
+        message.source,
+        message.senderId,
+        message.body,
+      );
 
       const ingressRecord = MessageIngressRecordSchema.parse({
         id: randomUUID(),
@@ -704,6 +725,12 @@ export class MessageIngestionService {
       1,
       message.relatedRunId,
       message.createdAt,
+    );
+    this.databases.app.prepare('INSERT INTO messages_fts (message_id, source, sender_id, body) VALUES (?, ?, ?, ?)').run(
+      message.id,
+      message.source,
+      message.senderId,
+      message.body,
     );
     const created = this.callbacks.createTask({ workspaceId: parsed.workspaceId, projectId: null, title: `message:${message.id}`, prompt: message.body, source: parsed.source === 'manual' ? 'manual' : 'api', coalesceKey: null, autoEnqueue: true });
     return MessageIngressResponseSchema.parse({

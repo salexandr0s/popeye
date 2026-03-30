@@ -1,6 +1,6 @@
 # Current State Matrix
 
-Date: 2026-03-20
+Date: 2026-03-30
 
 This document is the canonical repo-truth snapshot for Popeye. It supersedes
 older "current state" claims in:
@@ -25,6 +25,7 @@ older "current state" claims in:
 |---|---|---|
 | Runtime orchestration (`task`/`job`/`run`, scheduler, receipts, recovery) | **Substrate-complete** | Core runtime foundation is in place and already powers the daemon, CLI, API, and web inspector. |
 | Control API (loopback auth, role auth, CSRF, SSE) | **Substrate-complete** | `/v1/*` remains the required client boundary. Approvals, security policy, and vault routes are now first-class surfaces. |
+| Unified recall surface | **Experimental** | Additive runtime/API/tooling slice now searches receipts, run events, accepted messages, ingress decisions, interventions, and durable memory references through a normalized recall contract. Durable memory remains the truth substrate; playbooks and proposal-driven learning are still deferred. |
 | CLI operator surface (`pop`) | **Substrate-complete** | Daemon lifecycle, runs, receipts, auth, backups, security audit, approvals, vaults, and daemon health exist. Finance, medical, files review, upgrade verify/rollback commands added. |
 | Web inspector | **Substrate-complete** | Runtime/operator views are real, including dedicated connections plus email/calendar/GitHub operator pages. Finance, medical, and files views added. |
 | Generated contracts | **Substrate-complete** | Verified generated artifacts now include Swift models, TypeScript models, and a JSON Schema bundle. `pnpm verify:generated-artifacts` is part of `dev-verify`. |
