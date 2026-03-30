@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct PopeyeMacApp: App {
     @State private var appModel = AppModel()
+    private let routeShortcuts: [KeyEquivalent] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
     var body: some Scene {
         WindowGroup {
@@ -15,8 +16,12 @@ struct PopeyeMacApp: App {
         .commands {
             CommandGroup(after: .sidebar) {
                 ForEach(Array(AppRoute.allCases.enumerated()), id: \.element) { index, route in
-                    Button(route.title) { appModel.selectedRoute = route }
-                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    if let shortcut = routeShortcuts[safe: index] {
+                        Button(route.title) { appModel.selectedRoute = route }
+                            .keyboardShortcut(shortcut, modifiers: .command)
+                    } else {
+                        Button(route.title) { appModel.selectedRoute = route }
+                    }
                 }
             }
         }
@@ -25,5 +30,11 @@ struct PopeyeMacApp: App {
             SettingsView()
                 .environment(appModel)
         }
+    }
+}
+
+private extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
