@@ -16,6 +16,8 @@ export interface LoadedPlugin {
   tools: RuntimeToolDescriptor[];
 }
 
+type StdinWriteError = Error & { code?: string };
+
 function executePluginTool(command: string, timeoutMs: number, env: Record<string, string>): (params: unknown) => Promise<RuntimeToolResult> {
   return (params: unknown): Promise<RuntimeToolResult> => {
     return new Promise((resolve) => {
@@ -43,8 +45,13 @@ function executePluginTool(command: string, timeoutMs: number, env: Record<strin
       });
 
       if (child.stdin) {
-        child.stdin.write(JSON.stringify(params ?? {}));
-        child.stdin.end();
+        child.stdin.on('error', (error: StdinWriteError) => {
+          if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') {
+            return;
+          }
+          child.kill();
+        });
+        child.stdin.end(JSON.stringify(params ?? {}));
       }
     });
   };

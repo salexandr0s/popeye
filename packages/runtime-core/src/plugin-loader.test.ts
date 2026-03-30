@@ -189,6 +189,29 @@ describe('loadPlugins', () => {
     expect(result.content[0].text).toContain('something went wrong');
   });
 
+  it('handles tools that exit without reading stdin', async () => {
+    writePlugin(pluginsDir, 'stdin-ignoring-plugin', {
+      id: 'stdin-ignoring-plugin',
+      name: 'stdin-ignoring-plugin',
+      tools: [
+        {
+          name: 'ignore_stdin',
+          description: 'Exits successfully without consuming stdin',
+          inputSchema: {},
+          command: 'echo ok',
+        },
+      ],
+    });
+
+    const plugins = loadPlugins(pluginsDir, log);
+    const tool = plugins[0].tools[0];
+
+    for (let index = 0; index < 25; index += 1) {
+      const result = await tool.execute!({ iteration: index, payload: 'x'.repeat(1024) });
+      expect(result.content[0].text).toBe('ok');
+    }
+  });
+
   it('applies default timeoutMs and env', () => {
     writePlugin(pluginsDir, 'defaults-plugin', {
       id: 'defaults-plugin',
