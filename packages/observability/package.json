@@ -8,7 +8,7 @@
   "dependencies": {
     "@popeye/contracts": "workspace:*",
     "pino": "^10.3.1",
-    "safe-regex2": "^4.0.0"
+    "safe-regex2": "^5.1.0"
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json --pretty false",
