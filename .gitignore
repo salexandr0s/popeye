@@ -11,6 +11,7 @@ test-results
 .env
 .env.*
 .turbo
+*.profraw
 packages/**/src/**/*.js
 packages/**/src/**/*.js.map
 packages/**/src/**/*.d.ts
