@@ -9,14 +9,14 @@
 
 ## Executive Summary
 
-The conservative cleanup waves address the immediate backlog safely. The remaining **major** upgrades should be handled as separate follow-up branches because they touch shared build/test/lint infrastructure.
+The conservative cleanup waves addressed the immediate backlog safely. Major toolchain work has been landing as separate follow-up branches because it touches shared build/test/lint infrastructure.
 
-Current recommendation:
+Current status / next order:
 
-1. **TypeScript 6** as its own branch
-2. **Vite 8 + Vitest 4 + related web/test tooling** as one coordinated branch
-3. **ESLint 10 + lint ecosystem** as its own branch
-4. **`@types/node` 25 + `globals` 17** as final cleanup once the above are green
+1. ✅ **TypeScript 6** landed on `chore/toolchain-typescript-6`
+2. ✅ **ESLint 10 + lint ecosystem** landed on `chore/toolchain-eslint-10`
+3. **Vite 8 + Vitest 4 + related web/test tooling** next as one coordinated branch
+4. **`@types/node` 25** as final cleanup once the above are green
 
 The key repo surfaces affected are:
 
@@ -31,15 +31,15 @@ The key repo surfaces affected are:
 
 | Package | Current | Latest seen | Recommendation | Main risk surface |
 |---|---:|---:|---|---|
-| `typescript` | 5.9.3 | 6.0.2 | Separate branch | project references, NodeNext resolution, generated contracts |
+| `typescript` | 6.0.2 | 6.0.2 | Landed on `chore/toolchain-typescript-6` | project references, NodeNext resolution, generated contracts |
 | `vite` | 6.4.1 | 8.0.3 | Group with Vitest/web tooling | web-inspector build/dev server |
 | `@vitejs/plugin-react` | 4.7.0 | 6.0.1 | Group with Vite | React transform/HMR/build integration |
 | `vitest` | 3.2.4 | 4.1.2 | Group with Vite/web tooling | test runner, vite-node, jsdom suite |
 | `@vitest/coverage-v8` | 3.2.4 | 4.1.2 | Group with Vitest | coverage pipeline |
 | `jsdom` | 26.1.0 | 29.0.1 | Group with Vitest/web tooling | web-inspector DOM tests |
-| `eslint` | 9.39.4 | 10.1.0 | Separate branch after TS/web toolchain | flat config + `@typescript-eslint` compatibility |
-| `@eslint/js` | 9.39.4 | 10.0.1 | Upgrade with ESLint | rule preset compatibility |
-| `globals` | 15.15.0 | 17.4.0 | Upgrade with ESLint or final cleanup | lint globals surface |
+| `eslint` | 10.1.0 | 10.1.0 | Landed on `chore/toolchain-eslint-10` | flat config + `@typescript-eslint` compatibility |
+| `@eslint/js` | 10.0.1 | 10.0.1 | Landed with ESLint | rule preset compatibility |
+| `globals` | 17.4.0 | 17.4.0 | Landed with ESLint | lint globals surface |
 | `@types/node` | 22.19.15 | 25.5.0 | Final cleanup branch | ambient type changes |
 
 ---
@@ -61,7 +61,7 @@ Observed repo-specific adjustments while landing this branch:
 
 - keep `baseUrl` for current repo-wide path aliasing, but add `ignoreDeprecations: "6.0"` in `tsconfig.base.json` because TypeScript 6 now errors on the deprecation
 - add `types: ["vite/client"]` in `apps/web-inspector/tsconfig.json` so the CSS side-effect import in `src/main.tsx` remains typed
-- expect `@typescript-eslint` 8.57.2 to warn about an unsupported TypeScript 6 peer range even though the current lint config still runs green; revisit that in the later ESLint branch rather than mixing it into the TS6 change
+- the temporary `@typescript-eslint` TypeScript 6 bridge now lives in `chore/toolchain-eslint-10`, not in the TS6 branch itself
 
 ### 2) `chore/toolchain-vite-vitest-4`
 
@@ -99,6 +99,15 @@ Success criteria:
 - `pnpm security:sast` passes unchanged
 - `pnpm dev-verify` passes
 
+Observed repo-specific adjustments while landing this branch:
+
+- upgrade `eslint` to `10.1.0`, `@eslint/js` to `10.0.1`, and `globals` to `17.4.0`
+- fix newly enforced lint findings instead of disabling rules:
+  - `no-useless-assignment` in `packages/memory/src/search-service.ts`
+  - `preserve-caught-error` in `packages/runtime-core/src/runtime-service.ts`
+- add `warnOnUnsupportedTypeScriptVersion: false` in the flat config as an explicit temporary bridge while `@typescript-eslint` still lacks official TypeScript 6 support
+- add targeted `pnpm-workspace.yaml` `peerDependencyRules.allowedVersions` entries for the current `@typescript-eslint` 8.57.2 packages so fresh installs stay clean without pretending upstream has already shipped official support
+
 ### 4) `chore/toolchain-node-types`
 
 Upgrade `@types/node` last, once compile and lint surfaces are stable.
@@ -114,5 +123,6 @@ Success criteria:
 
 - `apps/web-inspector` is the only Vite surface in the repo, so Vite changes can stay tightly scoped.
 - The repo's flat ESLint config uses `projectService: true` and type-aware `@typescript-eslint` rules, so lint major upgrades should not be mixed with other work.
+- The `@typescript-eslint` TypeScript 6 bridge is intentionally temporary. Remove the local warning suppression and `peerDependencyRules.allowedVersions` entries once upstream ships an officially TS6-supported release.
 - `pnpm audit --audit-level=high` is currently sensitive enough that transitive security issues can block a branch; keep an eye on audit output while doing future toolchain work.
 - Generated contract files are part of the green path. Any toolchain branch that changes generation behavior must commit regenerated artifacts in the same branch.

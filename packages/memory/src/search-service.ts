@@ -145,10 +145,7 @@ export class MemorySearchService {
     });
     const weights = getStrategyWeights(plan.strategy);
 
-    let searchMode: 'hybrid' | 'fts_only' | 'vec_only' = 'fts_only';
-    let results: MemorySearchResult[];
-    let totalCandidates = 0;
-    let allScored: ScoredCandidate[] = [];
+    const searchMode: 'hybrid' | 'fts_only' | 'vec_only' = 'fts_only';
     const occurredAfter = query.occurredAfter ?? plan.temporalConstraint?.from ?? undefined;
     const occurredBefore = query.occurredBefore ?? plan.temporalConstraint?.to ?? undefined;
 
@@ -278,15 +275,15 @@ export class MemorySearchService {
       }
     }
 
-    allScored = rerankAndMerge(ftsCandidates, [], {
+    const allScored = rerankAndMerge(ftsCandidates, [], {
       ...rerankParams,
       weights,
       queryText,
       factMetadata,
     });
-    totalCandidates = allScored.length;
+    const totalCandidates = allScored.length;
     const limited = this.budgetConfig ? applyBudgetAllocation(allScored, limit, this.budgetConfig) : allScored.slice(0, limit);
-    results = limited.map(mapResult);
+    const results = limited.map(mapResult);
 
     const latencyMs = performance.now() - start;
 

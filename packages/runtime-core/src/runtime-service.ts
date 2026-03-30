@@ -367,7 +367,7 @@ export class PopeyeRuntimeService {
           regex = new RegExp(pattern, 'g');
         } catch (err: unknown) {
           const msg = err instanceof SyntaxError ? err.message : String(err);
-          throw new Error(`Invalid regex in security.${field.name}: pattern "${pattern}" — ${msg}`);
+          throw new Error(`Invalid regex in security.${field.name}: pattern "${pattern}" — ${msg}`, { cause: err });
         }
         if (!safe(regex)) {
           throw new Error(`ReDoS-vulnerable regex in security.${field.name}: pattern "${pattern}"`);

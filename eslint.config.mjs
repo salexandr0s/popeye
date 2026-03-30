@@ -52,6 +52,7 @@ export default [
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
         sourceType: 'module',
+        warnOnUnsupportedTypeScriptVersion: false,
       },
       globals: {
         ...globals.node,
@@ -77,6 +78,7 @@ export default [
       parser: tsParser,
       parserOptions: {
         sourceType: 'module',
+        warnOnUnsupportedTypeScriptVersion: false,
       },
       globals: {
         ...globals.node,
