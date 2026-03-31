@@ -740,14 +740,15 @@ async function main(): Promise<void> {
     }
     const upgradePaths = deriveRuntimePaths(config.runtimeDataDir);
     try {
-      const { MigrationManager } = await import('@popeye/runtime-core');
+      const { MigrationManager, resolveAppDbBackupPath } = await import('@popeye/runtime-core');
       const Database = (await import('better-sqlite3')).default;
       const appDbPath = upgradePaths.appDbPath;
+      const backupDbPath = resolveAppDbBackupPath(targetPath);
       const tempDb = new Database(':memory:');
       const mgr = new MigrationManager(tempDb);
-      mgr.rollbackMigration(targetPath, appDbPath);
+      mgr.rollbackMigration(backupDbPath, appDbPath);
       tempDb.close();
-      console.info(`Restored app database from backup: ${targetPath}`);
+      console.info(`Restored app database from backup: ${backupDbPath}`);
       console.info('Restart the daemon to apply the restored state.');
     } catch (error) {
       console.error(`Rollback failed: ${error instanceof Error ? error.message : String(error)}`);

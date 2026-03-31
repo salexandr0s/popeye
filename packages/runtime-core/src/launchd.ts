@@ -3,10 +3,38 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+const DEFAULT_LABEL = 'dev.popeye.popeyed';
+const RETRYABLE_BOOTSTRAP_OUTPUT = 'Bootstrap failed: 5: Input/output error';
+const LAUNCHD_RETRY_DELAYS_MS = [150, 300, 600] as const;
+
 function getUid(): number {
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error('process.getuid is not available on this platform (launchd requires macOS/POSIX)');
   return uid;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function runLaunchctl(args: string[]): { ok: boolean; output: string } {
+  const result = spawnSync('launchctl', args, { encoding: 'utf8' });
+  return { ok: result.status === 0, output: result.stdout || result.stderr || '' };
+}
+
+function isRetryableBootstrapOutput(output: string): boolean {
+  return output.includes(RETRYABLE_BOOTSTRAP_OUTPUT);
+}
+
+function waitForLaunchAgentState(label: string, loaded: boolean, timeoutMs = 2_000): void {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = daemonStatus(label);
+    if (current.loaded === loaded) {
+      return;
+    }
+    sleepSync(100);
+  }
 }
 
 export interface LaunchdInstallOptions {
@@ -28,11 +56,11 @@ export interface LaunchdCommandResult {
   output: string;
 }
 
-export function getLaunchAgentPath(label = 'dev.popeye.popeyed'): string {
+export function getLaunchAgentPath(label = DEFAULT_LABEL): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
 }
 
-export function getLaunchAgentTarget(label = 'dev.popeye.popeyed'): string {
+export function getLaunchAgentTarget(label = DEFAULT_LABEL): string {
   return `gui/${getUid()}/${label}`;
 }
 
@@ -41,7 +69,7 @@ function xmlEscape(s: string): string {
 }
 
 export function createLaunchdPlist(options: LaunchdInstallOptions): string {
-  const label = xmlEscape(options.label ?? 'dev.popeye.popeyed');
+  const label = xmlEscape(options.label ?? DEFAULT_LABEL);
   const nodeExecutable = xmlEscape(options.nodeExecutable ?? process.execPath);
   const entryPoint = xmlEscape(options.daemonEntryPoint);
   const workDir = xmlEscape(options.workingDirectory);
@@ -79,45 +107,101 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
 }
 
 export function installLaunchAgent(options: LaunchdInstallOptions): LaunchdInstallResult {
-  const label = options.label ?? 'dev.popeye.popeyed';
+  const label = options.label ?? DEFAULT_LABEL;
   const plistPath = getLaunchAgentPath(label);
   mkdirSync(resolve(plistPath, '..'), { recursive: true, mode: 0o700 });
   writeFileSync(plistPath, createLaunchdPlist(options));
   return { label, plistPath, installed: true };
 }
 
-export function daemonStatus(label = 'dev.popeye.popeyed'): { installed: boolean; loaded: boolean; output: string } {
+export function daemonStatus(label = DEFAULT_LABEL): { installed: boolean; loaded: boolean; output: string } {
   const plistPath = getLaunchAgentPath(label);
   if (!existsSync(plistPath)) {
     return { installed: false, loaded: false, output: 'not installed' };
   }
   const target = getLaunchAgentTarget(label);
-  const result = spawnSync('launchctl', ['print', target], { encoding: 'utf8' });
-  const loaded = result.status === 0;
-  return { installed: true, loaded, output: result.stdout || result.stderr || '' };
+  const result = runLaunchctl(['print', target]);
+  return { installed: true, loaded: result.ok, output: result.output };
 }
 
-export function loadLaunchAgent(label = 'dev.popeye.popeyed'): LaunchdCommandResult {
+export function loadLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
   const plistPath = getLaunchAgentPath(label);
-  const result = spawnSync('launchctl', ['bootstrap', `gui/${getUid()}`, plistPath], { encoding: 'utf8' });
-  return { ok: result.status === 0, output: result.stdout || result.stderr || '' };
+  const outputs: string[] = [];
+
+  for (let attempt = 0; attempt <= LAUNCHD_RETRY_DELAYS_MS.length; attempt += 1) {
+    const result = runLaunchctl(['bootstrap', `gui/${getUid()}`, plistPath]);
+    if (result.output) {
+      outputs.push(result.output.trimEnd());
+    }
+    if (result.ok) {
+      return { ok: true, output: outputs.join('\n') };
+    }
+
+    if (!isRetryableBootstrapOutput(result.output)) {
+      return { ok: false, output: outputs.join('\n') };
+    }
+
+    const status = daemonStatus(label);
+    if (status.loaded) {
+      if (status.output) {
+        outputs.push(status.output.trimEnd());
+      }
+      return { ok: true, output: outputs.join('\n') };
+    }
+
+    const retryDelay = LAUNCHD_RETRY_DELAYS_MS[attempt];
+    if (retryDelay !== undefined) {
+      sleepSync(retryDelay);
+    }
+  }
+
+  return { ok: false, output: outputs.join('\n') };
 }
 
-export function unloadLaunchAgent(label = 'dev.popeye.popeyed'): LaunchdCommandResult {
-  const result = spawnSync('launchctl', ['bootout', getLaunchAgentTarget(label)], { encoding: 'utf8' });
-  return { ok: result.status === 0, output: result.stdout || result.stderr || '' };
+export function unloadLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
+  const result = runLaunchctl(['bootout', getLaunchAgentTarget(label)]);
+  if (result.ok) {
+    waitForLaunchAgentState(label, false);
+  }
+  return result;
 }
 
-export function restartLaunchAgent(label = 'dev.popeye.popeyed'): LaunchdCommandResult {
+function kickstartLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
+  return runLaunchctl(['kickstart', '-k', getLaunchAgentTarget(label)]);
+}
+
+export function restartLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
+  const status = daemonStatus(label);
+  const outputs: string[] = [];
+
+  if (status.loaded) {
+    const restart = kickstartLaunchAgent(label);
+    if (status.output) {
+      outputs.push(status.output.trimEnd());
+    }
+    if (restart.output) {
+      outputs.push(restart.output.trimEnd());
+    }
+    if (restart.ok) {
+      return { ok: true, output: outputs.join('\n') };
+    }
+  }
+
   const unload = unloadLaunchAgent(label);
   const load = loadLaunchAgent(label);
+  if (unload.output) {
+    outputs.push(unload.output.trimEnd());
+  }
+  if (load.output) {
+    outputs.push(load.output.trimEnd());
+  }
   return {
     ok: load.ok,
-    output: [unload.output, load.output].filter(Boolean).join('\n'),
+    output: outputs.filter(Boolean).join('\n'),
   };
 }
 
-export function uninstallLaunchAgent(label = 'dev.popeye.popeyed'): LaunchdCommandResult & { removed: boolean; plistPath: string } {
+export function uninstallLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult & { removed: boolean; plistPath: string } {
   const plistPath = getLaunchAgentPath(label);
   if (existsSync(plistPath)) {
     unloadLaunchAgent(label);

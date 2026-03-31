@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 echo "==> Uninstalling Popeye..."
-# Unload LaunchAgent if loaded
-PLIST="$HOME/Library/LaunchAgents/com.popeye.daemon.plist"
-if launchctl list | grep -q com.popeye.daemon 2>/dev/null; then
-  echo "  Unloading LaunchAgent..."
-  launchctl unload "$PLIST" 2>/dev/null || true
-fi
-[ -f "$PLIST" ] && rm "$PLIST" && echo "  Removed LaunchAgent plist"
+CURRENT_LABEL="dev.popeye.popeyed"
+LEGACY_LABEL="com.popeye.daemon"
+for label in "$CURRENT_LABEL" "$LEGACY_LABEL"; do
+  PLIST="$HOME/Library/LaunchAgents/$label.plist"
+  echo "  Unloading LaunchAgent $label if present..."
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  [ -f "$PLIST" ] && rm "$PLIST" && echo "  Removed LaunchAgent plist $PLIST"
+done
 # Remove symlinks
 for link in /usr/local/bin/pop /usr/local/bin/popeyed /opt/homebrew/bin/pop /opt/homebrew/bin/popeyed; do
   [ -e "$link" ] && rm "$link" && echo "  Removed $link"
