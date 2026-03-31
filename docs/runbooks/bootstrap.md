@@ -163,7 +163,7 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 | Flag | Effect |
 |------|--------|
 | `--prefix <path>` | Launcher location (default: `/opt/homebrew/bin` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin`) |
-| `--force` | Overwrite existing `config.json` |
+| `--force` | Rebuild/reinstall bundles and launcher, while preserving an existing `config.json` |
 
 ### What install.sh does
 
@@ -174,7 +174,7 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 5. Bundles daemon → `apps/daemon/dist/index.js`
 6. Builds the web inspector → `apps/web-inspector/dist/`
 7. Writes a `pop` launcher to `<prefix>/pop`
-8. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
+8. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` only if it does not already exist
 
 Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 `src/*.d.ts`, and sourcemap artifacts are intentionally rejected by

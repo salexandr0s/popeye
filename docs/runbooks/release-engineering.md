@@ -53,7 +53,7 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 This builds, bundles the CLI and daemon, builds the web inspector, and installs a `pop` launcher in the
 default local bin directory (`/opt/homebrew/bin` on Apple Silicon Homebrew
 hosts, otherwise `/usr/local/bin`),
-and creates a default config at `~/Library/Application Support/Popeye/`.
+and creates a default config at `~/Library/Application Support/Popeye/` only when one does not already exist.
 
 ## Smoke test
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 export const KEYCHAIN_SERVICE_PREFIX = 'com.popeye.';
 export const KEYCHAIN_ACCOUNT = 'popeye';
+export const KEYCHAIN_COMMAND_TIMEOUT_MS = 5_000;
 
 export interface KeychainResult {
   ok: boolean;
@@ -13,6 +14,25 @@ export interface KeychainResult {
 }
 
 const SAFE_KEY_RE = /^[a-zA-Z0-9._-]+$/;
+
+function keychainSpawnError(result: { status: number | null; signal: string | null; stderr?: string | null; error?: Error | null }): string {
+  const errorCode = result.error && 'code' in result.error
+    ? String((result.error as Error & { code?: string }).code ?? '')
+    : '';
+  if (errorCode === 'ETIMEDOUT') {
+    return `timed out after ${KEYCHAIN_COMMAND_TIMEOUT_MS}ms`;
+  }
+  if (result.stderr?.trim()) {
+    return result.stderr.trim();
+  }
+  if (result.error?.message) {
+    return result.error.message;
+  }
+  if (result.signal) {
+    return `terminated by ${result.signal}`;
+  }
+  return `exit code ${String(result.status)}`;
+}
 
 function assertSafeKeychainKey(key: string): void {
   if (!SAFE_KEY_RE.test(key)) {
@@ -28,7 +48,7 @@ export function isKeychainAvailable(): boolean {
   if (process.platform !== 'darwin') {
     return false;
   }
-  const result = spawnSync('security', ['help'], { encoding: 'utf8' });
+  const result = spawnSync('security', ['help'], { encoding: 'utf8', timeout: KEYCHAIN_COMMAND_TIMEOUT_MS });
   return result.status === 0;
 }
 
@@ -40,6 +60,7 @@ export function keychainGet(key: string): KeychainResult {
   const service = keychainServiceName(key);
   const result = spawnSync('security', ['find-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT, '-w'], {
     encoding: 'utf8',
+    timeout: KEYCHAIN_COMMAND_TIMEOUT_MS,
   });
   if (result.status === 0) {
     return { ok: true, value: result.stdout.trim() };
@@ -47,7 +68,7 @@ export function keychainGet(key: string): KeychainResult {
   if (result.status === 44) {
     return { ok: false, error: 'not_found' };
   }
-  return { ok: false, error: result.stderr?.trim() || `exit code ${result.status}` };
+  return { ok: false, error: keychainSpawnError(result) };
 }
 
 /**
@@ -71,12 +92,12 @@ export function keychainSet(key: string, value: string): KeychainResult {
     const result = spawnSync(
       '/bin/sh',
       ['-c', `security add-generic-password -s "${service}" -a "${KEYCHAIN_ACCOUNT}" -w "$(cat "${tmpFile}")" -U`],
-      { encoding: 'utf8' },
+      { encoding: 'utf8', timeout: KEYCHAIN_COMMAND_TIMEOUT_MS },
     );
     if (result.status === 0) {
       return { ok: true };
     }
-    return { ok: false, error: result.stderr?.trim() || `exit code ${result.status}` };
+    return { ok: false, error: keychainSpawnError(result) };
   } finally {
     try { unlinkSync(tmpFile); } catch { /* best effort */ }
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
@@ -91,11 +112,12 @@ export function keychainDelete(key: string): KeychainResult {
   const service = keychainServiceName(key);
   const result = spawnSync('security', ['delete-generic-password', '-s', service, '-a', KEYCHAIN_ACCOUNT], {
     encoding: 'utf8',
+    timeout: KEYCHAIN_COMMAND_TIMEOUT_MS,
   });
   if (result.status === 0) {
     return { ok: true };
   }
-  return { ok: false, error: result.stderr?.trim() || `exit code ${result.status}` };
+  return { ok: false, error: keychainSpawnError(result) };
 }
 
 export function keychainHas(key: string): boolean {

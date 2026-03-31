@@ -24,6 +24,7 @@ import { writeFileSync } from 'node:fs';
 
 import {
   KEYCHAIN_ACCOUNT,
+  KEYCHAIN_COMMAND_TIMEOUT_MS,
   isKeychainAvailable,
   keychainDelete,
   keychainGet,
@@ -84,7 +85,7 @@ describe('keychain', () => {
     it('isKeychainAvailable returns true when security exits 0', () => {
       mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 0 }));
       expect(isKeychainAvailable()).toBe(true);
-      expect(mockSpawnSync).toHaveBeenCalledWith('security', ['help'], { encoding: 'utf8' });
+      expect(mockSpawnSync).toHaveBeenCalledWith('security', ['help'], { encoding: 'utf8', timeout: KEYCHAIN_COMMAND_TIMEOUT_MS });
     });
 
     it('isKeychainAvailable returns false when security not found', () => {
@@ -134,6 +135,16 @@ describe('keychain', () => {
       expect(result).toEqual({ ok: false, error: 'not_found' });
     });
 
+    it('keychainGet returns timeout error when security hangs', () => {
+      mockSpawnSync.mockReturnValueOnce(fakeResult({
+        status: null,
+        signal: 'SIGTERM',
+        error: Object.assign(new Error('spawnSync security ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+      }));
+      const result = keychainGet('slow-key');
+      expect(result).toEqual({ ok: false, error: `timed out after ${KEYCHAIN_COMMAND_TIMEOUT_MS}ms` });
+    });
+
     it('keychainDelete passes correct args', () => {
       mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 0 }));
       const result = keychainDelete('my-key');
@@ -141,7 +152,7 @@ describe('keychain', () => {
       expect(mockSpawnSync).toHaveBeenCalledWith(
         'security',
         ['delete-generic-password', '-s', 'com.popeye.my-key', '-a', KEYCHAIN_ACCOUNT],
-        { encoding: 'utf8' },
+        { encoding: 'utf8', timeout: KEYCHAIN_COMMAND_TIMEOUT_MS },
       );
     });
 
@@ -151,6 +162,16 @@ describe('keychain', () => {
 
       mockSpawnSync.mockReturnValueOnce(fakeResult({ status: 44 }));
       expect(keychainHas('missing')).toBe(false);
+    });
+
+    it('keychainSet returns timeout error when security hangs', () => {
+      mockSpawnSync.mockReturnValueOnce(fakeResult({
+        status: null,
+        signal: 'SIGTERM',
+        error: Object.assign(new Error('spawnSync /bin/sh ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+      }));
+      const result = keychainSet('slow-set', 'slow-secret');
+      expect(result).toEqual({ ok: false, error: `timed out after ${KEYCHAIN_COMMAND_TIMEOUT_MS}ms` });
     });
   });
 
