@@ -138,6 +138,73 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('creates pending file write intents for registered file roots by default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-file-write-intent-'));
+    chmodSync(dir, 0o700);
+    const rootDir = mkdtempSync(join(tmpdir(), 'popeye-file-root-'));
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(join(rootDir, 'note.md'), '# Note\n');
+
+    const runtime = createRuntimeService(makeConfig(dir));
+    const root = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'fixture-root',
+      rootPath: rootDir,
+      permission: 'index_and_derive',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+
+    const intent = runtime.createFileWriteIntent({
+      fileRootId: root.id,
+      filePath: 'note.md',
+      intentType: 'update',
+      diffPreview: '+ release checklist smoke line',
+    });
+
+    expect(intent.fileRootId).toBe(root.id);
+    expect(intent.status).toBe('pending');
+    expect(intent.reviewedAt).toBeNull();
+
+    await runtime.close();
+  });
+
+  it('can reject a pending file write intent after review', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-file-write-review-'));
+    chmodSync(dir, 0o700);
+    const rootDir = mkdtempSync(join(tmpdir(), 'popeye-file-root-'));
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(join(rootDir, 'note.md'), '# Note\n');
+
+    const runtime = createRuntimeService(makeConfig(dir));
+    const root = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'fixture-root',
+      rootPath: rootDir,
+      permission: 'index_and_derive',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+
+    const intent = runtime.createFileWriteIntent({
+      fileRootId: root.id,
+      filePath: 'note.md',
+      intentType: 'update',
+      diffPreview: '+ release checklist smoke line',
+    });
+    const reviewed = runtime.reviewFileWriteIntent(intent.id, { action: 'reject', reason: 'release-readiness reject-path proof' });
+
+    expect(reviewed).toMatchObject({
+      id: intent.id,
+      status: 'rejected',
+    });
+    expect(reviewed?.reviewedAt).toBeTruthy();
+
+    await runtime.close();
+  });
+
   it('enriches receipts with a timeline built from run events, policy events, and context releases', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-timeline-'));
     chmodSync(dir, 0o700);

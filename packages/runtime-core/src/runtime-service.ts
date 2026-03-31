@@ -3230,7 +3230,13 @@ export class PopeyeRuntimeService {
     const root = this.getFileRootRecord(input.fileRootId);
     if (!root) throw new RuntimeNotFoundError(`File root ${input.fileRootId} not found`);
 
-    const writePosture = (root as Record<string, unknown>)['writePosture'] as string ?? 'read_only';
+    const rawWritePosture = (root as Record<string, unknown>)['writePosture'];
+    const writePosture =
+      rawWritePosture === 'agent_owned'
+        ? 'agent_owned'
+        : rawWritePosture === 'read_only'
+          ? 'read_only'
+          : 'operator_review';
     if (writePosture === 'read_only') {
       throw new RuntimeValidationError(`File root ${input.fileRootId} is read-only`);
     }
