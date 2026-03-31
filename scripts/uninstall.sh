@@ -9,8 +9,8 @@ if launchctl list | grep -q com.popeye.daemon 2>/dev/null; then
 fi
 [ -f "$PLIST" ] && rm "$PLIST" && echo "  Removed LaunchAgent plist"
 # Remove symlinks
-for link in /usr/local/bin/pop /usr/local/bin/popeyed; do
-  [ -L "$link" ] && rm "$link" && echo "  Removed $link"
+for link in /usr/local/bin/pop /usr/local/bin/popeyed /opt/homebrew/bin/pop /opt/homebrew/bin/popeyed; do
+  [ -e "$link" ] && rm "$link" && echo "  Removed $link"
 done
 # Remove .pkg installer receipt if installed via .pkg
 if pkgutil --pkg-info com.popeye.cli &>/dev/null; then

@@ -162,7 +162,7 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 
 | Flag | Effect |
 |------|--------|
-| `--prefix <path>` | Symlink location (default: `/usr/local/bin`) |
+| `--prefix <path>` | Launcher location (default: `/opt/homebrew/bin` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin`) |
 | `--force` | Overwrite existing `config.json` |
 
 ### What install.sh does
@@ -185,7 +185,7 @@ Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 |----------|----------|
 | CLI bundle | `apps/cli/dist/index.js` |
 | Daemon bundle | `apps/daemon/dist/index.js` |
-| Symlink | `/usr/local/bin/pop` (or custom prefix) |
+| Launcher | `/opt/homebrew/bin/pop` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin/pop` (or custom prefix) |
 | Config | `~/Library/Application Support/Popeye/config.json` |
 | Runtime data | `~/Library/Application Support/Popeye/` by default, or configured via `runtimeDataDir` |
 | Auth store | `<runtimeDataDir>/config/auth.json` by default, or configured via `authFile` |

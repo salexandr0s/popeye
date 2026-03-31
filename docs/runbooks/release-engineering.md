@@ -50,7 +50,9 @@ Use the install script:
 bash scripts/install.sh [--prefix /custom/path] [--force]
 ```
 
-This builds, bundles the CLI and daemon, symlinks `pop` to `/usr/local/bin`,
+This builds, bundles the CLI and daemon, and installs a `pop` launcher in the
+default local bin directory (`/opt/homebrew/bin` on Apple Silicon Homebrew
+hosts, otherwise `/usr/local/bin`),
 and creates a default config at `~/Library/Application Support/Popeye/`.
 
 ## Smoke test

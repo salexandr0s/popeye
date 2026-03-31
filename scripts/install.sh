@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Popeye install script — builds, bundles, and symlinks `pop` to /usr/local/bin.
+# Popeye install script — builds, bundles, and installs a `pop` launcher.
 # Usage: bash scripts/install.sh [--prefix /custom/path] [--force]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-PREFIX="/usr/local/bin"
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && -d "/opt/homebrew/bin" ]]; then
+  PREFIX="/opt/homebrew/bin"
+else
+  PREFIX="/usr/local/bin"
+fi
 APP_SUPPORT_DIR="$HOME/Library/Application Support/Popeye"
 FORCE=0
 
@@ -41,14 +45,26 @@ pnpm pack:cli
 echo "==> Bundling daemon"
 pnpm pack:daemon
 
-echo "==> Symlinking pop → $PREFIX/pop"
+echo "==> Installing pop launcher → $PREFIX/pop"
 CLI_BUNDLE="$ROOT_DIR/apps/cli/dist/index.js"
 if [[ ! -f "$CLI_BUNDLE" ]]; then
   echo "Error: CLI bundle not found at $CLI_BUNDLE"
   exit 1
 fi
+if [[ ! -d "$PREFIX" ]]; then
+  echo "Error: install prefix $PREFIX does not exist. Pass --prefix <path> to override."
+  exit 1
+fi
+if [[ ! -w "$PREFIX" ]]; then
+  echo "Error: install prefix $PREFIX is not writable. Pass --prefix <path> to override."
+  exit 1
+fi
 chmod +x "$CLI_BUNDLE"
-ln -sf "$CLI_BUNDLE" "$PREFIX/pop"
+cat > "$PREFIX/pop" <<EOF
+#!/usr/bin/env bash
+exec node "$CLI_BUNDLE" "\$@"
+EOF
+chmod 755 "$PREFIX/pop"
 
 echo "==> Ensuring config directory"
 mkdir -p "$APP_SUPPORT_DIR"

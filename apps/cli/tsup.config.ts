@@ -17,14 +17,13 @@ const meta = getBuildMetadata();
 
 export default defineConfig({
   entry: ['src/index.ts'],
-  format: ['esm'],
+  format: ['cjs'],
   target: 'node22',
   platform: 'node',
   outDir: 'dist',
   clean: true,
   noExternal: [/@popeye\//],
   external: ['better-sqlite3', 'sqlite-vec', 'pino'],
-  banner: { js: '#!/usr/bin/env node' },
   sourcemap: true,
   define: {
     'process.env.POPEYE_VERSION': JSON.stringify(meta.version),

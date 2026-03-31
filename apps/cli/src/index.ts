@@ -2,7 +2,6 @@
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import type { PopeyeApiClient } from '@popeye/api-client';
 import type { AppConfig } from '@popeye/contracts';
@@ -350,10 +349,19 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
 }
 
 function isBundledMode(): boolean {
-  const selfPath = typeof import.meta.filename === 'string'
-    ? import.meta.filename
-    : fileURLToPath(import.meta.url);
+  const selfPath = getSelfPath();
   return selfPath.includes(`${join('dist', 'index')}`);
+}
+
+function getSelfPath(): string {
+  const invokedPath = process.argv[1];
+  if (typeof invokedPath === 'string' && invokedPath.length > 0) {
+    return resolve(invokedPath);
+  }
+  if (typeof __filename === 'string') {
+    return __filename;
+  }
+  throw new Error('Unable to determine CLI entrypoint path');
 }
 
 // Early exits that don't require configuration
@@ -453,9 +461,7 @@ async function main(): Promise<void> {
     let daemonEntryPoint: string;
     let workingDirectory: string;
     if (isBundledMode()) {
-      const selfPath = typeof import.meta.filename === 'string'
-        ? import.meta.filename
-        : fileURLToPath(import.meta.url);
+      const selfPath = getSelfPath();
       const selfDir = dirname(selfPath);
       daemonEntryPoint = resolve(selfDir, '..', '..', 'daemon', 'dist', 'index.js');
       workingDirectory = resolve(selfDir, '..', '..', '..');
@@ -479,9 +485,7 @@ async function main(): Promise<void> {
   if (command === 'daemon' && subcommand === 'start') {
     let execArgs: [string, string[]];
     if (isBundledMode()) {
-      const selfPath = typeof import.meta.filename === 'string'
-        ? import.meta.filename
-        : fileURLToPath(import.meta.url);
+      const selfPath = getSelfPath();
       const bundledDaemon = resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.js');
       if (!existsSync(bundledDaemon)) {
         console.error(`Bundled daemon not found at ${bundledDaemon}. Run 'pnpm pack:daemon' first.`);
@@ -554,9 +558,7 @@ async function main(): Promise<void> {
     let daemonEntryPoint: string;
     let workingDirectory: string;
     if (isBundledMode()) {
-      const selfPath = typeof import.meta.filename === 'string'
-        ? import.meta.filename
-        : fileURLToPath(import.meta.url);
+      const selfPath = getSelfPath();
       const selfDir = dirname(selfPath);
       daemonEntryPoint = resolve(selfDir, '..', '..', 'daemon', 'dist', 'index.js');
       workingDirectory = resolve(selfDir, '..', '..', '..');
@@ -890,4 +892,7 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-await main();
+void main().catch((error) => {
+  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  process.exit(1);
+});
