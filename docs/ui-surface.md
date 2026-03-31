@@ -35,6 +35,8 @@ errors for invalid tokens, expired nonces, or daemon unavailability.
 | Jobs | `/jobs` | `GET /v1/jobs`, `POST /v1/jobs/:id/pause`, `POST /v1/jobs/:id/resume`, `POST /v1/jobs/:id/enqueue` |
 | Receipts | `/receipts`, `/receipts/:id` | `GET /v1/receipts`, `GET /v1/receipts/:id` |
 | Instructions | `/instructions` | `GET /v1/workspaces`, `GET /v1/instruction-previews/:scope`, optional `?projectId=` |
+| Playbooks | `/playbooks`, `/playbooks/:recordId` | `GET /v1/playbooks`, `GET /v1/playbooks/stale-candidates`, `GET /v1/playbooks/:id`, `GET /v1/playbooks/:id/revisions`, `GET /v1/playbooks/:id/usage`, `POST /v1/playbooks/:id/suggest-patch`, `POST /v1/playbooks/:id/activate`, `POST /v1/playbooks/:id/retire` |
+| Playbook Proposals | `/playbook-proposals`, `/playbook-proposals/new`, `/playbook-proposals/:proposalId` | `GET /v1/playbook-proposals`, `GET /v1/playbook-proposals/:id`, `POST /v1/playbook-proposals`, `PATCH /v1/playbook-proposals/:id`, `POST /v1/playbook-proposals/:id/submit-review`, `POST /v1/playbook-proposals/:id/review`, `POST /v1/playbook-proposals/:id/apply` |
 | Interventions | `/interventions` | `GET /v1/interventions`, `POST /v1/interventions/:id/resolve` |
 | Memory | `/memory` | `GET /v1/memory/search?q=...&full=true&limit=20` |
 | Usage & Security | `/usage` | `GET /v1/usage/summary`, `GET /v1/security/audit` |

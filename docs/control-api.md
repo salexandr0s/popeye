@@ -142,6 +142,30 @@ scope.
 |--------|------|-------------|
 | GET | `/v1/instruction-previews/:scope` | Preview compiled instructions for a workspace scope. Optional query: `projectId` to include project context. Returns `400 { error: "invalid_context" }` if the project belongs to a different workspace, and `404` for unknown workspace/project IDs. |
 
+Instruction previews only include active canonical playbooks. Draft playbooks and pending proposals remain auditable through the playbook control surfaces until activation.
+
+### Playbooks
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/playbooks` | List canonical playbooks. Optional query: `q`, `scope`, `workspaceId`, `projectId`, `status`, `limit`, `offset`. `q` uses the canonical SQLite FTS mirror. Returned records include additive `effectiveness` metrics. |
+| GET | `/v1/playbooks/stale-candidates` | List active playbooks that show recent failure/intervention signals and lack a newer follow-up proposal. |
+| GET | `/v1/playbooks/:id` | Get one canonical playbook with current revision metadata. Returns 404 if not found. |
+| GET | `/v1/playbooks/:id/revisions` | List canonical revisions for one playbook. Returns 404 if the playbook does not exist. |
+| GET | `/v1/playbooks/:id/usage` | List recent runs that compiled the playbook. Optional query: `limit`, `offset`. |
+| GET | `/v1/playbook-proposals` | List DB-backed playbook proposals. Optional query: `q`, `status`, `kind`, `scope`, `sourceRunId`, `targetRecordId`, `sort`, `limit`, `offset`. |
+| GET | `/v1/playbook-proposals/:id` | Get one playbook proposal. Returns 404 if not found. |
+| POST | `/v1/playbook-proposals` | Create a draft or patch proposal. Drafts accept scope/workspace/project fields; patches may include `baseRevisionHash` for conflict-safe authoring. Proposal content is prompt-scanned and redacted before durable write. Blocked proposals fail closed with `400`. |
+| PATCH | `/v1/playbook-proposals/:id` | Update a `drafting` proposal body/title/summary/allowed profiles and rerun canonicalization + prompt scanning. |
+| POST | `/v1/playbook-proposals/:id/submit-review` | Move a `drafting` proposal into `pending_review`. Patch drafts must still match the current base revision and must change canonical content before submit. |
+| POST | `/v1/playbook-proposals/:id/review` | Approve or reject a proposal. Returns `409` if the lifecycle transition is invalid. |
+| POST | `/v1/playbook-proposals/:id/apply` | Apply an approved proposal back into the canonical file-backed playbook store. Patch applies fail with `409` on stale base revision conflicts. |
+| POST | `/v1/playbooks/:id/suggest-patch` | Create a deterministic `drafting` patch proposal from recent failed/intervened run evidence for that playbook. |
+| POST | `/v1/playbooks/:id/activate` | Change a canonical playbook status to `active`. |
+| POST | `/v1/playbooks/:id/retire` | Change a canonical playbook status to `retired`. |
+
+Playbook routes are operator-only. Canonical runtime behavior remains file-backed: proposals live in the database until explicitly reviewed and applied, and only active canonical playbooks affect instruction compilation or `receipt.runtime.playbooks`. The backend now also runs an hourly maintenance sweep that may auto-create `drafting` patch proposals for stale playbooks when repeated failure/intervention signals exist, but those proposals are never auto-approved or auto-applied.
+
 ### Interventions
 
 | Method | Path | Description |
@@ -192,6 +216,8 @@ The web inspector now exposes dedicated operator pages for:
 - `Automation Grants`
 - `Security Policy`
 - `Vaults`
+- `Playbooks`
+- `Playbook Proposals`
 
 ### Vaults
 

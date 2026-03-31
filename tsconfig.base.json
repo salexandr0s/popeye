@@ -22,6 +22,7 @@
       "@popeye/sessions": ["packages/sessions/src/index.ts"],
       "@popeye/workspace": ["packages/workspace/src/index.ts"],
       "@popeye/instructions": ["packages/instructions/src/index.ts"],
+      "@popeye/playbooks": ["packages/playbooks/src/index.ts"],
       "@popeye/memory": ["packages/memory/src/index.ts"],
       "@popeye/receipts": ["packages/receipts/src/index.ts"],
       "@popeye/observability": ["packages/observability/src/index.ts"],

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { UsageMetricsSchema } from './engine.js';
+import { AppliedPlaybookSchema } from './playbooks.js';
 import {
   ExecutionProfileModeSchema,
   ExecutionScopeSchema,
@@ -61,6 +62,7 @@ export const ReceiptRuntimeSummarySchema = z.object({
   profileId: z.string().nullable().default(null),
   execution: ReceiptExecutionSummarySchema.nullable().default(null),
   contextReleases: ReceiptContextReleaseSummarySchema.nullable().default(null),
+  playbooks: z.array(AppliedPlaybookSchema).default([]),
   timeline: z.array(ReceiptTimelineEventSchema).default([]),
   delegationSummary: DelegationReceiptSummarySchema.nullable().default(null),
 });

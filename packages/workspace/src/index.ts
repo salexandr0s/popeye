@@ -11,6 +11,7 @@ export const WORKSPACE_LAYOUT = {
   instructions: 'WORKSPACE.md',
   heartbeat: 'HEARTBEAT.md',
   memory: 'MEMORY.md',
+  playbooksDir: '.popeye/playbooks',
   memoryDir: 'memory',
   dailyDir: 'memory/daily',
   identitiesDir: 'identities',
@@ -19,6 +20,7 @@ export const WORKSPACE_LAYOUT = {
 
 export const PROJECT_LAYOUT = {
   instructions: 'PROJECT.md',
+  playbooksDir: '.popeye/playbooks',
   knowledgeDir: 'knowledge',
   worktreeDir: 'worktree',
 } as const;

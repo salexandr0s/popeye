@@ -1,6 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3';
 
 import type {
+  AppliedPlaybook,
   ApprovalRecord,
   ExecutionEnvelope,
   ReceiptRecord,
@@ -23,6 +24,26 @@ import {
   titleCase,
 } from './row-mappers.js';
 
+function sortAppliedPlaybooks(playbooks: NonNullable<ReceiptRecord['runtime']>['playbooks']): NonNullable<ReceiptRecord['runtime']>['playbooks'] {
+  const rank = (scope: NonNullable<ReceiptRecord['runtime']>['playbooks'][number]['scope']): number => {
+    switch (scope) {
+      case 'global':
+        return 0;
+      case 'workspace':
+        return 1;
+      case 'project':
+        return 2;
+    }
+  };
+  return [...playbooks].sort((left, right) => {
+    const byScope = rank(left.scope) - rank(right.scope);
+    if (byScope !== 0) return byScope;
+    const byId = left.id.localeCompare(right.id);
+    if (byId !== 0) return byId;
+    return left.revisionHash.localeCompare(right.revisionHash);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Dependencies
 // ---------------------------------------------------------------------------
@@ -38,6 +59,7 @@ export interface ReceiptBuilderDeps {
     totalTokenEstimate: number;
     byDomain: Record<string, { count: number; tokens: number }>;
   };
+  listPlaybookUsage: (runId: string) => AppliedPlaybook[];
   contextReleaseService: ContextReleaseService;
   approvalService: ApprovalService;
 }
@@ -57,6 +79,7 @@ export class ReceiptBuilder {
     totalTokenEstimate: number;
     byDomain: Record<string, { count: number; tokens: number }>;
   };
+  private readonly listPlaybookUsage: (runId: string) => AppliedPlaybook[];
   private readonly contextReleaseService: ContextReleaseService;
   private readonly approvalService: ApprovalService;
 
@@ -67,6 +90,7 @@ export class ReceiptBuilder {
     this.getTask = deps.getTask;
     this.getExecutionEnvelope = deps.getExecutionEnvelope;
     this.summarizeRunReleases = deps.summarizeRunReleases;
+    this.listPlaybookUsage = deps.listPlaybookUsage;
     this.contextReleaseService = deps.contextReleaseService;
     this.approvalService = deps.approvalService;
   }
@@ -233,6 +257,7 @@ export class ReceiptBuilder {
     const task = this.getTask(taskId);
     const envelope = this.getExecutionEnvelope(runId);
     const contextReleases = this.summarizeRunReleases(runId);
+    const playbooks = this.listPlaybookUsage(runId);
     const timeline = this.buildReceiptTimeline(runId, status);
 
     const runtimeSummary: NonNullable<ReceiptRecord['runtime']> = {
@@ -252,11 +277,12 @@ export class ReceiptBuilder {
       contextReleases: contextReleases.totalReleases > 0
         ? contextReleases
         : null,
+      playbooks: sortAppliedPlaybooks(playbooks),
       timeline,
       delegationSummary: null,
     };
 
-    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.timeline.length === 0) {
+    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
       return undefined;
     }
     return runtimeSummary;
@@ -281,11 +307,19 @@ export class ReceiptBuilder {
       const byTime = Date.parse(left.at) - Date.parse(right.at);
       return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
     });
+    const playbooksByKey = new Map<string, NonNullable<ReceiptRecord['runtime']>['playbooks'][number]>();
+    for (const playbook of receipt.runtime.playbooks) {
+      playbooksByKey.set(`${playbook.scope}:${playbook.id}:${playbook.revisionHash}`, playbook);
+    }
+    for (const playbook of derived.playbooks) {
+      playbooksByKey.set(`${playbook.scope}:${playbook.id}:${playbook.revisionHash}`, playbook);
+    }
     return {
       projectId: receipt.runtime.projectId ?? derived.projectId ?? null,
       profileId: receipt.runtime.profileId ?? derived.profileId ?? null,
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
+      playbooks: sortAppliedPlaybooks(Array.from(playbooksByKey.values())),
       timeline: mergedTimeline,
       delegationSummary: receipt.runtime.delegationSummary ?? derived.delegationSummary ?? null,
     };

@@ -29,11 +29,12 @@ New platform implementation.
 | `receipts.ts`      | `ReceiptRecordSchema`, `ReceiptRecord`                                     |
 | `sessions.ts`      | `SessionRootRecord`, `SessionRootKind`                                     |
 | `instructions.ts`  | `InstructionSource`, `CompiledInstructionBundle`                           |
-| `memory.ts`        | `MemoryRecordSchema`, `MemorySearchResponse`, `EmbeddingEligibility`       |
+| `playbooks.ts`     | `PlaybookFrontMatter`, `ResolvedPlaybook`, `AppliedPlaybook`, `PlaybookRecord`, `PlaybookDetail`, `PlaybookEffectiveness`, `PlaybookSearchResult`, `PlaybookRevisionRecord`, `PlaybookUsageRunRecord`, `PlaybookProposalEvidence`, `PlaybookProposalRecord`, `PlaybookStaleCandidate` |
+| `memory.ts`        | `MemoryRecordSchema`, `MemorySearchResponse`, `EmbeddingEligibility`, `MemorySourceType` (`playbook` included) |
 | `security.ts`      | `SecurityAuditEvent`, `AuthRotationRecord`                                 |
 | `messaging.ts`     | `IngestMessageInput`, `MessageIngressResponse`, `TelegramChatType`         |
 | `backup.ts`        | `BackupManifest`                                                           |
-| `api.ts`           | `HealthResponse`, `DaemonStatusResponse`, `UsageSummary`, etc.             |
+| `api.ts`           | `HealthResponse`, `DaemonStatusResponse`, `UsageSummary`, playbook proposal/lifecycle request+response schemas, etc. |
 
 ## Dependencies
 

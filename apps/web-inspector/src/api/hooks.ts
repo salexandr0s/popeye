@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApi } from './provider';
 import { ensureBrowserSession } from './browser-session';
 export { resetBrowserBootstrapForTests } from './browser-session';
+import { buildPlaybookListPath, buildPlaybookProposalListPath, buildPlaybookUsagePath } from './routes';
 
 import type {
   ApprovalRecord,
@@ -38,6 +39,7 @@ import type {
   MemorySearchResult,
   MemorySearchResponse,
   CompiledInstructionBundle,
+  ProjectListItem,
   StandingApprovalRecord,
   TodoAccountRecord,
   TodoProjectRecord,
@@ -46,6 +48,13 @@ import type {
   MedicalImportRecord,
   FileRootRecord,
   FileWriteIntentRecord,
+  PlaybookDetail,
+  PlaybookProposalRecord,
+  PlaybookRecord,
+  PlaybookRevisionRecord,
+  PlaybookStaleCandidate,
+  PlaybookUsageRunRecord,
+  WorkspaceListItem,
 } from '@popeye/contracts';
 
 // Re-export contract types for view convenience
@@ -77,6 +86,14 @@ export type {
   MedicalImportRecord,
   FileRootRecord,
   FileWriteIntentRecord,
+  PlaybookDetail,
+  PlaybookProposalRecord,
+  PlaybookRecord,
+  PlaybookRevisionRecord,
+  PlaybookStaleCandidate,
+  PlaybookUsageRunRecord,
+  ProjectListItem,
+  WorkspaceListItem,
 };
 export type InstructionBundle = CompiledInstructionBundle;
 
@@ -288,6 +305,48 @@ export function useReceipt(id: string | undefined) {
 
 export function useInterventions() {
   return usePolling<InterventionRecord[]>('/v1/interventions', 5000);
+}
+
+export function usePlaybooks(options: Parameters<typeof buildPlaybookListPath>[0] = {}) {
+  return usePolling<PlaybookRecord[]>(buildPlaybookListPath(options), 5000);
+}
+
+export function usePlaybook(recordId: string | undefined) {
+  return useFetch<PlaybookDetail>(recordId ? `/v1/playbooks/${encodeURIComponent(recordId)}` : null);
+}
+
+export function usePlaybookRevisions(recordId: string | undefined) {
+  return useFetch<PlaybookRevisionRecord[]>(
+    recordId ? `/v1/playbooks/${encodeURIComponent(recordId)}/revisions` : null,
+  );
+}
+
+export function usePlaybookProposals(options: Parameters<typeof buildPlaybookProposalListPath>[0] = {}) {
+  return usePolling<PlaybookProposalRecord[]>(buildPlaybookProposalListPath(options), 5000);
+}
+
+export function usePlaybookProposal(proposalId: string | undefined) {
+  return useFetch<PlaybookProposalRecord>(
+    proposalId ? `/v1/playbook-proposals/${encodeURIComponent(proposalId)}` : null,
+  );
+}
+
+export function usePlaybookStaleCandidates() {
+  return usePolling<PlaybookStaleCandidate[]>('/v1/playbooks/stale-candidates', 10_000);
+}
+
+export function usePlaybookUsage(recordId: string | undefined, options: Parameters<typeof buildPlaybookUsagePath>[1] = {}) {
+  return useFetch<PlaybookUsageRunRecord[]>(
+    recordId ? buildPlaybookUsagePath(recordId, options) : null,
+  );
+}
+
+export function useWorkspaces() {
+  return usePolling<WorkspaceListItem[]>('/v1/workspaces', 15_000);
+}
+
+export function useProjects() {
+  return usePolling<ProjectListItem[]>('/v1/projects', 15_000);
 }
 
 export function useApprovals() {

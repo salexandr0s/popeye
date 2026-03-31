@@ -42,6 +42,21 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/recall/search` | `RecallSearchResponseApiSchema` |
 | GET | `/v1/recall/:kind/:id` | `RecallDetailResponseSchema` |
 | GET | `/v1/instruction-previews/:scope` | `CompiledInstructionBundleSchema` (`projectId` query optional; `400 { error: "invalid_context" }` on cross-workspace mismatch) |
+| GET | `/v1/playbooks` | `PlaybookRecordResponseSchema[]` (`PlaybookListQueryParamsSchema`: optional `q`, `scope`, `workspaceId`, `projectId`, `status`, `limit`, `offset`) |
+| GET | `/v1/playbooks/stale-candidates` | `PlaybookStaleCandidateListResponseSchema` |
+| GET | `/v1/playbooks/:id` | `PlaybookDetailResponseSchema` |
+| GET | `/v1/playbooks/:id/revisions` | `PlaybookRevisionListResponseSchema` |
+| GET | `/v1/playbooks/:id/usage` | `PlaybookUsageRunListResponseSchema` (`PlaybookUsageListQueryParamsSchema`: optional `limit`, `offset`) |
+| GET | `/v1/playbook-proposals` | `PlaybookProposalRecordResponseSchema[]` (`PlaybookProposalListQueryParamsSchema`: optional `q`, `status`, `kind`, `scope`, `sourceRunId`, `targetRecordId`, `sort`, `limit`, `offset`) |
+| GET | `/v1/playbook-proposals/:id` | `PlaybookProposalRecordResponseSchema` |
+| POST | `/v1/playbook-proposals` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookProposalCreateRequestSchema`, including optional patch `baseRevisionHash`) |
+| PATCH | `/v1/playbook-proposals/:id` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookProposalUpdateRequestSchema`) |
+| POST | `/v1/playbook-proposals/:id/submit-review` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookProposalSubmitReviewRequestSchema`) |
+| POST | `/v1/playbook-proposals/:id/review` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookProposalReviewRequestSchema`) |
+| POST | `/v1/playbook-proposals/:id/apply` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookProposalApplyRequestSchema`) |
+| POST | `/v1/playbooks/:id/suggest-patch` | `PlaybookProposalRecordResponseSchema` (req: `PlaybookSuggestPatchRequestSchema`) |
+| POST | `/v1/playbooks/:id/activate` | `PlaybookDetailResponseSchema` (req: `PlaybookLifecycleActionRequestSchema`) |
+| POST | `/v1/playbooks/:id/retire` | `PlaybookDetailResponseSchema` (req: `PlaybookLifecycleActionRequestSchema`) |
 | GET | `/v1/interventions` | `InterventionRecordSchema[]` |
 | POST | `/v1/interventions/:id/resolve` | `InterventionRecordSchema` |
 | GET | `/v1/approvals` | `ApprovalListResponseSchema` |
@@ -206,9 +221,17 @@ Behavior notes:
 - `GET /v1/daemon/state` and `GET /v1/daemon/scheduler` expose runtime-owned scheduler state only.
 - `GET /v1/runs/:id/envelope` exposes the persisted per-run execution envelope snapshot.
 - `GET /v1/runs/:id/receipt` and `GET /v1/receipts/:id` may include an additive
-  `runtime` section with execution-policy, context-release summaries, and a
-  chronological `timeline` of run events, policy denials, approvals, context
-  releases, and terminal receipt outcomes.
+  `runtime` section with execution-policy, context-release summaries, active
+  compiled playbooks, and a chronological `timeline` of run events, policy
+  denials, approvals, playbook proposal audit events, and context releases.
+- `GET /v1/playbooks/:id` now includes additive `indexedMemoryId` so operator
+  surfaces can see whether the active canonical playbook is currently indexed
+  into derivative procedural memory.
+- `GET /v1/playbooks` now accepts additive `q` and uses a canonical SQLite FTS mirror for deterministic server-side playbook search while keeping markdown files authoritative.
+- `GET /v1/playbooks` and `GET /v1/playbooks/:id` now include additive playbook effectiveness metrics, and `GET /v1/playbooks/:id/usage` exposes recent run drilldowns for operator surfaces.
+- `GET /v1/playbooks/stale-candidates` remains a read-only diagnostic surface, but the runtime maintenance loop may now auto-create `drafting` patch proposals from the same stale evidence when no open draft/review proposal exists for the affected revision.
+- `PATCH /v1/playbook-proposals/:id` and `POST /v1/playbook-proposals/:id/submit-review` support the new `drafting` proposal lifecycle for maintenance- or suggestion-generated patch drafts.
+- `POST /v1/playbooks/:id/suggest-patch` creates a deterministic `drafting` patch proposal with recent failed-run/intervention evidence attached for operator editing.
 - `POST /v1/memory/:id/promote/propose` returns a review payload with `diff`, `approved: false`, and `promoted: false`.
 - `POST /v1/memory/:id/promote/execute` requires an approved proposal payload and writes the promoted markdown file inside the runtime memory directory.
 - `GET /v1/memory/search` accepts `domains` (comma-separated domain filter) and `consumerProfile` (`assistant` or `coding`) query params, plus `X-Consumer-Profile` header as a fallback. Consumer profiles set sensible default domain/namespace filters for different agent types.

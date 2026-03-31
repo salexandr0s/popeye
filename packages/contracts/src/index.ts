@@ -6,6 +6,7 @@ export * from './instructions.js';
 export * from './execution.js';
 export * from './sessions.js';
 export * from './memory.js';
+export * from './playbooks.js';
 export * from './receipts.js';
 export * from './run-reply.js';
 export * from './security.js';

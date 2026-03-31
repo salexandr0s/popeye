@@ -53,6 +53,14 @@ import {
 
   // Receipts domain
   ReceiptRecordSchema,
+  PlaybookFrontMatterSchema,
+  AppliedPlaybookSchema,
+  PlaybookDetailSchema,
+  PlaybookProposalRecordSchema,
+  PlaybookRecordSchema,
+  PlaybookSearchResultSchema,
+  PlaybookStaleCandidateSchema,
+  PlaybookRevisionRecordSchema,
 
   // Security domain
   PromptScanVerdictSchema,
@@ -72,6 +80,7 @@ import {
   UsageSummarySchema,
   ErrorResponseSchema,
   SseEventEnvelopeSchema,
+  InstructionResolutionContextSchema,
 } from '@popeye/contracts';
 
 // ---------------------------------------------------------------------------
@@ -223,6 +232,14 @@ describe('Schema parse tests', () => {
               },
             },
           },
+          playbooks: [
+            {
+              id: 'workspace-triage',
+              title: 'Workspace Triage',
+              scope: 'workspace',
+              revisionHash: 'playbook-revision-1',
+            },
+          ],
           timeline: [
             {
               id: 'timeline-1',
@@ -244,6 +261,14 @@ describe('Schema parse tests', () => {
       expect(result.runtime?.projectId).toBe('proj-1');
       expect(result.runtime?.execution?.sessionPolicy).toBe('dedicated');
       expect(result.runtime?.contextReleases?.byDomain.email?.tokens).toBe(320);
+      expect(result.runtime?.playbooks).toEqual([
+        {
+          id: 'workspace-triage',
+          title: 'Workspace Triage',
+          scope: 'workspace',
+          revisionHash: 'playbook-revision-1',
+        },
+      ]);
       expect(result.runtime?.timeline).toEqual([
         expect.objectContaining({
           code: 'connection_policy_denied',
@@ -268,6 +293,188 @@ describe('Schema parse tests', () => {
           usage: { ...validReceipt.usage, tokensIn: -1 },
         }),
       ).toThrow();
+    });
+  });
+
+  describe('Playbook schemas', () => {
+    it('parses canonical playbook records including draft status', () => {
+      const record = PlaybookRecordSchema.parse({
+        recordId: 'workspace:ws-1:triage',
+        playbookId: 'triage',
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        projectId: null,
+        title: 'Triage',
+        status: 'draft',
+        allowedProfileIds: ['default'],
+        filePath: '/tmp/ws/.popeye/playbooks/triage.md',
+        currentRevisionHash: 'rev-1',
+        effectiveness: {
+          useCount30d: 4,
+          succeededRuns30d: 3,
+          failedRuns30d: 1,
+          intervenedRuns30d: 1,
+          successRate30d: 0.75,
+          failureRate30d: 0.25,
+          interventionRate30d: 0.25,
+          lastUsedAt: '2026-03-30T00:00:00Z',
+          lastUpdatedAt: '2026-03-30T00:00:00Z',
+        },
+        createdAt: '2026-03-30T00:00:00Z',
+        updatedAt: '2026-03-30T00:00:00Z',
+      });
+
+      expect(record.status).toBe('draft');
+      expect(record.allowedProfileIds).toEqual(['default']);
+      expect(record.effectiveness?.successRate30d).toBe(0.75);
+    });
+
+    it('parses playbook detail and revision records', () => {
+      const detail = PlaybookDetailSchema.parse({
+        recordId: 'workspace:ws-1:triage',
+        playbookId: 'triage',
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        projectId: null,
+        title: 'Triage',
+        status: 'active',
+        allowedProfileIds: [],
+        filePath: '/tmp/ws/.popeye/playbooks/triage.md',
+        currentRevisionHash: 'rev-2',
+        body: 'Do the triage',
+        markdownText: '---\nid: "triage"\n---\nDo the triage\n',
+        indexedMemoryId: 'artifact-1',
+        createdAt: '2026-03-30T00:00:00Z',
+        updatedAt: '2026-03-30T00:00:00Z',
+      });
+      const revision = PlaybookRevisionRecordSchema.parse({
+        playbookRecordId: detail.recordId,
+        revisionHash: 'rev-1',
+        title: 'Triage',
+        status: 'draft',
+        allowedProfileIds: [],
+        filePath: detail.filePath,
+        contentHash: 'content-1',
+        markdownText: detail.markdownText,
+        createdAt: '2026-03-29T00:00:00Z',
+        current: false,
+      });
+
+      expect(detail.body).toContain('triage');
+      expect(detail.indexedMemoryId).toBe('artifact-1');
+      expect(revision.status).toBe('draft');
+    });
+
+    it('parses playbook search results and stale diagnostics', () => {
+      const searchResult = PlaybookSearchResultSchema.parse({
+        recordId: 'workspace:ws-1:triage',
+        playbookId: 'triage',
+        title: 'Triage',
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        projectId: null,
+        status: 'active',
+        currentRevisionHash: 'rev-2',
+        allowedProfileIds: ['default'],
+        snippet: 'Use the triage flow',
+        score: 18.5,
+      });
+      const staleCandidate = PlaybookStaleCandidateSchema.parse({
+        recordId: 'workspace:ws-1:triage',
+        title: 'Triage',
+        scope: 'workspace',
+        currentRevisionHash: 'rev-2',
+        lastUsedAt: '2026-03-30T00:00:00Z',
+        useCount30d: 4,
+        failedRuns30d: 2,
+        interventions30d: 1,
+        lastProposalAt: null,
+        indexedMemoryId: 'artifact-1',
+        reasons: ['Repeated failed runs in the last 30 days'],
+      });
+
+      expect(searchResult.score).toBeGreaterThan(0);
+      expect(staleCandidate.indexedMemoryId).toBe('artifact-1');
+    });
+
+    it('parses proposal records with audit fields', () => {
+      const proposal = PlaybookProposalRecordSchema.parse({
+        id: 'proposal-1',
+        kind: 'patch',
+        status: 'approved',
+        targetRecordId: 'workspace:ws-1:triage',
+        baseRevisionHash: 'rev-1',
+        playbookId: 'triage',
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        projectId: null,
+        title: 'Triage',
+        proposedStatus: 'active',
+        allowedProfileIds: ['default'],
+        summary: 'Tighten triage steps',
+        body: 'Updated body',
+        markdownText: '---\nid: "triage"\n---\nUpdated body\n',
+        diffPreview: '- old\n+ new',
+        contentHash: 'content-2',
+        revisionHash: 'rev-2',
+        scanVerdict: 'sanitize',
+        scanMatchedRules: ['strip-test'],
+        sourceRunId: 'run-1',
+        proposedBy: 'maintenance_job',
+        evidence: {
+          runIds: ['run-1', 'run-2'],
+          interventionIds: ['intervention-1'],
+          lastProblemAt: '2026-03-30T00:00:30Z',
+          metrics30d: {
+            useCount30d: 4,
+            failedRuns30d: 2,
+            interventions30d: 1,
+          },
+          suggestedPatchNote: 'Stale follow-up: 4 uses / 2 failed runs / 1 intervention in trailing 30 days.',
+        },
+        reviewedBy: 'operator',
+        reviewedAt: '2026-03-30T00:01:00Z',
+        reviewNote: 'Looks good',
+        appliedRecordId: null,
+        appliedRevisionHash: null,
+        appliedAt: null,
+        createdAt: '2026-03-30T00:00:00Z',
+        updatedAt: '2026-03-30T00:01:00Z',
+      });
+
+      expect(proposal.kind).toBe('patch');
+      expect(proposal.scanVerdict).toBe('sanitize');
+      expect(proposal.reviewedBy).toBe('operator');
+      expect(proposal.proposedBy).toBe('maintenance_job');
+      expect(proposal.evidence?.runIds).toEqual(['run-1', 'run-2']);
+    });
+  });
+
+  describe('Playbook schemas', () => {
+    it('parses playbook front matter with defaults', () => {
+      const result = PlaybookFrontMatterSchema.parse({
+        id: 'triage',
+        title: 'Triage',
+      });
+
+      expect(result).toEqual({
+        id: 'triage',
+        title: 'Triage',
+        status: 'active',
+        allowedProfileIds: [],
+      });
+    });
+
+    it('parses applied playbook summaries', () => {
+      const result = AppliedPlaybookSchema.parse({
+        id: 'triage',
+        title: 'Triage',
+        scope: 'workspace',
+        revisionHash: 'rev-123',
+      });
+
+      expect(result.scope).toBe('workspace');
+      expect(result.revisionHash).toBe('rev-123');
     });
   });
 
@@ -925,6 +1132,17 @@ describe('Cross-schema consistency', () => {
     expect(receipt.usage.estimatedCostUsd).toBe(usage.estimatedCostUsd);
   });
 
+  it('InstructionResolutionContextSchema accepts an optional profileId', () => {
+    const result = InstructionResolutionContextSchema.parse({
+      workspaceId: 'ws-1',
+      projectId: 'proj-1',
+      profileId: 'default',
+      taskBrief: 'Do the thing',
+    });
+
+    expect(result.profileId).toBe('default');
+  });
+
   it('SessionRootRecordSchema kind aligns with SessionRootKindSchema', () => {
     const kinds = ['interactive_main', 'system_heartbeat', 'scheduled_task', 'recovery', 'telegram_user'] as const;
     for (const kind of kinds) {
@@ -1341,6 +1559,7 @@ describe('Additional schema smoke tests', () => {
       expect(MemorySourceTypeSchema.parse('coding_session')).toBe('coding_session');
       expect(MemorySourceTypeSchema.parse('code_review')).toBe('code_review');
       expect(MemorySourceTypeSchema.parse('debug_session')).toBe('debug_session');
+      expect(MemorySourceTypeSchema.parse('playbook')).toBe('playbook');
     });
 
     it('MemoryImportInputSchema accepts domain, tags, durable, dedupKey', () => {

@@ -24,6 +24,11 @@ import type {
   WorkspaceRecord,
   JobRecord,
   CapabilityDescriptor,
+  PlaybookDetail,
+  PlaybookProposalRecord,
+  PlaybookRevisionRecord,
+  PlaybookSearchResult,
+  ResolvedPlaybook,
 } from '@popeye/contracts';
 import { nowIso, RunEventRecordSchema } from '@popeye/contracts';
 import type {
@@ -41,6 +46,7 @@ import {
   buildExecutionEnvelope,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
+import type { CreatePlaybookProposalInput } from './playbook-service.js';
 import type { MemoryDescription, MemoryExpansion } from './runtime-tools.js';
 import { RuntimeValidationError } from './errors.js';
 import { buildCoreRuntimeTools } from './runtime-tools.js';
@@ -121,7 +127,11 @@ export interface RunExecutorDeps {
   messageIngestion: {
     linkAcceptedIngressToRun: (taskId: string, jobId: string, runId: string) => void;
   };
-  resolveInstructionsForRun: (task: { workspaceId: string; projectId: string | null; prompt: string }) => CompiledInstructionBundle;
+  resolveInstructionsForRun: (task: { workspaceId: string; projectId: string | null; profileId: string | null; prompt: string }) => {
+    bundle: CompiledInstructionBundle;
+    resolvedPlaybooks: ResolvedPlaybook[];
+  };
+  recordPlaybookUsage: (runId: string, playbooks: ResolvedPlaybook[]) => void;
   capabilityRegistry: {
     getRuntimeTools: (taskContext: { workspaceId: string; runId?: string }) => ResolvedCapabilityTool[];
     listCapabilities: () => CapabilityDescriptor[];
@@ -149,6 +159,10 @@ export interface RunExecutorDeps {
     tags?: string[];
     includeSuperseded?: boolean;
   }, locationFilter?: { workspaceId: string | null; projectId: string | null; includeGlobal?: boolean }) => Promise<RecallExplanation | null>;
+  searchPlaybooks: (input: { query: string; status?: 'draft' | 'active' | 'retired' }) => PlaybookSearchResult[];
+  getPlaybook: (recordId: string) => PlaybookDetail | null;
+  listPlaybookRevisions: (recordId: string) => PlaybookRevisionRecord[];
+  createPlaybookProposal: (input: CreatePlaybookProposalInput) => PlaybookProposalRecord;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +244,9 @@ export class RunExecutor {
       run.delegationDepth,
     );
 
-    const instructionBundle = this.deps.resolveInstructionsForRun(task);
+    const instructionResolution = this.deps.resolveInstructionsForRun(task);
+    const instructionBundle = instructionResolution.bundle;
+    this.deps.recordPlaybookUsage(run.id, instructionResolution.resolvedPlaybooks);
     const redactedPrompt = redactText(task.prompt, this.deps.config.security.redactionPatterns);
     for (const event of redactedPrompt.events) this.deps.recordSecurityAudit(event);
     const fullPrompt = instructionBundle.compiledText
@@ -447,6 +463,10 @@ export class RunExecutor {
       describeMemory: (id, scope) => this.deps.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.deps.expandMemory(id, maxTokens, scope),
       explainMemoryRecall: (input, scope) => this.deps.explainMemoryRecall(input, scope),
+      searchPlaybooks: (input) => this.deps.searchPlaybooks(input),
+      getPlaybook: (recordId) => this.deps.getPlaybook(recordId),
+      listPlaybookRevisions: (recordId) => this.deps.listPlaybookRevisions(recordId),
+      createPlaybookProposal: (input) => this.deps.createPlaybookProposal(input),
     }, runId);
 
     const delegationTool = buildDelegationTool({

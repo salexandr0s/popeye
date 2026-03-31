@@ -105,6 +105,7 @@ export function buildExecutionEnvelope(input: {
     ...(workspaceRoot
       ? [
           ...WORKSPACE_CRITICAL_FILES.map((fileName) => resolve(workspaceRoot, fileName)),
+          resolve(workspaceRoot, WORKSPACE_LAYOUT.playbooksDir),
           resolve(workspaceRoot, WORKSPACE_LAYOUT.memory),
           resolve(workspaceRoot, WORKSPACE_LAYOUT.dailyDir),
         ]
@@ -112,6 +113,7 @@ export function buildExecutionEnvelope(input: {
     ...(projectRoot
       ? [
           resolve(projectRoot, PROJECT_LAYOUT.instructions),
+          resolve(projectRoot, PROJECT_LAYOUT.playbooksDir),
           resolve(projectRoot, PROJECT_LAYOUT.knowledgeDir),
         ]
       : []),
@@ -187,6 +189,22 @@ export function canAccessMemoryLocation(
     );
   }
   return location.workspaceId === envelope.workspaceId;
+}
+
+export function canAccessPlaybookLocation(
+  envelope: ExecutionEnvelope,
+  location: { scope: 'global' | 'workspace' | 'project'; workspaceId: string | null; projectId: string | null },
+): boolean {
+  if (location.scope === 'global') {
+    return true;
+  }
+  if (location.workspaceId !== envelope.workspaceId) {
+    return false;
+  }
+  if (location.scope === 'workspace') {
+    return true;
+  }
+  return location.projectId === envelope.projectId;
 }
 
 export function isPathAllowedByEnvelope(path: string, allowedRoots: string[]): boolean {

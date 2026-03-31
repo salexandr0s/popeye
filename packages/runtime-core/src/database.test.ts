@@ -399,6 +399,10 @@ describe('openRuntimeDatabases', () => {
           'execution_envelopes',
           'receipts',
           'instruction_snapshots',
+          'playbooks',
+          'playbook_revisions',
+          'playbook_proposals',
+          'playbook_usage',
           'interventions',
           'security_audit',
           'messages',
@@ -410,6 +414,11 @@ describe('openRuntimeDatabases', () => {
         for (const table of expectedAppTables) {
           expect(tableNames, `missing app table: ${table}`).toContain(table);
         }
+
+        const playbooksFtsRows = databases.app
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='playbooks_fts'")
+          .all() as { name: string }[];
+        expect(playbooksFtsRows).toHaveLength(1);
       } finally {
         databases.app.close();
         databases.memory.close();
@@ -549,6 +558,14 @@ describe('openRuntimeDatabases', () => {
           'idx_execution_envelopes_workspace_id',
           'idx_run_events_run_id',
           'idx_receipts_run_status',
+          'idx_playbooks_scope_file_path',
+          'idx_playbooks_scope_status',
+          'idx_playbook_revisions_created_at',
+          'idx_playbook_proposals_source_run_id',
+          'idx_playbook_proposals_status',
+          'idx_playbook_proposals_target_record_id',
+          'idx_playbook_usage_run_order',
+          'idx_playbook_usage_playbook_id',
           'idx_job_leases_expires',
           'idx_tasks_workspace',
           'idx_projects_workspace',
@@ -884,6 +901,10 @@ describe('openRuntimeDatabases', () => {
           '021-app-run-events-fts5',
           '022-app-delegation',
           '023-app-unified-recall-fts',
+          '024-app-playbooks',
+          '025-app-playbook-proposals',
+          '026-app-playbook-search-fts',
+          '027-app-playbook-drafting-and-evidence',
         ]);
 
         const memMigrations = databases.memory
@@ -937,6 +958,9 @@ describe('openRuntimeDatabases', () => {
         expect(migrationIds.map((row) => row.id)).toContain('014-execution-profiles');
         expect(migrationIds.map((row) => row.id)).toContain('015-execution-envelopes');
         expect(migrationIds.map((row) => row.id)).toContain('023-app-unified-recall-fts');
+        expect(migrationIds.map((row) => row.id)).toContain('024-app-playbooks');
+        expect(migrationIds.map((row) => row.id)).toContain('025-app-playbook-proposals');
+        expect(migrationIds.map((row) => row.id)).toContain('026-app-playbook-search-fts');
 
         const workspaceColumns = databases.app.pragma('table_info(workspaces)') as Array<{ name: string }>;
         expect(workspaceColumns.map((column) => column.name)).toContain('root_path');
@@ -949,6 +973,25 @@ describe('openRuntimeDatabases', () => {
 
         const telegramDeliveryColumns = databases.app.pragma('table_info(telegram_reply_deliveries)') as Array<{ name: string }>;
         expect(telegramDeliveryColumns.map((column) => column.name)).toContain('sent_telegram_message_id');
+
+        const playbookRevisionColumns = databases.app.pragma('table_info(playbook_revisions)') as Array<{ name: string }>;
+        expect(playbookRevisionColumns.map((column) => column.name)).toContain('markdown_text');
+
+        const playbookProposalColumns = databases.app.pragma('table_info(playbook_proposals)') as Array<{ name: string }>;
+        expect(playbookProposalColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+          'target_record_id',
+          'base_revision_hash',
+          'markdown_text',
+          'scan_verdict',
+          'source_run_id',
+          'proposed_by',
+          'applied_record_id',
+        ]));
+
+        const playbooksFtsRows = databases.app
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='playbooks_fts'")
+          .all() as Array<{ name: string }>;
+        expect(playbooksFtsRows).toHaveLength(1);
 
         const agentProfileColumns = databases.app.pragma('table_info(agent_profiles)') as Array<{ name: string }>;
         expect(agentProfileColumns.map((column) => column.name)).toEqual(expect.arrayContaining([

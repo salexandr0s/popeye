@@ -27,6 +27,11 @@ import { Todos } from './views/todos';
 import { Finance } from './views/finance';
 import { Medical } from './views/medical';
 import { Files } from './views/files';
+import { Playbooks } from './views/playbooks';
+import { PlaybookDetailView } from './views/playbook-detail';
+import { PlaybookProposals } from './views/playbook-proposals';
+import { PlaybookProposalDetailView } from './views/playbook-proposal-detail';
+import { PlaybookProposalNewView } from './views/playbook-proposal-new';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -63,6 +68,11 @@ export function App() {
               <Route path="receipts" element={<ReceiptsList />} />
               <Route path="receipts/:id" element={<ReceiptDetail />} />
               <Route path="instructions" element={<Instructions />} />
+              <Route path="playbooks" element={<Playbooks />} />
+              <Route path="playbooks/:recordId" element={<PlaybookDetailView />} />
+              <Route path="playbook-proposals" element={<PlaybookProposals />} />
+              <Route path="playbook-proposals/new" element={<PlaybookProposalNewView />} />
+              <Route path="playbook-proposals/:proposalId" element={<PlaybookProposalDetailView />} />
               <Route path="interventions" element={<Interventions />} />
               <Route path="approvals" element={<Approvals />} />
               <Route path="standing-approvals" element={<StandingApprovals />} />

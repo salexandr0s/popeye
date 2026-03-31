@@ -8,12 +8,14 @@ import type {
   MemorySearchQuery,
   MemorySearchResponse,
   MemoryType,
+  PlaybookDetail,
   RecallExplanation,
   SecurityAuditEvent,
 } from '@popeye/contracts';
 import { MemoryRecordSchema } from '@popeye/contracts';
 import type { MemorySearchService } from '@popeye/memory';
 import {
+  buildStableKey,
   buildLocationCondition,
   formatMemoryScope,
   resolveMemoryLocationFilter,
@@ -22,6 +24,7 @@ import {
   pinSynthesis,
   forgetFact,
   getRelationsForSource,
+  runSourceDeletionCascade,
 } from '@popeye/memory';
 import { redactText } from '@popeye/observability';
 import type Database from 'better-sqlite3';
@@ -128,6 +131,72 @@ export class MemoryFacade {
     const result = this.memoryLifecycle.insertMemory(input);
     if (result.rejected) return null;
     return this.getMemory(result.memoryId);
+  }
+
+  syncActivePlaybookMemory(playbook: PlaybookDetail): string | null {
+    if (playbook.status !== 'active') {
+      return null;
+    }
+
+    const sourceStreamId = this.getPlaybookSourceStreamId(playbook.recordId);
+    if (sourceStreamId) {
+      runSourceDeletionCascade(this.memoryDb as Database.Database, sourceStreamId);
+      this.memoryDb.prepare(
+        "UPDATE memory_source_streams SET ingestion_status = 'ready', last_processed_hash = NULL, updated_at = ? WHERE id = ?",
+      ).run(new Date().toISOString(), sourceStreamId);
+    }
+
+    const result = this.memoryLifecycle.insertMemory({
+      description: `Playbook ${playbook.title}`,
+      classification: 'embeddable',
+      sourceType: 'playbook',
+      content: playbook.markdownText,
+      confidence: 1,
+      scope: formatMemoryScope({
+        workspaceId: playbook.workspaceId,
+        projectId: playbook.projectId,
+      }),
+      workspaceId: playbook.workspaceId,
+      projectId: playbook.projectId,
+      memoryType: 'procedural',
+      sourceRef: playbook.recordId,
+      sourceRefType: 'playbook_record',
+      sourceTimestamp: playbook.updatedAt,
+      occurredAt: playbook.updatedAt,
+      tags: ['playbook', `playbook:${playbook.playbookId}`, `scope:${playbook.scope}`],
+      sourceMetadata: {
+        playbookId: playbook.playbookId,
+        recordId: playbook.recordId,
+        revisionHash: playbook.currentRevisionHash,
+        scope: playbook.scope,
+        status: playbook.status,
+      },
+      durable: true,
+    });
+
+    return result.rejected ? null : result.memoryId;
+  }
+
+  archivePlaybookMemory(recordId: string): void {
+    const sourceStreamId = this.getPlaybookSourceStreamId(recordId);
+    if (!sourceStreamId) return;
+    runSourceDeletionCascade(this.memoryDb as Database.Database, sourceStreamId);
+    this.memoryDb.prepare(
+      "UPDATE memory_source_streams SET ingestion_status = 'ready', last_processed_hash = NULL, updated_at = ? WHERE id = ?",
+    ).run(new Date().toISOString(), sourceStreamId);
+  }
+
+  getIndexedPlaybookMemoryId(recordId: string): string | null {
+    const sourceStreamId = this.getPlaybookSourceStreamId(recordId);
+    if (!sourceStreamId) return null;
+    const row = this.memoryDb.prepare(
+      `SELECT id
+       FROM memory_artifacts
+       WHERE source_stream_id = ? AND invalidated_at IS NULL
+       ORDER BY captured_at DESC, id DESC
+       LIMIT 1`,
+    ).get(sourceStreamId) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   listMemories(options?: {
@@ -367,5 +436,13 @@ export class MemoryFacade {
       evidenceLinks,
       operatorActions,
     };
+  }
+
+  private getPlaybookSourceStreamId(recordId: string): string | null {
+    const stableKey = buildStableKey('playbook', { ref: recordId });
+    const row = this.memoryDb.prepare(
+      'SELECT id FROM memory_source_streams WHERE stable_key = ? AND deleted_at IS NULL',
+    ).get(stableKey) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 }

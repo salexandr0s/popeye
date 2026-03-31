@@ -1,16 +1,51 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AppliedPlaybook,
   type CompiledInstructionBundle,
   type InstructionSource,
+  type ResolvedPlaybook,
+  AppliedPlaybookSchema,
 } from '@popeye/contracts';
 import { sha256 } from '@popeye/observability';
 
 export { resolveInstructionSources } from './resolver.js';
 export type { ResolverDependencies, WorkspaceDescriptor, ProjectDescriptor } from './resolver.js';
 
-export function compileInstructionBundle(sources: InstructionSource[]): CompiledInstructionBundle {
-  const orderedSources = [...sources].sort((left, right) => left.precedence - right.precedence);
+interface CompileInstructionBundleInput {
+  sources: InstructionSource[];
+  playbooks?: AppliedPlaybook[];
+}
+
+function normalizeCompileInput(
+  input: InstructionSource[] | CompileInstructionBundleInput,
+): CompileInstructionBundleInput {
+  if (Array.isArray(input)) {
+    return { sources: input, playbooks: [] };
+  }
+  return {
+    sources: input.sources,
+    playbooks: (input.playbooks ?? []).map((playbook) => AppliedPlaybookSchema.parse(playbook)),
+  };
+}
+
+export function buildPlaybookInstructionSource(playbooks: ResolvedPlaybook[]): InstructionSource | null {
+  if (playbooks.length === 0) return null;
+  const content = playbooks.map((playbook) => playbook.body).join('\n\n');
+  return {
+    precedence: 6,
+    type: 'playbook',
+    inlineId: 'playbooks',
+    contentHash: sha256(content),
+    content,
+  };
+}
+
+export function compileInstructionBundle(
+  input: InstructionSource[] | CompileInstructionBundleInput,
+): CompiledInstructionBundle {
+  const normalized = normalizeCompileInput(input);
+  const orderedSources = [...normalized.sources].sort((left, right) => left.precedence - right.precedence);
   const warnings: string[] = [];
 
   for (let index = 1; index < orderedSources.length; index += 1) {
@@ -25,6 +60,7 @@ export function compileInstructionBundle(sources: InstructionSource[]): Compiled
   return {
     id: randomUUID(),
     sources: orderedSources,
+    playbooks: normalized.playbooks ?? [],
     compiledText,
     bundleHash: sha256(compiledText),
     warnings,

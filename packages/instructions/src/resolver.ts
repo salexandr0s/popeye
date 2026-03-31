@@ -90,20 +90,20 @@ export function resolveInstructionSources(
     const identityPath = join(workspace.rootPath, 'identities', `${context.identity}.md`);
     const identityContent = tryReadFile(identityPath);
     if (identityContent) {
-      sources.push(makeSource(6, 'identity', identityContent, identityPath));
+      sources.push(makeSource(7, 'identity', identityContent, identityPath));
     }
   }
 
   if (context.taskBrief) {
-    sources.push(makeSource(7, 'task_brief', context.taskBrief, undefined, 'task_brief'));
+    sources.push(makeSource(8, 'task_brief', context.taskBrief, undefined, 'task_brief'));
   }
 
   if (context.triggerOverlay) {
-    sources.push(makeSource(8, 'trigger_overlay', context.triggerOverlay, undefined, 'trigger_overlay'));
+    sources.push(makeSource(9, 'trigger_overlay', context.triggerOverlay, undefined, 'trigger_overlay'));
   }
 
   if (context.runtimeNotes) {
-    sources.push(makeSource(9, 'runtime_notes', context.runtimeNotes, undefined, 'runtime_notes'));
+    sources.push(makeSource(10, 'runtime_notes', context.runtimeNotes, undefined, 'runtime_notes'));
   }
 
   return sources;

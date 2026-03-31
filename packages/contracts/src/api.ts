@@ -25,6 +25,19 @@ import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, Ca
 import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoReconcileResultSchema } from './todos.js';
 import { PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonMergeInputSchema, PersonRecordSchema, PersonSplitInputSchema, PersonUpdateInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema } from './people.js';
 import { RecallDetailSchema, RecallSearchResponseSchema, RecallSourceKindSchema } from './recall.js';
+import {
+  PlaybookDetailSchema,
+  PlaybookProposalKindSchema,
+  PlaybookProposalRecordSchema,
+  PlaybookProposalStatusSchema,
+  PlaybookRecordSchema,
+  PlaybookSearchResultSchema,
+  PlaybookRevisionRecordSchema,
+  PlaybookScopeSchema,
+  PlaybookStaleCandidateSchema,
+  PlaybookStatusSchema,
+  PlaybookUsageRunRecordSchema,
+} from './playbooks.js';
 
 export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
@@ -198,6 +211,117 @@ export const MemoryPromotionExecuteRequestSchema = MemoryPromotionResponseSchema
   memoryId: true,
 });
 
+export const PlaybookListQueryParamsSchema = z.object({
+  q: z.string().optional(),
+  scope: PlaybookScopeSchema.optional(),
+  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
+  status: PlaybookStatusSchema.optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+export type PlaybookListQueryParams = z.infer<typeof PlaybookListQueryParamsSchema>;
+
+export const PlaybookProposalListQueryParamsSchema = z.object({
+  q: z.string().optional(),
+  status: PlaybookProposalStatusSchema.optional(),
+  kind: PlaybookProposalKindSchema.optional(),
+  scope: PlaybookScopeSchema.optional(),
+  sourceRunId: z.string().optional(),
+  targetRecordId: z.string().optional(),
+  sort: z.enum(['created_desc', 'created_asc', 'updated_desc', 'updated_asc', 'title_asc', 'title_desc']).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+export type PlaybookProposalListQueryParams = z.infer<typeof PlaybookProposalListQueryParamsSchema>;
+
+export const PlaybookUsageListQueryParamsSchema = z.object({
+  limit: z.coerce.number().int().positive().max(100).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+export type PlaybookUsageListQueryParams = z.infer<typeof PlaybookUsageListQueryParamsSchema>;
+
+export const PlaybookProposalCreateRequestSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('draft'),
+    playbookId: z.string().min(1),
+    scope: PlaybookScopeSchema,
+    workspaceId: z.string().nullable().optional(),
+    projectId: z.string().nullable().optional(),
+    title: z.string().min(1),
+    allowedProfileIds: z.array(z.string().min(1)).default([]),
+    body: z.string().min(1),
+    summary: z.string().default(''),
+  }),
+  z.object({
+    kind: z.literal('patch'),
+    targetRecordId: z.string().min(1),
+    baseRevisionHash: z.string().min(1).optional(),
+    title: z.string().min(1),
+    allowedProfileIds: z.array(z.string().min(1)).default([]),
+    body: z.string().min(1),
+    summary: z.string().default(''),
+  }),
+]);
+export type PlaybookProposalCreateRequest = z.infer<typeof PlaybookProposalCreateRequestSchema>;
+
+export const PlaybookProposalReviewRequestSchema = z.object({
+  decision: z.enum(['approved', 'rejected']),
+  reviewedBy: z.string().min(1).default('operator'),
+  note: z.string().default(''),
+});
+export type PlaybookProposalReviewRequest = z.infer<typeof PlaybookProposalReviewRequestSchema>;
+
+export const PlaybookProposalApplyRequestSchema = z.object({
+  appliedBy: z.string().min(1).default('operator'),
+});
+export type PlaybookProposalApplyRequest = z.infer<typeof PlaybookProposalApplyRequestSchema>;
+
+export const PlaybookProposalUpdateRequestSchema = z.object({
+  title: z.string().min(1),
+  allowedProfileIds: z.array(z.string().min(1)).default([]),
+  summary: z.string().default(''),
+  body: z.string().min(1),
+  updatedBy: z.string().min(1).default('operator'),
+});
+export type PlaybookProposalUpdateRequest = z.infer<typeof PlaybookProposalUpdateRequestSchema>;
+
+export const PlaybookProposalSubmitReviewRequestSchema = z.object({
+  submittedBy: z.string().min(1).default('operator'),
+});
+export type PlaybookProposalSubmitReviewRequest = z.infer<typeof PlaybookProposalSubmitReviewRequestSchema>;
+
+export const PlaybookLifecycleActionRequestSchema = z.object({
+  updatedBy: z.string().min(1).default('operator'),
+});
+export type PlaybookLifecycleActionRequest = z.infer<typeof PlaybookLifecycleActionRequestSchema>;
+
+export const PlaybookSuggestPatchRequestSchema = z.object({
+  proposedBy: z.string().min(1).default('operator'),
+});
+export type PlaybookSuggestPatchRequest = z.infer<typeof PlaybookSuggestPatchRequestSchema>;
+
+export const PlaybookRecordResponseSchema = PlaybookRecordSchema;
+export type PlaybookRecordResponse = z.infer<typeof PlaybookRecordResponseSchema>;
+
+export const PlaybookDetailResponseSchema = PlaybookDetailSchema;
+export type PlaybookDetailResponse = z.infer<typeof PlaybookDetailResponseSchema>;
+
+export const PlaybookSearchResultResponseSchema = PlaybookSearchResultSchema;
+export type PlaybookSearchResultResponse = z.infer<typeof PlaybookSearchResultResponseSchema>;
+
+export const PlaybookRevisionListResponseSchema = z.array(PlaybookRevisionRecordSchema);
+export type PlaybookRevisionListResponse = z.infer<typeof PlaybookRevisionListResponseSchema>;
+
+export const PlaybookProposalRecordResponseSchema = PlaybookProposalRecordSchema;
+export type PlaybookProposalRecordResponse = z.infer<typeof PlaybookProposalRecordResponseSchema>;
+
+export const PlaybookStaleCandidateListResponseSchema = z.array(PlaybookStaleCandidateSchema);
+export type PlaybookStaleCandidateListResponse = z.infer<typeof PlaybookStaleCandidateListResponseSchema>;
+
+export const PlaybookUsageRunListResponseSchema = z.array(PlaybookUsageRunRecordSchema);
+export type PlaybookUsageRunListResponse = z.infer<typeof PlaybookUsageRunListResponseSchema>;
+
 export const RecallSearchQueryParamsSchema = z.object({
   q: z.string().max(1_000).optional(),
   query: z.string().max(1_000).optional(),
@@ -308,6 +432,7 @@ export const ContextReleasePreviewResponseSchema = ContextReleasePreviewSchema;
 export const InstructionResolutionContextSchema = z.object({
   workspaceId: z.string().min(1),
   projectId: z.string().min(1).optional(),
+  profileId: z.string().min(1).optional(),
   identity: z.string().min(1).optional(),
   taskBrief: z.string().optional(),
   triggerOverlay: z.string().optional(),

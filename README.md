@@ -45,7 +45,7 @@ Today the repository contains the core pieces of the platform:
 - **loopback-only control API** with token auth, CSRF protection on mutations,
   and explicit route authorization
 - **CLI (`pop`)** for operator workflows
-- **web inspector** for runtime visibility
+- **web inspector** for runtime visibility, including playbook and proposal authoring/review
 - **blessed browser-OAuth connect flows** for Gmail, Google Calendar, and
   GitHub
 - **blessed Todoist manual-token connect flow** for todos
@@ -94,6 +94,7 @@ packages/
   runtime-core/     daemon/runtime orchestration and policy
   control-api/      Fastify control plane
   memory/           durable memory system and retrieval
+  playbooks/        operator-owned reusable procedure artifacts
   instructions/     instruction resolution
   receipts/         receipt creation and rendering
   contracts/        shared Zod/API contracts
@@ -115,12 +116,23 @@ Popeye is designed as a local control plane, not a remote service:
 
 ## Memory and recall model
 
-Popeye now separates **durable memory** from **historical recall**:
+Popeye now separates **durable memory**, **historical recall**, and
+**operator-owned playbooks**:
 
 - **memory** = structured durable truth in artifacts, facts, syntheses, and
   curated markdown
 - **recall** = first-class retrieval over real runtime artifacts like receipts,
   run events, messages, interventions, plus durable memory references
+- **playbooks** = operator-owned procedure with a review/apply lifecycle; only
+  active canonical playbooks compile into instruction bundles, while run- or
+  operator-created proposals stay reviewable until applied. Repeated stale
+  failure/intervention signals can now auto-draft maintenance patch proposals,
+  but review/apply remains mandatory.
+- active playbooks also get **derivative procedural-memory indexing** plus
+  stale-candidate diagnostics based on recent usage, failures, and
+  interventions, with playbook effectiveness scoring, usage drilldowns,
+  operator-triggered repair proposal authoring, and deterministic patch
+  suggestions in the web inspector
 
 Durable memory remains:
 
@@ -191,8 +203,9 @@ Popeye is under active development, but the architecture direction is stable:
 - the API remains loopback-only and authenticated
 - Gmail, Google Calendar, GitHub, and Todoist now have blessed operator connect
   paths; People is now a first-class derived identity graph
-- the web inspector remains the primary required GUI; the native macOS client
-  is deferred for the current polished bar
+- the web inspector remains the primary required GUI; it now includes dedicated
+  playbook and proposal operator pages, including draft/patch proposal authoring and stale-repair entry points, while the native macOS client is
+  deferred for the current polished bar
 
 The goal is not maximum surface area. The goal is a dependable personal agent
 that can stay on, stay inspectable, and become more useful over time without

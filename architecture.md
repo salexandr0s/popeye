@@ -946,10 +946,11 @@ From lowest to highest precedence:
 3. global operator instructions
 4. workspace instructions
 5. project instructions
-6. identity/persona instructions
-7. task brief
-8. trigger overlay
-9. runtime-generated notes for current run
+6. active playbooks
+7. identity/persona instructions
+8. task brief
+9. trigger overlay
+10. runtime-generated notes for current run
 
 Code-level invariants override all of the above.
 
@@ -962,6 +963,8 @@ Workspace layout:
   WORKSPACE.md
   HEARTBEAT.md
   MEMORY.md
+  .popeye/
+    playbooks/
   memory/
     daily/
   identities/
@@ -970,9 +973,23 @@ Workspace layout:
   projects/
     <project>/
       PROJECT.md
+      .popeye/
+        playbooks/
       knowledge/
       worktree/   # or a pointer to external path
 ```
+
+Runtime-global playbooks live under the Popeye runtime data directory in
+`playbooks/`. Playbooks are operator-owned procedural artifacts loaded from the
+runtime, workspace, and project scopes, then compiled into the final
+instruction bundle deterministically. Only `active` canonical playbooks affect
+runs. `draft` playbooks and DB-backed playbook proposals are review/apply
+control-plane records until the runtime writes or rewrites the canonical
+markdown file and re-syncs metadata. When a playbook becomes active, the
+runtime also indexes the active canonical markdown as derivative procedural
+memory using `sourceType: 'playbook'`; retiring a playbook invalidates that
+derived memory, and stale-candidate diagnostics are computed from recent
+playbook usage, failed runs, interventions, and newer-proposal presence.
 
 Popeye may also support repo-local `AGENTS.md` via Pi where useful, but that is an input to the runtime's instruction resolution, not the product's sole instruction model.
 
@@ -982,8 +999,8 @@ For every run, the runtime generates a **compiled instruction bundle**:
 
 ```ts
 interface InstructionSource {
-  precedence: number;         // 1 (lowest, Pi base) to 9 (highest, runtime notes)
-  type: 'pi_base' | 'popeye_base' | 'global_operator' | 'workspace' | 'project' | 'identity' | 'task_brief' | 'trigger_overlay' | 'runtime_notes';
+  precedence: number;         // 1 (lowest, Pi base) to 10 (highest, runtime notes)
+  type: 'pi_base' | 'popeye_base' | 'global_operator' | 'workspace' | 'project' | 'playbook' | 'identity' | 'task_brief' | 'trigger_overlay' | 'runtime_notes';
   path?: string;              // file path for file-based sources
   inlineId?: string;          // identifier for generated/inline sources
   contentHash: string;        // SHA-256 of source content
@@ -993,6 +1010,7 @@ interface InstructionSource {
 interface CompiledInstructionBundle {
   id: string;                 // unique snapshot ID
   sources: InstructionSource[]; // ordered by precedence (ascending)
+  playbooks: AppliedPlaybook[]; // additive audit metadata for selected playbooks
   compiledText: string;       // final merged instruction text
   bundleHash: string;         // SHA-256 of compiledText
   warnings: string[];         // e.g., "workspace and project both define conflicting tool policies"
@@ -1002,7 +1020,11 @@ interface CompiledInstructionBundle {
 
 **Merge algorithm:** sources are concatenated in precedence order (lowest first). Higher-precedence sources override lower ones. Conflicts within the same precedence level produce a warning but both are included. The `compiledText` is the final concatenation. Code-level invariants (enforced in runtime code) override all instruction content regardless of precedence.
 
-Stored in `instruction_snapshots`.
+Stored in `instruction_snapshots`. Playbook usage is also normalized into
+runtime metadata so receipts can answer which active playbooks affected a run.
+Run-originated playbook proposals are audited separately and may appear in the
+receipt timeline, but they do not populate `runtime.playbooks` until activated
+and compiled into a later run.
 
 ## 16.4 Resolution requirements
 

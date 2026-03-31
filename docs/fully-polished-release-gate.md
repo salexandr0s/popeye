@@ -84,10 +84,10 @@ true.
 ### 4. Operator surfaces
 
 - The web inspector includes first-class views for connections, approvals,
-  policies, people, email, calendar, todos, GitHub, finance, medical, backups,
-  upgrades, and security.
+  policies, playbooks, proposals, people, email, calendar, todos, GitHub,
+  finance, medical, backups, upgrades, and security.
 - The CLI provides parity for setup, sync, digest, approvals, vault access,
-  backups, upgrades, and recovery.
+  backups, upgrades, recovery, and playbook inspection/review flows.
 - Telegram remains a thin conversational surface and is not required to perform
   platform administration.
 
@@ -128,6 +128,7 @@ The polished claim requires all of the following evidence:
 - passing verification logs
 - installer artifact + checksum
 - migration and restore drill results
+- installed-instance playbook / proposal validation evidence
 - operator-facing docs for setup, approvals, backups, upgrades, and recovery
 - current-state matrix aligned with repo truth
 

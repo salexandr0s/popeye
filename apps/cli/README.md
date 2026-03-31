@@ -51,6 +51,10 @@ New platform implementation.
 | `pop jobs list/pause/resume`   | Manage job lifecycle                             |
 | `pop sessions list`            | List session roots                               |
 | `pop interventions list`       | List pending interventions                       |
+| `pop playbook list/show/revisions/usage` | Inspect canonical playbooks, effectiveness, revision history, and recent compiled-run usage |
+| `pop playbook proposals/proposal` | Inspect playbook proposals                       |
+| `pop playbook approve/reject/apply` | Review and apply playbook proposals           |
+| `pop playbook activate/retire` | Change canonical playbook status                 |
 | `pop recovery retry <runId>`   | Retry a failed run                               |
 
 ## Dependencies

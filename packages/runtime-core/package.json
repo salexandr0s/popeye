@@ -19,6 +19,7 @@
     "@popeye/instructions": "workspace:*",
     "@popeye/memory": "workspace:*",
     "@popeye/observability": "workspace:*",
+    "@popeye/playbooks": "workspace:*",
     "@popeye/receipts": "workspace:*",
     "@popeye/scheduler": "workspace:*",
     "@popeye/sessions": "workspace:*",

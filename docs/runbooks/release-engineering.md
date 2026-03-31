@@ -1,5 +1,13 @@
 # Release engineering runbook
 
+For a real release-candidate pass, use:
+
+- `internal/release-readiness.md` as the canonical readiness plan
+- `internal/release-readiness-checklist.md` as the command companion
+
+This runbook covers packaging/release mechanics; it is not a substitute for the
+full installed-instance, domain, policy, recovery, and soak validation gate.
+
 ## Build and package
 
 Use the `build-pkg.sh` script to create a distribution tarball:
@@ -169,6 +177,18 @@ To enable signing and notarization, add these repository secrets:
 
 Without these secrets, the workflow skips signing and produces an unsigned .pkg.
 
+## Candidate SHA gate
+
+Before cutting a release or calling a candidate GO, require green results on the
+same frozen SHA for:
+
+- `ci / verify`
+- `security / semgrep`
+- `codeql / Analyze (javascript-typescript)`
+- `pi-smoke` if the intended Pi ref is part of the release bar
+
+Do not mix release packaging with a moving candidate branch or a dirty worktree.
+
 ## Pi smoke CI (daily)
 
 The `.github/workflows/pi-smoke.yml` runs nightly at 03:00 UTC. To activate:
@@ -207,3 +227,5 @@ Before releasing:
 - [ ] Artifact inventory produced -- `bash scripts/artifact-inventory.sh`
 - [ ] Smoke test passes -- `bash scripts/smoke-test.sh`
 - [ ] Upgrade verification passes -- `bash scripts/verify-upgrade-path.sh --json`
+- [ ] Installed-instance playbook/proposal smoke completed on the candidate host
+- [ ] `internal/release-readiness.md` / `internal/release-readiness-checklist.md` evidence set is complete

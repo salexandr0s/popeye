@@ -1,9 +1,16 @@
-import type { CompiledInstructionBundle } from '@popeye/contracts';
+import type { CompiledInstructionBundle, ResolvedPlaybook } from '@popeye/contracts';
 import { CompiledInstructionBundleSchema } from '@popeye/contracts';
-import { compileInstructionBundle, resolveInstructionSources, type ResolverDependencies } from '@popeye/instructions';
+import {
+  buildPlaybookInstructionSource,
+  compileInstructionBundle,
+  resolveInstructionSources,
+  type ResolverDependencies,
+} from '@popeye/instructions';
+import { toAppliedPlaybook } from '@popeye/playbooks';
 import type { WorkspaceRegistry } from '@popeye/workspace';
 
 import type { RuntimeDatabases } from './database.js';
+import type { PlaybookService } from './playbook-service.js';
 
 export class InstructionPreviewContextError extends Error {
   readonly errorCode: 'not_found' | 'invalid_context';
@@ -13,6 +20,11 @@ export class InstructionPreviewContextError extends Error {
     this.name = 'InstructionPreviewContextError';
     this.errorCode = errorCode;
   }
+}
+
+export interface ResolvedInstructionRunBundle {
+  bundle: CompiledInstructionBundle;
+  resolvedPlaybooks: ResolvedPlaybook[];
 }
 
 function buildResolverDependencies(workspaceRegistry: WorkspaceRegistry): ResolverDependencies {
@@ -53,16 +65,31 @@ function validateInstructionPreviewContext(workspaceRegistry: WorkspaceRegistry,
 export function createInstructionPreview(
   databases: RuntimeDatabases,
   workspaceRegistry: WorkspaceRegistry,
+  playbookService: PlaybookService,
   scope: string,
   projectId?: string,
 ): CompiledInstructionBundle {
   validateInstructionPreviewContext(workspaceRegistry, scope, projectId);
-  const bundle = compileInstructionBundle(
-    resolveInstructionSources(
-      { workspaceId: scope, projectId, identity: 'default' },
-      buildResolverDependencies(workspaceRegistry),
-    ),
-  );
+  const resolvedPlaybooks = playbookService.resolveForContext({
+    workspaceId: scope,
+    ...(projectId ? { projectId } : {}),
+    profileId: null,
+  });
+  const playbookSource = buildPlaybookInstructionSource(resolvedPlaybooks);
+  const bundle = compileInstructionBundle({
+    sources: [
+      ...resolveInstructionSources(
+        {
+          workspaceId: scope,
+          ...(projectId ? { projectId } : {}),
+          identity: 'default',
+        },
+        buildResolverDependencies(workspaceRegistry),
+      ),
+      ...(playbookSource ? [playbookSource] : []),
+    ],
+    playbooks: resolvedPlaybooks.map((playbook) => toAppliedPlaybook(playbook)),
+  });
   databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, project_id, bundle_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
     bundle.id,
     scope,
@@ -76,14 +103,30 @@ export function createInstructionPreview(
 export function resolveInstructionBundleForTask(
   databases: RuntimeDatabases,
   workspaceRegistry: WorkspaceRegistry,
-  task: { workspaceId: string; projectId: string | null; prompt: string },
-): CompiledInstructionBundle {
-  const bundle = compileInstructionBundle(
-    resolveInstructionSources(
-      { workspaceId: task.workspaceId, projectId: task.projectId ?? undefined, taskBrief: task.prompt },
-      buildResolverDependencies(workspaceRegistry),
-    ),
-  );
+  playbookService: PlaybookService,
+  task: { workspaceId: string; projectId: string | null; profileId: string | null; prompt: string },
+): ResolvedInstructionRunBundle {
+  const resolvedPlaybooks = playbookService.resolveForContext({
+    workspaceId: task.workspaceId,
+    ...(task.projectId ? { projectId: task.projectId } : {}),
+    profileId: task.profileId ?? null,
+  });
+  const playbookSource = buildPlaybookInstructionSource(resolvedPlaybooks);
+  const bundle = compileInstructionBundle({
+    sources: [
+      ...resolveInstructionSources(
+        {
+          workspaceId: task.workspaceId,
+          ...(task.projectId ? { projectId: task.projectId } : {}),
+          ...(task.profileId ? { profileId: task.profileId } : {}),
+          taskBrief: task.prompt,
+        },
+        buildResolverDependencies(workspaceRegistry),
+      ),
+      ...(playbookSource ? [playbookSource] : []),
+    ],
+    playbooks: resolvedPlaybooks.map((playbook) => toAppliedPlaybook(playbook)),
+  });
   databases.app.prepare('INSERT INTO instruction_snapshots (id, scope, project_id, bundle_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
     bundle.id,
     task.workspaceId,
@@ -91,5 +134,8 @@ export function resolveInstructionBundleForTask(
     JSON.stringify(bundle),
     bundle.createdAt,
   );
-  return CompiledInstructionBundleSchema.parse(bundle);
+  return {
+    bundle: CompiledInstructionBundleSchema.parse(bundle),
+    resolvedPlaybooks,
+  };
 }

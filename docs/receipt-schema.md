@@ -16,7 +16,7 @@ exactly one receipt, including failures and cancellations.
 | `summary` | string | Human-readable outcome summary |
 | `details` | string | Extended details (may be empty) |
 | `usage` | UsageMetrics | Cost and token accounting (see below) |
-| `runtime` | ReceiptRuntimeSummary | Execution policy, context releases, timeline (optional, additive) |
+| `runtime` | ReceiptRuntimeSummary | Execution policy, context releases, playbooks, timeline (optional, additive) |
 | `createdAt` | string (ISO 8601) | When the receipt was created |
 
 ## Usage metrics
@@ -42,11 +42,12 @@ chronological timeline of significant events during the run.
 | `runtime.profileId` | string or null | Execution profile used |
 | `runtime.execution` | object or null | Execution policy snapshot (mode, memory/recall scope, filesystem policy, context release policy, session policy, warnings) |
 | `runtime.contextReleases` | object or null | Aggregated context release summary (total releases, total token estimate, breakdown by domain) |
-| `runtime.timeline` | array | Chronological events (see Timeline events below) |
+| `runtime.playbooks` | array | Applied playbook summaries (`id`, `title`, `scope`, `revisionHash`) for the active canonical playbooks that were actually compiled into the run |
+| `runtime.timeline` | array | Chronological events (see Timeline events below), including additive policy/audit events such as playbook proposal creation or blocking |
 
 ## Timeline events
 
-Each timeline event records a discrete occurrence during the run.
+Each timeline event records a discrete occurrence during the run. For playbooks, `runtime.playbooks` remains the canonical list of compiled active playbooks, while proposal lifecycle events may appear in the timeline with codes such as `playbook_proposal_created`, `playbook_proposal_approved`, `playbook_proposal_applied`, or `playbook_proposal_quarantined`.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -107,6 +108,14 @@ redaction pipeline. Redacted values are replaced with `[REDACTED:<pattern>]`.
       "warnings": []
     },
     "contextReleases": null,
+    "playbooks": [
+      {
+        "id": "workspace-triage",
+        "title": "Workspace Triage",
+        "scope": "workspace",
+        "revisionHash": "sha256:example"
+      }
+    ],
     "timeline": [
       {
         "id": "evt-001",

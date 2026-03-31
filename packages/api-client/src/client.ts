@@ -38,6 +38,29 @@ import {
   MessageRecordSchema,
   type ProjectListItem,
   ProjectListItemSchema,
+  type PlaybookDetail,
+  PlaybookDetailResponseSchema,
+  type PlaybookLifecycleActionRequest,
+  type PlaybookProposalApplyRequest,
+  type PlaybookProposalCreateRequest,
+  type PlaybookProposalKind,
+  type PlaybookProposalRecord,
+  PlaybookProposalRecordResponseSchema,
+  type PlaybookProposalReviewRequest,
+  type PlaybookProposalSubmitReviewRequest,
+  type PlaybookProposalUpdateRequest,
+  type PlaybookProposalStatus,
+  type PlaybookRecord,
+  PlaybookRecordResponseSchema,
+  PlaybookRevisionListResponseSchema,
+  type PlaybookRevisionRecord,
+  type PlaybookScope,
+  type PlaybookStaleCandidate,
+  type PlaybookSuggestPatchRequest,
+  PlaybookStaleCandidateListResponseSchema,
+  type PlaybookStatus,
+  PlaybookUsageRunListResponseSchema,
+  type PlaybookUsageRunRecord,
   type ReceiptRecord,
   ReceiptRecordSchema,
   type RecallDetail,
@@ -290,6 +313,28 @@ export interface RecallSearchOptions {
   includeGlobal?: boolean;
   kinds?: RecallSourceKind[];
   limit?: number;
+}
+
+export interface ListPlaybooksOptions {
+  q?: string;
+  scope?: PlaybookScope;
+  workspaceId?: string | null;
+  projectId?: string | null;
+  status?: PlaybookStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListPlaybookProposalsOptions {
+  q?: string;
+  status?: PlaybookProposalStatus;
+  kind?: PlaybookProposalKind;
+  scope?: PlaybookScope;
+  sourceRunId?: string | null;
+  targetRecordId?: string | null;
+  sort?: 'created_desc' | 'created_asc' | 'updated_desc' | 'updated_asc' | 'title_asc' | 'title_desc';
+  limit?: number;
+  offset?: number;
 }
 
 const MemoryMaintenanceResultSchema = z.object({
@@ -583,6 +628,129 @@ export class PopeyeApiClient {
 
   async getRecallDetail(kind: RecallSourceKind, id: string): Promise<RecallDetail> {
     return this.get(`/v1/recall/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, RecallDetailSchema);
+  }
+
+  async listPlaybooks(options: ListPlaybooksOptions = {}): Promise<PlaybookRecord[]> {
+    return this.getArray(
+      `/v1/playbooks${this.buildQuery({
+        q: options.q?.trim() ? options.q.trim() : undefined,
+        scope: options.scope,
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        status: options.status,
+        limit: options.limit,
+        offset: options.offset,
+      })}`,
+      PlaybookRecordResponseSchema,
+    );
+  }
+
+  async getPlaybook(recordId: string): Promise<PlaybookDetail> {
+    return this.get(`/v1/playbooks/${encodeURIComponent(recordId)}`, PlaybookDetailResponseSchema);
+  }
+
+  async listPlaybookStaleCandidates(): Promise<PlaybookStaleCandidate[]> {
+    return this.getArray('/v1/playbooks/stale-candidates', PlaybookStaleCandidateListResponseSchema.element);
+  }
+
+  async listPlaybookRevisions(recordId: string): Promise<PlaybookRevisionRecord[]> {
+    const response = await this.get(
+      `/v1/playbooks/${encodeURIComponent(recordId)}/revisions`,
+      PlaybookRevisionListResponseSchema,
+    );
+    return PlaybookRevisionListResponseSchema.parse(response);
+  }
+
+  async listPlaybookUsage(recordId: string, options: { limit?: number; offset?: number } = {}): Promise<PlaybookUsageRunRecord[]> {
+    const response = await this.get(
+      `/v1/playbooks/${encodeURIComponent(recordId)}/usage${this.buildQuery(options)}`,
+      PlaybookUsageRunListResponseSchema,
+    );
+    return PlaybookUsageRunListResponseSchema.parse(response);
+  }
+
+  async listPlaybookProposals(options: ListPlaybookProposalsOptions = {}): Promise<PlaybookProposalRecord[]> {
+    return this.getArray(
+      `/v1/playbook-proposals${this.buildQuery({
+        q: options.q?.trim() ? options.q.trim() : undefined,
+        status: options.status,
+        kind: options.kind,
+        scope: options.scope,
+        sourceRunId: options.sourceRunId,
+        targetRecordId: options.targetRecordId,
+        sort: options.sort,
+        limit: options.limit,
+        offset: options.offset,
+      })}`,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async getPlaybookProposal(proposalId: string): Promise<PlaybookProposalRecord> {
+    return this.get(
+      `/v1/playbook-proposals/${encodeURIComponent(proposalId)}`,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async createPlaybookProposal(input: PlaybookProposalCreateRequest): Promise<PlaybookProposalRecord> {
+    return this.post('/v1/playbook-proposals', input, PlaybookProposalRecordResponseSchema);
+  }
+
+  async reviewPlaybookProposal(proposalId: string, input: PlaybookProposalReviewRequest): Promise<PlaybookProposalRecord> {
+    return this.post(
+      `/v1/playbook-proposals/${encodeURIComponent(proposalId)}/review`,
+      input,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async updatePlaybookProposal(proposalId: string, input: PlaybookProposalUpdateRequest): Promise<PlaybookProposalRecord> {
+    return this.patch(
+      `/v1/playbook-proposals/${encodeURIComponent(proposalId)}`,
+      input,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async submitPlaybookProposalForReview(proposalId: string, input: PlaybookProposalSubmitReviewRequest): Promise<PlaybookProposalRecord> {
+    return this.post(
+      `/v1/playbook-proposals/${encodeURIComponent(proposalId)}/submit-review`,
+      input,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async applyPlaybookProposal(proposalId: string, input: PlaybookProposalApplyRequest): Promise<PlaybookProposalRecord> {
+    return this.post(
+      `/v1/playbook-proposals/${encodeURIComponent(proposalId)}/apply`,
+      input,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async suggestPlaybookPatch(recordId: string, input: PlaybookSuggestPatchRequest): Promise<PlaybookProposalRecord> {
+    return this.post(
+      `/v1/playbooks/${encodeURIComponent(recordId)}/suggest-patch`,
+      input,
+      PlaybookProposalRecordResponseSchema,
+    );
+  }
+
+  async activatePlaybook(recordId: string, input: PlaybookLifecycleActionRequest): Promise<PlaybookDetail> {
+    return this.post(
+      `/v1/playbooks/${encodeURIComponent(recordId)}/activate`,
+      input,
+      PlaybookDetailResponseSchema,
+    );
+  }
+
+  async retirePlaybook(recordId: string, input: PlaybookLifecycleActionRequest): Promise<PlaybookDetail> {
+    return this.post(
+      `/v1/playbooks/${encodeURIComponent(recordId)}/retire`,
+      input,
+      PlaybookDetailResponseSchema,
+    );
   }
 
   // --- Trajectory ---

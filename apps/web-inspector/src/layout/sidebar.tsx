@@ -13,6 +13,8 @@ const navItems: NavItem[] = [
   { label: 'Jobs', to: '/jobs' },
   { label: 'Receipts', to: '/receipts' },
   { label: 'Instructions', to: '/instructions' },
+  { label: 'Playbooks', to: '/playbooks' },
+  { label: 'Playbook Proposals', to: '/playbook-proposals' },
   { label: 'Interventions', to: '/interventions' },
   { label: 'Approvals', to: '/approvals' },
   { label: 'Standing Approvals', to: '/standing-approvals' },

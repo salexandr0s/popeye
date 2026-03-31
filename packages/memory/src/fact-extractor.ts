@@ -62,6 +62,7 @@ function inferFactKind(text: string, memoryType: MemoryType): MemoryFactKind {
 function inferSourceReliability(sourceType: MemorySourceType): number {
   switch (sourceType) {
     case 'workspace_doc':
+    case 'playbook':
       return 0.95;
     case 'receipt':
       return 0.9;
@@ -86,7 +87,7 @@ function buildPrimaryFact(input: ExtractFactsInput): string {
 function buildSourceCandidates(input: ExtractFactsInput): string[] {
   const candidates = [buildPrimaryFact(input), ...splitIntoCandidates(input.content)];
 
-  if (input.sourceType === 'workspace_doc') {
+  if (input.sourceType === 'workspace_doc' || input.sourceType === 'playbook') {
     return candidates.slice(0, 5);
   }
   if (input.sourceType === 'receipt') {

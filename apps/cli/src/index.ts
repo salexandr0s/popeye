@@ -41,6 +41,7 @@ import { handlePeople } from './commands/people.js';
 import { handleFinance } from './commands/finance.js';
 import { handleMedical } from './commands/medical.js';
 import { handleFiles } from './commands/files.js';
+import { handlePlaybook } from './commands/playbooks.js';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -161,6 +162,19 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   profile: {
     list: { desc: 'List execution profiles', usage: 'pop profile list' },
     show: { desc: 'Show execution profile details', usage: 'pop profile show <id>' },
+  },
+  playbook: {
+    list: { desc: 'List canonical playbooks', usage: 'pop playbook list' },
+    show: { desc: 'Show one playbook', usage: 'pop playbook show <recordId>' },
+    revisions: { desc: 'List playbook revisions', usage: 'pop playbook revisions <recordId>' },
+    usage: { desc: 'List recent playbook usage runs', usage: 'pop playbook usage <recordId>' },
+    proposals: { desc: 'List playbook proposals', usage: 'pop playbook proposals' },
+    proposal: { desc: 'Show one playbook proposal', usage: 'pop playbook proposal <proposalId>' },
+    approve: { desc: 'Approve a playbook proposal', usage: 'pop playbook approve <proposalId> [note]' },
+    reject: { desc: 'Reject a playbook proposal', usage: 'pop playbook reject <proposalId> [note]' },
+    apply: { desc: 'Apply an approved playbook proposal', usage: 'pop playbook apply <proposalId>' },
+    activate: { desc: 'Activate a playbook', usage: 'pop playbook activate <recordId>' },
+    retire: { desc: 'Retire a playbook', usage: 'pop playbook retire <recordId>' },
   },
   files: {
     roots: { desc: 'List file roots', usage: 'pop files roots [--json]' },
@@ -644,6 +658,10 @@ async function main(): Promise<void> {
   if (command === 'profile') {
     const client = await requireDaemonClient(config);
     return handleProfile({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
+  }
+  if (command === 'playbook') {
+    const client = await requireDaemonClient(config);
+    return handlePlaybook({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
   if (command === 'files') {
     const client = await requireDaemonClient(config);

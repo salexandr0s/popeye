@@ -34,6 +34,22 @@ import {
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
   MemoryPromotionProposalRequestSchema,
+  PlaybookLifecycleActionRequestSchema,
+  PlaybookDetailResponseSchema,
+  PlaybookListQueryParamsSchema,
+  PlaybookProposalApplyRequestSchema,
+  PlaybookProposalCreateRequestSchema,
+  PlaybookProposalListQueryParamsSchema,
+  PlaybookProposalRecordResponseSchema,
+  PlaybookProposalReviewRequestSchema,
+  PlaybookProposalSubmitReviewRequestSchema,
+  PlaybookProposalUpdateRequestSchema,
+  PlaybookRecordResponseSchema,
+  PlaybookRevisionListResponseSchema,
+  PlaybookStaleCandidateListResponseSchema,
+  PlaybookSuggestPatchRequestSchema,
+  PlaybookUsageListQueryParamsSchema,
+  PlaybookUsageRunListResponseSchema,
   PathIdParamSchema,
   ProjectRecordSchema,
   ProjectRegistrationInputSchema,
@@ -1248,6 +1264,239 @@ export async function createControlApi(
   });
 
   // --- Unified recall routes ---
+
+  app.get('/v1/playbooks', async (request) => {
+    const query = PlaybookListQueryParamsSchema.parse(request.query);
+    return z.array(PlaybookRecordResponseSchema).parse(
+      dependencies.runtime.listPlaybooks(stripUndefined({
+        ...(query.q !== undefined ? { q: query.q } : {}),
+        scope: query.scope,
+        ...(query.workspaceId !== undefined ? { workspaceId: query.workspaceId } : {}),
+        ...(query.projectId !== undefined ? { projectId: query.projectId } : {}),
+        ...(query.status !== undefined ? { status: query.status } : {}),
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.offset !== undefined ? { offset: query.offset } : {}),
+      })),
+    );
+  });
+
+  app.get('/v1/playbooks/stale-candidates', async () => {
+    return PlaybookStaleCandidateListResponseSchema.parse(
+      dependencies.runtime.listPlaybookStaleCandidates(),
+    );
+  });
+
+  app.get('/v1/playbooks/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const playbook = dependencies.runtime.getPlaybook(id);
+    if (!playbook) return reply.code(404).send({ error: 'not_found' });
+    return PlaybookDetailResponseSchema.parse(playbook);
+  });
+
+  app.get('/v1/playbooks/:id/revisions', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const playbook = dependencies.runtime.getPlaybook(id);
+    if (!playbook) return reply.code(404).send({ error: 'not_found' });
+    return PlaybookRevisionListResponseSchema.parse(dependencies.runtime.listPlaybookRevisions(id));
+  });
+
+  app.get('/v1/playbooks/:id/usage', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const playbook = dependencies.runtime.getPlaybook(id);
+    if (!playbook) return reply.code(404).send({ error: 'not_found' });
+    const query = PlaybookUsageListQueryParamsSchema.parse(request.query);
+    return PlaybookUsageRunListResponseSchema.parse(
+      dependencies.runtime.listPlaybookUsage(id, stripUndefined({
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.offset !== undefined ? { offset: query.offset } : {}),
+      })),
+    );
+  });
+
+  app.get('/v1/playbook-proposals', async (request) => {
+    const query = PlaybookProposalListQueryParamsSchema.parse(request.query);
+    return z.array(PlaybookProposalRecordResponseSchema).parse(
+      dependencies.runtime.listPlaybookProposals(stripUndefined({
+        ...(query.q !== undefined ? { q: query.q } : {}),
+        ...(query.status !== undefined ? { status: query.status } : {}),
+        ...(query.kind !== undefined ? { kind: query.kind } : {}),
+        ...(query.scope !== undefined ? { scope: query.scope } : {}),
+        ...(query.sourceRunId !== undefined ? { sourceRunId: query.sourceRunId } : {}),
+        ...(query.targetRecordId !== undefined ? { targetRecordId: query.targetRecordId } : {}),
+        ...(query.sort !== undefined ? { sort: query.sort } : {}),
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.offset !== undefined ? { offset: query.offset } : {}),
+      })),
+    );
+  });
+
+  app.get('/v1/playbook-proposals/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const proposal = dependencies.runtime.getPlaybookProposal(id);
+    if (!proposal) return reply.code(404).send({ error: 'not_found' });
+    return PlaybookProposalRecordResponseSchema.parse(proposal);
+  });
+
+  app.post('/v1/playbook-proposals', async (request, reply) => {
+    const body = PlaybookProposalCreateRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.createPlaybookProposal(body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbook-proposals/:id/review', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookProposalReviewRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.reviewPlaybookProposal(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.patch('/v1/playbook-proposals/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookProposalUpdateRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.updatePlaybookProposal(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbook-proposals/:id/submit-review', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookProposalSubmitReviewRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.submitPlaybookProposalForReview(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbook-proposals/:id/apply', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookProposalApplyRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.applyPlaybookProposal(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbooks/:id/suggest-patch', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookSuggestPatchRequestSchema.parse(request.body);
+    try {
+      return PlaybookProposalRecordResponseSchema.parse(
+        dependencies.runtime.suggestPlaybookPatch(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbooks/:id/activate', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookLifecycleActionRequestSchema.parse(request.body);
+    try {
+      return PlaybookDetailResponseSchema.parse(
+        dependencies.runtime.activatePlaybook(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/playbooks/:id/retire', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = PlaybookLifecycleActionRequestSchema.parse(request.body);
+    try {
+      return PlaybookDetailResponseSchema.parse(
+        dependencies.runtime.retirePlaybook(id, body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_request', message: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'conflict', message: error.message });
+      }
+      throw error;
+    }
+  });
 
   app.get('/v1/recall/search', async (request) => {
     const parsed = RecallSearchQueryParamsSchema.parse(request.query);

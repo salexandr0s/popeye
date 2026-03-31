@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,7 +12,7 @@ import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../eng
 import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
 import { initAuthStore } from './auth.ts';
 import type { InstructionPreviewContextError } from './instruction-query.ts';
-import { RuntimeValidationError, classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
+import { RuntimeConflictError, RuntimeValidationError, classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -799,6 +799,776 @@ describe('PopeyeRuntimeService', () => {
       .prepare('SELECT project_id FROM instruction_snapshots WHERE id = ?')
       .get(capturedRequest?.instructionSnapshotId) as { project_id: string | null } | undefined;
     expect(snapshotRow?.project_id).toBe('proj-1');
+
+    await runtime.close();
+  });
+
+  it('compiles active playbooks deterministically, protects playbook directories, and records receipt usage', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-run-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    const globalPlaybooksDir = join(dir, 'playbooks');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    const projectPlaybooksDir = join(projectRoot, '.popeye', 'playbooks');
+    mkdirSync(globalPlaybooksDir, { recursive: true });
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    mkdirSync(projectPlaybooksDir, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project instructions');
+    writeFileSync(join(globalPlaybooksDir, 'global.md'), `---\nid: global-baseline\ntitle: Global Baseline\nstatus: active\n---\nglobal playbook body`);
+    writeFileSync(join(workspacePlaybooksDir, 'workspace.md'), `---\nid: workspace-flow\ntitle: Workspace Flow\nstatus: active\n---\nworkspace playbook body`);
+    writeFileSync(join(projectPlaybooksDir, 'project.md'), `---\nid: project-runbook\ntitle: Project Runbook\nstatus: active\nallowedProfileIds:\n  - default\n---\nproject playbook body`);
+    writeFileSync(join(workspacePlaybooksDir, 'excluded.md'), `---\nid: excluded\ntitle: Excluded\nstatus: active\nallowedProfileIds:\n  - restricted\n---\nexcluded playbook body`);
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    let capturedRequest: EngineRunRequest | null = null;
+    const capturingAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId', 'instructionSnapshotId'],
+          warnings: [],
+        };
+      },
+      async startRun(input, options) {
+        capturedRequest = typeof input === 'string' ? { prompt: input } : input;
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return {
+              engineSessionRef: 'fake:playbooks',
+              usage: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+              failureClassification: null,
+            };
+          },
+          isAlive: () => false,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input: capturedRequest?.prompt ?? '' } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:playbooks' } });
+        options?.onEvent?.({ type: 'completed', payload: { output: 'ok' } });
+        options?.onEvent?.({
+          type: 'usage',
+          payload: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+        });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    Object.defineProperty(runtime, 'engine', { value: capturingAdapter, writable: false });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      title: 'playbook task',
+      prompt: 'task prompt body',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
+    const prompt = capturedRequest?.prompt ?? '';
+
+    expect(prompt).toContain('workspace instructions');
+    expect(prompt).toContain('project instructions');
+    expect(prompt).toContain('global playbook body');
+    expect(prompt).toContain('workspace playbook body');
+    expect(prompt).toContain('project playbook body');
+    expect(prompt).not.toContain('excluded playbook body');
+    expect(prompt.indexOf('workspace instructions')).toBeLessThan(prompt.indexOf('project instructions'));
+    expect(prompt.indexOf('project instructions')).toBeLessThan(prompt.indexOf('global playbook body'));
+    expect(prompt.indexOf('project playbook body')).toBeLessThan(prompt.indexOf('task prompt body'));
+
+    const snapshotRow = runtime.databases.app
+      .prepare('SELECT bundle_json FROM instruction_snapshots WHERE id = ?')
+      .get(capturedRequest?.instructionSnapshotId) as { bundle_json: string } | undefined;
+    const snapshot = snapshotRow ? JSON.parse(snapshotRow.bundle_json) as {
+      sources: Array<{ type: string; precedence: number }>;
+      playbooks: Array<{ id: string; title: string; scope: string; revisionHash: string }>;
+    } : null;
+    expect(snapshot?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'playbook', precedence: 6 }),
+    ]));
+    expect(snapshot?.playbooks).toEqual([
+      expect.objectContaining({ id: 'global-baseline', title: 'Global Baseline', scope: 'global', revisionHash: expect.any(String) }),
+      expect.objectContaining({ id: 'workspace-flow', title: 'Workspace Flow', scope: 'workspace', revisionHash: expect.any(String) }),
+      expect.objectContaining({ id: 'project-runbook', title: 'Project Runbook', scope: 'project', revisionHash: expect.any(String) }),
+    ]);
+
+    const usageRows = runtime.databases.app.prepare(`
+      SELECT playbook_id, scope, source_order
+      FROM playbook_usage
+      WHERE run_id = ?
+      ORDER BY source_order ASC
+    `).all(terminal!.run!.id) as Array<{ playbook_id: string; scope: string; source_order: number }>;
+    expect(usageRows).toEqual([
+      { playbook_id: 'global-baseline', scope: 'global', source_order: 0 },
+      { playbook_id: 'workspace-flow', scope: 'workspace', source_order: 1 },
+      { playbook_id: 'project-runbook', scope: 'project', source_order: 2 },
+    ]);
+
+    const receipt = runtime.getReceiptByRunId(terminal!.run!.id);
+    expect(receipt?.runtime?.playbooks).toEqual([
+      expect.objectContaining({ id: 'global-baseline', title: 'Global Baseline', scope: 'global' }),
+      expect.objectContaining({ id: 'workspace-flow', title: 'Workspace Flow', scope: 'workspace' }),
+      expect.objectContaining({ id: 'project-runbook', title: 'Project Runbook', scope: 'project' }),
+    ]);
+
+    const envelope = runtime.getExecutionEnvelope(terminal!.run!.id);
+    expect(envelope?.protectedPaths).toEqual(expect.arrayContaining([
+      workspacePlaybooksDir,
+      projectPlaybooksDir,
+    ]));
+
+    await runtime.close();
+  });
+
+  it('creates run-originated draft proposals, keeps them inactive until activation, and audits the originating receipt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-proposal-run-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project instructions');
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    let proposalSubmitted = false;
+    const prompts: string[] = [];
+    const engineAdapter: EngineAdapter = {
+      getCapabilities() {
+        return {
+          engineKind: 'fake',
+          persistentSessionSupport: false,
+          resumeBySessionRefSupport: false,
+          hostToolMode: 'none',
+          compactionEventSupport: false,
+          cancellationMode: 'cooperative',
+          acceptedRequestMetadata: ['prompt', 'cwd', 'workspaceId', 'projectId', 'instructionSnapshotId'],
+          warnings: [],
+        };
+      },
+      async startRun(input, options) {
+        const request = typeof input === 'string' ? { prompt: input, runtimeTools: [] } : input;
+        prompts.push(request.prompt);
+        if (!proposalSubmitted) {
+          proposalSubmitted = true;
+          const proposalTool = request.runtimeTools?.find((tool) => tool.name === 'popeye_playbook_propose');
+          expect(proposalTool).toBeDefined();
+          await proposalTool!.execute({
+            kind: 'draft',
+            playbookId: 'followup-triage',
+            scope: 'workspace',
+            title: 'Follow-up Triage',
+            body: 'Follow-up playbook body',
+            summary: 'Capture a reusable follow-up triage flow',
+          });
+        }
+        const handle: EngineRunHandle = {
+          pid: null,
+          async cancel() {},
+          async wait() {
+            return {
+              engineSessionRef: 'fake:proposal-run',
+              usage: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+              failureClassification: null,
+            };
+          },
+          isAlive: () => false,
+        };
+        options?.onHandle?.(handle);
+        options?.onEvent?.({ type: 'started', payload: { input: request.prompt } });
+        options?.onEvent?.({ type: 'session', payload: { sessionRef: 'fake:proposal-run' } });
+        options?.onEvent?.({ type: 'completed', payload: { output: 'ok' } });
+        options?.onEvent?.({
+          type: 'usage',
+          payload: { provider: 'fake', model: 'capturing', tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+        });
+        return handle;
+      },
+      async run() {
+        throw new Error('not implemented');
+      },
+    };
+    Object.defineProperty(runtime, 'engine', { value: engineAdapter, writable: false });
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: 'proj-1',
+      title: 'proposal task',
+      prompt: 'create a reusable playbook',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
+
+    const proposals = runtime.listPlaybookProposals({ sourceRunId: terminal!.run!.id });
+    expect(proposals).toHaveLength(1);
+    const proposal = proposals[0]!;
+    expect(proposal.kind).toBe('draft');
+    expect(proposal.status).toBe('pending_review');
+    expect(proposal.workspaceId).toBe('default');
+    expect(proposal.projectId).toBeNull();
+
+    const receipt = runtime.getReceiptByRunId(terminal!.run!.id);
+    expect(receipt?.runtime?.playbooks).toEqual([]);
+    expect(receipt?.runtime?.timeline).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'playbook_proposal_created',
+        source: 'security_audit',
+      }),
+    ]));
+
+    runtime.reviewPlaybookProposal(proposal.id, {
+      decision: 'approved',
+      reviewedBy: 'operator',
+      note: '',
+    });
+    const appliedProposal = runtime.applyPlaybookProposal(proposal.id, {
+      appliedBy: 'operator',
+    });
+    expect(appliedProposal.status).toBe('applied');
+    const recordId = appliedProposal.appliedRecordId!;
+    const draftPlaybook = runtime.getPlaybook(recordId);
+    expect(draftPlaybook?.status).toBe('draft');
+    expect(existsSync(join(workspaceRoot, '.popeye', 'playbooks', 'followup-triage.md'))).toBe(true);
+
+    const inactivePreview = runtime.getInstructionPreview('default', 'proj-1');
+    expect(inactivePreview.playbooks).toEqual([]);
+    expect(inactivePreview.compiledText).not.toContain('Follow-up playbook body');
+
+    const activated = runtime.activatePlaybook(recordId, { updatedBy: 'operator' });
+    expect(activated.status).toBe('active');
+    expect(activated.indexedMemoryId).toEqual(expect.any(String));
+    expect(runtime.getPlaybook(recordId)?.indexedMemoryId).toEqual(expect.any(String));
+    const activePreview = runtime.getInstructionPreview('default', 'proj-1');
+    expect(activePreview.playbooks).toEqual([
+      expect.objectContaining({
+        id: 'followup-triage',
+        title: 'Follow-up Triage',
+        scope: 'workspace',
+      }),
+    ]);
+    expect(activePreview.compiledText).toContain('Follow-up playbook body');
+
+    expect(prompts[0]).toContain('workspace instructions');
+    expect(prompts[0]).not.toContain('Follow-up playbook body');
+
+    await runtime.close();
+  });
+
+  it('blocks quarantined proposals and rejects stale playbook patch applies', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-proposal-guardrails-'));
+    chmodSync(dir, 0o700);
+    const baseConfig = makeConfig(dir);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project instructions');
+    writeFileSync(join(workspacePlaybooksDir, 'triage.md'), `---\nid: triage\ntitle: Triage\nstatus: active\n---\nOriginal triage body`);
+
+    const runtime = createRuntimeService({
+      ...baseConfig,
+      security: {
+        ...baseConfig.security,
+        promptScanQuarantinePatterns: ['BLOCK_THIS'],
+      },
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    expect(() => runtime.createPlaybookProposal({
+      kind: 'draft',
+      playbookId: 'blocked-playbook',
+      scope: 'workspace',
+      workspaceId: 'default',
+      title: 'Blocked playbook',
+      body: 'BLOCK_THIS content',
+      allowedProfileIds: [],
+      summary: '',
+    })).toThrow(RuntimeValidationError);
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'playbook_proposal_quarantined' }),
+    ]));
+
+    const target = runtime.getPlaybook('workspace:default:triage');
+    expect(target?.status).toBe('active');
+
+    expect(() => runtime.createPlaybookProposal({
+      kind: 'patch',
+      targetRecordId: target!.recordId,
+      baseRevisionHash: 'stale-revision',
+      title: 'Triage',
+      body: 'Patched triage body',
+      allowedProfileIds: [],
+      summary: 'Adjust steps',
+    })).toThrow(RuntimeConflictError);
+
+    const proposal = runtime.createPlaybookProposal({
+      kind: 'patch',
+      targetRecordId: target!.recordId,
+      title: 'Triage',
+      body: 'Patched triage body',
+      allowedProfileIds: [],
+      summary: 'Adjust steps',
+    });
+    expect(proposal.baseRevisionHash).toBe(target?.currentRevisionHash);
+    runtime.reviewPlaybookProposal(proposal.id, {
+      decision: 'approved',
+      reviewedBy: 'operator',
+      note: '',
+    });
+    runtime.retirePlaybook(target!.recordId, { updatedBy: 'operator' });
+
+    expect(() => runtime.applyPlaybookProposal(proposal.id, { appliedBy: 'operator' })).toThrow(RuntimeConflictError);
+    expect(readFileSync(join(workspacePlaybooksDir, 'triage.md'), 'utf8')).not.toContain('Patched triage body');
+
+    await runtime.close();
+  });
+
+  it('mirrors canonical playbooks into FTS and supports q-filtered listing plus record-id search', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-search-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    const globalPlaybooksDir = join(dir, 'playbooks');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    const projectPlaybooksDir = join(projectRoot, '.popeye', 'playbooks');
+    mkdirSync(globalPlaybooksDir, { recursive: true });
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    mkdirSync(projectPlaybooksDir, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project instructions');
+    writeFileSync(join(globalPlaybooksDir, 'baseline.md'), `---\nid: baseline\ntitle: Global Baseline\nstatus: active\n---\nGlobal process body`);
+    writeFileSync(join(workspacePlaybooksDir, 'triage.md'), `---\nid: triage\ntitle: Workspace Triage\nstatus: active\n---\nTriage incoming issues deterministically`);
+    writeFileSync(join(projectPlaybooksDir, 'followup.md'), `---\nid: followup\ntitle: Project Follow-up\nstatus: draft\n---\nFollow up after operator review`);
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    const listed = runtime.listPlaybooks({ q: 'triage' });
+    expect(listed.map((playbook) => playbook.recordId)).toEqual(['workspace:default:triage']);
+
+    const recordIdMatches = runtime.searchPlaybooks({ query: 'workspace:default:triage', status: 'active' });
+    expect(recordIdMatches[0]?.recordId).toBe('workspace:default:triage');
+
+    const ftsRows = runtime.databases.app.prepare(`
+      SELECT record_id
+      FROM playbooks_fts
+      WHERE playbooks_fts MATCH ?
+      ORDER BY bm25(playbooks_fts)
+    `).all('"triage"') as Array<{ record_id: string }>;
+    expect(ftsRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ record_id: 'workspace:default:triage' }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('indexes active playbooks into procedural memory, refreshes the index on active patches, retires indexed memory, and reports stale candidates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-memory-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const projectRoot = join(workspaceRoot, 'project-root');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(projectRoot, 'PROJECT.md'), 'project instructions');
+    writeFileSync(join(workspacePlaybooksDir, 'triage.md'), `---\nid: triage\ntitle: Triage\nstatus: draft\n---\nOriginal triage body`);
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+        projects: [{ id: 'proj-1', name: 'Project 1', path: projectRoot }],
+      }],
+    });
+
+    const recordId = 'workspace:default:triage';
+    const activated = runtime.activatePlaybook(recordId, { updatedBy: 'operator' });
+    const firstIndexedMemoryId = activated.indexedMemoryId;
+    expect(firstIndexedMemoryId).toEqual(expect.any(String));
+
+    const firstArtifact = runtime.databases.memory.prepare(`
+      SELECT source_type, source_ref, source_ref_type, invalidated_at
+      FROM memory_artifacts
+      WHERE id = ?
+    `).get(firstIndexedMemoryId) as {
+      source_type: string;
+      source_ref: string | null;
+      source_ref_type: string | null;
+      invalidated_at: string | null;
+    } | undefined;
+    expect(firstArtifact).toEqual({
+      source_type: 'playbook',
+      source_ref: recordId,
+      source_ref_type: 'playbook_record',
+      invalidated_at: null,
+    });
+
+    const proceduralFactCount = runtime.databases.memory.prepare(`
+      SELECT COUNT(*) AS c
+      FROM memory_facts
+      WHERE source_type = 'playbook'
+        AND memory_type = 'procedural'
+        AND archived_at IS NULL
+    `).get() as { c: number };
+    expect(proceduralFactCount.c).toBeGreaterThan(0);
+
+    const patchProposal = runtime.createPlaybookProposal({
+      kind: 'patch',
+      targetRecordId: recordId,
+      title: 'Triage',
+      body: 'Updated triage body',
+      allowedProfileIds: [],
+      summary: 'Tighten the triage procedure',
+    });
+    runtime.reviewPlaybookProposal(patchProposal.id, {
+      decision: 'approved',
+      reviewedBy: 'operator',
+      note: '',
+    });
+    runtime.applyPlaybookProposal(patchProposal.id, { appliedBy: 'operator' });
+
+    const refreshed = runtime.getPlaybook(recordId);
+    expect(refreshed?.status).toBe('active');
+    expect(refreshed?.indexedMemoryId).toEqual(expect.any(String));
+    expect(refreshed?.indexedMemoryId).not.toBe(firstIndexedMemoryId);
+
+    const invalidatedFirstArtifact = runtime.databases.memory.prepare(`
+      SELECT invalidated_at
+      FROM memory_artifacts
+      WHERE id = ?
+    `).get(firstIndexedMemoryId) as { invalidated_at: string | null } | undefined;
+    expect(invalidatedFirstArtifact?.invalidated_at).toEqual(expect.any(String));
+
+    const appDb = runtime.databases.app;
+    const insertSyntheticRun = (suffix: string, state: 'failed_final' | 'succeeded', createdAt: string, withIntervention = false) => {
+      const createdTask = runtime.createTask({
+        workspaceId: 'default',
+        projectId: 'proj-1',
+        title: `synthetic-${suffix}`,
+        prompt: 'noop',
+        source: 'manual',
+        autoEnqueue: false,
+      });
+      const taskId = createdTask.task.id;
+      const jobId = `job-${suffix}`;
+      const runId = `run-${suffix}`;
+
+      appDb.prepare(
+        'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(jobId, taskId, 'default', state === 'failed_final' ? 'failed_final' : 'succeeded', 0, createdAt, runId, createdAt, createdAt);
+      appDb.prepare(
+        'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, jobId, taskId, 'default', 'default', `session-${suffix}`, null, state, createdAt, createdAt, state === 'failed_final' ? 'boom' : null, null, null, 0);
+      appDb.prepare(
+        'INSERT INTO playbook_usage (run_id, playbook_record_id, playbook_id, revision_hash, title, scope, source_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, recordId, 'triage', refreshed!.currentRevisionHash, 'Triage', 'workspace', 0, createdAt);
+
+      if (withIntervention) {
+        appDb.prepare(
+          'INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at, updated_at, resolution_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(`intervention-${suffix}`, 'needs_operator_input', runId, 'open', 'Needs operator review', createdAt, null, createdAt, null);
+      }
+    };
+
+    insertSyntheticRun('one', 'failed_final', new Date(Date.now() + 60_000).toISOString(), true);
+    insertSyntheticRun('two', 'failed_final', new Date(Date.now() + 120_000).toISOString());
+    insertSyntheticRun('three', 'succeeded', new Date(Date.now() + 180_000).toISOString());
+
+    const effectiveness = runtime.getPlaybook(recordId)?.effectiveness;
+    expect(effectiveness).toMatchObject({
+      useCount30d: 3,
+      succeededRuns30d: 1,
+      failedRuns30d: 2,
+      intervenedRuns30d: 1,
+    });
+    expect(effectiveness?.successRate30d).toBeCloseTo(1 / 3);
+
+    const usageRows = runtime.listPlaybookUsage(recordId, { limit: 10, offset: 0 });
+    expect(usageRows.map((row) => row.runId)).toEqual(['run-three', 'run-two', 'run-one']);
+    expect(usageRows[0]).toMatchObject({
+      runState: 'succeeded',
+      interventionCount: 0,
+      receiptId: null,
+    });
+    expect(usageRows[2]).toMatchObject({
+      runState: 'failed_final',
+      interventionCount: 1,
+      receiptId: null,
+    });
+
+    const staleCandidates = runtime.listPlaybookStaleCandidates();
+    expect(staleCandidates).toEqual([
+      expect.objectContaining({
+        recordId,
+        useCount30d: 3,
+        failedRuns30d: 2,
+        interventions30d: 1,
+        indexedMemoryId: refreshed?.indexedMemoryId,
+      }),
+    ]);
+    expect(staleCandidates[0]?.reasons.join(' ')).toContain('Repeated failed runs');
+
+    const retired = runtime.retirePlaybook(recordId, { updatedBy: 'operator' });
+    expect(retired.status).toBe('retired');
+    expect(retired.indexedMemoryId).toBeNull();
+    expect(runtime.getPlaybook(recordId)?.indexedMemoryId).toBeNull();
+    expect(runtime.listPlaybookStaleCandidates()).toEqual([]);
+
+    await runtime.close();
+  });
+
+  it('creates drafting suggestions and maintenance auto-drafts from recent playbook failures', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-drafting-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(workspacePlaybooksDir, 'triage.md'), `---\nid: triage\ntitle: Triage\nstatus: active\n---\nOriginal triage body`);
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+      }],
+    });
+
+    const recordId = 'workspace:default:triage';
+    const playbook = runtime.getPlaybook(recordId);
+    expect(playbook?.status).toBe('active');
+    const baseTime = Date.now() - (20 * 60 * 1000);
+    const isoAt = (offsetMinutes: number) => new Date(baseTime + (offsetMinutes * 60 * 1000)).toISOString();
+
+    const insertSignal = (suffix: string, state: 'failed_final' | 'succeeded', createdAt: string, withIntervention = false) => {
+      const createdTask = runtime.createTask({
+        workspaceId: 'default',
+        projectId: null,
+        title: `drafting-${suffix}`,
+        prompt: 'noop',
+        source: 'manual',
+        autoEnqueue: false,
+      });
+      const taskId = createdTask.task.id;
+      const jobId = `drafting-job-${suffix}`;
+      const runId = `drafting-run-${suffix}`;
+
+      runtime.databases.app.prepare(
+        'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(jobId, taskId, 'default', state, 0, createdAt, runId, createdAt, createdAt);
+      runtime.databases.app.prepare(
+        'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, jobId, taskId, 'default', 'default', `drafting-session-${suffix}`, null, state, createdAt, createdAt, state === 'failed_final' ? 'boom' : null, null, null, 0);
+      runtime.databases.app.prepare(
+        'INSERT INTO playbook_usage (run_id, playbook_record_id, playbook_id, revision_hash, title, scope, source_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, recordId, 'triage', playbook!.currentRevisionHash, playbook!.title, playbook!.scope, 0, createdAt);
+
+      if (withIntervention) {
+        runtime.databases.app.prepare(
+          'INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at, updated_at, resolution_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(`drafting-intervention-${suffix}`, 'needs_operator_input', runId, 'open', 'Needs operator review', createdAt, null, createdAt, null);
+      }
+    };
+
+    insertSignal('one', 'failed_final', isoAt(0), true);
+    insertSignal('two', 'failed_final', isoAt(5));
+    insertSignal('three', 'succeeded', isoAt(10));
+
+    const suggested = runtime.suggestPlaybookPatch(recordId, { proposedBy: 'operator' });
+    expect(suggested.status).toBe('drafting');
+    expect(suggested.proposedBy).toBe('operator_api');
+    expect(suggested.evidence).toMatchObject({
+      runIds: ['drafting-run-two', 'drafting-run-one'],
+      interventionIds: ['drafting-intervention-one'],
+      metrics30d: {
+        useCount30d: 3,
+        failedRuns30d: 2,
+        interventions30d: 1,
+      },
+    });
+
+    const updated = runtime.updatePlaybookProposal(suggested.id, {
+      title: suggested.title,
+      allowedProfileIds: [],
+      summary: suggested.summary,
+      body: `${suggested.body}\n\nAdd verification step.`,
+      updatedBy: 'operator',
+    });
+    expect(updated.status).toBe('drafting');
+
+    const submitted = runtime.submitPlaybookProposalForReview(suggested.id, { submittedBy: 'operator' });
+    expect(submitted.status).toBe('pending_review');
+
+    const autoDrafted = runtime.triggerPlaybookAutoDraftSweep();
+    expect(autoDrafted).toHaveLength(0);
+
+    runtime.reviewPlaybookProposal(submitted.id, {
+      decision: 'rejected',
+      reviewedBy: 'operator',
+      note: 'handled manually',
+    });
+
+    const secondSweep = runtime.triggerPlaybookAutoDraftSweep();
+    expect(secondSweep).toHaveLength(0);
+
+    insertSignal('four', 'failed_final', new Date(Date.now() + (60 * 60 * 1000)).toISOString());
+
+    const thirdSweep = runtime.triggerPlaybookAutoDraftSweep();
+    expect(thirdSweep).toHaveLength(1);
+    expect(thirdSweep[0]).toMatchObject({
+      status: 'drafting',
+      proposedBy: 'maintenance_job',
+      targetRecordId: recordId,
+    });
+    expect(thirdSweep[0]?.evidence?.runIds).toEqual([
+      'drafting-run-four',
+      'drafting-run-two',
+      'drafting-run-one',
+    ]);
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'playbook_proposal_auto_drafted' }),
+    ]));
+
+    await runtime.close();
+  });
+
+  it('does not auto-draft while a newer rejected proposal already addresses the latest playbook failure window', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-playbook-drafting-rejected-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace-root');
+    const workspacePlaybooksDir = join(workspaceRoot, '.popeye', 'playbooks');
+    mkdirSync(workspacePlaybooksDir, { recursive: true });
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'workspace instructions');
+    writeFileSync(join(workspacePlaybooksDir, 'triage.md'), `---\nid: triage\ntitle: Triage\nstatus: active\n---\nOriginal triage body`);
+
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      workspaces: [{
+        id: 'default',
+        name: 'Default workspace',
+        rootPath: workspaceRoot,
+        heartbeatEnabled: true,
+        heartbeatIntervalSeconds: 3600,
+      }],
+    });
+
+    const recordId = 'workspace:default:triage';
+    const playbook = runtime.getPlaybook(recordId);
+    expect(playbook?.status).toBe('active');
+    const baseTime = Date.now() - (20 * 60 * 1000);
+    const isoAt = (offsetMinutes: number) => new Date(baseTime + (offsetMinutes * 60 * 1000)).toISOString();
+
+    const insertSignal = (suffix: string, createdAt: string) => {
+      const createdTask = runtime.createTask({
+        workspaceId: 'default',
+        projectId: null,
+        title: `drafting-${suffix}`,
+        prompt: 'noop',
+        source: 'manual',
+        autoEnqueue: false,
+      });
+      const taskId = createdTask.task.id;
+      const jobId = `drafting-job-${suffix}`;
+      const runId = `drafting-run-${suffix}`;
+
+      runtime.databases.app.prepare(
+        'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(jobId, taskId, 'default', 'failed_final', 0, createdAt, runId, createdAt, createdAt);
+      runtime.databases.app.prepare(
+        'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, jobId, taskId, 'default', 'default', `drafting-session-${suffix}`, null, 'failed_final', createdAt, createdAt, 'boom', null, null, 0);
+      runtime.databases.app.prepare(
+        'INSERT INTO playbook_usage (run_id, playbook_record_id, playbook_id, revision_hash, title, scope, source_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, recordId, 'triage', playbook!.currentRevisionHash, playbook!.title, playbook!.scope, 0, createdAt);
+    };
+
+    insertSignal('one', isoAt(0));
+    insertSignal('two', isoAt(5));
+    insertSignal('three', isoAt(10));
+
+    const suggested = runtime.suggestPlaybookPatch(recordId, { proposedBy: 'operator' });
+    runtime.updatePlaybookProposal(suggested.id, {
+      title: suggested.title,
+      allowedProfileIds: [],
+      summary: suggested.summary,
+      body: `${suggested.body}\n\nOperator reviewed this already.`,
+      updatedBy: 'operator',
+    });
+    const submitted = runtime.submitPlaybookProposalForReview(suggested.id, { submittedBy: 'operator' });
+    runtime.reviewPlaybookProposal(submitted.id, {
+      decision: 'rejected',
+      reviewedBy: 'operator',
+      note: 'already investigated',
+    });
+
+    const secondSweep = runtime.triggerPlaybookAutoDraftSweep();
+    expect(secondSweep).toHaveLength(0);
+    expect(runtime.listPlaybookStaleCandidates()).toEqual([]);
 
     await runtime.close();
   });

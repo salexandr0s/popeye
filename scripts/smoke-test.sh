@@ -16,7 +16,16 @@ if ! echo "$VERSION_OUTPUT" | grep -q "^pop v"; then
 fi
 
 echo "  Checking daemon health..."
-pop daemon health || echo "WARN: daemon not running (expected for fresh install)"
+if pop daemon health; then
+  echo "  Checking installed-instance operator surfaces..."
+  pop daemon status >/dev/null
+  pop security audit >/dev/null
+  pop profile list >/dev/null
+  pop playbook list >/dev/null
+  echo "    Installed-instance operator surfaces: OK"
+else
+  echo "WARN: daemon not running (expected for fresh install); skipping installed-instance surface checks"
+fi
 
 # Check .pkg receipt if installed via installer
 if pkgutil --pkg-info com.popeye.cli &>/dev/null; then

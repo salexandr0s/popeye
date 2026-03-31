@@ -617,6 +617,146 @@ const APP_MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '024-app-playbooks',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS playbooks (
+        record_id TEXT PRIMARY KEY,
+        playbook_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        workspace_id TEXT REFERENCES workspaces(id),
+        project_id TEXT REFERENCES projects(id),
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        allowed_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+        file_path TEXT NOT NULL,
+        current_revision_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_playbooks_scope_file_path ON playbooks(scope, file_path);',
+      'CREATE INDEX IF NOT EXISTS idx_playbooks_scope_status ON playbooks(scope, status);',
+      'CREATE INDEX IF NOT EXISTS idx_playbooks_workspace_id ON playbooks(workspace_id);',
+      'CREATE INDEX IF NOT EXISTS idx_playbooks_project_id ON playbooks(project_id);',
+      `CREATE TABLE IF NOT EXISTS playbook_revisions (
+        playbook_record_id TEXT NOT NULL REFERENCES playbooks(record_id),
+        revision_hash TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        allowed_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+        file_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (playbook_record_id, revision_hash)
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_playbook_revisions_created_at ON playbook_revisions(created_at);',
+      `CREATE TABLE IF NOT EXISTS playbook_usage (
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        playbook_record_id TEXT NOT NULL REFERENCES playbooks(record_id),
+        playbook_id TEXT NOT NULL,
+        revision_hash TEXT NOT NULL,
+        title TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        source_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_id, playbook_record_id, revision_hash)
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_playbook_usage_run_order ON playbook_usage(run_id, source_order);',
+      'CREATE INDEX IF NOT EXISTS idx_playbook_usage_playbook_id ON playbook_usage(playbook_id);',
+    ],
+  },
+  {
+    id: '025-app-playbook-proposals',
+    statements: [
+      "ALTER TABLE playbook_revisions ADD COLUMN markdown_text TEXT NOT NULL DEFAULT '';",
+      `CREATE TABLE IF NOT EXISTS playbook_proposals (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        target_record_id TEXT REFERENCES playbooks(record_id),
+        base_revision_hash TEXT,
+        playbook_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        workspace_id TEXT REFERENCES workspaces(id),
+        project_id TEXT REFERENCES projects(id),
+        title TEXT NOT NULL,
+        proposed_status TEXT NOT NULL,
+        allowed_profile_ids_json TEXT NOT NULL DEFAULT '[]',
+        summary TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL,
+        markdown_text TEXT NOT NULL,
+        diff_preview TEXT NOT NULL DEFAULT '',
+        content_hash TEXT NOT NULL,
+        revision_hash TEXT NOT NULL,
+        scan_verdict TEXT NOT NULL,
+        scan_matched_rules_json TEXT NOT NULL DEFAULT '[]',
+        source_run_id TEXT REFERENCES runs(id),
+        proposed_by TEXT NOT NULL,
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        review_note TEXT,
+        applied_record_id TEXT,
+        applied_revision_hash TEXT,
+        applied_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_playbook_proposals_status ON playbook_proposals(status, created_at);',
+      'CREATE INDEX IF NOT EXISTS idx_playbook_proposals_source_run_id ON playbook_proposals(source_run_id);',
+      'CREATE INDEX IF NOT EXISTS idx_playbook_proposals_target_record_id ON playbook_proposals(target_record_id);',
+    ],
+  },
+  {
+    id: '026-app-playbook-search-fts',
+    statements: [
+      `CREATE VIRTUAL TABLE IF NOT EXISTS playbooks_fts USING fts5(
+        record_id UNINDEXED,
+        playbook_id,
+        title,
+        scope UNINDEXED,
+        workspace_id UNINDEXED,
+        project_id UNINDEXED,
+        status UNINDEXED,
+        body,
+        markdown_text
+      );`,
+      `INSERT INTO playbooks_fts (
+        record_id,
+        playbook_id,
+        title,
+        scope,
+        workspace_id,
+        project_id,
+        status,
+        body,
+        markdown_text
+      )
+      SELECT
+        p.record_id,
+        p.playbook_id,
+        p.title,
+        p.scope,
+        p.workspace_id,
+        p.project_id,
+        p.status,
+        COALESCE(r.markdown_text, ''),
+        COALESCE(r.markdown_text, '')
+      FROM playbooks p
+      LEFT JOIN playbook_revisions r
+        ON r.playbook_record_id = p.record_id
+       AND r.revision_hash = p.current_revision_hash
+      WHERE NOT EXISTS (
+        SELECT 1 FROM playbooks_fts existing WHERE existing.record_id = p.record_id
+      );`,
+    ],
+  },
+  {
+    id: '027-app-playbook-drafting-and-evidence',
+    statements: [
+      "ALTER TABLE playbook_proposals ADD COLUMN evidence_json TEXT NOT NULL DEFAULT 'null';",
+      'CREATE INDEX IF NOT EXISTS idx_playbook_proposals_target_base_status ON playbook_proposals(target_record_id, base_revision_hash, status);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

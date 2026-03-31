@@ -20,7 +20,8 @@ import type { WorkspaceRegistry } from '@popeye/workspace';
 
 import { readAuthStore, issueCsrfToken } from './auth.js';
 import type { RuntimeDatabases } from './database.js';
-import { createInstructionPreview, resolveInstructionBundleForTask } from './instruction-query.js';
+import { createInstructionPreview, resolveInstructionBundleForTask, type ResolvedInstructionRunBundle } from './instruction-query.js';
+import type { PlaybookService } from './playbook-service.js';
 
 export interface QueryServiceState {
   schedulerRunning: boolean;
@@ -90,6 +91,7 @@ export class QueryService {
     private readonly config: AppConfig,
     private readonly state: QueryServiceState,
     private readonly workspaceRegistry: WorkspaceRegistry,
+    private readonly playbookService: PlaybookService,
   ) {}
 
   getStatus(): DaemonStatusResponse {
@@ -149,11 +151,11 @@ export class QueryService {
   }
 
   getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
-    return createInstructionPreview(this.databases, this.workspaceRegistry, scope, projectId);
+    return createInstructionPreview(this.databases, this.workspaceRegistry, this.playbookService, scope, projectId);
   }
 
-  resolveInstructionsForRun(task: { workspaceId: string; projectId: string | null; prompt: string }): CompiledInstructionBundle {
-    return resolveInstructionBundleForTask(this.databases, this.workspaceRegistry, task);
+  resolveInstructionsForRun(task: { workspaceId: string; projectId: string | null; profileId: string | null; prompt: string }): ResolvedInstructionRunBundle {
+    return resolveInstructionBundleForTask(this.databases, this.workspaceRegistry, this.playbookService, task);
   }
 
   getSecurityAuditFindings(): SecurityAuditFinding[] {

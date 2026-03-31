@@ -16,6 +16,12 @@ import {
   FileRootRecordSchema,
   JobRecordSchema,
   MemoryPromotionResponseSchema,
+  PlaybookDetailResponseSchema,
+  PlaybookProposalRecordResponseSchema,
+  PlaybookRecordResponseSchema,
+  PlaybookRevisionListResponseSchema,
+  PlaybookStaleCandidateListResponseSchema,
+  PlaybookUsageRunListResponseSchema,
   ProjectRecordSchema,
   RecallDetailResponseSchema,
   RecallSearchResponseApiSchema,
@@ -746,6 +752,213 @@ describe('API contract tests', () => {
 
     expect(response.statusCode).toBe(200);
     MemoryPromotionResponseSchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('playbook proposal lifecycle routes conform to playbook schemas', async () => {
+    const { store, runtime } = createInstructionPreviewEnv();
+    const app = await createControlApi({ runtime });
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    const csrf = CsrfTokenResponseSchema.parse(csrfResponse.json()).token;
+    const mutationHeaders = {
+      authorization: `Bearer ${store.current.token}`,
+      'x-popeye-csrf': csrf,
+      'sec-fetch-site': 'same-origin',
+    };
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/playbook-proposals',
+      headers: mutationHeaders,
+      payload: {
+        kind: 'draft',
+        playbookId: 'triage',
+        scope: 'workspace',
+        workspaceId: 'default',
+        title: 'Triage',
+        body: 'Do the triage',
+        summary: 'Create a triage procedure',
+      },
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const createdProposal = PlaybookProposalRecordResponseSchema.parse(createResponse.json());
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/playbook-proposals',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(z.array(PlaybookProposalRecordResponseSchema).parse(listResponse.json())).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: createdProposal.id })]),
+    );
+
+    const reviewResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/playbook-proposals/${createdProposal.id}/review`,
+      headers: mutationHeaders,
+      payload: { decision: 'approved', reviewedBy: 'operator', note: '' },
+    });
+    expect(reviewResponse.statusCode).toBe(200);
+    PlaybookProposalRecordResponseSchema.parse(reviewResponse.json());
+
+    const applyResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/playbook-proposals/${createdProposal.id}/apply`,
+      headers: mutationHeaders,
+      payload: { appliedBy: 'operator' },
+    });
+    expect(applyResponse.statusCode).toBe(200);
+    const appliedProposal = PlaybookProposalRecordResponseSchema.parse(applyResponse.json());
+
+    const playbooksResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/playbooks',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(playbooksResponse.statusCode).toBe(200);
+    expect(z.array(PlaybookRecordResponseSchema).parse(playbooksResponse.json())).toEqual(
+      expect.arrayContaining([expect.objectContaining({ recordId: appliedProposal.appliedRecordId })]),
+    );
+
+    const filteredPlaybooksResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/playbooks?q=triage',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(filteredPlaybooksResponse.statusCode).toBe(200);
+    expect(z.array(PlaybookRecordResponseSchema).parse(filteredPlaybooksResponse.json())).toEqual(
+      expect.arrayContaining([expect.objectContaining({ recordId: appliedProposal.appliedRecordId })]),
+    );
+
+    const pagedPlaybooksResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/playbooks?limit=1&offset=0',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(pagedPlaybooksResponse.statusCode).toBe(200);
+    expect(z.array(PlaybookRecordResponseSchema).parse(pagedPlaybooksResponse.json()).length).toBe(1);
+
+    const playbookResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/playbooks/${encodeURIComponent(appliedProposal.appliedRecordId!)}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(playbookResponse.statusCode).toBe(200);
+    PlaybookDetailResponseSchema.parse(playbookResponse.json());
+
+    const revisionsResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/playbooks/${encodeURIComponent(appliedProposal.appliedRecordId!)}/revisions`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(revisionsResponse.statusCode).toBe(200);
+    PlaybookRevisionListResponseSchema.parse(revisionsResponse.json());
+
+    const usageResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/playbooks/${encodeURIComponent(appliedProposal.appliedRecordId!)}/usage?limit=10&offset=0`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(usageResponse.statusCode).toBe(200);
+    PlaybookUsageRunListResponseSchema.parse(usageResponse.json());
+
+    const activateResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/playbooks/${encodeURIComponent(appliedProposal.appliedRecordId!)}/activate`,
+      headers: mutationHeaders,
+      payload: { updatedBy: 'operator' },
+    });
+    expect(activateResponse.statusCode).toBe(200);
+    PlaybookDetailResponseSchema.parse(activateResponse.json());
+
+    const staleCandidatesResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/playbooks/stale-candidates',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(staleCandidatesResponse.statusCode).toBe(200);
+    PlaybookStaleCandidateListResponseSchema.parse(staleCandidatesResponse.json());
+
+    const activeRecordId = appliedProposal.appliedRecordId!;
+    const activePlaybook = runtime.activatePlaybook(activeRecordId, { updatedBy: 'operator' });
+    const signalTimes = [
+      '2026-03-31T10:00:00.000Z',
+      '2026-03-31T10:10:00.000Z',
+      '2026-03-31T10:20:00.000Z',
+    ];
+    const insertSyntheticSignal = (suffix: string, state: 'failed_final' | 'succeeded', createdAt: string, withIntervention = false) => {
+      const createdTask = runtime.createTask({
+        workspaceId: 'default',
+        projectId: 'proj-1',
+        title: `contract-playbook-${suffix}`,
+        prompt: 'noop',
+        source: 'manual',
+        autoEnqueue: false,
+      });
+      const taskId = createdTask.task.id;
+      const jobId = `job-contract-${suffix}`;
+      const runId = `run-contract-${suffix}`;
+      runtime.databases.app.prepare(
+        'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(jobId, taskId, 'default', state, 0, createdAt, runId, createdAt, createdAt);
+      runtime.databases.app.prepare(
+        'INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, jobId, taskId, 'default', 'default', `session-contract-${suffix}`, null, state, createdAt, createdAt, state === 'failed_final' ? 'boom' : null, null, null, 0);
+      runtime.databases.app.prepare(
+        'INSERT INTO playbook_usage (run_id, playbook_record_id, playbook_id, revision_hash, title, scope, source_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(runId, activeRecordId, activePlaybook.playbookId, activePlaybook.currentRevisionHash, activePlaybook.title, activePlaybook.scope, 0, createdAt);
+      if (withIntervention) {
+        runtime.databases.app.prepare(
+          'INSERT INTO interventions (id, code, run_id, status, reason, created_at, resolved_at, updated_at, resolution_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(`intervention-contract-${suffix}`, 'needs_operator_input', runId, 'open', 'Needs operator review', createdAt, null, createdAt, null);
+      }
+    };
+    insertSyntheticSignal('one', 'failed_final', signalTimes[0], true);
+    insertSyntheticSignal('two', 'failed_final', signalTimes[1]);
+    insertSyntheticSignal('three', 'succeeded', signalTimes[2]);
+
+    const suggestPatchResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/playbooks/${encodeURIComponent(activeRecordId)}/suggest-patch`,
+      headers: mutationHeaders,
+      payload: { proposedBy: 'operator' },
+    });
+    expect(suggestPatchResponse.statusCode).toBe(200);
+    const suggestedProposal = PlaybookProposalRecordResponseSchema.parse(suggestPatchResponse.json());
+    expect(suggestedProposal.status).toBe('drafting');
+    expect(suggestedProposal.evidence?.runIds.length).toBeGreaterThan(0);
+
+    const updateDraftResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/playbook-proposals/${suggestedProposal.id}`,
+      headers: mutationHeaders,
+      payload: {
+        title: 'Triage',
+        allowedProfileIds: [],
+        summary: 'Adjusted follow-up steps',
+        body: `${activePlaybook.body}\n\nAdd verification step.`,
+        updatedBy: 'operator',
+      },
+    });
+    expect(updateDraftResponse.statusCode).toBe(200);
+    const updatedDraft = PlaybookProposalRecordResponseSchema.parse(updateDraftResponse.json());
+    expect(updatedDraft.status).toBe('drafting');
+
+    const submitReviewResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/playbook-proposals/${suggestedProposal.id}/submit-review`,
+      headers: mutationHeaders,
+      payload: { submittedBy: 'operator' },
+    });
+    expect(submitReviewResponse.statusCode).toBe(200);
+    expect(PlaybookProposalRecordResponseSchema.parse(submitReviewResponse.json()).status).toBe('pending_review');
 
     await runtime.close();
     await app.close();

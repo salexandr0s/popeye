@@ -13,6 +13,7 @@
     { "path": "./packages/scheduler" },
     { "path": "./packages/workspace" },
     { "path": "./packages/receipts" },
+    { "path": "./packages/playbooks" },
     { "path": "./packages/cap-common" },
     { "path": "./packages/cap-people" },
     { "path": "./packages/cap-calendar" },

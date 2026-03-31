@@ -93,10 +93,45 @@ const stateColors: Record<string, { dot: string; bg: string; text: string }> = {
     bg: 'bg-[var(--color-success)]/10',
     text: 'text-[var(--color-success)]',
   },
+  applied: {
+    dot: 'bg-[var(--color-success)]',
+    bg: 'bg-[var(--color-success)]/10',
+    text: 'text-[var(--color-success)]',
+  },
   active: {
     dot: 'bg-[var(--color-success)]',
     bg: 'bg-[var(--color-success)]/10',
     text: 'text-[var(--color-success)]',
+  },
+  allow: {
+    dot: 'bg-[var(--color-success)]',
+    bg: 'bg-[var(--color-success)]/10',
+    text: 'text-[var(--color-success)]',
+  },
+  sanitize: {
+    dot: 'bg-[var(--color-warning)]',
+    bg: 'bg-[var(--color-warning)]/10',
+    text: 'text-[var(--color-warning)]',
+  },
+  pending_review: {
+    dot: 'bg-[var(--color-warning)]',
+    bg: 'bg-[var(--color-warning)]/10',
+    text: 'text-[var(--color-warning)]',
+  },
+  draft: {
+    dot: 'bg-[var(--color-warning)]',
+    bg: 'bg-[var(--color-warning)]/10',
+    text: 'text-[var(--color-warning)]',
+  },
+  retired: {
+    dot: 'bg-[var(--color-fg-muted)]',
+    bg: 'bg-[var(--color-fg-muted)]/10',
+    text: 'text-[var(--color-fg-muted)]',
+  },
+  rejected: {
+    dot: 'bg-[var(--color-danger)]',
+    bg: 'bg-[var(--color-danger)]/10',
+    text: 'text-[var(--color-danger)]',
   },
   denied: {
     dot: 'bg-[var(--color-danger)]',

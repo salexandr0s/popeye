@@ -215,16 +215,20 @@ export class MemoryLifecycleService {
 
   /** Writes to structured tables. Returns the artifact ID, or null if the write was skipped. */
   private captureStructuredMemory(input: MemoryInsertInput, memoryType: MemoryType): string | null {
-    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary', 'coding_session', 'code_review', 'debug_session', 'curated_memory']);
+    const structuredSources = new Set<MemoryRecord['sourceType']>(['receipt', 'compaction_flush', 'workspace_doc', 'daily_summary', 'playbook', 'coding_session', 'code_review', 'debug_session', 'curated_memory']);
     if (!structuredSources.has(input.sourceType)) return null;
 
     const { text: redactedContent } = redactText(input.content, this.config.security.redactionPatterns);
 
     // Resolve or create source stream
-    const stableKey = buildStableKey(input.sourceType, {
-      workspace: input.workspaceId ?? undefined,
-      ref: input.sourceRef ?? input.sourceRunId ?? undefined,
-    });
+    const stableKey = input.sourceType === 'playbook'
+      ? buildStableKey(input.sourceType, {
+          ref: input.sourceRef ?? input.sourceRunId ?? undefined,
+        })
+      : buildStableKey(input.sourceType, {
+          workspace: input.workspaceId ?? undefined,
+          ref: input.sourceRef ?? input.sourceRunId ?? undefined,
+        });
     const sourceStream = resolveOrCreateSourceStream(this.databases.memory, {
       stableKey,
       providerKind: 'runtime',

@@ -21,7 +21,7 @@ function makeDeps(overrides: Partial<ResolverDependencies> = {}): ResolverDepend
 }
 
 describe('golden: instruction precedence', () => {
-  it('sources are sorted by ascending precedence (2=base through 9=runtime_notes)', () => {
+  it('sources are sorted by ascending precedence (2=base through 10=runtime_notes)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'golden-prec-'));
     const projDir = join(dir, 'proj');
     mkdirSync(join(dir, 'identities'), { recursive: true });
@@ -47,7 +47,7 @@ describe('golden: instruction precedence', () => {
       }),
     );
 
-    expect(sources.map((s) => s.precedence)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(sources.map((s) => s.precedence)).toEqual([2, 3, 4, 5, 7, 8, 9, 10]);
     expect(sources.map((s) => s.type)).toEqual([
       'popeye_base',
       'global_operator',

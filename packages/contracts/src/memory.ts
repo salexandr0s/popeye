@@ -29,6 +29,7 @@ export const MemorySourceTypeSchema = z.enum([
   'receipt',
   'telegram',
   'daily_summary',
+  'playbook',
   'curated_memory',
   'workspace_doc',
   'compaction_flush',

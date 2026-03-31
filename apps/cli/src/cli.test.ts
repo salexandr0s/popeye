@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -260,6 +260,80 @@ describe('CLI command workflows (service-level)', () => {
     expect(rendered).toContain('Model');
     expect(rendered).toContain('Estimated cost');
 
+    await runtime.close();
+  });
+
+  it('playbook list/show/usage expose effectiveness metrics and recent usage', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-playbooks-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    mkdirSync(join(dir, 'playbooks'), { recursive: true });
+    writeFileSync(
+      join(dir, 'playbooks', 'triage.md'),
+      `---\nid: cli-usage\ntitle: CLI Usage\nstatus: active\nallowedProfileIds: []\n---\nAlways record the receipt.\n`,
+      'utf8',
+    );
+
+    const runtime = createRuntimeService(config);
+    runtime.startScheduler();
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'playbook-usage-task',
+      prompt: 'exercise global playbook usage',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.run?.id).toBeTruthy();
+
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
+    const configPath = join(dir, 'config.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...config,
+        security: {
+          ...config.security,
+          bindPort: address.port,
+        },
+      }),
+      'utf8',
+    );
+
+    const listResult = await runPopWithEnv(['playbook', 'list'], { POPEYE_CONFIG_PATH: configPath });
+    expect(listResult.code).toBe(0);
+    const listBody = JSON.parse(listResult.stdout) as Array<{
+      recordId: string;
+      effectiveness?: { useCount30d: number };
+    }>;
+    const listed = listBody.find((item) => item.recordId === 'global:cli-usage');
+    expect(listed).toBeTruthy();
+    expect(listed?.effectiveness?.useCount30d).toBeGreaterThanOrEqual(1);
+
+    const showResult = await runPopWithEnv(['playbook', 'show', 'global:cli-usage'], { POPEYE_CONFIG_PATH: configPath });
+    expect(showResult.code).toBe(0);
+    const showBody = JSON.parse(showResult.stdout) as {
+      recordId: string;
+      effectiveness?: { useCount30d: number };
+    };
+    expect(showBody.recordId).toBe('global:cli-usage');
+    expect(showBody.effectiveness?.useCount30d).toBeGreaterThanOrEqual(1);
+
+    const usageResult = await runPopWithEnv(['playbook', 'usage', 'global:cli-usage'], { POPEYE_CONFIG_PATH: configPath });
+    expect(usageResult.code).toBe(0);
+    const usageBody = JSON.parse(usageResult.stdout) as Array<{ runId: string }>;
+    expect(usageBody).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: terminal!.run!.id }),
+      ]),
+    );
+
+    await app.close();
     await runtime.close();
   });
 });

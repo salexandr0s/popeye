@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { sha256 } from '@popeye/observability';
 
-import { compileInstructionBundle } from './index.js';
+import { buildPlaybookInstructionSource, compileInstructionBundle } from './index.js';
 import { resolveInstructionSources, type ResolverDependencies } from './resolver.js';
 
 function makeDeps(overrides: Partial<ResolverDependencies> = {}): ResolverDependencies {
@@ -27,7 +27,7 @@ describe('resolveInstructionSources', () => {
     );
     expect(sources).toHaveLength(1);
     expect(sources[0]!.type).toBe('task_brief');
-    expect(sources[0]!.precedence).toBe(7);
+    expect(sources[0]!.precedence).toBe(8);
   });
 
   it('resolves WORKSPACE.md at precedence 4 with correct hash', () => {
@@ -68,7 +68,7 @@ describe('resolveInstructionSources', () => {
     expect(sources[1]!.precedence).toBe(5);
   });
 
-  it('resolves identity file at precedence 6', () => {
+  it('resolves identity file at precedence 7', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolver-id-'));
     mkdirSync(join(dir, 'identities'), { recursive: true });
     writeFileSync(join(dir, 'identities', 'default.md'), 'identity content');
@@ -80,11 +80,11 @@ describe('resolveInstructionSources', () => {
 
     expect(sources).toHaveLength(1);
     expect(sources[0]!.type).toBe('identity');
-    expect(sources[0]!.precedence).toBe(6);
+    expect(sources[0]!.precedence).toBe(7);
     expect(sources[0]!.path).toBe(join(dir, 'identities', 'default.md'));
   });
 
-  it('resolves all sources in correct precedence order 2-9', () => {
+  it('resolves all non-playbook sources in correct precedence order 2-10', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolver-full-'));
     const projDir = join(dir, 'proj');
     mkdirSync(join(dir, 'identities'), { recursive: true });
@@ -111,7 +111,7 @@ describe('resolveInstructionSources', () => {
     );
 
     const precedences = sources.map((s) => s.precedence);
-    expect(precedences).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(precedences).toEqual([2, 3, 4, 5, 7, 8, 9, 10]);
     expect(sources.map((s) => s.type)).toEqual([
       'popeye_base',
       'global_operator',
@@ -173,5 +173,46 @@ describe('resolveInstructionSources', () => {
     const bundle2 = compileInstructionBundle(resolveInstructionSources(ctx, deps));
 
     expect(bundle1.bundleHash).toBe(bundle2.bundleHash);
+  });
+
+  it('builds a deterministic playbook instruction source at precedence 6', () => {
+    const source = buildPlaybookInstructionSource([
+      {
+        recordId: 'global:triage',
+        id: 'triage',
+        title: 'Triage',
+        status: 'active',
+        scope: 'global',
+        workspaceId: null,
+        projectId: null,
+        path: '/tmp/playbooks/triage.md',
+        body: 'Do triage',
+        contentHash: 'body-hash',
+        revisionHash: 'rev-1',
+        allowedProfileIds: [],
+      },
+      {
+        recordId: 'workspace:ws-1:review',
+        id: 'review',
+        title: 'Review',
+        status: 'active',
+        scope: 'workspace',
+        workspaceId: 'ws-1',
+        projectId: null,
+        path: '/tmp/ws/.popeye/playbooks/review.md',
+        body: 'Review changes',
+        contentHash: 'body-hash-2',
+        revisionHash: 'rev-2',
+        allowedProfileIds: [],
+      },
+    ]);
+
+    expect(source).toEqual({
+      precedence: 6,
+      type: 'playbook',
+      inlineId: 'playbooks',
+      contentHash: sha256('Do triage\n\nReview changes'),
+      content: 'Do triage\n\nReview changes',
+    });
   });
 });

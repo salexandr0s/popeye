@@ -11,5 +11,37 @@ describe('compileInstructionBundle', () => {
     expect(bundle.sources[0]?.precedence).toBe(2);
     expect(bundle.compiledText).toContain('base');
     expect(bundle.bundleHash).toHaveLength(64);
+    expect(bundle.playbooks).toEqual([]);
+  });
+
+  it('preserves auditable applied playbooks in the compiled bundle', () => {
+    const bundle = compileInstructionBundle({
+      sources: [
+        {
+          precedence: 6,
+          type: 'playbook',
+          inlineId: 'playbooks',
+          contentHash: 'playbook-source-hash',
+          content: 'Playbook body',
+        },
+      ],
+      playbooks: [
+        {
+          id: 'triage',
+          title: 'Triage',
+          scope: 'workspace',
+          revisionHash: 'rev-123',
+        },
+      ],
+    });
+
+    expect(bundle.playbooks).toEqual([
+      {
+        id: 'triage',
+        title: 'Triage',
+        scope: 'workspace',
+        revisionHash: 'rev-123',
+      },
+    ]);
   });
 });

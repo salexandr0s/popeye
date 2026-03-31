@@ -73,6 +73,24 @@ import type {
   WorkspaceRegistrationInput,
   OAuthConnectStartRequest,
   OAuthSessionRecord,
+  PlaybookDetail,
+  PlaybookEffectiveness,
+  PlaybookLifecycleActionRequest,
+  PlaybookProposalApplyRequest,
+  PlaybookProposalCreateRequest,
+  PlaybookProposalKind,
+  PlaybookProposalRecord,
+  PlaybookProposalReviewRequest,
+  PlaybookProposalSubmitReviewRequest,
+  PlaybookProposalUpdateRequest,
+  PlaybookRecord,
+  PlaybookRevisionRecord,
+  PlaybookSearchResult,
+  PlaybookScope,
+  PlaybookStaleCandidate,
+  PlaybookSuggestPatchRequest,
+  PlaybookStatus,
+  PlaybookUsageRunRecord,
 } from '@popeye/contracts';
 import type {
   CapabilityContext,
@@ -205,6 +223,7 @@ import { CapabilityRegistry } from './capability-registry.js';
 import { ConnectionService, type ConnectionServiceDeps } from './connection-service.js';
 import { MemoryFacade } from './memory-facade.js';
 import { RecallService } from './recall-service.js';
+import { PlaybookService } from './playbook-service.js';
 import { PeopleFacade } from './people-facade.js';
 import { EmailFacade } from './email-facade.js';
 import { GithubFacade } from './github-facade.js';
@@ -336,6 +355,7 @@ export class PopeyeRuntimeService {
   private readonly vaultManager: VaultManager;
   private readonly contextReleaseService: ContextReleaseService;
   private readonly receiptBuilder: ReceiptBuilder;
+  private readonly playbookService: PlaybookService;
   private readonly telegramDelivery: TelegramDeliveryService;
   private readonly capabilityRegistry: CapabilityRegistry;
   private readonly connectionService: ConnectionService;
@@ -475,6 +495,13 @@ export class PopeyeRuntimeService {
       capabilityStoresDir: this.databases.paths.capabilityStoresDir,
       log: this.log,
     });
+    this.playbookService = new PlaybookService(
+      this.databases.app,
+      this.databases.paths,
+      this.workspaceRegistry,
+      this.config,
+      (event) => this.recordSecurityAudit(event),
+    );
     this.receiptBuilder = new ReceiptBuilder({
       db: this.databases.app,
       listRunEvents: (runId) => this.listRunEvents(runId),
@@ -482,6 +509,7 @@ export class PopeyeRuntimeService {
       getTask: (taskId) => this.getTask(taskId),
       getExecutionEnvelope: (runId) => this.getExecutionEnvelope(runId),
       summarizeRunReleases: (runId) => this.summarizeRunReleases(runId),
+      listPlaybookUsage: (runId) => this.playbookService.listUsageForRun(runId),
       contextReleaseService: this.contextReleaseService,
       approvalService: this.approvalService,
     });
@@ -517,7 +545,7 @@ export class PopeyeRuntimeService {
       get lastLeaseSweepAt() { return self.scheduler.lastLeaseSweepAt; },
       getEngineCapabilities: () => this.engine.getCapabilities(),
       computeNextHeartbeatDueAt: () => this.computeNextHeartbeatDueAt(),
-    }, this.workspaceRegistry);
+    }, this.workspaceRegistry, this.playbookService);
 
     const clearedBrowserSessions = clearBrowserSessions(this.databases.app);
     if (clearedBrowserSessions > 0) {
@@ -707,6 +735,7 @@ export class PopeyeRuntimeService {
       sessionService: this.sessionService,
       messageIngestion: this.messageIngestion,
       resolveInstructionsForRun: (task) => this.queryService.resolveInstructionsForRun(task),
+      recordPlaybookUsage: (runId, playbooks) => this.playbookService.recordUsage(runId, playbooks),
       capabilityRegistry: this.capabilityRegistry,
       memoryLifecycle: this.memoryLifecycle,
       searchRecall: (query) => this.searchRecall(query),
@@ -714,6 +743,10 @@ export class PopeyeRuntimeService {
       describeMemory: (id, scope) => this.describeMemory(id, scope),
       expandMemory: (id, maxTokens, scope) => this.expandMemory(id, maxTokens, scope),
       explainMemoryRecall: (input, filter) => this.explainMemoryRecall(input, filter),
+      searchPlaybooks: (input) => this.playbookService.searchPlaybooks(input),
+      getPlaybook: (recordId) => this.getPlaybook(recordId),
+      listPlaybookRevisions: (recordId) => this.listPlaybookRevisions(recordId),
+      createPlaybookProposal: (input) => this.playbookService.createProposal(input),
       pluginTools: this.pluginTools,
     });
 
@@ -1014,6 +1047,7 @@ export class PopeyeRuntimeService {
     const task = this.getTask(taskId);
     const envelope = this.getExecutionEnvelope(runId);
     const contextReleases = this.summarizeRunReleases(runId);
+    const playbooks = this.playbookService.listUsageForRun(runId);
     const timeline = this.buildReceiptTimeline(runId, status);
 
     const runtimeSummary: NonNullable<ReceiptRecord['runtime']> = {
@@ -1033,11 +1067,12 @@ export class PopeyeRuntimeService {
       contextReleases: contextReleases.totalReleases > 0
         ? contextReleases
         : null,
+      playbooks,
       timeline,
       delegationSummary: null,
     };
 
-    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.timeline.length === 0) {
+    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
       return undefined;
     }
     return runtimeSummary;
@@ -1062,11 +1097,19 @@ export class PopeyeRuntimeService {
       const byTime = Date.parse(left.at) - Date.parse(right.at);
       return byTime !== 0 ? byTime : left.id.localeCompare(right.id);
     });
+    const playbooksByKey = new Map<string, NonNullable<ReceiptRecord['runtime']>['playbooks'][number]>();
+    for (const playbook of receipt.runtime.playbooks) {
+      playbooksByKey.set(`${playbook.scope}:${playbook.id}:${playbook.revisionHash}`, playbook);
+    }
+    for (const playbook of derived.playbooks) {
+      playbooksByKey.set(`${playbook.scope}:${playbook.id}:${playbook.revisionHash}`, playbook);
+    }
     return {
       projectId: receipt.runtime.projectId ?? derived.projectId ?? null,
       profileId: receipt.runtime.profileId ?? derived.profileId ?? null,
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
+      playbooks: Array.from(playbooksByKey.values()),
       timeline: mergedTimeline,
       delegationSummary: receipt.runtime.delegationSummary ?? derived.delegationSummary ?? null,
     };
@@ -1375,6 +1418,459 @@ export class PopeyeRuntimeService {
 
   getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
     return this.queryService.getInstructionPreview(scope, projectId);
+  }
+
+  listPlaybooks(filter?: {
+    q?: string | null;
+    scope?: PlaybookScope;
+    workspaceId?: string | null;
+    projectId?: string | null;
+    status?: PlaybookStatus;
+    limit?: number;
+    offset?: number;
+  }): PlaybookRecord[] {
+    return this.playbookService.listPlaybooks(filter).map((playbook) => this.enrichPlaybookRecord(playbook));
+  }
+
+  searchPlaybooks(input: {
+    query: string;
+    status?: PlaybookStatus;
+  }): PlaybookSearchResult[] {
+    return this.playbookService.searchPlaybooks(input);
+  }
+
+  getPlaybook(recordId: string): PlaybookDetail | null {
+    const playbook = this.playbookService.getPlaybook(recordId);
+    if (!playbook) return null;
+    return this.enrichPlaybookDetail(playbook);
+  }
+
+  listPlaybookRevisions(recordId: string): PlaybookRevisionRecord[] {
+    return this.playbookService.listRevisions(recordId);
+  }
+
+  listPlaybookProposals(filter?: {
+    q?: string | null;
+    status?: PlaybookProposalRecord['status'];
+    kind?: PlaybookProposalKind;
+    scope?: PlaybookScope;
+    sourceRunId?: string | null;
+    targetRecordId?: string | null;
+    sort?: 'created_desc' | 'created_asc' | 'updated_desc' | 'updated_asc' | 'title_asc' | 'title_desc';
+    limit?: number;
+    offset?: number;
+  }): PlaybookProposalRecord[] {
+    return this.playbookService.listProposals(filter);
+  }
+
+  getPlaybookProposal(id: string): PlaybookProposalRecord | null {
+    return this.playbookService.getProposal(id);
+  }
+
+  createPlaybookProposal(input: PlaybookProposalCreateRequest): PlaybookProposalRecord {
+    return this.playbookService.createProposal(
+      input.kind === 'draft'
+        ? {
+            kind: 'draft',
+            playbookId: input.playbookId,
+            scope: input.scope,
+            title: input.title,
+            body: input.body,
+            proposedBy: 'operator_api',
+            sourceRunId: null,
+            ...(input.allowedProfileIds !== undefined ? { allowedProfileIds: input.allowedProfileIds } : {}),
+            ...(input.summary !== undefined ? { summary: input.summary } : {}),
+            ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
+            ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+          }
+        : {
+            kind: 'patch',
+            targetRecordId: input.targetRecordId,
+            ...(input.baseRevisionHash !== undefined ? { baseRevisionHash: input.baseRevisionHash } : {}),
+            title: input.title,
+            body: input.body,
+            proposedBy: 'operator_api',
+            sourceRunId: null,
+            ...(input.allowedProfileIds !== undefined ? { allowedProfileIds: input.allowedProfileIds } : {}),
+            ...(input.summary !== undefined ? { summary: input.summary } : {}),
+          },
+    );
+  }
+
+  reviewPlaybookProposal(id: string, input: PlaybookProposalReviewRequest): PlaybookProposalRecord {
+    return this.playbookService.reviewProposal(id, {
+      decision: input.decision,
+      reviewedBy: input.reviewedBy,
+      note: input.note,
+    });
+  }
+
+  updatePlaybookProposal(id: string, input: PlaybookProposalUpdateRequest): PlaybookProposalRecord {
+    return this.playbookService.updateProposal(id, {
+      title: input.title,
+      allowedProfileIds: input.allowedProfileIds,
+      summary: input.summary,
+      body: input.body,
+      updatedBy: input.updatedBy,
+    });
+  }
+
+  submitPlaybookProposalForReview(id: string, input: PlaybookProposalSubmitReviewRequest): PlaybookProposalRecord {
+    return this.playbookService.submitProposalForReview(id, {
+      submittedBy: input.submittedBy,
+    });
+  }
+
+  applyPlaybookProposal(id: string, input: PlaybookProposalApplyRequest): PlaybookProposalRecord {
+    const proposal = this.playbookService.applyProposal(id, {
+      appliedBy: input.appliedBy,
+    });
+    if (proposal.appliedRecordId) {
+      const playbook = this.getPlaybook(proposal.appliedRecordId);
+      if (playbook?.status === 'active') {
+        this.memoryOps.syncActivePlaybookMemory(playbook);
+      }
+    }
+    return proposal;
+  }
+
+  activatePlaybook(recordId: string, input: PlaybookLifecycleActionRequest): PlaybookDetail {
+    const before = this.playbookService.getPlaybook(recordId);
+    const updated = this.playbookService.activatePlaybook(recordId, {
+      updatedBy: input.updatedBy,
+    });
+    if (before?.status !== 'active' && updated.status === 'active') {
+      this.memoryOps.syncActivePlaybookMemory(updated);
+    }
+    return this.enrichPlaybookDetail(updated);
+  }
+
+  retirePlaybook(recordId: string, input: PlaybookLifecycleActionRequest): PlaybookDetail {
+    const before = this.playbookService.getPlaybook(recordId);
+    const updated = this.playbookService.retirePlaybook(recordId, {
+      updatedBy: input.updatedBy,
+    });
+    if (before?.status !== 'retired' && updated.status === 'retired') {
+      this.memoryOps.archivePlaybookMemory(recordId);
+    }
+    return this.enrichPlaybookDetail(updated);
+  }
+
+  suggestPlaybookPatch(recordId: string, _input: PlaybookSuggestPatchRequest): PlaybookProposalRecord {
+    const playbook = this.playbookService.getPlaybook(recordId);
+    if (!playbook) {
+      throw new RuntimeNotFoundError(`Playbook ${recordId} not found`);
+    }
+    const signal = this.collectPlaybookSignal(playbook);
+    if (!signal.lastProblemAt || (signal.failedRunIds.length === 0 && signal.interventionIds.length === 0)) {
+      throw new RuntimeValidationError(`Playbook ${recordId} does not have recent failure or intervention evidence to suggest a patch`);
+    }
+    return this.playbookService.createProposal({
+      kind: 'patch',
+      targetRecordId: playbook.recordId,
+      baseRevisionHash: playbook.currentRevisionHash,
+      title: playbook.title,
+      allowedProfileIds: playbook.allowedProfileIds,
+      summary: signal.suggestedPatchNote,
+      body: playbook.body,
+      sourceRunId: null,
+      proposedBy: 'operator_api',
+      status: 'drafting',
+      evidence: {
+        runIds: signal.failedRunIds,
+        interventionIds: signal.interventionIds,
+        lastProblemAt: signal.lastProblemAt,
+        metrics30d: {
+          useCount30d: signal.useCount30d,
+          failedRuns30d: signal.failedRuns30d,
+          interventions30d: signal.interventions30d,
+        },
+        suggestedPatchNote: signal.suggestedPatchNote,
+      },
+    });
+  }
+
+  listPlaybookUsage(recordId: string, options?: { limit?: number; offset?: number }): PlaybookUsageRunRecord[] {
+    return this.playbookService.listUsage(recordId, options);
+  }
+
+  listPlaybookStaleCandidates(): PlaybookStaleCandidate[] {
+    return this.playbookService.listPlaybooks({ status: 'active' })
+      .map((playbook) => this.collectPlaybookSignal(playbook))
+      .filter((candidate) => {
+        if (candidate.useCount30d < 3) return false;
+        if (candidate.failedRuns30d < 2 && candidate.interventions30d < 1) return false;
+        if (!candidate.lastProblemAt) return false;
+        return candidate.lastProposalAt === null || candidate.lastProposalAt <= candidate.lastProblemAt;
+      })
+      .sort((left, right) => {
+        const byFailedRuns = right.failedRuns30d - left.failedRuns30d;
+        if (byFailedRuns !== 0) return byFailedRuns;
+        const byInterventions = right.interventions30d - left.interventions30d;
+        if (byInterventions !== 0) return byInterventions;
+        const byUsage = right.useCount30d - left.useCount30d;
+        if (byUsage !== 0) return byUsage;
+        const byLastUsed = (right.lastUsedAt ?? '').localeCompare(left.lastUsedAt ?? '');
+        if (byLastUsed !== 0) return byLastUsed;
+        const byScope = ({ global: 0, workspace: 1, project: 2 } as const)[left.scope] - ({ global: 0, workspace: 1, project: 2 } as const)[right.scope];
+        if (byScope !== 0) return byScope;
+        const byTitle = left.title.localeCompare(right.title);
+        if (byTitle !== 0) return byTitle;
+        return left.recordId.localeCompare(right.recordId);
+      })
+      .map(({ lastProblemAt: _lastProblemAt, failedRunIds: _failedRunIds, interventionIds: _interventionIds, suggestedPatchNote: _suggestedPatchNote, ...candidate }) => candidate);
+  }
+
+  triggerPlaybookAutoDraftSweep(): PlaybookProposalRecord[] {
+    return this.runPlaybookAutoDraftSweep();
+  }
+
+  private enrichPlaybookRecord(playbook: PlaybookRecord): PlaybookRecord {
+    return {
+      ...playbook,
+      effectiveness: this.buildPlaybookEffectiveness(playbook),
+    };
+  }
+
+  private enrichPlaybookDetail(playbook: PlaybookDetail): PlaybookDetail {
+    return {
+      ...playbook,
+      indexedMemoryId: this.memoryOps.getIndexedPlaybookMemoryId(playbook.recordId),
+      effectiveness: this.buildPlaybookEffectiveness(playbook),
+    };
+  }
+
+  private buildPlaybookEffectiveness(playbook: Pick<PlaybookRecord, 'recordId' | 'updatedAt'>): PlaybookEffectiveness {
+    const windowStart = this.getPlaybookWindowStart();
+    const row = this.databases.app.prepare(`
+      SELECT
+        COUNT(DISTINCT pu.run_id) AS use_count,
+        COUNT(DISTINCT CASE WHEN r.state = 'succeeded' THEN pu.run_id END) AS succeeded_count,
+        COUNT(DISTINCT CASE WHEN r.state IN ('failed_final', 'abandoned') THEN pu.run_id END) AS failed_count,
+        COUNT(DISTINCT CASE WHEN i.id IS NOT NULL THEN pu.run_id END) AS intervened_count,
+        MAX(pu.created_at) AS last_used_at
+      FROM playbook_usage pu
+      LEFT JOIN runs r ON r.id = pu.run_id
+      LEFT JOIN interventions i ON i.run_id = pu.run_id
+      WHERE pu.playbook_record_id = ?
+        AND pu.created_at >= ?
+    `).get(playbook.recordId, windowStart);
+
+    const parsed = z.object({
+      use_count: z.coerce.number().int().nonnegative(),
+      succeeded_count: z.coerce.number().int().nonnegative(),
+      failed_count: z.coerce.number().int().nonnegative(),
+      intervened_count: z.coerce.number().int().nonnegative(),
+      last_used_at: z.string().nullable(),
+    }).parse(row);
+    const denominator = parsed.use_count === 0 ? 1 : parsed.use_count;
+
+    return {
+      useCount30d: parsed.use_count,
+      succeededRuns30d: parsed.succeeded_count,
+      failedRuns30d: parsed.failed_count,
+      intervenedRuns30d: parsed.intervened_count,
+      successRate30d: parsed.use_count === 0 ? 0 : parsed.succeeded_count / denominator,
+      failureRate30d: parsed.use_count === 0 ? 0 : parsed.failed_count / denominator,
+      interventionRate30d: parsed.use_count === 0 ? 0 : parsed.intervened_count / denominator,
+      lastUsedAt: parsed.last_used_at,
+      lastUpdatedAt: playbook.updatedAt,
+    };
+  }
+
+  private collectPlaybookSignal(playbook: PlaybookRecord): PlaybookStaleCandidate & {
+    lastProblemAt: string | null;
+    failedRunIds: string[];
+    interventionIds: string[];
+    suggestedPatchNote: string;
+  } {
+    const windowStart = this.getPlaybookWindowStart();
+    const effectiveness = this.buildPlaybookEffectiveness(playbook);
+    const failedRunsRow = this.databases.app.prepare(`
+      SELECT MAX(COALESCE(r.finished_at, pu.created_at)) AS last_failed_at
+      FROM playbook_usage pu
+      JOIN runs r ON r.id = pu.run_id
+      WHERE pu.playbook_record_id = ?
+        AND pu.created_at >= ?
+        AND r.state IN ('failed_final', 'abandoned')
+    `).get(playbook.recordId, windowStart);
+    const interventionRow = this.databases.app.prepare(`
+      SELECT MAX(i.created_at) AS last_intervention_at
+      FROM playbook_usage pu
+      JOIN interventions i ON i.run_id = pu.run_id
+      WHERE pu.playbook_record_id = ?
+        AND i.created_at >= ?
+    `).get(playbook.recordId, windowStart);
+    const proposalRow = this.databases.app.prepare(`
+      SELECT MAX(created_at) AS last_proposal_at
+      FROM playbook_proposals
+      WHERE target_record_id = ? OR applied_record_id = ?
+    `).get(playbook.recordId, playbook.recordId);
+    const failedRunIds = z.array(z.object({ run_id: z.string() })).parse(this.databases.app.prepare(`
+      SELECT DISTINCT pu.run_id
+      FROM playbook_usage pu
+      JOIN runs r ON r.id = pu.run_id
+      WHERE pu.playbook_record_id = ?
+        AND pu.created_at >= ?
+        AND r.state IN ('failed_final', 'abandoned')
+      ORDER BY COALESCE(r.finished_at, pu.created_at) DESC, pu.run_id DESC
+      LIMIT 10
+    `).all(playbook.recordId, windowStart)).map((row) => row.run_id);
+    const interventionIds = z.array(z.object({ id: z.string() })).parse(this.databases.app.prepare(`
+      SELECT DISTINCT i.id
+      FROM playbook_usage pu
+      JOIN interventions i ON i.run_id = pu.run_id
+      WHERE pu.playbook_record_id = ?
+        AND i.created_at >= ?
+      ORDER BY i.created_at DESC, i.id DESC
+      LIMIT 10
+    `).all(playbook.recordId, windowStart)).map((row) => row.id);
+    const lastFailedAt = z.object({ last_failed_at: z.string().nullable() }).parse(failedRunsRow).last_failed_at;
+    const lastInterventionAt = z.object({ last_intervention_at: z.string().nullable() }).parse(interventionRow).last_intervention_at;
+    const lastProposalAt = z.object({ last_proposal_at: z.string().nullable() }).parse(proposalRow).last_proposal_at;
+    const lastProblemAt = [lastFailedAt, lastInterventionAt]
+      .filter((value): value is string => value !== null)
+      .sort((left, right) => right.localeCompare(left))[0] ?? null;
+    const indexedMemoryId = this.memoryOps.getIndexedPlaybookMemoryId(playbook.recordId);
+
+    const reasons: string[] = [];
+    if (effectiveness.failedRuns30d >= 2) {
+      reasons.push(`Repeated failed runs in the last 30 days (${effectiveness.failedRuns30d}).`);
+    }
+    const interventionLabel = effectiveness.intervenedRuns30d === 1 ? 'intervention' : 'interventions';
+    if (effectiveness.intervenedRuns30d >= 1) {
+      reasons.push(`Operator ${interventionLabel} in the last 30 days (${effectiveness.intervenedRuns30d}).`);
+    }
+    if (!indexedMemoryId) {
+      reasons.push('Missing active procedural-memory index.');
+    }
+    if (!lastProposalAt || (lastProblemAt && lastProposalAt <= lastProblemAt)) {
+      reasons.push('No newer proposal exists after the latest problem signal.');
+    }
+
+    return {
+      recordId: playbook.recordId,
+      title: playbook.title,
+      scope: playbook.scope,
+      currentRevisionHash: playbook.currentRevisionHash,
+      lastUsedAt: effectiveness.lastUsedAt,
+      useCount30d: effectiveness.useCount30d,
+      failedRuns30d: effectiveness.failedRuns30d,
+      interventions30d: effectiveness.intervenedRuns30d,
+      lastProposalAt,
+      indexedMemoryId,
+      reasons,
+      lastProblemAt,
+      failedRunIds,
+      interventionIds,
+      suggestedPatchNote: this.buildPlaybookRepairSummary({
+        recordId: playbook.recordId,
+        title: playbook.title,
+        scope: playbook.scope,
+        currentRevisionHash: playbook.currentRevisionHash,
+        lastUsedAt: effectiveness.lastUsedAt,
+        useCount30d: effectiveness.useCount30d,
+        failedRuns30d: effectiveness.failedRuns30d,
+        interventions30d: effectiveness.intervenedRuns30d,
+        lastProposalAt,
+        indexedMemoryId,
+        reasons,
+      }),
+    };
+  }
+
+  private buildPlaybookRepairSummary(candidate: PlaybookStaleCandidate): string {
+    const interventionLabel = candidate.interventions30d === 1 ? 'intervention' : 'interventions';
+    const normalizedReasons = candidate.reasons
+      .map((reason) => reason.trim().replace(/\.$/, ''))
+      .filter((reason) => reason.length > 0);
+    const reasonsSuffix = normalizedReasons.length > 0
+      ? ` Reasons: ${normalizedReasons.join(', ')}.`
+      : '';
+    return `Stale follow-up: ${candidate.useCount30d} uses / ${candidate.failedRuns30d} failed runs / ${candidate.interventions30d} ${interventionLabel} in trailing 30 days.${reasonsSuffix}`;
+  }
+
+  private getPlaybookWindowStart(): string {
+    return new Date(Date.now() - (30 * 24 * 60 * 60 * 1000)).toISOString();
+  }
+
+  private runPlaybookAutoDraftSweep(): PlaybookProposalRecord[] {
+    const created: PlaybookProposalRecord[] = [];
+    for (const playbook of this.playbookService.listPlaybooks({ status: 'active' })) {
+      const signal = this.collectPlaybookSignal(playbook);
+      const qualifies = signal.useCount30d >= 3
+        && (signal.failedRuns30d >= 2 || signal.interventions30d >= 1)
+        && signal.lastProblemAt !== null
+        && (signal.lastProposalAt === null || signal.lastProposalAt <= signal.lastProblemAt);
+      if (!qualifies) continue;
+
+      const existingOpenProposal = this.databases.app.prepare(`
+        SELECT id
+        FROM playbook_proposals
+        WHERE target_record_id = ?
+          AND base_revision_hash = ?
+          AND status IN ('drafting', 'pending_review')
+        LIMIT 1
+      `).get(playbook.recordId, playbook.currentRevisionHash) as { id: string } | undefined;
+
+      if (existingOpenProposal) {
+        this.recordSecurityAudit({
+          code: 'playbook_proposal_auto_draft_skipped',
+          severity: 'info',
+          message: 'Skipped auto-drafting because an open proposal already exists for the same playbook revision',
+          component: 'runtime-service',
+          timestamp: nowIso(),
+          details: {
+            recordId: playbook.recordId,
+            proposalId: existingOpenProposal.id,
+          },
+        });
+        continue;
+      }
+
+      const currentPlaybook = this.playbookService.getPlaybook(playbook.recordId);
+      if (!currentPlaybook) continue;
+
+      const proposal = this.playbookService.createProposal({
+        kind: 'patch',
+        targetRecordId: playbook.recordId,
+        baseRevisionHash: playbook.currentRevisionHash,
+        title: playbook.title,
+        allowedProfileIds: playbook.allowedProfileIds,
+        summary: signal.suggestedPatchNote,
+        body: currentPlaybook.body,
+        sourceRunId: null,
+        proposedBy: 'maintenance_job',
+        status: 'drafting',
+        evidence: {
+          runIds: signal.failedRunIds,
+          interventionIds: signal.interventionIds,
+          lastProblemAt: signal.lastProblemAt,
+          metrics30d: {
+            useCount30d: signal.useCount30d,
+            failedRuns30d: signal.failedRuns30d,
+            interventions30d: signal.interventions30d,
+          },
+          suggestedPatchNote: signal.suggestedPatchNote,
+        },
+      });
+      created.push(proposal);
+      this.recordSecurityAudit({
+        code: 'playbook_proposal_auto_drafted',
+        severity: 'info',
+        message: 'Auto-drafted a playbook patch proposal from stale signals',
+        component: 'runtime-service',
+        timestamp: nowIso(),
+        details: {
+          proposalId: proposal.id,
+          recordId: playbook.recordId,
+          failedRuns30d: String(signal.failedRuns30d),
+          interventions30d: String(signal.interventions30d),
+        },
+      });
+    }
+
+    return created;
   }
 
   listInterventions(): InterventionRecord[] {
@@ -2479,6 +2975,13 @@ export class PopeyeRuntimeService {
 
       // Structured layer governance runs every hour (responsive TTL/staleness)
       this.memoryLifecycle.runStructuredGovernance();
+      try {
+        this.runPlaybookAutoDraftSweep();
+      } catch (error) {
+        this.log.warn('playbook auto-draft sweep failed', {
+          err: error instanceof Error ? error.message : String(error),
+        });
+      }
     }, 3600_000); // 1 hour
   }
 

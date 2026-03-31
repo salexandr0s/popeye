@@ -35,6 +35,10 @@ New platform implementation.
 - `listReceipts()`, `getReceipt()`
 - `searchRecall()`, `getRecallDetail()`
 - `getInstructionPreview()`, `listInterventions()`, `resolveIntervention()`
+- `listPlaybooks({ q, scope, status, workspaceId, projectId, limit, offset })`, `getPlaybook()`, `listPlaybookRevisions()`, `listPlaybookUsage()`
+- `listPlaybookStaleCandidates()`
+- `listPlaybookProposals({ q, status, kind, scope, sourceRunId, targetRecordId, sort, limit, offset })`, `getPlaybookProposal()`, `createPlaybookProposal()` (drafts or conflict-aware patches via optional `baseRevisionHash`)
+- `updatePlaybookProposal()`, `submitPlaybookProposalForReview()`, `reviewPlaybookProposal()`, `applyPlaybookProposal()`, `suggestPlaybookPatch()`, `activatePlaybook()`, `retirePlaybook()`
 - `searchMemory()`, `usageSummary()`, `securityAudit()`
 - `subscribeEvents()` -- SSE stream subscription returning an unsubscribe function
 

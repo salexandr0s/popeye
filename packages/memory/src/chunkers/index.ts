@@ -15,6 +15,7 @@ import { plaintextChunker } from './plaintext-chunker.js';
 export function selectChunker(sourceType: string): Chunker {
   switch (sourceType) {
     case 'workspace_doc':
+    case 'playbook':
     case 'curated_memory':
     case 'file_doc':
       return markdownChunker;
