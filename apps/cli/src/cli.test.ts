@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -335,6 +335,62 @@ describe('CLI command workflows (service-level)', () => {
 
     await app.close();
     await runtime.close();
+  });
+});
+
+describe('CLI daemon workflows', () => {
+  it('daemon load auto-installs the LaunchAgent when the plist is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-daemon-load-'));
+    const homeDir = join(dir, 'home');
+    const binDir = join(dir, 'bin');
+    const runtimeDir = join(dir, 'runtime');
+    const launchctlLog = join(dir, 'launchctl.log');
+    mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+    mkdirSync(binDir, { recursive: true, mode: 0o700 });
+    chmodSync(homeDir, 0o700);
+    chmodSync(binDir, 0o700);
+
+    const launchctlPath = join(binDir, 'launchctl');
+    writeFileSync(
+      launchctlPath,
+      `#!/bin/sh
+printf '%s\\n' "$*" >> '${launchctlLog}'
+case "$1" in
+  bootstrap|bootout|kickstart)
+    exit 0
+    ;;
+  print)
+    echo "Could not find service" >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`,
+      'utf8',
+    );
+    chmodSync(launchctlPath, 0o755);
+
+    const config = makeConfig(runtimeDir);
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify(config), 'utf8');
+
+    const result = await runPopWithEnv(['daemon', 'load'], {
+      HOME: homeDir,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      POPEYE_CONFIG_PATH: configPath,
+    });
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout) as { ok: boolean }).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+
+    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'dev.popeye.popeyed.plist');
+    expect(existsSync(plistPath)).toBe(true);
+    expect(readFileSync(plistPath, 'utf8')).toContain('apps/daemon/src/index.ts');
+    expect(readFileSync(launchctlLog, 'utf8')).toContain('bootstrap');
   });
 });
 
