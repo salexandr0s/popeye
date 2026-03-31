@@ -72,10 +72,12 @@ chmod 755 "$PREFIX/pop"
 echo "==> Ensuring config directory"
 mkdir -p "$APP_SUPPORT_DIR"
 chmod 700 "$APP_SUPPORT_DIR"
-if [[ ! -f "$APP_SUPPORT_DIR/config.json" ]] || [[ "$FORCE" -eq 1 ]]; then
+if [[ ! -f "$APP_SUPPORT_DIR/config.json" ]]; then
   cp "$ROOT_DIR/config/example.json" "$APP_SUPPORT_DIR/config.json"
   echo "    Created default config at $APP_SUPPORT_DIR/config.json"
   echo "    Edit it before first run (set engine.kind, engine.piPath, etc.)"
+elif [[ "$FORCE" -eq 1 ]]; then
+  echo "    Preserving existing config at $APP_SUPPORT_DIR/config.json"
 fi
 
 echo ""
