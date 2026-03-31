@@ -116,23 +116,10 @@ if command -v pop &>/dev/null; then
   if pop backup create "$BACKUP_DIR" 2>/dev/null; then
     record_result "backup-create" "pass" "backup created at $BACKUP_DIR"
 
-    # Find the backup file
-    BACKUP_FILE=$(find "$BACKUP_DIR" -name "*.db" -type f 2>/dev/null | head -1 || true)
-
-    if [[ -n "$BACKUP_FILE" ]]; then
-      if pop backup verify "$BACKUP_FILE" 2>/dev/null; then
-        record_result "backup-verify" "pass" "backup verified: $BACKUP_FILE"
-      else
-        record_result "backup-verify" "fail" "backup verification failed"
-      fi
+    if pop backup verify "$BACKUP_DIR" 2>/dev/null; then
+      record_result "backup-verify" "pass" "backup verified: $BACKUP_DIR"
     else
-      # Backup dir might contain files without .db extension
-      BACKUP_COUNT=$(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')
-      if [[ "$BACKUP_COUNT" -gt 0 ]]; then
-        record_result "backup-verify" "pass" "$BACKUP_COUNT file(s) in backup directory"
-      else
-        record_result "backup-verify" "skip" "no backup files found to verify"
-      fi
+      record_result "backup-verify" "fail" "backup verification failed"
     fi
   else
     record_result "backup-create" "fail" "pop backup create failed"
