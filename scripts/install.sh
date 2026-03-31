@@ -45,6 +45,9 @@ pnpm pack:cli
 echo "==> Bundling daemon"
 pnpm pack:daemon
 
+echo "==> Building web inspector"
+pnpm --filter @popeye/web-inspector build
+
 echo "==> Installing pop launcher → $PREFIX/pop"
 CLI_BUNDLE="$ROOT_DIR/apps/cli/dist/index.js"
 if [[ ! -f "$CLI_BUNDLE" ]]; then

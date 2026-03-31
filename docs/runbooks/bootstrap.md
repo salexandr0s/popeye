@@ -172,8 +172,9 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 3. Type-checks the project
 4. Bundles CLI → `apps/cli/dist/index.js` (tsup, inlines all `@popeye/*` packages)
 5. Bundles daemon → `apps/daemon/dist/index.js`
-6. Symlinks `pop` → `<prefix>/pop`
-7. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
+6. Builds the web inspector → `apps/web-inspector/dist/`
+7. Writes a `pop` launcher to `<prefix>/pop`
+8. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
 
 Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 `src/*.d.ts`, and sourcemap artifacts are intentionally rejected by
@@ -185,6 +186,7 @@ Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 |----------|----------|
 | CLI bundle | `apps/cli/dist/index.js` |
 | Daemon bundle | `apps/daemon/dist/index.js` |
+| Web inspector bundle | `apps/web-inspector/dist/` |
 | Launcher | `/opt/homebrew/bin/pop` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin/pop` (or custom prefix) |
 | Config | `~/Library/Application Support/Popeye/config.json` |
 | Runtime data | `~/Library/Application Support/Popeye/` by default, or configured via `runtimeDataDir` |

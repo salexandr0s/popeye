@@ -306,6 +306,13 @@ Update the remote config for the real candidate environment:
 - ensure loopback bind remains `127.0.0.1`
 - confirm runtime paths are correct and writable
 
+If this pass is supposed to validate a **fresh staging install** and
+`config.json` did not exist at the start, but the runtime directory already
+contains stale `state/`, `memory/`, `receipts/`, or `vaults/` data from an
+earlier dev snapshot, archive the runtime directory and regenerate the config
+before continuing. That stale snapshot is environmental contamination, not
+evidence of a supported release-candidate upgrade path.
+
 ## 7.5 Foreground daemon proof
 
 ```bash
@@ -313,7 +320,8 @@ ssh savorgserver '
   set -e
   export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
   cd ~/src/popeye
-  pop auth init
+  rm -f "$HOME/Library/Application Support/Popeye/config/auth.json"
+  pop auth init > /dev/null
   pnpm verify:pi-checkout -- --pi-path ~/src/pi
   pop daemon start
 ' | tee "$LOCAL_EVIDENCE/02-remote/foreground-daemon-start.log"

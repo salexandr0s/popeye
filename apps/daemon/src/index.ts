@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import fastifyStatic from '@fastify/static';
@@ -13,6 +13,7 @@ import {
   loadAppConfig,
 } from '@popeye/runtime-core';
 import { WebBootstrapNonceStore } from './web-bootstrap.js';
+import { resolveWebInspectorAssets } from './web-assets.js';
 import { startTelegramBridge } from './telegram-bridge.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
@@ -92,13 +93,10 @@ async function main(): Promise<void> {
     logger: log.child({}),
   });
 
-  const webInspectorDist = resolve(
-    currentModuleDir(),
-    '../../web-inspector/dist',
-  );
-  if (existsSync(webInspectorDist)) {
+  const webInspectorAssets = resolveWebInspectorAssets(currentModuleDir());
+  if (webInspectorAssets) {
     const rawHtml = readFileSync(
-      resolve(webInspectorDist, 'index.html'),
+      webInspectorAssets.indexPath,
       'utf8',
     );
     const renderWebInspector = (nonce: string) => rawHtml
@@ -110,7 +108,7 @@ async function main(): Promise<void> {
     ));
 
     await app.register(fastifyStatic, {
-      root: webInspectorDist,
+      root: webInspectorAssets.distDir,
       prefix: '/',
       decorateReply: false,
       wildcard: false,
@@ -122,6 +120,10 @@ async function main(): Promise<void> {
         return reply.code(404).send({ error: 'not_found' });
       }
       return reply.code(200).type('text/html').send(renderWebInspector(request.popeyeCspNonce ?? generateCspNonce()));
+    });
+  } else {
+    log.warn('web inspector assets missing; continuing without static UI', {
+      expectedDist: resolve(currentModuleDir(), '../../web-inspector/dist'),
     });
   }
 

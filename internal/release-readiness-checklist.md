@@ -255,6 +255,13 @@ PY
 " | tee "$LOCAL_EVIDENCE/02-remote/config-generated.log"
 ```
 
+If this is meant to be a **fresh staging install** and `config.json` was absent
+before the pass, but the runtime directory already contains old `state/`,
+`memory/`, `receipts/`, or `vaults/` data from an earlier dev snapshot, archive
+`$POPEYE_RUNTIME_DIR` before continuing, then rerun **4.3** and **4.5** against
+the fresh directory. Do **not** try to treat an unknown pre-release schema as a
+release-candidate upgrade proof.
+
 ### 4.4 Fill in real provider credentials remotely
 
 This part is intentionally manual because it involves secrets.
@@ -282,9 +289,24 @@ ssh "$HOST" "
   set -e
   . \$HOME/.popeye-rr-env.sh
   cd \$POPEYE_REPO_DIR
-  pop auth init --role operator
-  pop auth init --role service
-  pop auth init --role readonly
+  rm -f \"\$POPEYE_AUTH_FILE\"
+  pop auth init --role operator > /dev/null
+  pop auth init --role service > /dev/null
+  pop auth init --role readonly > /dev/null
+  python3 - <<'PY'
+import json, os
+path = os.path.expandvars(os.path.expanduser(os.environ['POPEYE_AUTH_FILE']))
+with open(path) as fh:
+    data = json.load(fh)
+for role in ('operator', 'service', 'readonly'):
+    current = data['roles'][role]['current']
+    print(json.dumps({
+        'role': role,
+        'token': '<redacted>',
+        'createdAt': current['createdAt'],
+        'expiresAt': current.get('expiresAt'),
+    }))
+PY
 " | tee "$LOCAL_EVIDENCE/02-remote/auth-init.log"
 ```
 
