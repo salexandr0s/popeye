@@ -164,8 +164,12 @@ pnpm install --frozen-lockfile 2>&1 | tee "$LOCAL_EVIDENCE/01-local/install.log"
 pnpm dev-verify 2>&1 | tee "$LOCAL_EVIDENCE/01-local/dev-verify.log"
 pnpm exec playwright install chromium 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-install.log"
 pnpm test:e2e 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-e2e.log"
-pnpm verify:pi-checkout -- --pi-path ../pi 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
+pnpm verify:pi-checkout -- --pi-path "$LOCAL_PI_DIR" 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
 ```
+
+When running from the required clean release worktree, resolve `LOCAL_PI_DIR` to
+the actual sibling Pi checkout before this block (for example `../../pi` from
+`../popeye-release-worktrees/rc`).
 
 ## 5.3 Exit criteria
 

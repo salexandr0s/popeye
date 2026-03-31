@@ -45,8 +45,9 @@ export LOCAL_EVIDENCE="${LOCAL_EVIDENCE:-$PWD/dist/release-readiness/$RR_ID}"
 export POPEYE_PORT="${POPEYE_PORT:-3210}"
 export POPEYE_REPO_URL="${POPEYE_REPO_URL:-$(git remote get-url origin)}"
 export GITHUB_REPO="${GITHUB_REPO:-$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')}"
-export PI_REPO_URL="${PI_REPO_URL:-git@github.com:<set-pi-repo>.git}"
-export PI_REF="${PI_REF:-$(if [ -d ../pi/.git ]; then git -C ../pi rev-parse HEAD; else echo main; fi)}"
+export LOCAL_PI_DIR="${LOCAL_PI_DIR:-$(if [ -d ../../pi/.git ]; then cd ../../pi && pwd; elif [ -d ../pi/.git ]; then cd ../pi && pwd; else echo ../pi; fi)}"
+export PI_REPO_URL="${PI_REPO_URL:-$(if [ -d "$LOCAL_PI_DIR/.git" ]; then git -C "$LOCAL_PI_DIR" remote get-url origin; else echo git@github.com:<set-pi-repo>.git; fi)}"
+export PI_REF="${PI_REF:-$(if [ -d "$LOCAL_PI_DIR/.git" ]; then git -C "$LOCAL_PI_DIR" rev-parse HEAD; else echo main; fi)}"
 mkdir -p "$LOCAL_EVIDENCE"/{00-meta,01-local,02-remote,03-soak,04-release-artifacts,05-final}
 ```
 
@@ -72,6 +73,7 @@ export REMOTE_EVIDENCE_DIR='$HOME/popeye-release-evidence/'"$RR_ID"
 printf '%s\n' "$HOST" | tee "$LOCAL_EVIDENCE/00-meta/host.txt"
 printf '%s\n' "$REMOTE_OS" | tee "$LOCAL_EVIDENCE/00-meta/remote-os.txt"
 printf '%s\n' "$POPEYE_REPO_URL" | tee "$LOCAL_EVIDENCE/00-meta/popeye-repo-url.txt"
+printf '%s\n' "$LOCAL_PI_DIR" | tee "$LOCAL_EVIDENCE/00-meta/local-pi-dir.txt"
 printf '%s\n' "$PI_REPO_URL" | tee "$LOCAL_EVIDENCE/00-meta/pi-repo-url.txt"
 printf '%s\n' "$PI_REF" | tee "$LOCAL_EVIDENCE/00-meta/pi-ref.txt"
 ```
@@ -100,7 +102,7 @@ pnpm install --frozen-lockfile 2>&1 | tee "$LOCAL_EVIDENCE/01-local/install.log"
 pnpm dev-verify 2>&1 | tee "$LOCAL_EVIDENCE/01-local/dev-verify.log"
 pnpm exec playwright install chromium 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-install.log"
 pnpm test:e2e 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-e2e.log"
-pnpm verify:pi-checkout -- --pi-path ../pi 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
+pnpm verify:pi-checkout -- --pi-path "$LOCAL_PI_DIR" 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
 ```
 
 ### 2.3 GitHub green gate on the same SHA
