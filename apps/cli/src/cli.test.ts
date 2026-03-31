@@ -58,6 +58,86 @@ function makeConfig(dir: string): AppConfig {
   };
 }
 
+function createFakePiRepoWithCompatibilitySmoke(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-pi-'));
+  chmodSync(dir, 0o700);
+  const codingAgentDir = join(dir, 'packages', 'coding-agent');
+  const cliDir = join(codingAgentDir, 'dist');
+  const aiDir = join(dir, 'packages', 'ai');
+  const aiDistDir = join(aiDir, 'dist');
+  mkdirSync(cliDir, { recursive: true });
+  mkdirSync(aiDistDir, { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '0.1.0', private: true }, null, 2));
+  writeFileSync(join(codingAgentDir, 'package.json'), JSON.stringify({ name: '@fake/coding-agent', version: '0.1.0', private: true }, null, 2));
+  writeFileSync(join(aiDir, 'package.json'), JSON.stringify({ name: '@fake/ai', private: true, type: 'module' }, null, 2));
+  writeFileSync(
+    join(aiDistDir, 'index.js'),
+    'export function createAssistantMessageEventStream() { return { push() {} }; }\n',
+    'utf8',
+  );
+  writeFileSync(
+    join(cliDir, 'cli.js'),
+    `
+const { pathToFileURL } = require('node:url');
+const extensionPaths = [];
+for (let index = 2; index < process.argv.length; index += 1) {
+  if (process.argv[index] === '--extension') {
+    extensionPaths.push(process.argv[index + 1]);
+    index += 1;
+  }
+}
+
+(async () => {
+  let provider = null;
+  const pi = {
+    registerProvider(name, implementation) {
+      provider = { name, implementation };
+    },
+  };
+  for (const extensionPath of extensionPaths) {
+    const extension = await import(pathToFileURL(extensionPath).href);
+    if (typeof extension.default === 'function') {
+      extension.default(pi);
+    }
+  }
+
+  let buffer = '';
+  function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+  process.stdin.setEncoding('utf8');
+  process.on('SIGTERM', () => process.exit(0));
+  process.stdin.on('data', (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split('\\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const message = JSON.parse(line);
+      if (message.type === 'get_state') {
+        write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:cli-smoke-session', isStreaming: false } });
+      }
+      if (message.type === 'prompt') {
+        const modelIndex = process.argv.findIndex((arg) => arg === '--model');
+        const model = modelIndex >= 0 ? process.argv[modelIndex + 1] : 'missing';
+        if (!provider || model !== 'popeye-smoke/smoke-model') {
+          write({ id: message.id, type: 'response', command: 'prompt', success: false, error: 'missing compatibility smoke provider' });
+          continue;
+        }
+        write({ id: message.id, type: 'response', command: 'prompt', success: true });
+        write({ type: 'message_end', message: { role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] } });
+        write({ type: 'agent_end', messages: [{ role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] }] });
+      }
+    }
+  });
+})().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
+`,
+    'utf8',
+  );
+  return dir;
+}
+
 describe('CLI command workflows (service-level)', () => {
   // 1. `task run` workflow
   it('task run: createTask with autoEnqueue, startScheduler, waitForJobTerminalState produces succeeded result', async () => {
@@ -391,6 +471,33 @@ esac
     expect(existsSync(plistPath)).toBe(true);
     expect(readFileSync(plistPath, 'utf8')).toContain('apps/daemon/src/index.ts');
     expect(readFileSync(launchctlLog, 'utf8')).toContain('bootstrap');
+  });
+
+  it('pi smoke injects the secretless compatibility provider when no explicit smoke args are set', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-pi-smoke-'));
+    chmodSync(dir, 0o700);
+    const piPath = createFakePiRepoWithCompatibilitySmoke();
+    const config = {
+      ...makeConfig(dir),
+      engine: {
+        kind: 'pi' as const,
+        piPath,
+        command: 'node',
+        args: [],
+      },
+    };
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+    const result = await runPopWithEnv(['pi', 'smoke'], {
+      POPEYE_CONFIG_PATH: configPath,
+    });
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      engineSessionRef: 'pi:cli-smoke-session',
+    });
   });
 });
 

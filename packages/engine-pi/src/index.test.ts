@@ -29,6 +29,75 @@ function createFakePiRepo(script: string, options: { defaultCli?: boolean } = {}
   return dir;
 }
 
+function createFakePiRepoWithCompatibilitySmoke(): string {
+  const dir = createFakePiRepo(`
+    const { pathToFileURL } = require('node:url');
+    const extensionPaths = [];
+    for (let index = 2; index < process.argv.length; index += 1) {
+      if (process.argv[index] === '--extension') {
+        extensionPaths.push(process.argv[index + 1]);
+        index += 1;
+      }
+    }
+
+    (async () => {
+      let provider = null;
+      const pi = {
+        registerProvider(name, implementation) {
+          provider = { name, implementation };
+        },
+      };
+      for (const extensionPath of extensionPaths) {
+        const extension = await import(pathToFileURL(extensionPath).href);
+        if (typeof extension.default === 'function') {
+          extension.default(pi);
+        }
+      }
+
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:smoke-session', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            const modelIndex = process.argv.findIndex((arg) => arg === '--model');
+            const model = modelIndex >= 0 ? process.argv[modelIndex + 1] : 'missing';
+            if (!provider || model !== 'popeye-smoke/smoke-model') {
+              write({ id: message.id, type: 'response', command: 'prompt', success: false, error: 'missing compatibility smoke provider' });
+              continue;
+            }
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({ type: 'message_end', message: { role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] } });
+            write({ type: 'agent_end', messages: [{ role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] }] });
+          }
+        }
+      });
+    })().catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
+  `);
+  const aiPackageDir = join(dir, 'packages', 'ai');
+  const aiDistDir = join(aiPackageDir, 'dist');
+  mkdirSync(aiDistDir, { recursive: true });
+  writeFileSync(join(aiPackageDir, 'package.json'), JSON.stringify({ name: '@fake/ai', private: true, type: 'module' }, null, 2));
+  writeFileSync(
+    join(aiDistDir, 'index.js'),
+    'export function createAssistantMessageEventStream() { return { push() {} }; }\n',
+    'utf8',
+  );
+  return dir;
+}
+
 function explicitConfig(piPath: string): PiAdapterConfig {
   return { piPath, command: 'node', args: ['bin/pi.js'] };
 }
@@ -318,6 +387,31 @@ describe('engine-pi', () => {
     const result = await adapter.run(runRequest('warn'));
     expect(result.failureClassification).toBeNull();
     expect(result.warnings).toBe('deprecation warning: old API');
+  });
+
+  it('runPiCompatibilityCheck injects a secretless smoke provider when requested', async () => {
+    const piPath = createFakePiRepoWithCompatibilitySmoke();
+    const previousSmokeApiKey = process.env.POPEYE_SMOKE_API_KEY;
+    delete process.env.POPEYE_SMOKE_API_KEY;
+
+    try {
+      const result = await runPiCompatibilityCheck(
+        { piPath, command: 'node' },
+        'hello',
+        { injectSecretlessProvider: true },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.engineSessionRef).toBe('pi:smoke-session');
+      expect(result.eventTypes).toContain('completed');
+      expect(process.env.POPEYE_SMOKE_API_KEY).toBeUndefined();
+    } finally {
+      if (previousSmokeApiKey === undefined) {
+        delete process.env.POPEYE_SMOKE_API_KEY;
+      } else {
+        process.env.POPEYE_SMOKE_API_KEY = previousSmokeApiKey;
+      }
+    }
   });
 
   it('does not set warnings when stderr is empty', async () => {

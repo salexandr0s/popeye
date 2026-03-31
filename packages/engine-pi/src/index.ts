@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   type AppConfig,
@@ -26,6 +27,9 @@ const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
 const MAX_EVENTS = 10_000;
 const CANCEL_GRACE_MS = 5_000;
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30_000;
+const PI_TEMP_DIR_PREFIX = 'popeye-pi-extension-';
+const PI_SMOKE_MODEL = 'popeye-smoke/smoke-model';
+const PI_SMOKE_API_KEY_ENV = 'POPEYE_SMOKE_API_KEY';
 const INTERNAL_IDS = {
   getState: 'popeye:get_state',
   registerHostTools: 'popeye:register_host_tools',
@@ -35,7 +39,6 @@ const INTERNAL_IDS = {
 const PASSIVE_EXTENSION_UI_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text']);
 
 export function cleanStalePiTempDirs(maxAgeMs = 60 * 60 * 1000): number {
-  const prefix = 'popeye-pi-extension-';
   const base = tmpdir();
   let cleaned = 0;
   let entries: string[];
@@ -46,7 +49,7 @@ export function cleanStalePiTempDirs(maxAgeMs = 60 * 60 * 1000): number {
   }
   const cutoff = Date.now() - maxAgeMs;
   for (const entry of entries) {
-    if (!entry.startsWith(prefix)) continue;
+    if (!entry.startsWith(PI_TEMP_DIR_PREFIX)) continue;
     const fullPath = join(base, entry);
     try {
       const mtime = statSync(fullPath).mtimeMs;
@@ -175,6 +178,10 @@ export interface PiCompatibilityResult {
   engineSessionRef: string | null;
 }
 
+export interface PiCompatibilityCheckOptions {
+  injectSecretlessProvider?: boolean;
+}
+
 interface PrimitiveRecord {
   [key: string]: string | number | boolean | null;
 }
@@ -224,6 +231,13 @@ interface PreparedRuntimeToolBridge {
   extensionPaths: string[];
   cleanup(): void;
   toolsByName: Map<string, RuntimeToolDescriptor>;
+}
+
+interface PreparedPiCompatibilitySmoke {
+  args: string[];
+  modelOverride: string;
+  cleanup(): void;
+  restoreEnv(): void;
 }
 
 const PackageVersionSchema = z.object({
@@ -608,7 +622,7 @@ function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRunti
     toolsByName.set(tool.name, tool);
   }
 
-  const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
+  const dir = mkdtempSync(join(tmpdir(), PI_TEMP_DIR_PREFIX));
   chmodSync(dir, 0o700);
   const extensionPath = join(dir, 'popeye-runtime-tools.mjs');
   writeFileSync(extensionPath, createRuntimeToolExtensionSource(tools), 'utf8');
@@ -619,6 +633,90 @@ function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRunti
       rmSync(dir, { recursive: true, force: true });
     },
     toolsByName,
+  };
+}
+
+function preparePiCompatibilitySmoke(config: PiAdapterConfig): PreparedPiCompatibilitySmoke {
+  const piPath = assertPiCheckoutAvailable(config.piPath).path;
+  const aiIndexPath = resolve(piPath, 'packages', 'ai', 'dist', 'index.js');
+  if (!existsSync(aiIndexPath)) {
+    throw new PiEngineAdapterNotConfiguredError(
+      `Could not find built Pi AI module at ${aiIndexPath}. Build Pi or set POPEYE_PI_SMOKE_ARGS explicitly.`,
+    );
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), PI_TEMP_DIR_PREFIX));
+  chmodSync(dir, 0o700);
+  const extensionPath = join(dir, 'popeye-smoke-provider.mjs');
+  const aiIndexUrl = pathToFileURL(aiIndexPath).href;
+  writeFileSync(
+    extensionPath,
+    `
+import { createAssistantMessageEventStream } from ${JSON.stringify(aiIndexUrl)};
+
+export default function(pi) {
+  pi.registerProvider('popeye-smoke', {
+    baseUrl: 'http://localhost/popeye-smoke',
+    apiKey: ${JSON.stringify(PI_SMOKE_API_KEY_ENV)},
+    api: 'popeye-smoke-api',
+    authHeader: false,
+    models: [
+      {
+        id: 'smoke-model',
+        name: 'Popeye Smoke Model',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 8192,
+        maxTokens: 1024
+      }
+    ],
+    streamSimple(model) {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message = {
+          role: 'assistant',
+          api: 'popeye-smoke-api',
+          provider: 'popeye-smoke',
+          model: model.id,
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+          },
+          stopReason: 'stop',
+          timestamp: Date.now(),
+          content: [{ type: 'text', text: 'smoke ok' }]
+        };
+        stream.push({ type: 'done', reason: 'stop', message });
+      });
+      return stream;
+    }
+  });
+}
+`,
+    'utf8',
+  );
+
+  const previousApiKey = process.env[PI_SMOKE_API_KEY_ENV];
+  process.env[PI_SMOKE_API_KEY_ENV] = previousApiKey ?? 'popeye-smoke-key';
+
+  return {
+    args: [...(config.args ?? []), '--extension', extensionPath],
+    modelOverride: PI_SMOKE_MODEL,
+    cleanup() {
+      rmSync(dir, { recursive: true, force: true });
+    },
+    restoreEnv() {
+      if (previousApiKey === undefined) {
+        delete process.env[PI_SMOKE_API_KEY_ENV];
+        return;
+      }
+      process.env[PI_SMOKE_API_KEY_ENV] = previousApiKey;
+    },
   };
 }
 
@@ -1787,15 +1885,52 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 }
 
-export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | PiAdapterConfig, prompt = 'compatibility-check'): Promise<PiCompatibilityResult> {
-  const adapter = 'startRun' in adapterOrConfig ? adapterOrConfig : new PiEngineAdapter(adapterOrConfig);
-  const result = await adapter.run({ prompt });
-  return {
-    ok: result.failureClassification === null && Boolean(result.engineSessionRef),
-    eventTypes: result.events.map((event) => event.type),
-    eventsObserved: result.events.length,
-    engineSessionRef: result.engineSessionRef,
-  };
+export async function runPiCompatibilityCheck(
+  adapterOrConfig: EngineAdapter | PiAdapterConfig,
+  prompt = 'compatibility-check',
+  options: PiCompatibilityCheckOptions = {},
+): Promise<PiCompatibilityResult> {
+  if ('startRun' in adapterOrConfig) {
+    if (options.injectSecretlessProvider) {
+      throw new Error('Secretless Pi smoke injection requires a Pi adapter config, not an EngineAdapter instance.');
+    }
+    const result = await adapterOrConfig.run({ prompt });
+    return {
+      ok: result.failureClassification === null && Boolean(result.engineSessionRef),
+      eventTypes: result.events.map((event) => event.type),
+      eventsObserved: result.events.length,
+      engineSessionRef: result.engineSessionRef,
+    };
+  }
+
+  let adapterConfig = adapterOrConfig;
+  let modelOverride: string | undefined;
+  let cleanup = () => {};
+  let restoreEnv = () => {};
+  if (options.injectSecretlessProvider) {
+    const prepared = preparePiCompatibilitySmoke(adapterOrConfig);
+    adapterConfig = { ...adapterOrConfig, args: prepared.args };
+    modelOverride = prepared.modelOverride;
+    cleanup = prepared.cleanup;
+    restoreEnv = prepared.restoreEnv;
+  }
+
+  try {
+    const adapter = new PiEngineAdapter(adapterConfig);
+    const result = await adapter.run({
+      prompt,
+      ...(modelOverride === undefined ? {} : { modelOverride }),
+    });
+    return {
+      ok: result.failureClassification === null && Boolean(result.engineSessionRef),
+      eventTypes: result.events.map((event) => event.type),
+      eventsObserved: result.events.length,
+      engineSessionRef: result.engineSessionRef,
+    };
+  } finally {
+    restoreEnv();
+    cleanup();
+  }
 }
 
 export function createEngineAdapter(config: AppConfig): EngineAdapter {

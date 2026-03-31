@@ -16,7 +16,6 @@ import {
   installLaunchAgent,
   loadLaunchAgent,
   loadAppConfig,
-  PiEngineAdapter,
   restoreBackup,
   restartLaunchAgent,
   rotateAuthStore,
@@ -454,6 +453,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'pi' && subcommand === 'smoke') {
+    const hasExplicitSmokeArgs = Object.prototype.hasOwnProperty.call(process.env, 'POPEYE_PI_SMOKE_ARGS');
     let smokeArgs = config.engine.args;
     if (process.env.POPEYE_PI_SMOKE_ARGS) {
       try {
@@ -464,12 +464,11 @@ async function main(): Promise<void> {
       }
     }
     const piPath = process.env.POPEYE_PI_SMOKE_PATH ?? config.engine.piPath;
-    const adapter = new PiEngineAdapter({
+    console.info(JSON.stringify(await runPiCompatibilityCheck({
       ...(piPath !== undefined && { piPath }),
       command: process.env.POPEYE_PI_SMOKE_COMMAND ?? config.engine.command,
       args: smokeArgs,
-    });
-    console.info(JSON.stringify(await runPiCompatibilityCheck(adapter), null, 2));
+    }, 'compatibility-check', { injectSecretlessProvider: !hasExplicitSmokeArgs }), null, 2));
     return;
   }
   if (command === 'daemon' && subcommand === 'install') {
