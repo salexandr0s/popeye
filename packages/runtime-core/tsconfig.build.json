@@ -22,6 +22,9 @@
       "path": "../observability/tsconfig.build.json"
     },
     {
+      "path": "../playbooks/tsconfig.build.json"
+    },
+    {
       "path": "../receipts/tsconfig.build.json"
     },
     {
