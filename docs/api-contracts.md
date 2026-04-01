@@ -122,9 +122,8 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/todos/search?query=...` | `{ query, results: TodoSearchResultSchema[] }` |
 | GET | `/v1/todos/digest` | `TodoDigestRecordSchema \| null` |
 | POST | `/v1/todos/accounts` | `TodoAccountRecordSchema` (req: `TodoAccountRegistrationInputSchema`) |
-| POST | `/v1/todos/connect` | `TodoistConnectResponseSchema` (req: `TodoistConnectRequestSchema`) |
 | POST | `/v1/todos/items` | `TodoItemRecordSchema` (req: `TodoCreateInputSchema`) |
-| POST | `/v1/todos/sync` | `TodoSyncResponseSchema` |
+| POST | `/v1/todos/sync` | `TodoSyncResultSchema` |
 | POST | `/v1/todos/items/:id/complete` | `TodoItemRecordSchema` |
 | POST | `/v1/todos/items/:id/reprioritize` | `TodoItemRecordSchema` (req: `{ priority }`) |
 | POST | `/v1/todos/items/:id/reschedule` | `TodoItemRecordSchema` (req: `{ dueDate, dueTime? }`) |
@@ -283,18 +282,23 @@ Behavior notes:
   allowlist strings.
 - `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`,
   and `GET /v1/connections/oauth/callback` are the blessed browser-OAuth
-  surfaces for Gmail, Google Calendar, and GitHub.
+  surfaces for Gmail, Google Calendar, Google Tasks, and GitHub.
 - The callback route returns HTML rather than JSON because it is intended for
   the browser popup/tab flow.
 - `POST /v1/connections/oauth/start` also accepts an existing `connectionId` for
   reconnect / reauthorize flows instead of requiring operators to create a new
   connection.
 - Blessed browser OAuth completion auto-registers the matching email, calendar,
-  or GitHub account; separate `POST /v1/*/accounts` calls are no longer part of
+  todo, or GitHub account; separate `POST /v1/*/accounts` calls are no longer part of
   the happy path for those domains.
-- `POST /v1/todos/connect` is the blessed Todoist connect path. It stores the
-  manual API token in the secret store, creates or updates the connection, and
-  auto-registers the matching todo account.
+- Google Tasks is the blessed todo provider path. Use the generic OAuth start
+  route with `providerKind: "google_tasks"`.
+- Google Tasks semantics are intentionally narrower than the legacy remote todo surface:
+  - task lists map to Popeye projects
+  - due dates are date-only
+  - reprioritize is unsupported
+  - labels are unsupported
+  - named destination lists are created on demand during move/create flows
 - `GET /v1/people`, `GET /v1/people/search`, and the People mutation routes are
   the canonical operator surfaces for the local derived-first identity graph
   built from Gmail, Calendar, and GitHub sync data.

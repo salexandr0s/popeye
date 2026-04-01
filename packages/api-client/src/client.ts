@@ -234,8 +234,6 @@ import {
   TodoSearchResultSchema,
   type TodoSearchResult,
   type TodoCreateInput,
-  type TodoistConnectInput,
-  type TodoistConnectResult,
   TodoReconcileResultSchema,
   type TodoReconcileResult,
   type PersonActivityRollup,
@@ -1490,14 +1488,6 @@ export class PopeyeApiClient {
 
   async registerTodoAccount(input: TodoAccountRegistrationInput): Promise<TodoAccountRecord> {
     return this.post('/v1/todos/accounts', input, TodoAccountRecordSchema);
-  }
-
-  async connectTodoist(input: TodoistConnectInput): Promise<TodoistConnectResult> {
-    const schema = z.object({
-      connectionId: z.string(),
-      account: TodoAccountRecordSchema,
-    });
-    return this.post('/v1/todos/connect', input, schema);
   }
 
   async createTodo(input: TodoCreateInput): Promise<TodoItemRecord> {

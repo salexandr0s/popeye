@@ -19,6 +19,7 @@ import { nowIso } from '@popeye/contracts';
 import { EmailService, GmailAdapter } from '@popeye/cap-email';
 import { CalendarService, GoogleCalendarAdapter } from '@popeye/cap-calendar';
 import { GithubService, GithubApiAdapter } from '@popeye/cap-github';
+import { GoogleTasksAdapter, TodoService } from '@popeye/cap-todos';
 import type { PopeyeLogger } from '@popeye/observability';
 
 import type { OAuthSessionService, OAuthSessionInternalRecord } from './oauth-session-service.js';
@@ -96,6 +97,7 @@ export class OAuthConnectService {
       redirectUri,
       state: stateToken,
       codeChallenge: buildPkceChallenge(pkceVerifier),
+      mode: input.mode,
     });
 
     return this.deps.oauthSessionService.createSession({
@@ -181,6 +183,8 @@ export class OAuthConnectService {
         return this.completeGmailSession(session, tokenPayload);
       case 'google_calendar':
         return this.completeGoogleCalendarSession(session, tokenPayload);
+      case 'google_tasks':
+        return this.completeGoogleTasksSession(session, tokenPayload);
       case 'github':
         return this.completeGithubSession(session, tokenPayload);
     }
@@ -246,7 +250,7 @@ export class OAuthConnectService {
         displayName: profile.emailAddress,
         writeAllowed: true,
       }],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('gmail'),
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('gmail', session.connectionMode),
     });
     const secretRef = this.deps.connectionService.storeOAuthSecret(connection.id, 'gmail', tokenPayload, connection.secretRefId);
     const connected = this.deps.connectionService.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
@@ -312,7 +316,7 @@ export class OAuthConnectService {
         displayName: profile.email,
         writeAllowed: true,
       }],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_calendar'),
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_calendar', session.connectionMode),
     });
     const secretRef = this.deps.connectionService.storeOAuthSecret(connection.id, 'google_calendar', tokenPayload, connection.secretRefId);
     const connected = this.deps.connectionService.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
@@ -356,6 +360,83 @@ export class OAuthConnectService {
     })!;
   }
 
+  private async completeGoogleTasksSession(
+    session: OAuthSessionInternalRecord,
+    tokenPayload: OAuthTokenPayload,
+  ): Promise<OAuthSessionRecord> {
+    const adapter = new GoogleTasksAdapter({
+      accessToken: tokenPayload.accessToken,
+      refreshToken: tokenPayload.refreshToken,
+      clientId: this.deps.config.providerAuth.google.clientId,
+      clientSecret: this.deps.config.providerAuth.google.clientSecret,
+    });
+    const projects = await adapter.getProjects();
+    const defaultProject = projects[0] ?? await adapter.getDefaultProject();
+    const connectionProjects = projects.some((project) => project.id === defaultProject.id)
+      ? projects
+      : [...projects, defaultProject];
+    const connection = this.createOrUpdateConnectedConnection({
+      session,
+      providerKind: 'google_tasks',
+      domain: 'todos',
+      label: 'Google Tasks',
+      allowedResources: connectionProjects.map((project) => project.id),
+      resourceRules: connectionProjects.map((project) => ({
+        resourceType: 'project',
+        resourceId: project.id,
+        displayName: project.name,
+        writeAllowed: true,
+      })),
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('google_tasks', session.connectionMode),
+    });
+    const secretRef = this.deps.connectionService.storeOAuthSecret(connection.id, 'google_tasks', tokenPayload, connection.secretRefId);
+    const connected = this.deps.connectionService.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
+
+    const dbPath = `${this.deps.capabilityStoresDir}/todos.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    let accountId: string;
+    try {
+      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
+      accountId = svc.getAccountByConnection(connection.id)?.id
+        ?? svc.registerAccount({
+          connectionId: connection.id,
+          providerKind: 'google_tasks',
+          displayName: 'Google Tasks',
+        }).id;
+      if (defaultProject.id) {
+        svc.upsertProject(accountId, {
+          externalId: defaultProject.id,
+          name: defaultProject.name,
+          color: null,
+        });
+      }
+    } finally {
+      writeDb.close();
+    }
+
+    this.deps.connectionService.updateConnectionRollups({
+      connectionId: connected.id,
+      health: {
+        status: 'healthy',
+        authState: 'configured',
+        checkedAt: nowIso(),
+        lastError: null,
+        diagnostics: [],
+      },
+      sync: {
+        status: 'idle',
+        cursorKind: connectionCursorKindForProvider(connected.providerKind),
+        cursorPresent: false,
+        lagSummary: 'Awaiting first sync',
+      },
+    });
+
+    return this.deps.oauthSessionService.completeSession(session.id, {
+      connectionId: connected.id,
+      accountId,
+    })!;
+  }
+
   private async completeGithubSession(
     session: OAuthSessionInternalRecord,
     tokenPayload: OAuthTokenPayload,
@@ -369,7 +450,7 @@ export class OAuthConnectService {
       label: `GitHub (${profile.username})`,
       allowedResources: [],
       resourceRules: [],
-      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('github'),
+      scopes: tokenPayload.scopes.length > 0 ? tokenPayload.scopes : getProviderScopes('github', session.connectionMode),
     });
     const secretRef = this.deps.connectionService.storeOAuthSecret(connection.id, 'github', tokenPayload, connection.secretRefId);
     const connected = this.deps.connectionService.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;

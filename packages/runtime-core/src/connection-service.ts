@@ -707,13 +707,13 @@ export class ConnectionService {
       return { account, connection: null };
     }
     const allowedProviderKinds: Array<ConnectionRecord['providerKind']> =
-      account.providerKind === 'todoist' ? ['todoist'] : ['local'];
+      account.providerKind === 'google_tasks' ? ['google_tasks'] : ['local'];
     const connection = this.requireConnectionForOperation({
       connectionId: account.connectionId,
       purpose,
       expectedDomain: 'todos',
       allowedProviderKinds,
-      requireSecret: options.requireSecret ?? account.providerKind === 'todoist',
+      requireSecret: options.requireSecret ?? account.providerKind === 'google_tasks',
     });
     return { account, connection };
   }
@@ -938,7 +938,7 @@ export class ConnectionService {
       };
     }
     if (input.secretStatus === 'missing' || input.secretStatus === 'stale') {
-      const oauthProvider = ['gmail', 'google_calendar', 'github'].includes(connection.providerKind);
+      const oauthProvider = ['gmail', 'google_calendar', 'google_tasks', 'github'].includes(connection.providerKind);
       return {
         action: oauthProvider ? 'reconnect' : 'secret_fix',
         message: oauthProvider
@@ -949,7 +949,7 @@ export class ConnectionService {
     }
     if (input.healthStatus === 'error' || input.healthStatus === 'degraded') {
       return {
-        action: ['gmail', 'google_calendar', 'github'].includes(connection.providerKind) ? 'reconnect' : 'secret_fix',
+        action: ['gmail', 'google_calendar', 'google_tasks', 'github'].includes(connection.providerKind) ? 'reconnect' : 'secret_fix',
         message: input.diagnostics[0]?.message ?? 'Connection needs operator remediation before it can recover.',
         updatedAt: now,
       };

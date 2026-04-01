@@ -227,7 +227,7 @@ export const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRe
   general: ['local'],
   email: ['gmail', 'proton'],
   calendar: ['google_calendar'],
-  todos: ['todoist', 'local'],
+  todos: ['google_tasks', 'local'],
   github: ['github'],
   files: ['local_fs', 'local'],
   people: ['local'],
@@ -239,9 +239,9 @@ export const ALLOWED_CONNECTION_PROVIDERS: Record<DomainKind, Array<ConnectionRe
 export const SECRET_REQUIRED_CONNECTION_PROVIDERS = new Set<ConnectionRecord['providerKind']>([
   'gmail',
   'google_calendar',
+  'google_tasks',
   'github',
   'proton',
-  'todoist',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -622,6 +622,7 @@ export function canRefreshStoredOAuthSecret(
   switch (providerKind) {
     case 'gmail':
     case 'google_calendar':
+    case 'google_tasks':
       return Boolean(config.providerAuth.google.clientId && config.providerAuth.google.clientSecret);
     default:
       return false;
@@ -634,6 +635,7 @@ export function connectionCursorKindForProvider(providerKind: ConnectionRecord['
       return 'history_id';
     case 'google_calendar':
       return 'sync_token';
+    case 'google_tasks':
     case 'github':
       return 'since';
     default:

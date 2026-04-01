@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ConnectionModeSchema } from './connection.js';
 import { DomainKindSchema } from './domain.js';
 
-const OAuthProviderKindSchema = z.enum(['gmail', 'google_calendar', 'github']);
+export const OAuthProviderKindSchema = z.enum(['gmail', 'google_calendar', 'google_tasks', 'github']);
 export type OAuthProviderKind = z.infer<typeof OAuthProviderKindSchema>;
 
 const OAuthSessionStatusSchema = z.enum(['pending', 'completed', 'failed', 'expired']);

@@ -141,12 +141,30 @@ describe('createTodosCapability', () => {
   it('uses actionApprovalRequest for external todo writes', async () => {
     const cap = createTodosCapability();
     const actionApprovalRequest = vi.fn(() => ({ id: 'approval-1', status: 'approved' as const }));
-    const ctx = makeCtx(tempDir, { actionApprovalRequest });
+    const createTodoViaRuntime = vi.fn(async () => ({
+      id: 'todo-1',
+      accountId: 'acct-1',
+      externalId: 'gtask-1',
+      title: 'Ship evaluator-backed approvals',
+      description: '',
+      priority: 4,
+      status: 'pending' as const,
+      dueDate: null,
+      dueTime: null,
+      labels: [],
+      projectId: null,
+      projectName: null,
+      parentId: null,
+      completedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    const ctx = makeCtx(tempDir, { actionApprovalRequest, createTodoViaRuntime });
     await cap.initialize(ctx);
 
     const db = new Database(join(tempDir, 'todos.db'));
     const todoService = new TodoService(db as unknown as CapabilityContext['appDb']);
-    todoService.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'conn-1' });
+    todoService.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'conn-1' });
     db.close();
 
     const tools = cap.getRuntimeTools!({ workspaceId: 'default', runId: 'run-1' });
@@ -161,6 +179,103 @@ describe('createTodosCapability', () => {
       requestedBy: 'popeye_todo_add',
       runId: 'run-1',
     }));
+    expect(createTodoViaRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      accountId: expect.any(String),
+      title: 'Ship evaluator-backed approvals',
+    }));
+
+    await cap.shutdown();
+  });
+
+  it('uses runtime-backed callbacks for external add and complete operations', async () => {
+    const cap = createTodosCapability();
+    const actionApprovalRequest = vi.fn(() => ({ id: 'approval-1', status: 'approved' as const }));
+    const createTodoViaRuntime = vi.fn(async () => ({
+      id: 'todo-runtime-1',
+      accountId: 'acct-runtime',
+      externalId: 'gtask-runtime-1',
+      title: 'Route external create through runtime',
+      description: '',
+      priority: 4,
+      status: 'pending' as const,
+      dueDate: null,
+      dueTime: null,
+      labels: [],
+      projectId: null,
+      projectName: null,
+      parentId: null,
+      completedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    const completeTodoViaRuntime = vi.fn(async (todoId: string) => ({
+      id: todoId,
+      accountId: 'acct-runtime',
+      externalId: 'gtask-runtime-existing',
+      title: 'Existing external todo',
+      description: '',
+      priority: 4,
+      status: 'completed' as const,
+      dueDate: null,
+      dueTime: null,
+      labels: [],
+      projectId: null,
+      projectName: null,
+      parentId: null,
+      completedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    const ctx = makeCtx(tempDir, {
+      actionApprovalRequest,
+      createTodoViaRuntime,
+      completeTodoViaRuntime,
+    });
+    await cap.initialize(ctx);
+
+    const db = new Database(join(tempDir, 'todos.db'));
+    const todoService = new TodoService(db as unknown as CapabilityContext['appDb']);
+    const account = todoService.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'conn-1' });
+    const existing = todoService.createItem(account.id, { title: 'Existing external todo' });
+    db.close();
+
+    const tools = cap.getRuntimeTools!({ workspaceId: 'default', runId: 'run-1' });
+    const addTool = tools.find((tool) => tool.name === 'popeye_todo_add')!;
+    const addResult = await addTool.execute({ title: 'Route external create through runtime' });
+    expect(addResult.content[0]!.text).toContain('Created todo');
+    expect(createTodoViaRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      accountId: account.id,
+      title: 'Route external create through runtime',
+    }));
+
+    const completeTool = tools.find((tool) => tool.name === 'popeye_todo_complete')!;
+    const completeResult = await completeTool.execute({ todoId: existing.id });
+    expect(completeResult.content[0]!.text).toContain('Completed');
+    expect(completeTodoViaRuntime).toHaveBeenCalledWith(existing.id);
+
+    await cap.shutdown();
+  });
+
+  it('fails clearly when external todo mutation callbacks are unavailable', async () => {
+    const cap = createTodosCapability();
+    const actionApprovalRequest = vi.fn(() => ({ id: 'approval-1', status: 'approved' as const }));
+    const ctx = makeCtx(tempDir, { actionApprovalRequest });
+    await cap.initialize(ctx);
+
+    const db = new Database(join(tempDir, 'todos.db'));
+    const todoService = new TodoService(db as unknown as CapabilityContext['appDb']);
+    const account = todoService.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'conn-1' });
+    const existing = todoService.createItem(account.id, { title: 'Existing external todo' });
+    db.close();
+
+    const tools = cap.getRuntimeTools!({ workspaceId: 'default', runId: 'run-1' });
+    const addTool = tools.find((tool) => tool.name === 'popeye_todo_add')!;
+    const addResult = await addTool.execute({ title: 'Needs runtime facade' });
+    expect(addResult.content[0]!.text).toContain('runtime-backed todo mutation support');
+
+    const completeTool = tools.find((tool) => tool.name === 'popeye_todo_complete')!;
+    const completeResult = await completeTool.execute({ todoId: existing.id });
+    expect(completeResult.content[0]!.text).toContain('runtime-backed todo mutation support');
 
     await cap.shutdown();
   });

@@ -23,7 +23,7 @@ import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInp
 import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema, EmailDraftCreateInputSchema, EmailDraftRecordSchema, EmailDraftUpdateInputSchema } from './email.js';
 import { GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema, GithubCommentCreateInputSchema, GithubCommentRecordSchema, GithubNotificationMarkReadInputSchema } from './github.js';
 import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, CalendarEventRecordSchema, CalendarDigestRecordSchema, CalendarSearchResultSchema, CalendarSyncResultSchema, CalendarAvailabilitySlotSchema, CalendarEventCreateInputSchema, CalendarEventUpdateInputSchema } from './calendar.js';
-import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoReconcileResultSchema } from './todos.js';
+import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoSyncResultSchema, TodoReconcileResultSchema } from './todos.js';
 import { PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonMergeInputSchema, PersonRecordSchema, PersonSplitInputSchema, PersonUpdateInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema } from './people.js';
 import { RecallDetailSchema, RecallSearchResponseSchema, RecallSourceKindSchema } from './recall.js';
 import {
@@ -567,7 +567,7 @@ export const TodoItemResponseSchema = TodoItemRecordSchema;
 
 export const TodoDigestResponseSchema = TodoDigestRecordSchema;
 
-export { TodoAccountRegistrationInputSchema, TodoAccountRecordSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoistConnectInputSchema, TodoReconcileResultSchema };
+export { TodoAccountRegistrationInputSchema, TodoAccountRecordSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoSyncResultSchema, TodoReconcileResultSchema };
 
 // --- People API schemas ---
 

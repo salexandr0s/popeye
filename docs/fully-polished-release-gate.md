@@ -37,7 +37,7 @@ The polished bar requires one blessed provider path per general domain:
 | Files | local file roots |
 | Email | Gmail |
 | Calendar | Google Calendar |
-| Todos | Todoist |
+| Todos | Google Tasks |
 | GitHub | direct GitHub API |
 | People | local canonical people graph |
 | Finance | local import-based vaults |

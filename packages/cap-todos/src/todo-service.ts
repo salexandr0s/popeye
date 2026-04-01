@@ -70,6 +70,7 @@ function mapItemRow(row: TodoItemRow): TodoItemRecord {
     dueDate: row.due_date,
     dueTime: row.due_time,
     labels: parseJsonArray(row.labels),
+    projectId: row.project_id,
     projectName: row.project_name,
     parentId: row.parent_id,
     completedAt: row.completed_at,
@@ -259,6 +260,7 @@ export class TodoService {
     dueDate: string | null;
     dueTime: string | null;
     labels: string[];
+    projectId: string | null;
     projectName: string | null;
     parentId: string | null;
     completedAt: string | null;
@@ -272,11 +274,11 @@ export class TodoService {
       if (existing) {
         prepareRun(this.db,
           `UPDATE todo_items SET title = ?, description = ?, priority = ?, status = ?,
-           due_date = ?, due_time = ?, labels = ?, project_name = ?, parent_id = ?,
+           due_date = ?, due_time = ?, labels = ?, project_id = ?, project_name = ?, parent_id = ?,
            completed_at = ?, created_at_external = ?, updated_at_external = ?, updated_at = ? WHERE id = ?`,
         )(
           data.title, data.description, data.priority, data.status,
-          data.dueDate, data.dueTime, JSON.stringify(data.labels), data.projectName,
+          data.dueDate, data.dueTime, JSON.stringify(data.labels), data.projectId, data.projectName,
           data.parentId, data.completedAt, data.createdAtExternal, data.updatedAtExternal,
           now, existing.id,
         );
@@ -287,12 +289,12 @@ export class TodoService {
     const id = randomUUID();
     prepareRun(this.db,
       `INSERT INTO todo_items (id, account_id, external_id, title, description, priority, status,
-       due_date, due_time, labels, project_name, parent_id, completed_at,
+       due_date, due_time, labels, project_id, project_name, parent_id, completed_at,
        created_at_external, updated_at_external, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )(
       id, accountId, data.externalId, data.title, data.description, data.priority, data.status,
-      data.dueDate, data.dueTime, JSON.stringify(data.labels), data.projectName,
+      data.dueDate, data.dueTime, JSON.stringify(data.labels), data.projectId, data.projectName,
       data.parentId, data.completedAt, data.createdAtExternal, data.updatedAtExternal,
       now, now,
     );
@@ -306,19 +308,20 @@ export class TodoService {
     dueDate?: string;
     dueTime?: string;
     labels?: string[];
+    projectId?: string;
     projectName?: string;
   }): TodoItemRecord {
     const id = randomUUID();
     const now = nowIso();
     prepareRun(this.db,
       `INSERT INTO todo_items (id, account_id, external_id, title, description, priority, status,
-       due_date, due_time, labels, project_name, parent_id, completed_at,
+       due_date, due_time, labels, project_id, project_name, parent_id, completed_at,
        created_at_external, updated_at_external, created_at, updated_at)
-       VALUES (?, ?, NULL, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+       VALUES (?, ?, NULL, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
     )(
       id, accountId, data.title, data.description ?? '', data.priority ?? 4,
       data.dueDate ?? null, data.dueTime ?? null,
-      JSON.stringify(data.labels ?? []), data.projectName ?? null,
+      JSON.stringify(data.labels ?? []), data.projectId ?? null, data.projectName ?? null,
       now, now,
     );
     return this.getItem(id)!;
@@ -332,6 +335,7 @@ export class TodoService {
     dueDate?: string | null;
     dueTime?: string | null;
     labels?: string[];
+    projectId?: string | null;
     projectName?: string | null;
   }): TodoItemRecord | null {
     const existing = this.getItem(id);
@@ -345,12 +349,13 @@ export class TodoService {
     const dueDate = data.dueDate !== undefined ? data.dueDate : existing.dueDate;
     const dueTime = data.dueTime !== undefined ? data.dueTime : existing.dueTime;
     const labels = data.labels ?? existing.labels;
+    const projectId = data.projectId !== undefined ? data.projectId : existing.projectId;
     const projectName = data.projectName !== undefined ? data.projectName : existing.projectName;
 
     prepareRun(this.db,
       `UPDATE todo_items SET title = ?, description = ?, priority = ?, status = ?,
-       due_date = ?, due_time = ?, labels = ?, project_name = ?, updated_at = ? WHERE id = ?`,
-    )(title, description, priority, status, dueDate, dueTime, JSON.stringify(labels), projectName, now, id);
+       due_date = ?, due_time = ?, labels = ?, project_id = ?, project_name = ?, updated_at = ? WHERE id = ?`,
+    )(title, description, priority, status, dueDate, dueTime, JSON.stringify(labels), projectId, projectName, now, id);
 
     return this.getItem(id)!;
   }

@@ -44,7 +44,7 @@ There is no multi-user identity system, no tenant management, and no
 operator-login OAuth flow. Popeye may use local role-scoped tokens
 (`operator`, `service`, `readonly`) for least-privilege access on the same
 machine, and capability providers may use connector-specific OAuth for Gmail,
-Google Calendar, and GitHub, but that is connector auth rather than a
+Google Calendar, Google Tasks, and GitHub, but that is connector auth rather than a
 multi-tenant identity system.
 
 ### Open registration

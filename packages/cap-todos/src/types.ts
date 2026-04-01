@@ -37,6 +37,7 @@ export interface TodoItemRow {
   due_date: string | null;
   due_time: string | null;
   labels: string; // JSON array
+  project_id: string | null;
   project_name: string | null;
   parent_id: string | null;
   completed_at: string | null;
@@ -57,4 +58,3 @@ export interface TodoDigestRow {
   summary_markdown: string;
   generated_at: string;
 }
-

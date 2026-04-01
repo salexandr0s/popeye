@@ -20,7 +20,6 @@ import {
   CalendarEventCreateInputSchema,
   CalendarEventUpdateInputSchema,
   TodoAccountRegistrationInputSchema,
-  TodoistConnectInputSchema,
   type DomainKind,
   FileRootRegistrationInputSchema,
   FileRootUpdateInputSchema,
@@ -2611,7 +2610,7 @@ export async function createControlApi(
   app.post('/v1/todos/items', async (request, reply) => {
     const body = TodoCreateInputSchema.parse(request.body);
     try {
-      return dependencies.runtime.createTodo(body);
+      return await dependencies.runtime.createTodo(body);
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
@@ -2624,7 +2623,7 @@ export async function createControlApi(
     const id = parseIdParam(request.params);
     let result;
     try {
-      result = dependencies.runtime.completeTodo(id);
+      result = await dependencies.runtime.completeTodo(id);
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_todo_item', details: error.message });
@@ -2642,18 +2641,6 @@ export async function createControlApi(
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_todo_account', details: error.message });
-      }
-      throw error;
-    }
-  });
-
-  app.post('/v1/todos/connect', async (request, reply) => {
-    const body = TodoistConnectInputSchema.parse(request.body);
-    try {
-      return dependencies.runtime.connectTodoist(body);
-    } catch (error) {
-      if (error instanceof RuntimeValidationError) {
-        return reply.code(400).send({ error: 'invalid_todoist_connection', details: error.message });
       }
       throw error;
     }
@@ -2690,7 +2677,7 @@ export async function createControlApi(
     const id = parseIdParam(request.params);
     const body = z.object({ dueDate: z.string().min(1), dueTime: z.string().nullable().optional() }).parse(request.body);
     try {
-      const result = dependencies.runtime.rescheduleTodo(id, body.dueDate, body.dueTime);
+      const result = await dependencies.runtime.rescheduleTodo(id, body.dueDate, body.dueTime);
       if (!result) return reply.code(404).send({ error: 'todo not found' });
       return result;
     } catch (error) {
@@ -2705,7 +2692,7 @@ export async function createControlApi(
     const id = parseIdParam(request.params);
     const body = z.object({ projectName: z.string().min(1) }).parse(request.body);
     try {
-      const result = dependencies.runtime.moveTodo(id, body.projectName);
+      const result = await dependencies.runtime.moveTodo(id, body.projectName);
       if (!result) return reply.code(404).send({ error: 'todo not found' });
       return result;
     } catch (error) {

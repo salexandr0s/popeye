@@ -32,13 +32,20 @@ export interface TodoProviderAdapter {
     labels?: string[];
     projectName?: string;
   }): Promise<NormalizedTodoItem>;
-  updateItem(externalId: string, input: {
+  updateItem(input: {
+    externalId: string;
+    projectId?: string | null;
     title?: string;
     description?: string;
     priority?: number;
     status?: string;
-    dueDate?: string;
+    dueDate?: string | null;
+    dueTime?: string | null;
     labels?: string[];
+    projectName?: string | null;
   }): Promise<NormalizedTodoItem>;
-  completeItem(externalId: string): Promise<void>;
+  completeItem(input: {
+    externalId: string;
+    projectId?: string | null;
+  }): Promise<NormalizedTodoItem>;
 }

@@ -1,36 +1,22 @@
 import type { CommandContext } from '../formatters.js';
 import { getFlagValue } from '../formatters.js';
+import { runOAuthConnectFlow } from './email.js';
 
 export async function handleTodo(ctx: CommandContext): Promise<void> {
   const { client, subcommand, arg1, jsonFlag } = ctx;
 
   if (subcommand === 'connect') {
-    const readline = await import('node:readline');
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (prompt: string): Promise<string> => new Promise((resolveQuestion) => rl.question(prompt, resolveQuestion));
-    const displayName = getFlagValue('--display-name') ?? 'Todoist';
-    const label = getFlagValue('--label') ?? 'Todoist';
-    const mode = process.argv.includes('--read-only') ? 'read_only' : 'read_write';
-    const apiToken = (await ask('Todoist API token: ')).trim();
-    rl.close();
-    if (!apiToken) {
-      console.error('A Todoist API token is required.');
-      process.exit(1);
-    }
-    const result = await client.connectTodoist({
-      apiToken,
-      displayName,
-      label,
-      mode,
+    const reconnectId = getFlagValue('--reconnect');
+    await runOAuthConnectFlow(client, {
+      providerKind: 'google_tasks',
+      mode: process.argv.includes('--read-only') ? 'read_only' : 'read_write',
       syncIntervalSeconds: 900,
+      ...(reconnectId ? { connectionId: reconnectId } : {}),
+      openBrowser: !process.argv.includes('--no-open'),
     });
-    if (jsonFlag) {
-      console.info(JSON.stringify(result, null, 2));
-    } else {
-      console.info('Connected Todoist.');
-      console.info(`  Connection: ${result.connectionId}`);
-      console.info(`  Account:    ${result.account.id} (${result.account.displayName})`);
-      console.info('Run "pop todo sync" to fetch projects and tasks.');
+    if (!jsonFlag) {
+      console.info('Google Tasks semantics: task lists map to projects; priorities, labels, and due times are unsupported.');
+      console.info('Run "pop todo sync" to fetch lists and tasks.');
     }
     return;
   }

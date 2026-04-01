@@ -42,7 +42,7 @@ function buildLoopbackTunnelHint(authorizationUrl: string): string | null {
 async function runOAuthConnectFlow(
   client: PopeyeApiClient,
   input: {
-    providerKind: 'gmail' | 'google_calendar' | 'github';
+    providerKind: 'gmail' | 'google_calendar' | 'google_tasks' | 'github';
     mode: 'read_only' | 'read_write';
     syncIntervalSeconds?: number;
     connectionId?: string;

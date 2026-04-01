@@ -20,6 +20,8 @@ export function mapProviderToDomain(providerKind: OAuthProviderKind): DomainKind
       return 'email';
     case 'google_calendar':
       return 'calendar';
+    case 'google_tasks':
+      return 'todos';
     case 'github':
       return 'github';
   }
@@ -39,12 +41,15 @@ export function buildProviderAuthorizationUrl(input: {
   redirectUri: string;
   state: string;
   codeChallenge: string;
+  mode: 'read_only' | 'read_write';
 }): string {
   switch (input.providerKind) {
     case 'gmail':
-      return buildGoogleAuthorizationUrl(input.config, input.redirectUri, input.state, input.codeChallenge, getProviderScopes('gmail'));
+      return buildGoogleAuthorizationUrl(input.config, input.redirectUri, input.state, input.codeChallenge, getProviderScopes('gmail', input.mode));
     case 'google_calendar':
-      return buildGoogleAuthorizationUrl(input.config, input.redirectUri, input.state, input.codeChallenge, getProviderScopes('google_calendar'));
+      return buildGoogleAuthorizationUrl(input.config, input.redirectUri, input.state, input.codeChallenge, getProviderScopes('google_calendar', input.mode));
+    case 'google_tasks':
+      return buildGoogleAuthorizationUrl(input.config, input.redirectUri, input.state, input.codeChallenge, getProviderScopes('google_tasks', input.mode));
     case 'github': {
       const clientId = input.config.providerAuth.github.clientId;
       if (!clientId) {
@@ -53,7 +58,7 @@ export function buildProviderAuthorizationUrl(input: {
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: input.redirectUri,
-        scope: getProviderScopes('github').join(' '),
+        scope: getProviderScopes('github', input.mode).join(' '),
         state: input.state,
       });
       return `https://github.com/login/oauth/authorize?${params.toString()}`;
@@ -71,13 +76,14 @@ export async function exchangeProviderAuthorizationCode(input: {
   switch (input.providerKind) {
     case 'gmail':
     case 'google_calendar':
+    case 'google_tasks':
       return exchangeGoogleAuthorizationCode(input);
     case 'github':
       return exchangeGithubAuthorizationCode(input);
   }
 }
 
-export function getProviderScopes(providerKind: OAuthProviderKind): string[] {
+export function getProviderScopes(providerKind: OAuthProviderKind, mode: 'read_only' | 'read_write' = 'read_write'): string[] {
   switch (providerKind) {
     case 'gmail':
       return [
@@ -88,6 +94,12 @@ export function getProviderScopes(providerKind: OAuthProviderKind): string[] {
       return [
         'https://www.googleapis.com/auth/calendar.readonly',
         'https://www.googleapis.com/auth/calendar.events',
+      ];
+    case 'google_tasks':
+      return [
+        mode === 'read_only'
+          ? 'https://www.googleapis.com/auth/tasks.readonly'
+          : 'https://www.googleapis.com/auth/tasks',
       ];
     case 'github':
       return ['read:user', 'notifications', 'repo'];

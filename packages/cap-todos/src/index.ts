@@ -16,7 +16,7 @@ export { TodoSearchService } from './todo-search.js';
 export { getTodoMigrations } from './migrations.js';
 export type { TodoProviderAdapter, NormalizedTodoProject, NormalizedTodoItem } from './providers/adapter-interface.js';
 export { LocalTodoAdapter } from './providers/local-adapter.js';
-export { TodoistAdapter } from './providers/todoist-adapter.js';
+export { GoogleTasksAdapter } from './providers/google-tasks-adapter.js';
 
 const DEFAULT_SYNC_INTERVAL_MS = 15 * 60_000; // 15 minutes
 const DIGEST_INTERVAL_MS = 24 * 3600_000; // 24 hours
@@ -87,8 +87,8 @@ export function createTodosCapability(): CapabilityModule {
             for (const account of accounts) {
               if (account.providerKind === 'local') continue;
 
-              // External accounts need an API token — for now, log and skip
-              ctx.log.debug('Todo sync timer — skipping external account (no adapter resolver)', { accountId: account.id });
+              // External provider sync is resolved through runtime-owned facades, not direct capability timers.
+              ctx.log.debug('Todo sync timer — skipping external account (runtime facade owns provider resolution)', { accountId: account.id });
             }
           },
         },

@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-03-20
 
+> Note: the todos-domain portion of this ADR is superseded by
+> [ADR 0020](./0020-bless-google-tasks-as-remote-todo-provider.md).
+
 ## Context
 
 Popeye already has multiple adapters or possible provider paths in some

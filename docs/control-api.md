@@ -235,15 +235,16 @@ The web inspector now exposes dedicated operator pages for:
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include additive `policy`, `health`, `sync`, and typed `resourceRules` read models. |
-| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, or `github`. Returns an `authorizationUrl` plus session metadata. Optional `connectionId` turns the same route into a reconnect / reauthorize flow. Invalid provider config or connection mismatch fails closed. |
+| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, `google_tasks`, or `github`. Returns an `authorizationUrl` plus session metadata. Optional `connectionId` turns the same route into a reconnect / reauthorize flow. Invalid provider config or connection mismatch fails closed. |
 | GET | `/v1/connections/oauth/sessions/:id` | Read the current OAuth session state (`pending`, `completed`, `failed`, `expired`). Returns 404 if not found. |
 | GET | `/v1/connections/oauth/callback` | Loopback-only OAuth callback endpoint used by the browser connect flow. Returns a simple success/failure HTML page instead of JSON. |
 | POST | `/v1/connections` | Create a connection. Invalid provider/domain combinations or missing secret refs fail closed with `400 { error: "invalid_connection" }`. |
 | PATCH | `/v1/connections/:id` | Update a connection. Returns 404 if not found and `400 { error: "invalid_connection" }` for policy validation failures. |
 | DELETE | `/v1/connections/:id` | Delete a connection. Returns 404 if not found. |
 
-Blessed browser OAuth remains separate per domain: Gmail and Google Calendar
-share Google client credentials but become distinct Popeye connections. The
+Blessed browser OAuth remains separate per domain: Gmail, Google Calendar, and
+Google Tasks share Google client credentials but become distinct Popeye
+connections. The
 runtime owns PKCE, state validation, token exchange, vault persistence,
 connection updates, and account auto-registration.
 
@@ -329,15 +330,24 @@ calendars. Deletes remain out of scope for this tranche.
 | GET | `/v1/todos/items/:id` | Read one todo item. Returns 404 if not found. |
 | GET | `/v1/todos/search` | Search synced todo items. Query params: `query`, optional `accountId`, `projectId`, `limit`. |
 | GET | `/v1/todos/digest` | Read the latest digest for one account. Optional query: `accountId`. |
-| POST | `/v1/todos/accounts` | Register a todo account manually. |
-| POST | `/v1/todos/connect` | Blessed Todoist connect flow. Body uses `TodoistConnectInputSchema`; the runtime stores the token in the secret store, creates or updates the connection, and auto-registers the matching account. |
+| POST | `/v1/todos/accounts` | Register a todo account manually. Blessed Google Tasks OAuth now auto-registers the happy path. |
 | POST | `/v1/todos/items` | Create a todo item. Body uses `TodoCreateInputSchema`. |
 | POST | `/v1/todos/items/:id/complete` | Complete a todo item. Returns 404 if not found. |
 | POST | `/v1/todos/sync` | Trigger a sync for one todo account. Body: `{ accountId }`. |
 
-Todoist is now the blessed todo provider path. The older local-only path remains
-available as an experimental fallback and is not part of the polished connect
-flow.
+Google Tasks is now the blessed todo provider path. Start it through
+`POST /v1/connections/oauth/start` with `providerKind: "google_tasks"`.
+
+Current Google Tasks semantics:
+
+- Google Task Lists map to Popeye projects.
+- Creates without `projectName` use the default Google task list.
+- Creates or moves with a new `projectName` create that task list on demand.
+- Completion maps to Google Tasks `status=completed`.
+- Due dates are supported as date-only values.
+- Reprioritize is unsupported.
+- Labels are unsupported.
+- Due times are unsupported.
 
 ### People
 

@@ -175,7 +175,7 @@ export function createTodoTools(
     {
       name: 'popeye_todo_add',
       label: 'Popeye Todo Add',
-      description: 'Create a new todo item. For local accounts, creates directly. For external accounts (Todoist), requires approval.',
+      description: 'Create a new todo item. For local accounts, creates directly. For external accounts, requires approval.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -250,6 +250,28 @@ export function createTodoTools(
         if (parsed.labels !== undefined) createInput.labels = parsed.labels;
         if (parsed.projectName !== undefined) createInput.projectName = parsed.projectName;
 
+        if (account.providerKind !== 'local') {
+          if (!ctx.createTodoViaRuntime) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'Todo creation for external providers requires runtime-backed todo mutation support.',
+              }],
+            };
+          }
+          const item = await ctx.createTodoViaRuntime({
+            accountId: account.id,
+            ...createInput,
+          });
+
+          const prio = `P${item.priority}`;
+          const due = item.dueDate ? ` (due ${item.dueDate})` : '';
+          return {
+            content: [{ type: 'text', text: `Created todo: [${prio}] **${item.title}**${due}` }],
+            details: { todoId: item.id },
+          };
+        }
+
         const item = todoService.createItem(account.id, createInput);
 
         const prio = `P${item.priority}`;
@@ -303,6 +325,25 @@ export function createTodoTools(
           if (approval.status !== 'approved') {
             return { content: [{ type: 'text', text: `Todo completion requires approval for external accounts. Approval status: ${approval.status}` }] };
           }
+        }
+
+        if (account.providerKind !== 'local') {
+          if (!ctx.completeTodoViaRuntime) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'Todo completion for external providers requires runtime-backed todo mutation support.',
+              }],
+            };
+          }
+          const completed = await ctx.completeTodoViaRuntime(parsed.todoId);
+          if (!completed) {
+            return { content: [{ type: 'text', text: 'Failed to complete todo.' }] };
+          }
+          return {
+            content: [{ type: 'text', text: `Completed: **${completed.title}**` }],
+            details: { todoId: completed.id },
+          };
         }
 
         const completed = todoService.completeItem(parsed.todoId);

@@ -23,7 +23,7 @@ model.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `providerAuth.google.clientId` | `string` | No | unset | Google OAuth client ID used by the Gmail and Google Calendar browser connect flows. Required to start blessed Google connect sessions. |
+| `providerAuth.google.clientId` | `string` | No | unset | Google OAuth client ID used by the Gmail, Google Calendar, and Google Tasks browser connect flows. Required to start blessed Google connect sessions. |
 | `providerAuth.google.clientSecret` | `string` | No | unset | Google OAuth client secret used for token exchange and refresh-token handling. Required to complete blessed Google connect sessions. |
 | `providerAuth.github.clientId` | `string` | No | unset | GitHub OAuth client ID used by the direct GitHub browser connect flow. Required to start blessed GitHub connect sessions. |
 | `providerAuth.github.clientSecret` | `string` | No | unset | GitHub OAuth client secret used for token exchange. Required to complete blessed GitHub connect sessions. |

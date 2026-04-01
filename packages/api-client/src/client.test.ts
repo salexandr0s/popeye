@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PeopleService } from '../../cap-people/src/index.ts';
 import { createControlApi } from '@popeye/control-api';
@@ -23,6 +23,10 @@ function makeConfig(dir: string): AppConfig {
     embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'] },
     memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
     engine: { kind: 'fake', command: 'node', args: [] },
+    providerAuth: {
+      google: { clientId: 'google-client', clientSecret: 'google-secret' },
+      github: { clientId: 'github-client', clientSecret: 'github-secret' },
+    },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
   } as AppConfig;
 }
@@ -102,7 +106,8 @@ describe('PopeyeApiClient', () => {
     await app.close();
   });
 
-  it('connects Todoist and manages people through the API client', async () => {
+  it('connects Google Tasks through OAuth and manages people through the API client', async () => {
+    const originalFetch = globalThis.fetch;
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-client-people-'));
     chmodSync(dir, 0o700);
     const config = makeConfig(dir);
@@ -115,14 +120,52 @@ describe('PopeyeApiClient', () => {
     const store = readAuthStore(config.authFile);
 
     const client = new PopeyeApiClient({ baseUrl, token: store.current.token });
-    const todoist = await client.connectTodoist({
-      apiToken: 'todoist-client-token',
-      label: 'Todoist',
-      displayName: 'Client Todoist',
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: 'google-access-token',
+            refresh_token: 'google-refresh-token',
+            scope: 'https://www.googleapis.com/auth/tasks',
+            token_type: 'Bearer',
+            expires_in: 3600,
+          }),
+        } as Response;
+      }
+      if (url.startsWith('https://tasks.googleapis.com/tasks/v1/users/@me/lists')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{ id: '@default', title: 'My Tasks' }],
+          }),
+        } as Response;
+      }
+      return originalFetch(input, init);
+    });
+
+    const session = await client.startOAuthConnection({
+      providerKind: 'google_tasks',
       mode: 'read_write',
       syncIntervalSeconds: 900,
     });
-    expect(todoist.account.displayName).toBe('Client Todoist');
+    const internalSession = (runtime as any).oauthSessionService.getSessionInternal(session.id);
+    const callbackResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/connections/oauth/callback?code=test-code&state=${encodeURIComponent(internalSession.stateToken)}`,
+    });
+    expect(callbackResponse.statusCode).toBe(200);
+
+    const todoAccounts = await client.listTodoAccounts();
+    expect(todoAccounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerKind: 'google_tasks',
+          displayName: 'Google Tasks',
+        }),
+      ]),
+    );
 
     const peopleDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'people.db'));
     const peopleService = new PeopleService(peopleDb as never);
@@ -177,6 +220,7 @@ describe('PopeyeApiClient', () => {
     expect(detached.id).not.toBe(projected.id);
     expect(detached.githubLogin).toBe('client-gh');
 
+    fetchSpy.mockRestore();
     await runtime.close();
     await app.close();
   });

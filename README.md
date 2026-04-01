@@ -48,7 +48,7 @@ Today the repository contains the core pieces of the platform:
 - **web inspector** for runtime visibility, including playbook and proposal authoring/review
 - **blessed browser-OAuth connect flows** for Gmail, Google Calendar, and
   GitHub
-- **blessed Todoist manual-token connect flow** for todos
+- **blessed browser-OAuth Google Tasks connect flow** for todos
 - **derived-first People graph** with Gmail / Calendar / GitHub identity
   projection plus operator merge/split/edit workflows
 - **structured memory system** with SQLite, FTS5, sqlite-vec, provenance, and
@@ -201,7 +201,7 @@ Popeye is under active development, but the architecture direction is stable:
 - Pi remains the engine boundary
 - the runtime remains local-first and operator-owned
 - the API remains loopback-only and authenticated
-- Gmail, Google Calendar, GitHub, and Todoist now have blessed operator connect
+- Gmail, Google Calendar, Google Tasks, and GitHub now have blessed operator connect
   paths; People is now a first-class derived identity graph
 - the web inspector remains the primary required GUI; it now includes dedicated
   playbook and proposal operator pages, including draft/patch proposal authoring and stale-repair entry points, while the native macOS client is

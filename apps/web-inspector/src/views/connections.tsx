@@ -31,8 +31,6 @@ export function Connections() {
   const todoAccounts = useTodoAccounts();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [todoistToken, setTodoistToken] = useState('');
-  const [todoistLabel, setTodoistLabel] = useState('Todoist');
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [ruleType, setRuleType] = useState<string>('resource');
   const [ruleId, setRuleId] = useState('');
@@ -90,13 +88,16 @@ export function Connections() {
     throw new Error('OAuth connection timed out');
   };
 
-  const handleConnect = async (providerKind: 'gmail' | 'google_calendar' | 'github', connectionId?: string) => {
+  const handleConnect = async (
+    providerKind: 'gmail' | 'google_calendar' | 'google_tasks' | 'github',
+    connectionId?: string,
+  ) => {
     try {
       setBusyKey(connectionId ? `reconnect:${connectionId}` : `connect:${providerKind}`);
       setActionError(null);
       const session = await api.post<OAuthSessionRecord>('/v1/connections/oauth/start', {
         providerKind,
-        mode: 'read_only',
+        mode: providerKind === 'google_tasks' ? 'read_write' : 'read_only',
         syncIntervalSeconds: 900,
         ...(connectionId ? { connectionId } : {}),
       });
@@ -104,26 +105,6 @@ export function Connections() {
       await pollOAuthSession(session.id);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Connection failed');
-    } finally {
-      setBusyKey(null);
-    }
-  };
-
-  const handleTodoistConnect = async () => {
-    try {
-      setBusyKey('connect:todoist');
-      setActionError(null);
-      await api.post('/v1/todos/connect', {
-        apiToken: todoistToken,
-        label: todoistLabel,
-        displayName: todoistLabel,
-        mode: 'read_write',
-        syncIntervalSeconds: 900,
-      });
-      setTodoistToken('');
-      refetchAll();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Todoist connection failed');
     } finally {
       setBusyKey(null);
     }
@@ -306,11 +287,11 @@ export function Connections() {
               {busyKey === `sync:${row.id}` ? 'Syncing…' : 'Sync'}
             </button>
           ) : null}
-          {row.providerKind === 'gmail' || row.providerKind === 'google_calendar' || row.providerKind === 'github' ? (
+          {row.providerKind === 'gmail' || row.providerKind === 'google_calendar' || row.providerKind === 'google_tasks' || row.providerKind === 'github' ? (
             row.health?.remediation ? (
               <button
                 className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
-                onClick={() => void handleConnect(row.providerKind as 'gmail' | 'google_calendar' | 'github', row.id)}
+                onClick={() => void handleConnect(row.providerKind as 'gmail' | 'google_calendar' | 'google_tasks' | 'github', row.id)}
                 type="button"
               >
                 {busyKey === `reconnect:${row.id}` ? 'Opening…' : 'Reconnect'}
@@ -353,7 +334,7 @@ export function Connections() {
       <div className="mb-[24px] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
         <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Connect Blessed Providers</h2>
         <p className="mt-[4px] text-[14px] text-[var(--color-fg-muted)]">
-          Browser OAuth is the blessed path for Gmail, Google Calendar, and GitHub in this tranche.
+          Browser OAuth is the blessed path for Gmail, Google Calendar, Google Tasks, and GitHub.
         </p>
         <div className="mt-[16px] flex flex-wrap gap-[12px]">
           <button
@@ -372,35 +353,22 @@ export function Connections() {
           </button>
           <button
             className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
+            onClick={() => void handleConnect('google_tasks')}
+            type="button"
+          >
+            {busyKey === 'connect:google_tasks' ? 'Connecting Tasks…' : 'Connect Google Tasks'}
+          </button>
+          <button
+            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
             onClick={() => void handleConnect('github')}
             type="button"
           >
             {busyKey === 'connect:github' ? 'Connecting GitHub…' : 'Connect GitHub'}
           </button>
         </div>
-        <div className="mt-[20px] grid gap-[12px] md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <input
-            className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
-            onChange={(event) => setTodoistLabel(event.target.value)}
-            placeholder="Todoist label"
-            value={todoistLabel}
-          />
-          <input
-            className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
-            onChange={(event) => setTodoistToken(event.target.value)}
-            placeholder="Todoist API token"
-            type="password"
-            value={todoistToken}
-          />
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-            disabled={todoistToken.trim().length === 0}
-            onClick={() => void handleTodoistConnect()}
-            type="button"
-          >
-            {busyKey === 'connect:todoist' ? 'Connecting Todoist…' : 'Connect Todoist'}
-          </button>
-        </div>
+        <p className="mt-[12px] text-[13px] text-[var(--color-fg-muted)]">
+          Google Tasks maps task lists to Popeye projects. Native priorities, labels, and due times are not supported.
+        </p>
       </div>
 
       {actionError ? (

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 
 import type { AppConfig, ReceiptRecord } from '../../contracts/src/index.ts';
@@ -335,11 +335,11 @@ describe('PopeyeRuntimeService', () => {
     const runtime = createRuntimeService(makeConfig(dir));
     await (runtime as any).capabilityInitPromise;
 
-    const secret = runtime.setSecret({ key: 'todoist-token', value: 'token-123', provider: 'file' });
+    const secret = runtime.setSecret({ key: 'google-tasks-token', value: JSON.stringify({ accessToken: 'token-123' }), provider: 'file' });
     const connection = runtime.createConnection({
       domain: 'todos',
-      providerKind: 'todoist',
-      label: 'Todoist',
+      providerKind: 'google_tasks',
+      label: 'Google Tasks',
       mode: 'read_write',
       secretRefId: secret.id,
       syncIntervalSeconds: 900,
@@ -347,16 +347,16 @@ describe('PopeyeRuntimeService', () => {
       allowedResources: [],
     });
     const account = runtime.registerTodoAccount({
-      providerKind: 'todoist',
+      providerKind: 'google_tasks',
       connectionId: connection.id,
       displayName: 'Primary todos',
     });
     runtime.updateConnection(connection.id, { enabled: false });
 
-    expect(() => runtime.createTodo({
+    await expect(runtime.createTodo({
       accountId: account.id,
       title: 'Blocked task',
-    })).toThrow(RuntimeValidationError);
+    })).rejects.toThrow(RuntimeValidationError);
     expect(runtime.getSecurityAuditFindings()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -517,10 +517,10 @@ describe('PopeyeRuntimeService', () => {
       }],
     });
 
-    const todoist = runtime.createConnection({
+    const googleTasks = runtime.createConnection({
       domain: 'todos',
-      providerKind: 'todoist',
-      label: 'Todoist',
+      providerKind: 'google_tasks',
+      label: 'Google Tasks',
       mode: 'read_write',
       syncIntervalSeconds: 900,
       allowedScopes: [],
@@ -530,7 +530,7 @@ describe('PopeyeRuntimeService', () => {
 
     const connections = runtime.listConnections();
     const githubConnection = connections.find((connection) => connection.id === github.id);
-    const todoistConnection = connections.find((connection) => connection.id === todoist.id);
+    const googleTasksConnection = connections.find((connection) => connection.id === googleTasks.id);
 
     expect(githubConnection).toMatchObject({
       resourceRules: [
@@ -546,31 +546,61 @@ describe('PopeyeRuntimeService', () => {
         }),
       },
     });
-    expect(todoistConnection?.health?.remediation).toMatchObject({
-      action: 'secret_fix',
+    expect(googleTasksConnection?.health?.remediation).toMatchObject({
+      action: 'reconnect',
     });
 
     await runtime.close();
   });
 
-  it('connects Todoist through the blessed secret-backed flow', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-todoist-connect-'));
+  it('connects Google Tasks through the shared OAuth flow', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-google-tasks-connect-'));
     chmodSync(dir, 0o700);
-    const runtime = createRuntimeService(makeConfig(dir));
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      providerAuth: {
+        google: { clientId: 'google-client', clientSecret: 'google-secret' },
+      },
+    });
     await (runtime as any).capabilityInitPromise;
 
-    const result = runtime.connectTodoist({
-      apiToken: 'todoist-token-123',
-      label: 'Todoist',
-      displayName: 'Primary Todoist',
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'google-access-token',
+          refresh_token: 'google-refresh-token',
+          scope: 'https://www.googleapis.com/auth/tasks',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: '@default', title: 'My Tasks' }],
+        }),
+      });
+
+    const session = runtime.startOAuthConnectSession({
+      providerKind: 'google_tasks',
       mode: 'read_write',
       syncIntervalSeconds: 900,
     });
+    const internalSession = (runtime as any).oauthSessionService.getSessionInternal(session.id);
+    const completed = await runtime.completeOAuthConnectCallback({
+      code: 'google-auth-code',
+      state: internalSession.stateToken,
+    });
 
-    expect(result.account.displayName).toBe('Primary Todoist');
-    const connection = runtime.listConnections('todos').find((entry) => entry.id === result.connectionId);
+    expect(completed.accountId).toBeTruthy();
+    expect(completed.connectionId).toBeTruthy();
+    const connection = runtime.listConnections('todos').find((entry) => entry.id === completed.connectionId);
     expect(connection).toMatchObject({
-      providerKind: 'todoist',
+      providerKind: 'google_tasks',
       mode: 'read_write',
       health: {
         status: 'healthy',
@@ -585,13 +615,22 @@ describe('PopeyeRuntimeService', () => {
     expect(runtime.listTodoAccounts()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: result.account.id,
-          connectionId: result.connectionId,
-          providerKind: 'todoist',
+          id: completed.accountId,
+          connectionId: completed.connectionId,
+          providerKind: 'google_tasks',
+        }),
+      ]),
+    );
+    expect(runtime.listTodoProjects(completed.accountId!)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          externalId: '@default',
+          name: 'My Tasks',
         }),
       ]),
     );
 
+    vi.unstubAllGlobals();
     await runtime.close();
   });
 

@@ -17,7 +17,7 @@ export class LocalTodoAdapter implements TodoProviderAdapter {
     throw new Error('Local todos are managed directly through TodoService');
   }
 
-  async completeItem(): Promise<void> {
+  async completeItem(): Promise<NormalizedTodoItem> {
     throw new Error('Local todos are managed directly through TodoService');
   }
 }

@@ -103,7 +103,7 @@ describe('TodoSyncService', () => {
   });
 
   it('syncs projects and items from external adapter', async () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     const ctx = makeCtx();
     const syncSvc = new TodoSyncService(svc, ctx);
     const adapter = createFakeAdapter();
@@ -123,10 +123,11 @@ describe('TodoSyncService', () => {
     const items = svc.listItems(acct.id);
     expect(items.length).toBe(2);
     expect(items.map((i) => i.title).sort()).toEqual(['Buy groceries', 'Fix the bug']);
+    expect(items.map((i) => i.projectId).sort()).toEqual(['proj-1', 'proj-2']);
   });
 
   it('marks updated items as todosUpdated on re-sync', async () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     const ctx = makeCtx();
     const syncSvc = new TodoSyncService(svc, ctx);
     const adapter = createFakeAdapter();
@@ -141,7 +142,7 @@ describe('TodoSyncService', () => {
   });
 
   it('redacts descriptions during sync', async () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     const ctx = makeCtx();
     // Add a redaction pattern
     (ctx.config as Record<string, unknown>)['security'] = { redactionPatterns: ['Auth'] };
@@ -157,7 +158,7 @@ describe('TodoSyncService', () => {
   });
 
   it('emits audit event on success', async () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     const ctx = makeCtx();
     const syncSvc = new TodoSyncService(svc, ctx);
     const adapter = createFakeAdapter();
@@ -170,7 +171,7 @@ describe('TodoSyncService', () => {
   });
 
   it('emits audit event on adapter failure', async () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     const ctx = makeCtx();
     const syncSvc = new TodoSyncService(svc, ctx);
 

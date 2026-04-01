@@ -65,7 +65,7 @@ describe('TodoService', () => {
 
   it('lists accounts', () => {
     svc.registerAccount({ providerKind: 'local', displayName: 'Alice Todos' });
-    svc.registerAccount({ providerKind: 'todoist', displayName: 'Bob Todoist', connectionId: 'conn-1' });
+    svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Bob Google Tasks', connectionId: 'conn-1' });
     const all = svc.listAccounts();
     expect(all.length).toBe(2);
   });
@@ -195,7 +195,7 @@ describe('TodoService', () => {
   });
 
   it('gets item by external ID', () => {
-    const acct = svc.registerAccount({ providerKind: 'todoist', displayName: 'Todoist', connectionId: 'c1' });
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
     svc.upsertItem(acct.id, {
       externalId: 'ext-123',
       title: 'External todo',
@@ -205,6 +205,7 @@ describe('TodoService', () => {
       dueDate: null,
       dueTime: null,
       labels: [],
+      projectId: 'list-1',
       projectName: null,
       parentId: null,
       completedAt: null,
@@ -282,5 +283,28 @@ describe('TodoService', () => {
     svc.updateTodoCount(acct.id);
     const updated = svc.getAccount(acct.id)!;
     expect(updated.todoCount).toBe(2);
+  });
+
+  it('persists projectId for synced items', () => {
+    const acct = svc.registerAccount({ providerKind: 'google_tasks', displayName: 'Google Tasks', connectionId: 'c1' });
+    const stored = svc.upsertItem(acct.id, {
+      externalId: 'gtask-1',
+      title: 'Mapped task',
+      description: '',
+      priority: 4,
+      status: 'pending',
+      dueDate: '2026-04-01',
+      dueTime: null,
+      labels: [],
+      projectId: 'list-123',
+      projectName: 'Inbox',
+      parentId: null,
+      completedAt: null,
+      createdAtExternal: null,
+      updatedAtExternal: '2026-04-01T10:00:00.000Z',
+    });
+
+    expect(stored.projectId).toBe('list-123');
+    expect(svc.getItem(stored.id)?.projectId).toBe('list-123');
   });
 });

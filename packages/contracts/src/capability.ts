@@ -5,6 +5,7 @@ import type { ContextReleasePolicy } from './domain.js';
 import type { ContextReleaseAuthorization } from './context-release.js';
 import type { ExecutionEnvelope } from './execution.js';
 import type { ActionApprovalRequestInput, ActionKind, ActionResourceScope, ApprovalRiskClass, ApprovalScope } from './approval.js';
+import type { TodoCreateInput, TodoItemRecord } from './todos.js';
 
 // --- Capability Descriptor ---
 
@@ -110,6 +111,8 @@ export interface CapabilityContext {
     adapter: unknown;
     account: { id: string; connectionId: string; githubUsername: string };
   } | null>) | undefined;
+  readonly createTodoViaRuntime?: ((input: TodoCreateInput) => Promise<TodoItemRecord>) | undefined;
+  readonly completeTodoViaRuntime?: ((todoId: string) => Promise<TodoItemRecord | null>) | undefined;
 }
 
 // --- Capability Lifecycle ---

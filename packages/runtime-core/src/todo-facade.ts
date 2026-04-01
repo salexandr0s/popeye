@@ -1,12 +1,9 @@
 import type {
   CapabilityContext,
-  ConnectionCreateInput,
   ConnectionHealthSummary,
   ConnectionRecord,
   ConnectionSyncSummary,
-  ConnectionUpdateInput,
   DomainKind,
-  SecretRefRecord,
   TodoAccountRecord,
   TodoAccountRegistrationInput,
   TodoCreateInput,
@@ -17,11 +14,9 @@ import type {
   TodoSearchQuery,
   TodoSearchResult,
   TodoSyncResult,
-  TodoistConnectInput,
-  TodoistConnectResult,
 } from '@popeye/contracts';
 import { nowIso } from '@popeye/contracts';
-import { TodoService, TodoSyncService, TodoDigestService, LocalTodoAdapter, TodoistAdapter } from '@popeye/cap-todos';
+import { TodoService, TodoSyncService, TodoDigestService, LocalTodoAdapter, GoogleTasksAdapter } from '@popeye/cap-todos';
 import type { TodoSearchService as TodoSearchServiceType } from '@popeye/cap-todos';
 import BetterSqlite3 from 'better-sqlite3';
 
@@ -29,6 +24,7 @@ import type { CapabilityFacade } from './capability-facade.js';
 import type { CapabilityRegistry } from './capability-registry.js';
 import { RuntimeValidationError } from './errors.js';
 import type { PopeyeLogger } from '@popeye/observability';
+import { connectionCursorKindForProvider, parseStoredOAuthSecret } from './row-mappers.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +35,10 @@ export interface TodoFacadeDeps {
   capabilityRegistry: CapabilityRegistry;
   capabilityStoresDir: string;
   log: PopeyeLogger;
+  googleOAuthClient: {
+    clientId?: string | undefined;
+    clientSecret?: string | undefined;
+  };
 
   // Callbacks for shared RuntimeService helpers
   buildCapabilityContext: () => CapabilityContext;
@@ -63,15 +63,8 @@ export interface TodoFacadeDeps {
     health?: Partial<ConnectionHealthSummary> | undefined;
     sync?: Partial<ConnectionSyncSummary> | undefined;
   }) => ConnectionRecord | null;
-
-  // Connection CRUD callbacks (needed by connectTodoist)
-  listConnections: (domain?: string) => ConnectionRecord[];
-  createConnection: (input: ConnectionCreateInput) => ConnectionRecord;
-  updateConnection: (id: string, input: ConnectionUpdateInput) => ConnectionRecord | null;
-
-  // Secret store callbacks (needed by connectTodoist and adapter resolution)
-  setSecret: (input: { provider?: string; key: string; value: string; connectionId: string; description: string }) => SecretRefRecord;
-  rotateSecret: (id: string, newValue: string) => SecretRefRecord | null;
+  classifyConnectionFailure: (message: string) => Pick<ConnectionHealthSummary, 'status' | 'authState'>;
+  requireReadWriteConnection: (connection: ConnectionRecord, purpose: string) => void;
   getSecretValue: (id: string) => string | null;
 }
 
@@ -84,15 +77,13 @@ export class TodoFacade {
   private readonly capabilityRegistry: CapabilityRegistry;
   private readonly capabilityStoresDir: string;
   private readonly log: PopeyeLogger;
+  private readonly googleOAuthClient: TodoFacadeDeps['googleOAuthClient'];
   private readonly buildCapabilityContext: () => CapabilityContext;
   private readonly requireConnectionForOperation: TodoFacadeDeps['requireConnectionForOperation'];
   private readonly requireTodoAccountForOperation: TodoFacadeDeps['requireTodoAccountForOperation'];
   private readonly updateConnectionRollups: TodoFacadeDeps['updateConnectionRollups'];
-  private readonly listConnections: TodoFacadeDeps['listConnections'];
-  private readonly createConnection: TodoFacadeDeps['createConnection'];
-  private readonly updateConnection: TodoFacadeDeps['updateConnection'];
-  private readonly setSecret: TodoFacadeDeps['setSecret'];
-  private readonly rotateSecret: TodoFacadeDeps['rotateSecret'];
+  private readonly classifyConnectionFailure: TodoFacadeDeps['classifyConnectionFailure'];
+  private readonly requireReadWriteConnection: TodoFacadeDeps['requireReadWriteConnection'];
   private readonly getSecretValue: TodoFacadeDeps['getSecretValue'];
 
   constructor(deps: TodoFacadeDeps) {
@@ -100,15 +91,13 @@ export class TodoFacade {
     this.capabilityRegistry = deps.capabilityRegistry;
     this.capabilityStoresDir = deps.capabilityStoresDir;
     this.log = deps.log;
+    this.googleOAuthClient = deps.googleOAuthClient;
     this.buildCapabilityContext = deps.buildCapabilityContext;
     this.requireConnectionForOperation = deps.requireConnectionForOperation;
     this.requireTodoAccountForOperation = deps.requireTodoAccountForOperation;
     this.updateConnectionRollups = deps.updateConnectionRollups;
-    this.listConnections = deps.listConnections;
-    this.createConnection = deps.createConnection;
-    this.updateConnection = deps.updateConnection;
-    this.setSecret = deps.setSecret;
-    this.rotateSecret = deps.rotateSecret;
+    this.classifyConnectionFailure = deps.classifyConnectionFailure;
+    this.requireReadWriteConnection = deps.requireReadWriteConnection;
     this.getSecretValue = deps.getSecretValue;
   }
 
@@ -146,21 +135,183 @@ export class TodoFacade {
 
   // --- Helper: resolve todo adapter ---
 
-  private resolveTodoAdapter(account: TodoAccountRecord, connection: ConnectionRecord | null): LocalTodoAdapter | TodoistAdapter {
+  private resolveTodoAdapter(account: TodoAccountRecord, connection: ConnectionRecord | null): LocalTodoAdapter | GoogleTasksAdapter {
     if (account.providerKind === 'local') {
       return new LocalTodoAdapter();
     }
-    if (account.providerKind === 'todoist') {
+    if (account.providerKind === 'google_tasks') {
       if (!connection?.secretRefId) {
-        throw new RuntimeValidationError('Todoist account has no usable connection secret');
+        throw new RuntimeValidationError('Google Tasks account has no usable connection secret');
       }
-      const apiToken = this.getSecretValue(connection.secretRefId);
-      if (!apiToken) {
-        throw new RuntimeValidationError('Failed to retrieve Todoist API token from SecretStore');
+      const secretValue = this.getSecretValue(connection.secretRefId);
+      const oauthSecret = parseStoredOAuthSecret(secretValue);
+      if (!oauthSecret) {
+        throw new RuntimeValidationError('Failed to retrieve Google Tasks OAuth credentials from SecretStore');
       }
-      return new TodoistAdapter({ apiToken });
+      return new GoogleTasksAdapter({
+        accessToken: oauthSecret.accessToken,
+        refreshToken: oauthSecret.refreshToken,
+        clientId: this.googleOAuthClient.clientId,
+        clientSecret: this.googleOAuthClient.clientSecret,
+      });
     }
     throw new Error(`Unsupported todo provider: ${account.providerKind}`);
+  }
+
+  private persistProviderItem(
+    service: TodoService,
+    accountId: string,
+    item: {
+      id: string;
+      title: string;
+      description: string;
+      priority: number;
+      status: 'pending' | 'completed';
+      dueDate: string | null;
+      dueTime: string | null;
+      labels: string[];
+      projectId: string | null;
+      projectName: string | null;
+      parentId: string | null;
+      createdAt: string | null;
+      updatedAt: string | null;
+    },
+  ): TodoItemRecord {
+    if (item.projectId && item.projectName) {
+      service.upsertProject(accountId, {
+        externalId: item.projectId,
+        name: item.projectName,
+        color: null,
+      });
+    }
+
+    const stored = service.upsertItem(accountId, {
+      externalId: item.id,
+      title: item.title,
+      description: item.description,
+      priority: item.priority,
+      status: item.status,
+      dueDate: item.dueDate,
+      dueTime: item.dueTime,
+      labels: item.labels,
+      projectId: item.projectId,
+      projectName: item.projectName,
+      parentId: item.parentId,
+      completedAt: item.status === 'completed' ? (item.updatedAt ?? nowIso()) : null,
+      createdAtExternal: item.createdAt,
+      updatedAtExternal: item.updatedAt,
+    });
+    service.updateTodoCount(accountId);
+    return stored;
+  }
+
+  private validateGoogleTasksCreateInput(input: {
+    priority?: number | undefined;
+    dueTime?: string | undefined;
+    labels?: string[] | undefined;
+  }): void {
+    if (input.priority !== undefined && input.priority !== 4) {
+      throw new RuntimeValidationError('Google Tasks does not support priorities');
+    }
+    if (input.dueTime !== undefined) {
+      throw new RuntimeValidationError('Google Tasks does not support due times');
+    }
+    if (input.labels && input.labels.length > 0) {
+      throw new RuntimeValidationError('Google Tasks does not support labels');
+    }
+  }
+
+  private async syncAccountWithRollups(
+    service: TodoService,
+    accountId: string,
+    purpose: string,
+  ): Promise<TodoSyncResult> {
+    const { account, connection } = this.requireTodoAccountForOperation(service, accountId, purpose, {
+      requireSecret: true,
+    });
+    const adapter = this.resolveTodoAdapter(account, connection);
+    const ctx = this.buildCapabilityContext();
+    const syncService = new TodoSyncService(service, ctx);
+
+    if (!connection) {
+      return syncService.syncAccount(account, adapter);
+    }
+
+    const attemptAt = nowIso();
+    this.updateConnectionRollups({
+      connectionId: connection.id,
+      health: {
+        checkedAt: attemptAt,
+      },
+      sync: {
+        lastAttemptAt: attemptAt,
+        cursorKind: connectionCursorKindForProvider(connection.providerKind),
+      },
+    });
+
+    try {
+      const result = await syncService.syncAccount(account, adapter);
+      const refreshedAccount = service.getAccount(account.id) ?? account;
+      const successCount = result.todosSynced + result.todosUpdated;
+      const syncStatus = result.errors.length === 0
+        ? 'success'
+        : successCount > 0
+          ? 'partial'
+          : 'failed';
+      const failureSummary = result.errors[0] ?? null;
+      const failureState = failureSummary ? this.classifyConnectionFailure(failureSummary) : null;
+      const successAt = syncStatus === 'failed' ? null : nowIso();
+
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: failureSummary
+          ? {
+            status: syncStatus === 'partial' ? 'degraded' : failureState?.status ?? 'error',
+            authState: syncStatus === 'partial' ? 'configured' : failureState?.authState ?? 'configured',
+            checkedAt: nowIso(),
+            lastError: failureSummary,
+          }
+          : {
+            status: 'healthy',
+            authState: 'configured',
+            checkedAt: nowIso(),
+            lastError: null,
+          },
+        sync: {
+          ...(successAt ? { lastSuccessAt: successAt } : {}),
+          status: syncStatus,
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+          cursorPresent: Boolean(refreshedAccount.syncCursorSince),
+          lagSummary: refreshedAccount.syncCursorSince
+            ? `Cursor checkpoint stored at ${refreshedAccount.syncCursorSince}`
+            : 'Awaiting first todo checkpoint',
+        },
+      });
+
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = this.classifyConnectionFailure(message);
+      this.updateConnectionRollups({
+        connectionId: connection.id,
+        health: {
+          status: failure.status,
+          authState: failure.authState,
+          checkedAt: nowIso(),
+          lastError: message,
+        },
+        sync: {
+          lastAttemptAt: nowIso(),
+          status: 'failed',
+          cursorKind: connectionCursorKindForProvider(connection.providerKind),
+          lagSummary: 'Sync failed before a checkpoint could be updated',
+        },
+      });
+      throw error;
+    }
   }
 
   // --- Read-only facade methods ---
@@ -216,84 +367,6 @@ export class TodoFacade {
 
   // --- Mutation methods ---
 
-  connectTodoist(input: TodoistConnectInput): TodoistConnectResult {
-    const existingConnection = this
-      .listConnections('todos')
-      .find((connection) => connection.providerKind === 'todoist') ?? null;
-
-    let connection = existingConnection;
-    if (!connection) {
-      connection = this.createConnection({
-        domain: 'todos',
-        providerKind: 'todoist',
-        label: input.label,
-        mode: input.mode,
-        secretRefId: null,
-        syncIntervalSeconds: input.syncIntervalSeconds,
-        allowedScopes: [],
-        allowedResources: [],
-        resourceRules: [],
-      });
-    } else {
-      connection = this.updateConnection(connection.id, {
-        label: input.label,
-        mode: input.mode,
-        syncIntervalSeconds: input.syncIntervalSeconds,
-      }) ?? connection;
-    }
-
-    const secretRef = connection.secretRefId
-      ? (this.rotateSecret(connection.secretRefId, input.apiToken) ?? this.setSecret({
-        key: 'todoist-api-token',
-        value: input.apiToken,
-        connectionId: connection.id,
-        description: 'Todoist API token',
-      }))
-      : this.setSecret({
-        key: 'todoist-api-token',
-        value: input.apiToken,
-        connectionId: connection.id,
-        description: 'Todoist API token',
-      });
-
-    connection = this.updateConnection(connection.id, { secretRefId: secretRef.id }) ?? connection;
-
-    const todosCap = this.capabilityRegistry.getCapability('todos');
-    if (!todosCap) throw new Error('Todos capability not initialized');
-
-    const dbPath = `${this.capabilityStoresDir}/todos.db`;
-    const writeDb = new BetterSqlite3(dbPath);
-    try {
-      const svc = new TodoService(writeDb as unknown as CapabilityContext['appDb']);
-      const account = svc.getAccountByConnection(connection.id)
-        ?? svc.registerAccount({
-          connectionId: connection.id,
-          providerKind: 'todoist',
-          displayName: input.displayName,
-        });
-      this.updateConnectionRollups({
-        connectionId: connection.id,
-        health: {
-          status: 'healthy',
-          authState: 'configured',
-          checkedAt: nowIso(),
-          lastError: null,
-          diagnostics: [],
-        },
-        sync: {
-          status: 'idle',
-          cursorKind: 'since',
-          cursorPresent: false,
-          lagSummary: 'Awaiting first sync',
-        },
-      });
-      this.todosFacade.invalidate();
-      return { connectionId: connection.id, account };
-    } finally {
-      writeDb.close();
-    }
-  }
-
   registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
     // Local accounts don't need a connection
     if (input.connectionId) {
@@ -301,7 +374,7 @@ export class TodoFacade {
         connectionId: input.connectionId,
         purpose: 'todo_account_register',
         expectedDomain: 'todos',
-        allowedProviderKinds: ['todoist', 'local'],
+        allowedProviderKinds: ['google_tasks', 'local'],
         requireSecret: false,
       });
     }
@@ -309,29 +382,67 @@ export class TodoFacade {
     return this.withWriteDb((svc) => svc.registerAccount(input));
   }
 
-  createTodo(input: TodoCreateInput): TodoItemRecord {
-    return this.withWriteDb((svc) => {
-      this.requireTodoAccountForOperation(svc, input.accountId, 'todo_create');
-      const data: { title: string; description?: string; priority?: number; dueDate?: string; dueTime?: string; labels?: string[]; projectName?: string } = { title: input.title };
+  async createTodo(input: TodoCreateInput): Promise<TodoItemRecord> {
+    return this.withWriteDbAsync(async (svc) => {
+      const { account, connection } = this.requireTodoAccountForOperation(svc, input.accountId, 'todo_create', {
+        requireSecret: input.accountId.length > 0,
+      });
+      const data: {
+        title: string;
+        description?: string;
+        priority?: number;
+        dueDate?: string;
+        dueTime?: string;
+        labels?: string[];
+        projectName?: string;
+      } = { title: input.title };
       if (input.description !== undefined) data.description = input.description;
       if (input.priority !== undefined) data.priority = input.priority;
       if (input.dueDate !== undefined) data.dueDate = input.dueDate;
       if (input.dueTime !== undefined) data.dueTime = input.dueTime;
       if (input.labels !== undefined) data.labels = input.labels;
       if (input.projectName !== undefined) data.projectName = input.projectName;
-      return svc.createItem(input.accountId, data);
+
+      if (account.providerKind === 'local') {
+        return svc.createItem(input.accountId, data);
+      }
+
+      this.validateGoogleTasksCreateInput({
+        priority: input.priority,
+        dueTime: input.dueTime,
+        labels: input.labels,
+      });
+      if (!connection) {
+        throw new RuntimeValidationError(`Todo account ${account.id} requires a Google Tasks connection`);
+      }
+      this.requireReadWriteConnection(connection, 'todo_create');
+      const adapter = this.resolveTodoAdapter(account, connection);
+      const created = await adapter.createItem(data);
+      return this.persistProviderItem(svc, account.id, created);
     });
   }
 
-  completeTodo(id: string): TodoItemRecord | null {
-    return this.withWriteDb((svc) => {
+  async completeTodo(id: string): Promise<TodoItemRecord | null> {
+    return this.withWriteDbAsync(async (svc) => {
       const existing = svc.getItem(id);
       if (!existing) {
         return null;
       }
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_complete');
-      svc.completeItem(id);
-      return svc.getItem(id);
+      const { account, connection } = this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_complete');
+      if (account.providerKind === 'local') {
+        svc.completeItem(id);
+        return svc.getItem(id);
+      }
+      if (!connection) {
+        throw new RuntimeValidationError(`Todo account ${account.id} requires a Google Tasks connection`);
+      }
+      this.requireReadWriteConnection(connection, 'todo_complete');
+      const adapter = this.resolveTodoAdapter(account, connection);
+      const completed = await adapter.completeItem({
+        externalId: existing.externalId ?? existing.id,
+        projectId: existing.projectId,
+      });
+      return this.persistProviderItem(svc, account.id, completed);
     });
   }
 
@@ -339,37 +450,64 @@ export class TodoFacade {
     return this.withWriteDb((svc) => {
       const existing = svc.getItem(todoId);
       if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reprioritize');
+      const { account } = this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reprioritize');
+      if (account.providerKind === 'google_tasks') {
+        throw new RuntimeValidationError('Google Tasks does not support reprioritize');
+      }
       return svc.reprioritizeItem(todoId, priority);
     });
   }
 
-  rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
-    return this.withWriteDb((svc) => {
+  async rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): Promise<TodoItemRecord | null> {
+    return this.withWriteDbAsync(async (svc) => {
       const existing = svc.getItem(todoId);
       if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reschedule');
-      return svc.rescheduleItem(todoId, dueDate, dueTime);
+      const { account, connection } = this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_reschedule');
+      if (account.providerKind === 'local') {
+        return svc.rescheduleItem(todoId, dueDate, dueTime);
+      }
+      if (dueTime !== undefined && dueTime !== null) {
+        throw new RuntimeValidationError('Google Tasks does not support due times');
+      }
+      if (!connection) {
+        throw new RuntimeValidationError(`Todo account ${account.id} requires a Google Tasks connection`);
+      }
+      this.requireReadWriteConnection(connection, 'todo_reschedule');
+      const adapter = this.resolveTodoAdapter(account, connection);
+      const updated = await adapter.updateItem({
+        externalId: existing.externalId ?? existing.id,
+        projectId: existing.projectId,
+        dueDate,
+      });
+      return this.persistProviderItem(svc, account.id, updated);
     });
   }
 
-  moveTodo(todoId: string, projectName: string): TodoItemRecord | null {
-    return this.withWriteDb((svc) => {
+  async moveTodo(todoId: string, projectName: string): Promise<TodoItemRecord | null> {
+    return this.withWriteDbAsync(async (svc) => {
       const existing = svc.getItem(todoId);
       if (!existing) return null;
-      this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_move');
-      return svc.moveItem(todoId, projectName);
+      const { account, connection } = this.requireTodoAccountForOperation(svc, existing.accountId, 'todo_move');
+      if (account.providerKind === 'local') {
+        return svc.moveItem(todoId, projectName);
+      }
+      if (!connection) {
+        throw new RuntimeValidationError(`Todo account ${account.id} requires a Google Tasks connection`);
+      }
+      this.requireReadWriteConnection(connection, 'todo_move');
+      const adapter = this.resolveTodoAdapter(account, connection);
+      const updated = await adapter.updateItem({
+        externalId: existing.externalId ?? existing.id,
+        projectId: existing.projectId,
+        projectName,
+      });
+      return this.persistProviderItem(svc, account.id, updated);
     });
   }
 
   async reconcileTodos(accountId: string): Promise<TodoReconcileResult> {
     return this.withWriteDbAsync(async (svc) => {
-      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_reconcile', { requireSecret: true });
-      const adapter = this.resolveTodoAdapter(account, connection);
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new TodoSyncService(svc, ctx);
-      const syncResult = await syncService.syncAccount(account, adapter);
+      const syncResult = await this.syncAccountWithRollups(svc, accountId, 'todo_reconcile');
 
       return {
         accountId,
@@ -383,14 +521,7 @@ export class TodoFacade {
 
   async syncTodoAccount(accountId: string): Promise<TodoSyncResult> {
     return this.withWriteDbAsync(async (svc) => {
-      const { account, connection } = this.requireTodoAccountForOperation(svc, accountId, 'todo_sync', {
-        requireSecret: true,
-      });
-      const adapter = this.resolveTodoAdapter(account, connection);
-
-      const ctx = this.buildCapabilityContext();
-      const syncService = new TodoSyncService(svc, ctx);
-      return syncService.syncAccount(account, adapter);
+      return this.syncAccountWithRollups(svc, accountId, 'todo_sync');
     });
   }
 

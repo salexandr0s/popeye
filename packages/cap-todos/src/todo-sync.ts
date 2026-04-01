@@ -73,6 +73,7 @@ export class TodoSyncService {
               dueDate: item.dueDate,
               dueTime: item.dueTime,
               labels: item.labels,
+              projectId: item.projectId,
               projectName: resolvedProjectName,
               parentId: item.parentId,
               completedAt: item.status === 'completed' ? (item.updatedAt ?? new Date().toISOString()) : null,

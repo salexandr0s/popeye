@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 // --- Todo Account Record ---
 
-const TodoProviderKindSchema = z.enum(['local', 'todoist']);
+export const TodoProviderKindSchema = z.enum(['local', 'google_tasks']);
+export type TodoProviderKind = z.infer<typeof TodoProviderKindSchema>;
 
 export const TodoAccountRecordSchema = z.object({
   id: z.string(),
@@ -26,21 +27,6 @@ export const TodoAccountRegistrationInputSchema = z.object({
 });
 export type TodoAccountRegistrationInput = z.infer<typeof TodoAccountRegistrationInputSchema>;
 
-export const TodoistConnectInputSchema = z.object({
-  apiToken: z.string().min(1),
-  displayName: z.string().min(1).default('Todoist'),
-  label: z.string().min(1).default('Todoist'),
-  mode: z.enum(['read_only', 'read_write']).default('read_write'),
-  syncIntervalSeconds: z.number().int().positive().default(900),
-});
-export type TodoistConnectInput = z.infer<typeof TodoistConnectInputSchema>;
-
-export const TodoistConnectResultSchema = z.object({
-  connectionId: z.string(),
-  account: TodoAccountRecordSchema,
-});
-export type TodoistConnectResult = z.infer<typeof TodoistConnectResultSchema>;
-
 // --- Todo Item Record ---
 
 const TodoStatusSchema = z.enum(['pending', 'completed', 'cancelled']);
@@ -56,6 +42,7 @@ export const TodoItemRecordSchema = z.object({
   dueDate: z.string().nullable().default(null),
   dueTime: z.string().nullable().default(null),
   labels: z.array(z.string()).default([]),
+  projectId: z.string().nullable().default(null),
   projectName: z.string().nullable().default(null),
   parentId: z.string().nullable().default(null),
   completedAt: z.string().nullable().default(null),
@@ -170,4 +157,3 @@ export const TodoReconcileResultSchema = z.object({
   errors: z.array(z.string()),
 });
 export type TodoReconcileResult = z.infer<typeof TodoReconcileResultSchema>;
-

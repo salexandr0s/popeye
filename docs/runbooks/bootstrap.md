@@ -95,7 +95,7 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
   - `identities/default.md` (canonical runtime identity)
   in `~/popeye-assistant`
 - set `providerAuth.google.clientId` / `providerAuth.google.clientSecret` to
-  enable the blessed Gmail and Google Calendar browser-OAuth flows
+  enable the blessed Gmail, Google Calendar, and Google Tasks browser-OAuth flows
 - set `providerAuth.github.clientId` / `providerAuth.github.clientSecret` to
   enable the blessed GitHub browser-OAuth flow
 
@@ -145,8 +145,9 @@ pop todo connect
 ```
 
 These commands open browser OAuth for the blessed direct-provider paths. The
-Todoist flow uses a manual API token and stores it in the secret store. The
-legacy CLI-backed adapters remain available only as experimental fallbacks.
+Google Tasks flow reuses the same shared Google OAuth substrate as Gmail and
+Calendar. Todo writes then use the stored OAuth secret through the runtime's
+connection and secret-store system.
 
 If you are driving a remote host over SSH, prefer `--no-open`, establish a
 local port forward for the callback port first, and then open the printed URL

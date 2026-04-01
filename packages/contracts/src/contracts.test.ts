@@ -83,6 +83,10 @@ import {
   SseEventEnvelopeSchema,
   InstructionSourceSchema,
   InstructionResolutionContextSchema,
+  ConnectionProviderKindSchema,
+  OAuthProviderKindSchema,
+  TodoProviderKindSchema,
+  TodoItemRecordSchema,
 } from '@popeye/contracts';
 
 // ---------------------------------------------------------------------------
@@ -846,6 +850,46 @@ describe('Enum coverage', () => {
 
     it('rejects invalid code', () => {
       expect(() => InterventionCodeSchema.parse('timeout')).toThrow();
+    });
+  });
+
+  describe('Todo/connection provider schemas', () => {
+    it('accepts google_tasks as a first-class provider kind', () => {
+      expect(TodoProviderKindSchema.parse('google_tasks')).toBe('google_tasks');
+      expect(ConnectionProviderKindSchema.parse('google_tasks')).toBe('google_tasks');
+      expect(OAuthProviderKindSchema.parse('google_tasks')).toBe('google_tasks');
+    });
+
+    it('rejects removed todoist provider kinds', () => {
+      expect(() => TodoProviderKindSchema.parse('todoist')).toThrow();
+      expect(() => ConnectionProviderKindSchema.parse('todoist')).toThrow();
+      expect(() => OAuthProviderKindSchema.parse('todoist')).toThrow();
+    });
+
+    it('parses todo items with a stable projectId field', () => {
+      const item = TodoItemRecordSchema.parse({
+        id: 'todo-1',
+        accountId: 'acct-1',
+        externalId: 'gtask-1',
+        title: 'Ship Google Tasks',
+        description: '',
+        priority: 4,
+        status: 'pending',
+        dueDate: '2026-04-01',
+        dueTime: null,
+        labels: [],
+        projectId: '@default',
+        projectName: 'My Tasks',
+        parentId: null,
+        completedAt: null,
+        createdAtExternal: null,
+        updatedAtExternal: '2026-04-01T09:00:00.000Z',
+        createdAt: '2026-04-01T09:00:00.000Z',
+        updatedAt: '2026-04-01T09:00:00.000Z',
+      });
+
+      expect(item.projectId).toBe('@default');
+      expect(item.projectName).toBe('My Tasks');
     });
   });
 });

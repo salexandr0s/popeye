@@ -215,6 +215,85 @@ describe('policy substrate API routes', () => {
     await app.close();
   });
 
+  it('starts and completes a Google Tasks OAuth connection through the control API', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { runtime, mutationHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'google_access_token',
+          refresh_token: 'google_refresh_token',
+          scope: 'https://www.googleapis.com/auth/tasks',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [{ id: '@default', title: 'My Tasks' }],
+        }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/connections/oauth/start',
+      headers: mutationHeaders,
+      payload: { providerKind: 'google_tasks', mode: 'read_write', syncIntervalSeconds: 900 },
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    const session = OAuthSessionResponseSchema.parse(startResponse.json());
+    expect(session.status).toBe('pending');
+    expect(session.authorizationUrl).toContain('https://accounts.google.com/o/oauth2/v2/auth');
+
+    const internalSession = (runtime as any).oauthSessionService.getSessionInternal(session.id);
+    expect(internalSession?.stateToken).toBeTruthy();
+
+    const callbackResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/connections/oauth/callback?code=test-code&state=${encodeURIComponent(internalSession.stateToken)}`,
+    });
+
+    expect(callbackResponse.statusCode).toBe(200);
+    expect(callbackResponse.body).toContain('Connection Complete');
+    expect(callbackResponse.body).toContain('google_tasks is now connected');
+
+    const completed = runtime.getOAuthSession(session.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.connectionId).toBeTruthy();
+    expect(completed?.accountId).toBeTruthy();
+
+    const connection = runtime.getConnection(completed!.connectionId!);
+    expect(connection).toMatchObject({
+      providerKind: 'google_tasks',
+      health: {
+        status: 'healthy',
+      },
+      sync: {
+        cursorKind: 'since',
+      },
+    });
+    expect(runtime.listTodoAccounts()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: completed?.accountId,
+          connectionId: completed?.connectionId,
+          providerKind: 'google_tasks',
+        }),
+      ]),
+    );
+
+    vi.unstubAllGlobals();
+    await runtime.close();
+    await app.close();
+  });
+
   it('POST /v1/approvals/:id/resolve approves a pending approval', async () => {
     const { runtime, mutationHeaders } = createTestEnv();
     const app = await createControlApi({ runtime });

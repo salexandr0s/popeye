@@ -12,8 +12,6 @@ it affects, and the migration steps an operator must follow.
 
 ## v0.1.0
 
-Initial release. No breaking changes from prior versions.
-
 | Change | Description | Migration steps |
 |--------|-------------|-----------------|
-| _n/a_  | _Initial release_ | _No migration required_ |
+| Remote todo provider shift | The blessed remote todo path is now Google Tasks. `google_tasks` replaces Todoist in the active provider surface, `POST /v1/todos/connect` is removed, and browser OAuth via `POST /v1/connections/oauth/start` is the connect path. | Reconnect todos through Google Tasks OAuth, update any callers to use `providerKind: "google_tasks"` with the generic OAuth start route, and stop relying on Todoist-only semantics such as native priority, labels, or due times. |

@@ -12,7 +12,7 @@
 > It is as autonomous as Popeye can honestly be. The intentionally non-autonomous parts are:
 >
 > 1. provider OAuth / browser consent,
-> 2. Todoist token entry,
+> 2. Google Tasks OAuth start,
 > 3. final human go/no-go judgment,
 > 4. signing / notarization credentials.
 
@@ -710,14 +710,14 @@ ssh -tt "$HOST" "
 " | tee "$LOCAL_EVIDENCE/02-remote/github.log"
 ```
 
-### 10.4 Todoist
+### 10.4 Google Tasks
 
 ```bash
 ssh -tt "$HOST" "
   set -e
   . \$HOME/.popeye-rr-env.sh
   cd \$POPEYE_REPO_DIR
-  pop todo connect --display-name 'Release Readiness Todoist'
+  pop todo connect --no-open
   pop todo accounts --json
   pop todo sync --json
   pop todo projects
@@ -725,7 +725,7 @@ ssh -tt "$HOST" "
 " | tee "$LOCAL_EVIDENCE/02-remote/todo-connect.log"
 ```
 
-Create one real Todo for later mutation and policy checks.
+Create one real Google Task for later mutation and policy checks.
 
 ```bash
 ssh "$HOST" "

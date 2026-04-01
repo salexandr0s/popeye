@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { OAuthSessionResponse } from '@popeye/contracts';
 import { useApi } from '../api/provider';
 import { useConnections, useTodoAccounts, useTodoProjects } from '../api/hooks';
 import { PageHeader } from '../components/page-header';
@@ -30,6 +31,7 @@ interface TodoItemRecord {
   dueDate: string | null;
   dueTime: string | null;
   labels: string[];
+  projectId: string | null;
   projectName: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -60,8 +62,6 @@ export function Todos() {
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [priorityFilter, setPriorityFilter] = useState<string>('');
   const [projectFilter, setProjectFilter] = useState<string>('');
-  const [todoistToken, setTodoistToken] = useState('');
-  const [todoistLabel, setTodoistLabel] = useState('Todoist');
   const [reprioritizeId, setReprioritizeId] = useState<string | null>(null);
   const [reprioritizeValue, setReprioritizeValue] = useState<string>('4');
   const [rescheduleId, setRescheduleId] = useState<string | null>(null);
@@ -75,6 +75,7 @@ export function Todos() {
     [account?.connectionId, connections.data],
   );
   const projects = useTodoProjects(account?.id ?? '');
+  const supportsReprioritize = account?.providerKind !== 'google_tasks';
 
   if (accounts.loading || connections.loading) return <Loading />;
   if (accounts.error || connections.error) return <ErrorDisplay message={accounts.error ?? connections.error ?? 'Unknown error'} />;
@@ -214,26 +215,6 @@ export function Todos() {
     }
   };
 
-  const handleTodoistConnect = async () => {
-    try {
-      setBusyAction('connect');
-      setActionError(null);
-      await api.post('/v1/todos/connect', {
-        apiToken: todoistToken,
-        displayName: todoistLabel,
-        label: todoistLabel,
-        mode: 'read_write',
-        syncIntervalSeconds: 900,
-      });
-      setTodoistToken('');
-      refetchAll();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Todoist connection failed');
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
   const handleGenerateDigest = async () => {
     if (!account) return;
     try {
@@ -248,50 +229,70 @@ export function Todos() {
     }
   };
 
+  const pollOAuthSession = async (sessionId: string): Promise<void> => {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const latest = await api.get<OAuthSessionResponse>(`/v1/connections/oauth/sessions/${encodeURIComponent(sessionId)}`);
+      if (latest.status === 'pending') {
+        continue;
+      }
+      if (latest.status === 'completed') {
+        refetchAll();
+        return;
+      }
+      throw new Error(latest.error ?? `OAuth session ${latest.status}`);
+    }
+    throw new Error('OAuth connection timed out');
+  };
+
+  const handleGoogleTasksConnect = async () => {
+    try {
+      setBusyAction('connect');
+      setActionError(null);
+      const session = await api.post<OAuthSessionResponse>('/v1/connections/oauth/start', {
+        providerKind: 'google_tasks',
+        mode: 'read_write',
+        syncIntervalSeconds: 900,
+      });
+      window.open(session.authorizationUrl, '_blank', 'noopener,noreferrer');
+      await pollOAuthSession(session.id);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Google Tasks connection failed');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   if (!account) {
     return (
       <>
         <PageHeader
           title="Todos"
-          description="Task management with Todoist integration, sync, and digest views."
+          description="Task management with Google Tasks sync, project mapping, and digest views."
         />
         <div className="mb-[24px] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
-          <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Connect Todoist</h2>
+          <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Connect Google Tasks</h2>
           <p className="mt-[4px] text-[14px] text-[var(--color-fg-muted)]">
-            Provide your Todoist API token to connect.
+            Browser OAuth is the blessed path. Task lists map to projects; priorities, labels, and due times are unsupported.
           </p>
           {actionError ? (
             <div className="mt-[12px]">
               <ErrorDisplay message={actionError} />
             </div>
           ) : null}
-          <div className="mt-[16px] grid gap-[12px] md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-            <input
-              className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
-              onChange={(event) => setTodoistLabel(event.target.value)}
-              placeholder="Label"
-              value={todoistLabel}
-            />
-            <input
-              className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-transparent px-[12px] py-[8px]"
-              onChange={(event) => setTodoistToken(event.target.value)}
-              placeholder="Todoist API token"
-              type="password"
-              value={todoistToken}
-            />
+          <div className="mt-[16px] flex gap-[12px]">
             <button
               className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-              disabled={todoistToken.trim().length === 0}
-              onClick={() => void handleTodoistConnect()}
+              onClick={() => void handleGoogleTasksConnect()}
               type="button"
             >
-              {busyAction === 'connect' ? 'Connecting…' : 'Connect Todoist'}
+              {busyAction === 'connect' ? 'Connecting…' : 'Connect Google Tasks'}
             </button>
           </div>
         </div>
         <EmptyState
           title="No todo accounts"
-          description="Connect a Todoist account to start managing tasks."
+          description="Connect Google Tasks to start managing synced task lists."
         />
       </>
     );
@@ -301,7 +302,7 @@ export function Todos() {
     <div>
       <PageHeader
         title="Todos"
-        description="Task management with Todoist integration, sync, and digest views."
+        description="Task management with Google Tasks sync, project mapping, and digest views."
       />
 
       <div className="mb-[24px] grid gap-[16px] md:grid-cols-3">
@@ -359,6 +360,11 @@ export function Todos() {
       </div>
 
       <div className="mb-[24px] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-[20px]">
+        {account.providerKind === 'google_tasks' ? (
+          <p className="mb-[12px] text-[13px] text-[var(--color-fg-muted)]">
+            Google Tasks maps task lists to projects. Native priorities and labels are unsupported; due dates are date-only.
+          </p>
+        ) : null}
         <h2 className="text-[16px] font-semibold text-[var(--color-fg)]">Todo List</h2>
         <div className="mt-[12px] flex flex-wrap gap-[12px]">
           <select
@@ -418,13 +424,15 @@ export function Todos() {
                       {busyAction === `complete:${todo.id}` ? 'Completing…' : 'Complete'}
                     </button>
                   ) : null}
-                  <button
-                    className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
-                    onClick={() => setReprioritizeId(reprioritizeId === todo.id ? null : todo.id)}
-                    type="button"
-                  >
-                    Reprioritize
-                  </button>
+                  {supportsReprioritize ? (
+                    <button
+                      className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
+                      onClick={() => setReprioritizeId(reprioritizeId === todo.id ? null : todo.id)}
+                      type="button"
+                    >
+                      Reprioritize
+                    </button>
+                  ) : null}
                   <button
                     className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
                     onClick={() => setRescheduleId(rescheduleId === todo.id ? null : todo.id)}

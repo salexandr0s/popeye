@@ -156,8 +156,6 @@ import type {
   TodoReconcileResult,
   TodoSyncResult,
   TodoCreateInput,
-  TodoistConnectInput,
-  TodoistConnectResult,
   PersonActivityRollup,
   PersonIdentityAttachInput,
   PersonIdentityDetachInput,
@@ -671,15 +669,16 @@ export class PopeyeRuntimeService {
       capabilityRegistry: this.capabilityRegistry,
       capabilityStoresDir: storesDir,
       log: this.log,
+      googleOAuthClient: {
+        clientId: this.config.providerAuth?.google?.clientId,
+        clientSecret: this.config.providerAuth?.google?.clientSecret,
+      },
       buildCapabilityContext: () => this.buildCapabilityContext(),
       requireConnectionForOperation: (input) => this.requireConnectionForOperation(input),
       requireTodoAccountForOperation: (svc, accountId, purpose, options) => this.requireTodoAccountForOperation(svc, accountId, purpose, options),
       updateConnectionRollups: (input) => this.updateConnectionRollups(input),
-      listConnections: (domain) => this.listConnections(domain),
-      createConnection: (input) => this.createConnection(input),
-      updateConnection: (id, input) => this.updateConnection(id, input),
-      setSecret: (input) => this.secretStore.setSecret(input),
-      rotateSecret: (id, newValue) => this.secretStore.rotateSecret(id, newValue),
+      classifyConnectionFailure: (message) => this.classifyConnectionFailure(message),
+      requireReadWriteConnection: (connection, purpose) => this.requireReadWriteConnection(connection, purpose),
       getSecretValue: (id) => this.secretStore.getSecretValue(id),
     });
     this.financeFacade = new CapabilityFacade(
@@ -3711,19 +3710,15 @@ export class PopeyeRuntimeService {
     return this.todoOps.getTodoDigest(accountId);
   }
 
-  connectTodoist(input: TodoistConnectInput): TodoistConnectResult {
-    return this.todoOps.connectTodoist(input);
-  }
-
   registerTodoAccount(input: TodoAccountRegistrationInput): TodoAccountRecord {
     return this.todoOps.registerTodoAccount(input);
   }
 
-  createTodo(input: TodoCreateInput): TodoItemRecord {
+  createTodo(input: TodoCreateInput): Promise<TodoItemRecord> {
     return this.todoOps.createTodo(input);
   }
 
-  completeTodo(id: string): TodoItemRecord | null {
+  completeTodo(id: string): Promise<TodoItemRecord | null> {
     return this.todoOps.completeTodo(id);
   }
 
@@ -3731,11 +3726,11 @@ export class PopeyeRuntimeService {
     return this.todoOps.reprioritizeTodo(todoId, priority);
   }
 
-  rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): TodoItemRecord | null {
+  rescheduleTodo(todoId: string, dueDate: string, dueTime?: string | null): Promise<TodoItemRecord | null> {
     return this.todoOps.rescheduleTodo(todoId, dueDate, dueTime);
   }
 
-  moveTodo(todoId: string, projectName: string): TodoItemRecord | null {
+  moveTodo(todoId: string, projectName: string): Promise<TodoItemRecord | null> {
     return this.todoOps.moveTodo(todoId, projectName);
   }
 
@@ -4139,6 +4134,8 @@ export class PopeyeRuntimeService {
       resolveEmailAdapter: (connectionId) => this.resolveEmailAdapterForConnection(connectionId),
       resolveCalendarAdapter: (connectionId) => this.resolveCalendarAdapterForConnection(connectionId),
       resolveGithubAdapter: (connectionId) => this.resolveGithubAdapterForConnection(connectionId),
+      createTodoViaRuntime: (input) => this.todoOps.createTodo(input),
+      completeTodoViaRuntime: (todoId) => this.todoOps.completeTodo(todoId),
     };
   }
 }

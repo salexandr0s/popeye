@@ -59,6 +59,14 @@ function makeConfig(dir: string): AppConfig {
 }
 
 describe('CLI command workflows (service-level)', () => {
+  it('help shows Google Tasks as the todo connect path', async () => {
+    const result = await runPop('todo', 'connect', '--help');
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Connect Google Tasks via browser OAuth');
+    expect(result.stdout).toContain('pop todo connect [--google-tasks]');
+  });
+
   // 1. `task run` workflow
   it('task run: createTask with autoEnqueue, startScheduler, waitForJobTerminalState produces succeeded result', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-taskrun-'));

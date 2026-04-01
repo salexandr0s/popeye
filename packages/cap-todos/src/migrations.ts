@@ -101,5 +101,24 @@ export function getTodoMigrations(): CapabilityMigration[] {
         END;`,
       ],
     },
+    {
+      id: 'todos-006-project-id',
+      statements: [
+        'ALTER TABLE todo_items ADD COLUMN project_id TEXT;',
+      ],
+    },
+    {
+      id: 'todos-007-remove-todoist',
+      statements: [
+        `DELETE FROM todo_items
+         WHERE account_id IN (SELECT id FROM todo_accounts WHERE provider_kind = 'todoist');`,
+        `DELETE FROM todo_projects
+         WHERE account_id IN (SELECT id FROM todo_accounts WHERE provider_kind = 'todoist');`,
+        `DELETE FROM todo_digests
+         WHERE account_id IN (SELECT id FROM todo_accounts WHERE provider_kind = 'todoist');`,
+        `DELETE FROM todo_accounts
+         WHERE provider_kind = 'todoist';`,
+      ],
+    },
   ];
 }

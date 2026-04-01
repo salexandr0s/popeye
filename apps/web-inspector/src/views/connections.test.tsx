@@ -204,8 +204,8 @@ describe('Connections', () => {
       makeConnection({
         id: 'connection-2',
         domain: 'todos',
-        providerKind: 'todoist',
-        label: 'Todoist',
+        providerKind: 'google_tasks',
+        label: 'Google Tasks',
       }),
     ], { refetch: refetchConnections }));
     hooks.useEmailAccounts.mockReturnValue(makeResult([
@@ -220,8 +220,8 @@ describe('Connections', () => {
       {
         id: 'todo-account-1',
         connectionId: 'connection-2',
-        providerKind: 'todoist',
-        displayName: 'Todoist',
+        providerKind: 'google_tasks',
+        displayName: 'Google Tasks',
       },
     ]));
     api.post.mockResolvedValueOnce({ accountId: 'email-account-1', synced: 0, updated: 0, errors: [] });

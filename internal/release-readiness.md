@@ -583,18 +583,17 @@ pop github digest --json
 - sync succeeds
 - repos/PRs/issues/notifications/digest all work
 
-## 9.6 Todos (blessed Todoist path)
+## 9.6 Todos (blessed Google Tasks path)
 
 ### Commands
 
 ```bash
-pop todo connect --display-name "Release Readiness Todoist"
+pop todo connect --no-open
 pop todo accounts --json
 pop todo sync --json
 pop todo projects
 pop todo list --limit 20 --json
-pop todo add "release readiness test todo" --priority 3
-pop todo reprioritize <todo-id> 2
+pop todo add "release readiness test todo"
 pop todo reschedule <todo-id> 2026-04-01
 pop todo complete <todo-id>
 pop todo digest --json
@@ -958,7 +957,7 @@ Before the soak window starts:
 
 - at least one workspace configured
 - real Pi engine enabled
-- Gmail / Calendar / GitHub / Todoist connected
+- Gmail / Calendar / GitHub / Google Tasks connected
 - finance + medical vaults/imports established
 - at least one file root indexed
 - standing approvals / automation grants configured as intended
