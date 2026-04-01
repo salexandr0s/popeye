@@ -70,4 +70,84 @@ struct ServiceTests {
         #expect(snapshot.securityAudit == nil)
         #expect(snapshot.status.ok == true)
     }
+
+    @Test("Identity endpoints encode workspace query")
+    func identityEndpoints() {
+        let identities = Endpoint.identities(workspaceId: "default")
+        let defaultIdentity = Endpoint.defaultIdentity(workspaceId: "default")
+
+        #expect(identities.path == "/v1/identities")
+        #expect(identities.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(defaultIdentity.path == "/v1/identities/default")
+        #expect(defaultIdentity.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+    }
+
+    @Test("OAuth and secret endpoints use the expected paths")
+    func setupActionEndpoints() {
+        let oauthStart = Endpoint.startOAuthConnection
+        let oauthSession = Endpoint.oauthConnectionSession(id: "oauth-session-001")
+        let secretStore = Endpoint.storeSecret
+
+        #expect(oauthStart.path == "/v1/connections/oauth/start")
+        #expect(oauthStart.method == .post)
+        #expect(oauthSession.path == "/v1/connections/oauth/sessions/oauth-session-001")
+        #expect(secretStore.path == "/v1/secrets")
+        #expect(secretStore.method == .post)
+    }
+
+    @Test("Workspace and Telegram control endpoints use the expected paths")
+    func workspaceAndTelegramEndpoints() {
+        let workspaces = Endpoint.workspaces
+        let telegramConfig = Endpoint.telegramConfig
+        let saveTelegramConfig = Endpoint.saveTelegramConfig
+        let applyTelegramConfig = Endpoint.applyTelegramConfig
+        let restartDaemon = Endpoint.restartDaemon
+        let mutationReceipts = Endpoint.mutationReceipts(component: "telegram", limit: 6)
+
+        #expect(workspaces.path == "/v1/workspaces")
+        #expect(telegramConfig.path == "/v1/config/telegram")
+        #expect(saveTelegramConfig.method == .post)
+        #expect(applyTelegramConfig.path == "/v1/daemon/components/telegram/apply")
+        #expect(restartDaemon.path == "/v1/daemon/restart")
+        #expect(mutationReceipts.path == "/v1/governance/mutation-receipts")
+        #expect(mutationReceipts.queryItems.contains(URLQueryItem(name: "component", value: "telegram")))
+        #expect(mutationReceipts.queryItems.contains(URLQueryItem(name: "limit", value: "6")))
+    }
+
+    @Test("Memory list endpoint encodes optional filters")
+    func memoryListEndpoint() {
+        let endpoint = Endpoint.memories(
+            type: "semantic",
+            scope: "default",
+            workspaceId: "default",
+            projectId: "proj-1",
+            includeGlobal: true,
+            limit: 200
+        )
+
+        #expect(endpoint.path == "/v1/memory")
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "type", value: "semantic")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "scope", value: "default")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "projectId", value: "proj-1")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "includeGlobal", value: "true")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "limit", value: "200")))
+    }
+
+    @Test("Memory search endpoint encodes workspace-aware filters once")
+    func memorySearchEndpoint() {
+        let endpoint = Endpoint.memorySearch(
+            query: "triage",
+            limit: 50,
+            scope: "default",
+            workspaceId: "workspace-2",
+            types: "semantic",
+            domains: "coding"
+        )
+
+        #expect(endpoint.path == "/v1/memory/search")
+        #expect(endpoint.queryItems.filter { $0.name == "workspaceId" }.count == 1)
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "workspaceId", value: "workspace-2")))
+        #expect(endpoint.queryItems.contains(URLQueryItem(name: "limit", value: "50")))
+    }
 }

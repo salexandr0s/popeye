@@ -233,6 +233,32 @@ struct DTODecodingTests {
         #expect(dto.resolvedAt == nil)
     }
 
+    @Test("Decode OAuthSessionDTO from fixture")
+    func decodeOAuthSession() throws {
+        let data = try loadFixture("oauth_session")
+        let dto = try decoder.decode(OAuthSessionDTO.self, from: data)
+
+        #expect(dto.id == "oauth-session-001")
+        #expect(dto.providerKind == "github")
+        #expect(dto.domain == "github")
+        #expect(dto.status == "pending")
+        #expect(dto.authorizationUrl.contains("github.com/login/oauth/authorize"))
+        #expect(dto.connectionId == "conn-gh-001")
+        #expect(dto.completedAt == nil)
+    }
+
+    @Test("Decode SecretRefDTO from fixture")
+    func decodeSecretRef() throws {
+        let data = try loadFixture("secret_ref")
+        let dto = try decoder.decode(SecretRefDTO.self, from: data)
+
+        #expect(dto.id == "secret-telegram-bot")
+        #expect(dto.provider == "keychain")
+        #expect(dto.key == "telegram-bot-token")
+        #expect(dto.connectionId == nil)
+        #expect(dto.description == "Telegram bot token")
+    }
+
     // MARK: - Memory DTOs
 
     @Test("Decode MemoryRecordDTO from fixture")
@@ -349,6 +375,9 @@ struct DTODecodingTests {
 
         #expect(dto.id == "bundle-abc123")
         #expect(dto.sources.count == 2)
+        #expect(dto.playbooks.count == 1)
+        #expect(dto.playbooks[0].id == "triage")
+        #expect(dto.playbooks[0].scope == "workspace")
         #expect(dto.sources[0].type == "pi_base")
         #expect(dto.sources[0].precedence == 1)
         #expect(dto.sources[1].type == "workspace")
@@ -356,6 +385,127 @@ struct DTODecodingTests {
         #expect(dto.compiledText.contains("helpful assistant"))
         #expect(dto.bundleHash == "bundlehash-xyz")
         #expect(dto.warnings.isEmpty)
+    }
+
+    @Test("Decode IdentityRecordDTO list from fixture")
+    func decodeIdentityList() throws {
+        let data = try loadFixture("identity_list")
+        let dto = try decoder.decode([IdentityRecordDTO].self, from: data)
+
+        #expect(dto.count == 2)
+        #expect(dto[0].id == "default")
+        #expect(dto[0].workspaceId == "default")
+        #expect(dto[0].exists == true)
+        #expect(dto[0].selected == true)
+        #expect(dto[1].path == "identities/reviewer.md")
+    }
+
+    @Test("Decode WorkspaceIdentityDefaultDTO from fixture")
+    func decodeDefaultIdentity() throws {
+        let data = try loadFixture("identity_default")
+        let dto = try decoder.decode(WorkspaceIdentityDefaultDTO.self, from: data)
+
+        #expect(dto.workspaceId == "default")
+        #expect(dto.identityId == "default")
+        #expect(dto.updatedAt == "2026-03-24T08:15:00Z")
+    }
+
+    @Test("Decode WorkspaceRecordDTO list from inline JSON")
+    func decodeWorkspaceList() throws {
+        let data = Data("""
+        [
+          {
+            "id": "default",
+            "name": "Default workspace",
+            "rootPath": "/Users/example/Assistant",
+            "createdAt": "2026-03-31T09:00:00Z"
+          },
+          {
+            "id": "projects",
+            "name": "Projects",
+            "rootPath": "/Users/example/Projects",
+            "createdAt": "2026-03-31T09:05:00Z"
+          }
+        ]
+        """.utf8)
+
+        let dto = try decoder.decode([WorkspaceRecordDTO].self, from: data)
+
+        #expect(dto.count == 2)
+        #expect(dto[0].id == "default")
+        #expect(dto[0].createdAt == "2026-03-31T09:00:00Z")
+        #expect(dto[1].rootPath == "/Users/example/Projects")
+    }
+
+    @Test("Decode TelegramConfigSnapshotDTO from inline JSON")
+    func decodeTelegramConfigSnapshot() throws {
+        let data = Data("""
+        {
+          "persisted": {
+            "enabled": true,
+            "allowedUserId": "5315323298",
+            "secretRefId": "secret-telegram-bot"
+          },
+          "applied": {
+            "enabled": false,
+            "allowedUserId": null,
+            "secretRefId": null
+          },
+          "effectiveWorkspaceId": "default",
+          "secretAvailability": "available",
+          "staleComparedToApplied": true,
+          "warnings": [
+            "Saved Telegram settings differ from the daemon-applied settings."
+          ],
+          "managementMode": "launchd",
+          "restartSupported": true
+        }
+        """.utf8)
+
+        let dto = try decoder.decode(TelegramConfigSnapshotDTO.self, from: data)
+
+        #expect(dto.persisted.enabled == true)
+        #expect(dto.persisted.allowedUserId == "5315323298")
+        #expect(dto.applied.enabled == false)
+        #expect(dto.secretAvailability == "available")
+        #expect(dto.staleComparedToApplied == true)
+        #expect(dto.managementMode == "launchd")
+        #expect(dto.restartSupported == true)
+    }
+
+    @Test("Decode MutationReceiptDTO from inline JSON")
+    func decodeMutationReceipt() throws {
+        let data = Data("""
+        {
+          "id": "mut-telegram-001",
+          "kind": "telegram_config_update",
+          "component": "telegram",
+          "status": "succeeded",
+          "summary": "Saved Telegram config: enabled, allowedUserId, secretRefId",
+          "details": "enabled false → true; secretRefId absent → present",
+          "actorRole": "operator",
+          "workspaceId": null,
+          "usage": {
+            "provider": "control-plane",
+            "model": "mutation",
+            "tokensIn": 0,
+            "tokensOut": 0,
+            "estimatedCostUsd": 0
+          },
+          "metadata": {
+            "effectiveWorkspaceId": "default"
+          },
+          "createdAt": "2026-03-31T09:05:00Z"
+        }
+        """.utf8)
+
+        let dto = try decoder.decode(MutationReceiptDTO.self, from: data)
+
+        #expect(dto.kind == "telegram_config_update")
+        #expect(dto.component == "telegram")
+        #expect(dto.status == "succeeded")
+        #expect(dto.usage.provider == "control-plane")
+        #expect(dto.metadata["effectiveWorkspaceId"] == "default")
     }
 
     // MARK: - Telegram DTOs

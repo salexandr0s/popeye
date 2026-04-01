@@ -3,6 +3,8 @@ import PopeyeAPI
 
 struct InstructionPreviewView: View {
     @Bindable var store: InstructionPreviewStore
+    @Environment(AppModel.self) private var appModel
+    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -11,6 +13,18 @@ struct InstructionPreviewView: View {
             contentArea
         }
         .navigationTitle("Instructions")
+        .task(id: appModel.selectedWorkspaceID) {
+            store.adoptWorkspaceScope(appModel.selectedWorkspaceID)
+            await store.loadDefaultPreviewIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
+            Task { await store.loadPreview() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
+            if let signal = notification.object as? InvalidationSignal, [.general].contains(signal) {
+                debouncer.schedule { [store] in await store.loadPreview() }
+            }
+        }
     }
 
     private var scopeBar: some View {
@@ -59,6 +73,9 @@ struct InstructionPreviewView: View {
                 metadataSection(preview)
                 if !preview.warnings.isEmpty {
                     warningsSection(preview.warnings)
+                }
+                if !preview.playbooks.isEmpty {
+                    playbooksSection(preview.playbooks)
                 }
                 sourcesSection(preview.sources)
                 compiledSection(preview.compiledText)
@@ -115,6 +132,26 @@ struct InstructionPreviewView: View {
                             .lineLimit(1)
                     }
                     Spacer()
+                }
+            }
+        }
+    }
+
+    private func playbooksSection(_ playbooks: [AppliedPlaybookDTO]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Applied Playbooks")
+                .font(.headline)
+
+            ForEach(playbooks) { playbook in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(playbook.title)
+                        Text(playbook.id)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    StatusBadge(state: playbook.scope)
                 }
             }
         }

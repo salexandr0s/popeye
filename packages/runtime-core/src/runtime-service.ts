@@ -25,6 +25,7 @@ import type {
   DomainKind,
   EngineCapabilities,
   ExecutionEnvelope,
+  AuthRole,
   IdentityRecord,
   IntegrityReport,
   InterventionRecord,
@@ -51,6 +52,9 @@ import type {
   RunEventRecord,
   RunReply,
   RunRecord,
+  MutationReceiptKind,
+  MutationReceiptRecord,
+  MutationReceiptStatus,
   SchedulerStatusResponse,
   SecretRefRecord,
   SecurityAuditEvent,
@@ -64,6 +68,7 @@ import type {
   TelegramRelayCheckpoint,
   TelegramRelayCheckpointCommitRequest,
   TelegramSendAttemptRecord,
+  UsageMetrics,
   UsageSummary,
   AnalyticsGranularity,
   AnalyticsUsageResponse,
@@ -235,6 +240,7 @@ import { GithubFacade } from './github-facade.js';
 import { CalendarFacade } from './calendar-facade.js';
 import { TodoFacade } from './todo-facade.js';
 import { OAuthConnectService } from './oauth-connect.js';
+import { MutationReceiptManager } from './mutation-receipt-manager.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, type EmailProviderAdapter } from '@popeye/cap-email';
 import type { GithubApiAdapter } from '@popeye/cap-github';
@@ -350,6 +356,7 @@ export class PopeyeRuntimeService {
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly sessionService: SessionService;
   private readonly receiptManager: ReceiptManager;
+  private readonly mutationReceiptManager: MutationReceiptManager;
   private readonly messageIngestion: MessageIngestionService;
   private readonly taskManager: TaskManager;
   private readonly queryService: QueryService;
@@ -531,6 +538,12 @@ export class PopeyeRuntimeService {
 
     this.receiptManager = new ReceiptManager(this.databases, config, {
       captureMemory: (input) => this.memoryLifecycle.insertMemory(input),
+    });
+    this.mutationReceiptManager = new MutationReceiptManager({
+      db: this.databases.app,
+      paths: this.databases.paths,
+      redactionPatterns: config.security.redactionPatterns,
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
     });
     this.taskManager = new TaskManager(this.databases, {
       emit: (event, payload) => this.emit(event, payload),
@@ -1162,6 +1175,28 @@ export class PopeyeRuntimeService {
 
   getUsageSummary(): UsageSummary {
     return this.receiptManager.getUsageSummary();
+  }
+
+  writeMutationReceipt(input: {
+    kind: MutationReceiptKind;
+    component: string;
+    status: MutationReceiptStatus;
+    summary: string;
+    details: string;
+    actorRole: AuthRole;
+    workspaceId?: string | null;
+    usage?: UsageMetrics;
+    metadata?: Record<string, string>;
+  }): MutationReceiptRecord {
+    return this.mutationReceiptManager.writeReceipt(input);
+  }
+
+  listMutationReceipts(component?: string, limit = 50): MutationReceiptRecord[] {
+    return this.mutationReceiptManager.listReceipts(component, limit);
+  }
+
+  getMutationReceipt(receiptId: string): MutationReceiptRecord | null {
+    return this.mutationReceiptManager.getReceipt(receiptId);
   }
 
   // --- Analytics ---

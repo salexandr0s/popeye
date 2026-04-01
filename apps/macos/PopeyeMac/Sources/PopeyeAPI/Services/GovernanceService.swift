@@ -14,4 +14,8 @@ public struct GovernanceService: Sendable {
     public func loadApprovals() async throws -> [ApprovalDTO] {
         try await client.listApprovals()
     }
+
+    public func loadMutationReceipts(component: String? = nil, limit: Int = 10) async throws -> [MutationReceiptDTO] {
+        try await client.listMutationReceipts(component: component, limit: limit)
+    }
 }

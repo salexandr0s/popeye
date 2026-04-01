@@ -771,6 +771,26 @@ const APP_MIGRATIONS: Migration[] = [
       );`,
     ],
   },
+  {
+    id: '029-app-mutation-receipts',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS mutation_receipts (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        component TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        workspace_id TEXT,
+        usage_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`,
+      'CREATE INDEX IF NOT EXISTS idx_mutation_receipts_component_created ON mutation_receipts(component, created_at DESC);',
+      'CREATE INDEX IF NOT EXISTS idx_mutation_receipts_kind_created ON mutation_receipts(kind, created_at DESC);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

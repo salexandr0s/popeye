@@ -12,6 +12,17 @@ final class AppModel {
 
     var badgeCounts: BadgeCounts = BadgeCounts()
     var sseConnected = false
+    var workspaces: [WorkspaceRecordDTO] = []
+    var selectedWorkspaceID: String = UserDefaults.standard.string(forKey: "selectedWorkspaceID") ?? "default" {
+        didSet {
+            UserDefaults.standard.set(selectedWorkspaceID, forKey: "selectedWorkspaceID")
+            propagateWorkspaceSelection()
+        }
+    }
+
+    var selectedWorkspace: WorkspaceRecordDTO? {
+        workspaces.first { $0.id == selectedWorkspaceID }
+    }
 
     // MARK: - Settings (backed by UserDefaults)
 
@@ -51,6 +62,8 @@ final class AppModel {
     private var _connectionsStore: ConnectionsStore?
     private var _usageSecurityStore: UsageSecurityStore?
     private var _usageStore: UsageStore?
+    private var _setupStore: SetupStore?
+    private var _brainStore: BrainStore?
     private var _memoryStore: MemoryStore?
     private var _agentProfilesStore: AgentProfilesStore?
     private var _instructionPreviewStore: InstructionPreviewStore?
@@ -148,9 +161,26 @@ final class AppModel {
         return s
     }
 
+    func setupStore() -> SetupStore {
+        if let s = _setupStore { return s }
+        let s = SetupStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _setupStore = s
+        return s
+    }
+
+    func brainStore() -> BrainStore {
+        if let s = _brainStore { return s }
+        let s = BrainStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _brainStore = s
+        return s
+    }
+
     func memoryStore() -> MemoryStore {
         if let s = _memoryStore { return s }
         let s = MemoryStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
         _memoryStore = s
         return s
     }
@@ -165,6 +195,7 @@ final class AppModel {
     func instructionPreviewStore() -> InstructionPreviewStore {
         if let s = _instructionPreviewStore { return s }
         let s = InstructionPreviewStore(client: connectedClient)
+        s.adoptWorkspaceScope(selectedWorkspaceID)
         _instructionPreviewStore = s
         return s
     }
@@ -183,6 +214,40 @@ final class AppModel {
         selectedRoute = .runs
     }
 
+    func navigateToConnection(id: String?) {
+        if let id {
+            connectionsStore().selectedId = id
+        }
+        selectedRoute = .connections
+    }
+
+    func navigateToBrain() {
+        selectedRoute = .brain
+    }
+
+    func navigateToInstructions() {
+        selectedRoute = .instructionPreview
+    }
+
+    func navigateToMemory(id: String? = nil, preferredMode: MemoryStore.ViewMode? = nil) {
+        let store = memoryStore()
+        if let preferredMode {
+            store.viewMode = preferredMode
+        }
+        if let id {
+            store.selectedMemoryId = id
+        }
+        selectedRoute = .memory
+    }
+
+    func navigateToAgentProfiles() {
+        selectedRoute = .agentProfiles
+    }
+
+    func navigateToTelegram() {
+        selectedRoute = .telegram
+    }
+
     // MARK: - Connection
 
     func connect(baseURL: String, token: String) async {
@@ -196,6 +261,7 @@ final class AppModel {
             _ = try await newClient.status()
             try credentialStore.saveToken(token)
             client = newClient
+            await refreshWorkspaces(using: newClient)
             connectionState = .connected
             if sseEnabled { startSSE() }
         } catch let error as APIError {
@@ -209,6 +275,7 @@ final class AppModel {
         stopSSE()
         client = nil
         clearStores()
+        workspaces = []
         connectionState = .disconnected
         badgeCounts = BadgeCounts()
         try? credentialStore.deleteToken()
@@ -217,6 +284,29 @@ final class AppModel {
     func restoreSession() async {
         guard let token = try? credentialStore.retrieveToken() else { return }
         await connect(baseURL: baseURL, token: token)
+    }
+
+    private func refreshWorkspaces(using client: ControlAPIClient) async {
+        let service = SystemService(client: client)
+        do {
+            let loadedWorkspaces = try await service.loadWorkspaces()
+            workspaces = loadedWorkspaces
+            if loadedWorkspaces.contains(where: { $0.id == selectedWorkspaceID }) == false {
+                selectedWorkspaceID = loadedWorkspaces.first?.id ?? "default"
+            } else {
+                propagateWorkspaceSelection()
+            }
+        } catch {
+            workspaces = []
+            selectedWorkspaceID = "default"
+        }
+    }
+
+    private func propagateWorkspaceSelection() {
+        _setupStore?.workspaceID = selectedWorkspaceID
+        _brainStore?.workspaceID = selectedWorkspaceID
+        _memoryStore?.workspaceID = selectedWorkspaceID
+        _instructionPreviewStore?.adoptWorkspaceScope(selectedWorkspaceID)
     }
 
     private func clearStores() {
@@ -232,6 +322,8 @@ final class AppModel {
         _connectionsStore = nil
         _usageSecurityStore = nil
         _usageStore = nil
+        _setupStore = nil
+        _brainStore = nil
         _memoryStore = nil
         _agentProfilesStore = nil
         _instructionPreviewStore = nil

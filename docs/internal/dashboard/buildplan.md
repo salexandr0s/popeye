@@ -2,6 +2,9 @@
 
 ## Purpose
 
+**Historical note:** this document defines the operator-console-first foundation. For the current broader product direction, also read `docs/internal/dashboard/product_direction.md` and `docs/internal/dashboard/personal_control_center_roadmap.md`.
+
+
 This document defines the phased implementation plan for Popeye’s native macOS dashboard/client.
 
 It assumes the design and architecture documents in this folder are the source of truth for scope and structure. The plan is explicitly incremental and non-destructive: every phase should leave the repo in a working state without forcing broad rewrites later.

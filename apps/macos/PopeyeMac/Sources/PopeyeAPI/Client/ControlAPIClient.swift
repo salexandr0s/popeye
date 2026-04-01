@@ -78,6 +78,10 @@ public actor ControlAPIClient {
         try await get(.securityAudit)
     }
 
+    public func listWorkspaces() async throws -> [WorkspaceRecordDTO] {
+        try await get(.workspaces)
+    }
+
     // MARK: - Execution
 
     public func listTasks() async throws -> [TaskRecordDTO] {
@@ -144,6 +148,24 @@ public actor ControlAPIClient {
         try await get(.connections)
     }
 
+    public func startOAuthConnection(input: OAuthConnectStartInput) async throws -> OAuthSessionDTO {
+        try await post(.startOAuthConnection, body: input)
+    }
+
+    public func getOAuthConnectionSession(id: String) async throws -> OAuthSessionDTO {
+        try await get(.oauthConnectionSession(id: id))
+    }
+
+    // MARK: - Identities
+
+    public func listIdentities(workspaceId: String) async throws -> [IdentityRecordDTO] {
+        try await get(.identities(workspaceId: workspaceId))
+    }
+
+    public func getDefaultIdentity(workspaceId: String) async throws -> WorkspaceIdentityDefaultDTO {
+        try await get(.defaultIdentity(workspaceId: workspaceId))
+    }
+
     // MARK: - Mutations
 
     public func retryRun(id: String) async throws -> RunRecordDTO {
@@ -174,14 +196,52 @@ public actor ControlAPIClient {
         try await post(.resolveApproval(id: id), body: ApprovalResolveInput(decision: decision, decisionReason: reason))
     }
 
-    // MARK: - Memory
-
-    public func searchMemories(query: String, limit: Int = 20, scope: String? = nil, types: String? = nil, domains: String? = nil) async throws -> MemorySearchResponseDTO {
-        try await get(.memorySearch(query: query, limit: limit, scope: scope, types: types, domains: domains))
+    public func storeSecret(input: StoreSecretInput) async throws -> SecretRefDTO {
+        try await post(.storeSecret, body: input)
     }
 
-    public func listMemories() async throws -> [MemoryRecordDTO] {
-        try await get(.memories)
+    public func telegramConfig() async throws -> TelegramConfigSnapshotDTO {
+        try await get(.telegramConfig)
+    }
+
+    public func saveTelegramConfig(input: TelegramConfigUpdateInput) async throws -> TelegramConfigSnapshotDTO {
+        try await post(.saveTelegramConfig, body: input)
+    }
+
+    public func applyTelegramConfig() async throws -> TelegramApplyResponseDTO {
+        try await post(.applyTelegramConfig)
+    }
+
+    public func restartDaemon() async throws -> DaemonRestartResponseDTO {
+        try await post(.restartDaemon)
+    }
+
+    public func listMutationReceipts(component: String? = nil, limit: Int = 10) async throws -> [MutationReceiptDTO] {
+        try await get(.mutationReceipts(component: component, limit: limit))
+    }
+
+    // MARK: - Memory
+
+    public func searchMemories(query: String, limit: Int = 20, scope: String? = nil, workspaceId: String? = nil, types: String? = nil, domains: String? = nil) async throws -> MemorySearchResponseDTO {
+        try await get(.memorySearch(query: query, limit: limit, scope: scope, workspaceId: workspaceId, types: types, domains: domains))
+    }
+
+    public func listMemories(
+        type: String? = nil,
+        scope: String? = nil,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        includeGlobal: Bool? = nil,
+        limit: Int? = nil
+    ) async throws -> [MemoryRecordDTO] {
+        try await get(.memories(
+            type: type,
+            scope: scope,
+            workspaceId: workspaceId,
+            projectId: projectId,
+            includeGlobal: includeGlobal,
+            limit: limit
+        ))
     }
 
     public func getMemory(id: String) async throws -> MemoryRecordDTO {

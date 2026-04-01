@@ -78,6 +78,7 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
   const entryPoint = xmlEscape(options.daemonEntryPoint);
   const workDir = xmlEscape(options.workingDirectory);
   const configPath = xmlEscape(options.configPath);
+  const launchdLabel = label;
   const outLog = xmlEscape(join(options.workingDirectory, 'launchd.out.log'));
   const errLog = xmlEscape(join(options.workingDirectory, 'launchd.err.log'));
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -97,6 +98,8 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
   <dict>
     <key>POPEYE_CONFIG_PATH</key>
     <string>${configPath}</string>
+    <key>POPEYE_LAUNCHD_LABEL</key>
+    <string>${launchdLabel}</string>
   </dict>
   <key>KeepAlive</key>
   <true/>

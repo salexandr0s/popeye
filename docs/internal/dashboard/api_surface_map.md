@@ -32,8 +32,8 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | --- | --- | --- |
 | `SystemService` | health, status, scheduler, engine capabilities, usage, session roots, security audit | v1 |
 | `OperationsService` | tasks, jobs, runs, run events, envelopes, receipts, interventions, instruction previews | v1 |
-| `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults | approvals in v1; rest later |
-| `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets | overview in v1; deeper flows later |
+| `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults, mutation receipts | approvals + mutation receipts in v1; rest later |
+| `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets, Telegram config/apply helpers | overview + provider setup in v1; deeper flows later |
 | `UsageSecurityService` | usage + security summary composition | v1 |
 | `InstructionsService` | instruction previews | later |
 | `MemoryService` | memory search/audit/list/detail/maintenance | later |
@@ -84,7 +84,7 @@ These endpoints are enough to power a solid dashboard without any backend work.
 
 | Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/workspaces` | Later label enrichment / filters | Read | `operator` | Poll rarely or on demand | Workspace list items | Ready with wrapper | Not needed for basic v1 because runtime records already carry workspace ids | `OperationsService` |
+| `GET /v1/workspaces` | App-wide workspace picker; Brain / Memory / Instructions context | Read | `operator` | Poll on connect or explicit refresh | Workspace list items | Ready with wrapper | Now part of the native app shell so workspace-sensitive surfaces stay aligned | `SystemService` |
 | `GET /v1/projects` | Later label enrichment / filters | Read | `operator` | On demand | Project list items | Ready with wrapper | Same note as above | `OperationsService` |
 | `GET /v1/profiles` | Later profile browser or label enrichment | Read | `operator` | On demand | Agent profile list items | Ready with wrapper | Useful later; not needed for first vertical slice | `OperationsService` |
 | `GET /v1/profiles/:id` | Run/receipt enrichment later | Read | `operator` | On demand | Agent profile details | Defer | Nice-to-have, not core v1 | `OperationsService` |
@@ -178,18 +178,32 @@ Only **Approvals** belongs in early native scope. The rest should wait.
 
 | Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `POST /v1/connections/oauth/start` | Later, if native decides to own provider connect UX | Write | `operator` | Poll session after start | OAuth start request/response | Defer | Requires browser launch + callback/session polling; not v1 |
-| `GET /v1/connections/oauth/sessions/:id` | Later OAuth progress polling | Read | `operator` | Poll while flow active | OAuth session record | Defer | Same reason | `ConnectionsService` |
+| `POST /v1/connections/oauth/start` | Setup hub Start Setup / Reconnect / Reauthorize for GitHub, Gmail, Calendar | Write | `operator` | Poll session after start | OAuth start request/response | Ready with wrapper | Native opens the default browser and refreshes in place after completion | `ConnectionsService` |
+| `GET /v1/connections/oauth/sessions/:id` | Setup hub OAuth progress polling | Read | `operator` | Poll while flow active | OAuth session record | Ready with wrapper | Used only while the browser flow is active | `ConnectionsService` |
 | `GET /v1/connections/:id/resource-rules` | Later resource-rule editor | Read | `operator` | Poll on screen | Resource rule records | Defer | Deep admin flow; web-first | `ConnectionsService` |
 | `POST /v1/connections/:id/resource-rules` | Later resource-rule editor | Write | `operator` | Refetch after success | Create input | Defer | Deeper than v1 needs | `ConnectionsService` |
 | `DELETE /v1/connections/:id/resource-rules` | Later resource-rule editor | Write | `operator` | Refetch after success | Delete input body | Defer | Same reason | `ConnectionsService` |
 | `GET /v1/connections/:id/diagnostics` | Later diagnostics pane | Read | `operator` | On demand | Diagnostics response | Defer | Good later support surface | `ConnectionsService` |
 | `POST /v1/connections/:id/reconnect` | Possible later quick action | Write | `operator` | Refetch after success | Reconnect input | Defer | Add only after read-only overview feels clean | `ConnectionsService` |
-| `POST /v1/secrets` | Never first-wave native | Write | `operator` | N/A | Secret reference record | Defer | Secrets management should not be the early native foothold | `ConnectionsService` |
+| `POST /v1/secrets` | Setup hub Telegram token storage | Write | `operator` | N/A | Secret reference record | Ready with wrapper | Used narrowly for Telegram bot-token handoff; app clears local token entry state immediately | `ConnectionsService` |
+
+### Telegram control-plane and mutation receipt endpoints
+
+| Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /v1/config/telegram` | Setup hub Telegram detail pane | Read | `operator` | Poll on load / refresh | Telegram config snapshot | Ready with wrapper | Powers persisted vs applied truth, target workspace, warnings, and restart support | `ConnectionsService` |
+| `POST /v1/config/telegram` | Save Telegram runtime settings from the app | Write | `operator` | Refetch after success | Telegram config update input/snapshot | Ready with wrapper | Narrow config mutation path; token values still go through `/v1/secrets` | `ConnectionsService` |
+| `POST /v1/daemon/components/telegram/apply` | Apply saved Telegram config in-process | Write | `operator` | Refetch after success | Telegram apply response | Ready with wrapper | Preferred first step before a full daemon restart | `ConnectionsService` |
+| `POST /v1/daemon/restart` | Setup hub restart action / remediation | Write | `operator` | Refetch after success or reconnect | Daemon restart response | Ready with wrapper | Returns `manual_required` when the daemon is not launchd-managed | `ConnectionsService` |
+| `GET /v1/governance/mutation-receipts` | Setup hub Telegram mutation history | Read | `operator` | Poll on load / refresh | Mutation receipt list | Ready with wrapper | Supports recent save/apply/restart visibility in native Setup | `GovernanceService` |
+| `GET /v1/governance/mutation-receipts/:id` | Later detailed mutation receipt inspector | Read | `operator` | On demand | Mutation receipt record | Ready with wrapper | Current native Setup only needs the list, but detail is available | `GovernanceService` |
 
 ### Native recommendation
 
-v1 should show a **read-only connections overview** plus **Open in Web Inspector** for deep work.
+v1 should use Setup + Connections together:
+- **Setup** owns the quick-start provider actions and Telegram runtime guidance
+- **Connections** remains the deeper diagnostics surface
+- **Mutation receipts** make Telegram save/apply/restart actions observable without inventing hidden state
 
 ---
 
@@ -223,7 +237,7 @@ These surfaces exist and matter, but they are not where native should start.
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `GET /v1/todos/projects` | Later todo dashboard | Read | `operator` | Poll on screen | Ready with wrapper | Could make a nice later native view, but not where to start | `DomainDigestService` |
-| `POST /v1/todos/accounts`, `POST /v1/todos/connect`, `POST /v1/todos/items`, `POST /v1/todos/sync`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/items/:id/reprioritize`, `POST /v1/todos/items/:id/reschedule`, `POST /v1/todos/items/:id/move`, `POST /v1/todos/reconcile` | Later todo actions | Write | `operator` | Refetch after success | Defer | Broad, task-oriented admin UI; not native v1 | `DomainDigestService` |
+| `POST /v1/todos/accounts`, `POST /v1/todos/items`, `POST /v1/todos/sync`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/items/:id/reprioritize`, `POST /v1/todos/items/:id/reschedule`, `POST /v1/todos/items/:id/move`, `POST /v1/todos/reconcile` | Later todo actions | Write | `operator` | Refetch after success | Defer | Broad, task-oriented admin UI; not native v1 | `DomainDigestService` |
 
 ### People
 

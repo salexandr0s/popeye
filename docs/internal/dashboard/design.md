@@ -2,6 +2,9 @@
 
 ## Document purpose
 
+**Historical note:** this document defines the operator-console-first foundation. For the current broader product direction, also read `docs/internal/dashboard/product_direction.md` and `docs/internal/dashboard/personal_control_center_roadmap.md`.
+
+
 This document defines the product and interaction design for Popeye’s native macOS dashboard/client. It is intentionally repo-first and control-plane-first. It does **not** invent a parallel product. It translates the current Popeye runtime, control API, CLI, and web inspector into a native operator console that fits the existing architecture.
 
 This is a planning document for implementation. It assumes:
@@ -707,7 +710,7 @@ These are the workflows the native app should optimize first.
 
 ### Priority 4 — connection sanity
 
-- see whether Gmail / Calendar / GitHub / Todoist / other connections are healthy
+- see whether Gmail / Calendar / GitHub / Google Tasks / other connections are healthy
 - know when to hand off to the web inspector for deeper maintenance
 
 ### Priority 5 — cost and audit visibility

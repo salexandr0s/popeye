@@ -26,7 +26,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PopeyeMacTests",
-            dependencies: ["PopeyeAPI"],
+            dependencies: ["PopeyeAPI", "PopeyeMac"],
             path: "Tests/PopeyeMacTests"
         ),
     ]

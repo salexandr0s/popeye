@@ -1736,4 +1736,197 @@ describe('control api', () => {
     await runtime.close();
     await app.close();
   });
+
+  it('saves Telegram config, applies it, and exposes mutation receipts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-telegram-control-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    let currentSnapshot = {
+      persisted: { enabled: false, allowedUserId: null, secretRefId: null },
+      applied: { enabled: false, allowedUserId: null, secretRefId: null },
+      effectiveWorkspaceId: 'default',
+      secretAvailability: 'not_configured' as const,
+      staleComparedToApplied: false,
+      warnings: [],
+      managementMode: 'launchd' as const,
+      restartSupported: true,
+    };
+
+    const app = await createControlApi({
+      runtime,
+      telegramConfigControl: {
+        getSnapshot: () => currentSnapshot,
+        updateConfig: (input) => {
+          currentSnapshot = {
+            ...currentSnapshot,
+            persisted: {
+              enabled: input.enabled,
+              allowedUserId: input.allowedUserId,
+              secretRefId: input.secretRefId,
+            },
+            secretAvailability: input.secretRefId ? 'available' : 'not_configured',
+            staleComparedToApplied: true,
+          };
+          return {
+            snapshot: currentSnapshot,
+            changedFields: ['enabled', 'allowedUserId', 'secretRefId'],
+          };
+        },
+        applyTelegramConfig: async () => {
+          currentSnapshot = {
+            ...currentSnapshot,
+            applied: currentSnapshot.persisted,
+            staleComparedToApplied: false,
+          };
+          return {
+            status: 'reloaded_active',
+            summary: 'Telegram bridge reloaded and is active.',
+            snapshot: currentSnapshot,
+          };
+        },
+      },
+      daemonControl: {
+        getManagementStatus: () => ({ managementMode: 'launchd', restartSupported: true }),
+        restartDaemonNow: () => ({ ok: true, output: 'restarted' }),
+      },
+    });
+
+    const saveResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/config/telegram',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        enabled: true,
+        allowedUserId: '5315323298',
+        secretRefId: 'secret-telegram-bot',
+      },
+    });
+    expect(saveResponse.statusCode).toBe(200);
+    expect(saveResponse.json()).toMatchObject({
+      persisted: {
+        enabled: true,
+        allowedUserId: '5315323298',
+        secretRefId: 'secret-telegram-bot',
+      },
+      staleComparedToApplied: true,
+    });
+
+    const applyResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/daemon/components/telegram/apply',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(applyResponse.statusCode).toBe(200);
+    expect(applyResponse.json()).toMatchObject({
+      status: 'reloaded_active',
+      snapshot: {
+        staleComparedToApplied: false,
+      },
+    });
+
+    const receiptsResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/governance/mutation-receipts?component=telegram&limit=10',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(receiptsResponse.statusCode).toBe(200);
+    const receipts = receiptsResponse.json() as Array<{ id: string; kind: string; summary: string; status: string }>;
+    expect(receipts.map((receipt) => receipt.kind)).toEqual(['telegram_apply', 'telegram_config_update']);
+    expect(receipts[0]?.status).toBe('succeeded');
+
+    const receiptDetailResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/governance/mutation-receipts/${receipts[0]?.id}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(receiptDetailResponse.statusCode).toBe(200);
+    expect(receiptDetailResponse.json()).toMatchObject({
+      kind: 'telegram_apply',
+    });
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'telegram_config_updated', severity: 'info' }),
+        expect.objectContaining({ code: 'telegram_apply_succeeded', severity: 'info' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns manual_required for unmanaged daemon restart and receipts the failure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-daemon-restart-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/daemon/restart',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: 'manual_required',
+      restartSupported: false,
+      managementMode: 'manual',
+    });
+
+    const receipts = runtime.listMutationReceipts('daemon');
+    expect(receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'daemon_restart',
+          status: 'failed',
+        }),
+      ]),
+    );
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'daemon_restart_failed', severity: 'warn' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
 });

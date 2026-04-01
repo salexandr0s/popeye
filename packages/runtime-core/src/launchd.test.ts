@@ -26,6 +26,8 @@ describe('launchd pure functions', () => {
     expect(plist).toContain('/app/daemon.js');
     expect(plist).toContain('<key>KeepAlive</key>');
     expect(plist).toContain('<key>RunAtLoad</key>');
+    expect(plist).toContain('POPEYE_LAUNCHD_LABEL');
+    expect(plist).toContain('dev.popeye.popeyed');
   });
 
   it('createLaunchdPlist uses custom label', () => {

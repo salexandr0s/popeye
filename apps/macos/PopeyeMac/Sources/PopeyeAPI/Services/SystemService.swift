@@ -28,6 +28,11 @@ public struct SystemService: Sendable {
         )
     }
 
+
+    public func loadWorkspaces() async throws -> [WorkspaceRecordDTO] {
+        try await client.listWorkspaces()
+    }
+
     // MARK: - Agent Profiles
 
     public func loadAgentProfiles() async throws -> [AgentProfileDTO] {
@@ -36,6 +41,16 @@ public struct SystemService: Sendable {
 
     public func loadAgentProfile(id: String) async throws -> AgentProfileDTO {
         try await client.getAgentProfile(id: id)
+    }
+
+    // MARK: - Identities
+
+    public func loadIdentities(workspaceId: String) async throws -> [IdentityRecordDTO] {
+        try await client.listIdentities(workspaceId: workspaceId)
+    }
+
+    public func loadDefaultIdentity(workspaceId: String) async throws -> WorkspaceIdentityDefaultDTO {
+        try await client.getDefaultIdentity(workspaceId: workspaceId)
     }
 
     // MARK: - Instruction Previews

@@ -13,7 +13,7 @@ import {
   loadAppConfig,
 } from '@popeye/runtime-core';
 import { WebBootstrapNonceStore } from './web-bootstrap.js';
-import { startTelegramBridge } from './telegram-bridge.js';
+import { TelegramControlPlane } from './telegram-control.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
 if (!configPath) {
@@ -41,6 +41,7 @@ if (cleanedTempDirs > 0) {
 }
 const runtime = createRuntimeService(config);
 runtime.startScheduler();
+const telegramControl = new TelegramControlPlane(configPath, config, runtime);
 const generateCspNonce = () => randomBytes(16).toString('base64');
 const webBootstrap = new WebBootstrapNonceStore();
 const currentScriptDir = (): string => {
@@ -54,13 +55,12 @@ const currentScriptDir = (): string => {
 };
 
 let shuttingDown = false;
-let telegramBridge: Awaited<ReturnType<typeof startTelegramBridge>> | null = null;
 let app: Awaited<ReturnType<typeof createControlApi>> | null = null;
 const shutdown = async (code = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info('daemon shutting down');
-  await telegramBridge?.stop();
+  await telegramControl.stopCurrentBridge();
   await app?.close();
   await runtime.close();
   process.exit(code);
@@ -88,6 +88,18 @@ const start = async (): Promise<void> => {
     validateAuthExchangeNonce: (nonce) => webBootstrap.consume(nonce),
     useSecureCookies: config.security.useSecureCookies,
     logger: log.child({}),
+    telegramConfigControl: {
+      getSnapshot: () => telegramControl.getSnapshot(),
+      updateConfig: (input) => telegramControl.updateConfig(input),
+      applyTelegramConfig: () => telegramControl.applyTelegramConfig(),
+    },
+    daemonControl: {
+      getManagementStatus: () => ({
+        managementMode: telegramControl.managementMode,
+        restartSupported: telegramControl.restartSupported,
+      }),
+      restartDaemonNow: () => telegramControl.restartDaemonNow(),
+    },
   });
 
   const webInspectorDist = resolve(
@@ -128,10 +140,8 @@ const start = async (): Promise<void> => {
     port: config.security.bindPort,
   });
   log.info('control api listening', { host: config.security.bindHost, port: config.security.bindPort });
-  telegramBridge = await startTelegramBridge(config, {
-    getSecretValue: (id) => runtime.getSecretValue(id),
-  });
-  if (telegramBridge) {
+  const startedBridge = await telegramControl.startInitialBridge();
+  if (startedBridge) {
     log.info('telegram bridge started');
   }
 };

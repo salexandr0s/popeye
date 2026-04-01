@@ -1,0 +1,53 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.26587,0.50879,0.17981,1.00000",
+      "display-p3:0.38867,0.68652,0.23975,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "darken",
+          "fill" : {
+            "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+          },
+          "image-name" : "popeye_logo.png",
+          "name" : "popeye_logo",
+          "position" : {
+            "scale" : 0.5,
+            "translation-in-points" : [
+              24.25,
+              -0.25
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

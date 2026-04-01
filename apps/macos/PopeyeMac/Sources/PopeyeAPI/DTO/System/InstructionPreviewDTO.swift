@@ -3,6 +3,7 @@ import Foundation
 public struct InstructionPreviewDTO: Codable, Sendable {
     public let id: String
     public let sources: [InstructionSourceDTO]
+    public let playbooks: [AppliedPlaybookDTO]
     public let compiledText: String
     public let bundleHash: String
     public let warnings: [String]

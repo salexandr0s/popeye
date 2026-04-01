@@ -6,6 +6,7 @@ final class MemoryStore {
     enum ViewMode: String, CaseIterable {
         case search
         case browse
+        case daily
     }
 
     // MARK: - State
@@ -15,6 +16,7 @@ final class MemoryStore {
     var searchResults: MemorySearchResponseDTO?
     var memories: [MemoryRecordDTO] = []
     var selectedMemoryId: String?
+    var selectedDayID: String?
     var selectedDetail: MemoryRecordDTO?
     var memoryHistory: MemoryHistoryDTO?
     var isLoading = false
@@ -34,6 +36,16 @@ final class MemoryStore {
 
     private let memoryService: MemoryService
     private let client: ControlAPIClient
+    var workspaceID = "default" {
+        didSet {
+            guard oldValue != workspaceID else { return }
+            searchResults = nil
+            selectedMemoryId = nil
+            selectedDetail = nil
+            memoryHistory = nil
+            selectedDayID = nil
+        }
+    }
 
     init(client: ControlAPIClient) {
         self.client = client
@@ -60,6 +72,17 @@ final class MemoryStore {
         Array(Set(memories.map(\.memoryType))).sorted()
     }
 
+    var dayGroups: [MemoryDayGroup] {
+        MemoryDayGrouper.group(memories: filteredMemories)
+    }
+
+    var selectedDayGroup: MemoryDayGroup? {
+        if let selectedDayID {
+            return dayGroups.first { $0.id == selectedDayID }
+        }
+        return dayGroups.first
+    }
+
     // MARK: - Actions
 
     func search() async {
@@ -68,7 +91,7 @@ final class MemoryStore {
         isSearching = true
         errorMessage = nil
         do {
-            searchResults = try await memoryService.search(query: query)
+            searchResults = try await memoryService.search(query: query, workspaceId: workspaceID)
         } catch let error as APIError {
             errorMessage = error.userMessage
         } catch {
@@ -80,7 +103,8 @@ final class MemoryStore {
     func loadList() async {
         isLoading = true
         do {
-            memories = try await memoryService.listMemories()
+            memories = try await memoryService.listMemories(workspaceId: workspaceID, limit: 200)
+            ensureSelectedDay()
         } catch {
             PopeyeLogger.refresh.error("Memory list load failed: \(error)")
         }
@@ -161,4 +185,21 @@ final class MemoryStore {
     }
 
     func dismissMutation() { mutations.dismiss() }
+
+    func ensureSelectedDay() {
+        guard let firstDayID = dayGroups.first?.id else {
+            selectedDayID = nil
+            return
+        }
+
+        if selectedDayID == nil || dayGroups.contains(where: { $0.id == selectedDayID }) == false {
+            selectedDayID = firstDayID
+        }
+    }
+
+    func selectDay(for memoryID: String?) {
+        guard let memoryID else { return }
+        guard let group = dayGroups.first(where: { group in group.memories.contains(where: { $0.id == memoryID }) }) else { return }
+        selectedDayID = group.id
+    }
 }

@@ -124,7 +124,7 @@ In scope:
 Out of scope:
 
 - full UI design for web or macOS inspectors
-- capability-specific sync implementations for Gmail, Calendar, GitHub, Todoist
+- capability-specific sync implementations for Gmail, Calendar, GitHub, Google Tasks
 - model selection benchmarking for embeddings or rerankers
 - replacing SQLite with a different database
 - broad platform comparisons unrelated to Popeye and Supermemory

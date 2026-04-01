@@ -14,7 +14,7 @@ public struct ReceiptRecordDTO: Codable, Sendable, Identifiable {
     public let createdAt: String
 }
 
-public struct ReceiptUsageDTO: Codable, Sendable {
+public struct ReceiptUsageDTO: Codable, Sendable, Equatable {
     public let provider: String
     public let model: String
     public let tokensIn: Int

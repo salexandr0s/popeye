@@ -18,6 +18,14 @@
       "content": "# Workspace Instructions\nUse conventional commits."
     }
   ],
+  "playbooks": [
+    {
+      "id": "triage",
+      "title": "Inbox triage",
+      "scope": "workspace",
+      "revisionHash": "rev-triage-001"
+    }
+  ],
   "compiledText": "You are a helpful assistant.\n\n# Workspace Instructions\nUse conventional commits.",
   "bundleHash": "bundlehash-xyz",
   "warnings": [],

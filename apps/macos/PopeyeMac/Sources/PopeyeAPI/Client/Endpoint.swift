@@ -30,6 +30,7 @@ public extension Endpoint {
     static let csrfToken = Endpoint(path: "/v1/security/csrf-token")
     static let securityAudit = Endpoint(path: "/v1/security/audit")
     static let daemonState = Endpoint(path: "/v1/daemon/state")
+    static let workspaces = Endpoint(path: "/v1/workspaces")
     static let eventStream = Endpoint(path: "/v1/events/stream")
 }
 
@@ -78,6 +79,29 @@ public extension Endpoint {
 
 public extension Endpoint {
     static let connections = Endpoint(path: "/v1/connections")
+    static let storeSecret = Endpoint(path: "/v1/secrets", method: .post)
+
+    static let startOAuthConnection = Endpoint(path: "/v1/connections/oauth/start", method: .post)
+
+    static func oauthConnectionSession(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/oauth/sessions/\(id)")
+    }
+}
+
+// MARK: - Identity Endpoints
+
+public extension Endpoint {
+    static func identities(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/identities", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
+
+    static func defaultIdentity(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/identities/default", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
 }
 
 // MARK: - Memory Endpoints
@@ -85,13 +109,32 @@ public extension Endpoint {
 public extension Endpoint {
     static let memories = Endpoint(path: "/v1/memory")
 
-    static func memorySearch(query: String, limit: Int = 20, scope: String? = nil, types: String? = nil, domains: String? = nil, full: Bool = false) -> Endpoint {
+    static func memories(
+        type: String? = nil,
+        scope: String? = nil,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        includeGlobal: Bool? = nil,
+        limit: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let type { items.append(URLQueryItem(name: "type", value: type)) }
+        if let scope { items.append(URLQueryItem(name: "scope", value: scope)) }
+        if let workspaceId { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
+        if let projectId { items.append(URLQueryItem(name: "projectId", value: projectId)) }
+        if let includeGlobal { items.append(URLQueryItem(name: "includeGlobal", value: includeGlobal ? "true" : "false")) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/memory", queryItems: items)
+    }
+
+    static func memorySearch(query: String, limit: Int = 20, scope: String? = nil, workspaceId: String? = nil, types: String? = nil, domains: String? = nil, full: Bool = false) -> Endpoint {
         var items: [URLQueryItem] = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "limit", value: String(limit)),
         ]
         if full { items.append(URLQueryItem(name: "full", value: "true")) }
         if let scope { items.append(URLQueryItem(name: "scope", value: scope)) }
+        if let workspaceId { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
         if let types { items.append(URLQueryItem(name: "types", value: types)) }
         if let domains { items.append(URLQueryItem(name: "domains", value: domains)) }
         return Endpoint(path: "/v1/memory/search", queryItems: items)
@@ -155,5 +198,17 @@ public extension Endpoint {
 
     static func telegramResolveDelivery(id: String) -> Endpoint {
         Endpoint(path: "/v1/telegram/deliveries/\(id)/resolve", method: .post)
+    }
+
+    static let telegramConfig = Endpoint(path: "/v1/config/telegram")
+    static let saveTelegramConfig = Endpoint(path: "/v1/config/telegram", method: .post)
+    static let applyTelegramConfig = Endpoint(path: "/v1/daemon/components/telegram/apply", method: .post)
+    static let restartDaemon = Endpoint(path: "/v1/daemon/restart", method: .post)
+
+    static func mutationReceipts(component: String? = nil, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let component { items.append(URLQueryItem(name: "component", value: component)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/governance/mutation-receipts", queryItems: items)
     }
 }

@@ -26,13 +26,13 @@ struct StatusBadge: View {
         switch state.lowercased() {
         case "running", "starting", "active", "sending":
             .blue
-        case "succeeded", "approved", "resolved", "connected", "sent":
+        case "succeeded", "approved", "resolved", "connected", "sent", "healthy", "ready", "configured":
             .green
         case "failed", "failed_retryable", "failed_final", "failed_permanent", "failed_transient", "permanent_failure", "denied", "revoked", "stuck-risk", "error":
             .red
-        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn", "uncertain", "ambiguous", "retryable_failure":
+        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn", "uncertain", "ambiguous", "retryable_failure", "degraded", "reauth_required", "expired", "invalid_scopes", "stale", "partial", "incomplete":
             .orange
-        case "cancelled", "abandoned", "queued", "waiting_retry", "leased", "expired", "closed", "info":
+        case "cancelled", "abandoned", "queued", "waiting_retry", "leased", "closed", "info", "missing", "disabled", "unknown":
             .secondary
         default:
             .secondary

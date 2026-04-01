@@ -3,7 +3,8 @@ import PopeyeAPI
 
 @Observable @MainActor
 final class InstructionPreviewStore {
-    var scopeInput = ""
+    var scopeInput = "default"
+    private var followedWorkspaceScope = "default"
     var preview: InstructionPreviewDTO?
     var isLoading = false
     var error: String?
@@ -12,6 +13,23 @@ final class InstructionPreviewStore {
 
     init(client: ControlAPIClient) {
         self.systemService = SystemService(client: client)
+    }
+
+
+    func adoptWorkspaceScope(_ workspaceID: String) {
+        let trimmed = scopeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == followedWorkspaceScope {
+            scopeInput = workspaceID
+            if followedWorkspaceScope != workspaceID {
+                preview = nil
+            }
+        }
+        followedWorkspaceScope = workspaceID
+    }
+
+    func loadDefaultPreviewIfNeeded() async {
+        guard preview == nil, !isLoading else { return }
+        await loadPreview()
     }
 
     func loadPreview() async {

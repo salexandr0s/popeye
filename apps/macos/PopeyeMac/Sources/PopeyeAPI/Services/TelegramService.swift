@@ -15,6 +15,23 @@ public struct TelegramService: Sendable {
         try await client.telegramRelayCheckpoint(workspaceId: workspaceId)
     }
 
+
+    public func loadConfigSnapshot() async throws -> TelegramConfigSnapshotDTO {
+        try await client.telegramConfig()
+    }
+
+    public func saveConfig(_ input: TelegramConfigUpdateInput) async throws -> TelegramConfigSnapshotDTO {
+        try await client.saveTelegramConfig(input: input)
+    }
+
+    public func applyConfig() async throws -> TelegramApplyResponseDTO {
+        try await client.applyTelegramConfig()
+    }
+
+    public func restartDaemon() async throws -> DaemonRestartResponseDTO {
+        try await client.restartDaemon()
+    }
+
     public func loadDeliveryDetail(id: String) async throws -> TelegramDeliveryDetailSnapshot {
         async let delivery = client.getTelegramDelivery(id: id)
         async let resolutions = client.listDeliveryResolutions(id: id)

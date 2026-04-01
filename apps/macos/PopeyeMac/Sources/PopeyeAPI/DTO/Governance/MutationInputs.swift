@@ -17,3 +17,15 @@ public struct ApprovalResolveInput: Encodable, Sendable {
         self.decisionReason = decisionReason
     }
 }
+
+public struct TelegramConfigUpdateInput: Encodable, Sendable {
+    public let enabled: Bool
+    public let allowedUserId: String?
+    public let secretRefId: String?
+
+    public init(enabled: Bool, allowedUserId: String?, secretRefId: String?) {
+        self.enabled = enabled
+        self.allowedUserId = allowedUserId
+        self.secretRefId = secretRefId
+    }
+}

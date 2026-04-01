@@ -7,12 +7,26 @@ public struct MemoryService: Sendable {
         self.client = client
     }
 
-    public func search(query: String, limit: Int = 20, scope: String? = nil, types: String? = nil, domains: String? = nil) async throws -> MemorySearchResponseDTO {
-        try await client.searchMemories(query: query, limit: limit, scope: scope, types: types, domains: domains)
+    public func search(query: String, limit: Int = 20, scope: String? = nil, workspaceId: String? = nil, types: String? = nil, domains: String? = nil) async throws -> MemorySearchResponseDTO {
+        try await client.searchMemories(query: query, limit: limit, scope: scope, workspaceId: workspaceId, types: types, domains: domains)
     }
 
-    public func listMemories() async throws -> [MemoryRecordDTO] {
-        try await client.listMemories()
+    public func listMemories(
+        type: String? = nil,
+        scope: String? = nil,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        includeGlobal: Bool? = nil,
+        limit: Int? = nil
+    ) async throws -> [MemoryRecordDTO] {
+        try await client.listMemories(
+            type: type,
+            scope: scope,
+            workspaceId: workspaceId,
+            projectId: projectId,
+            includeGlobal: includeGlobal,
+            limit: limit
+        )
     }
 
     public func getMemory(id: String) async throws -> MemoryRecordDTO {

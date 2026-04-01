@@ -3,6 +3,7 @@ import PopeyeAPI
 
 struct MemoryView: View {
     @Bindable var store: MemoryStore
+    @Environment(AppModel.self) private var appModel
     @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
@@ -23,12 +24,13 @@ struct MemoryView: View {
                 Picker("Mode", selection: $store.viewMode) {
                     Text("Search").tag(MemoryStore.ViewMode.search)
                     Text("Browse").tag(MemoryStore.ViewMode.browse)
+                    Text("Daily").tag(MemoryStore.ViewMode.daily)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 160)
+                .frame(width: 220)
             }
 
-            if store.viewMode == .browse {
+            if store.viewMode == .browse || store.viewMode == .daily {
                 ToolbarItem(placement: .automatic) {
                     Picker("Type", selection: $store.typeFilter) {
                         Text("All Types").tag(String?.none)
@@ -41,7 +43,8 @@ struct MemoryView: View {
                 }
             }
         }
-        .task {
+        .task(id: appModel.selectedWorkspaceID) {
+            store.workspaceID = appModel.selectedWorkspaceID
             await store.loadList()
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
@@ -54,11 +57,18 @@ struct MemoryView: View {
         }
         .onChange(of: store.selectedMemoryId) { _, newId in
             if let id = newId {
+                store.selectDay(for: id)
                 Task { await store.loadDetail(id: id) }
             } else {
                 store.selectedDetail = nil
                 store.memoryHistory = nil
             }
+        }
+        .onChange(of: store.typeFilter) { _, _ in
+            store.ensureSelectedDay()
+        }
+        .onChange(of: store.viewMode) { _, _ in
+            store.ensureSelectedDay()
         }
         .sheet(isPresented: $store.showPromotionSheet) {
             if let proposal = store.promotionProposal {
@@ -83,6 +93,8 @@ struct MemoryView: View {
             MemorySearchResultsView(store: store)
         case .browse:
             MemoryListView(store: store)
+        case .daily:
+            MemoryDailyView(store: store)
         }
     }
 

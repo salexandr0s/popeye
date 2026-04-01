@@ -17,6 +17,22 @@ struct AppShellView: View {
                         DashboardView(store: appModel.dashboardStore())
                     case .commandCenter:
                         CommandCenterView(store: appModel.commandCenterStore())
+                    case .setup:
+                        SetupView(store: appModel.setupStore())
+                    case .connections:
+                        ConnectionsOverviewView(store: appModel.connectionsStore())
+                    case .telegram:
+                        TelegramView(store: appModel.telegramStore())
+                    case .brain:
+                        BrainView(store: appModel.brainStore())
+                    case .memory:
+                        MemoryView(store: appModel.memoryStore())
+                    case .instructionPreview:
+                        InstructionPreviewView(store: appModel.instructionPreviewStore())
+                    case .agentProfiles:
+                        AgentProfilesView(store: appModel.agentProfilesStore())
+                    case .scheduler:
+                        SchedulerView(jobsStore: appModel.jobsStore(), dashboardStore: appModel.dashboardStore())
                     case .usage:
                         UsageView(store: appModel.usageStore())
                     case .runs:
@@ -29,20 +45,8 @@ struct AppShellView: View {
                         InterventionsView(store: appModel.interventionsStore())
                     case .approvals:
                         ApprovalsView(store: appModel.approvalsStore())
-                    case .connections:
-                        ConnectionsOverviewView(store: appModel.connectionsStore())
                     case .usageSecurity:
                         UsageSecurityView(store: appModel.usageSecurityStore())
-                    case .memory:
-                        MemoryView(store: appModel.memoryStore())
-                    case .instructionPreview:
-                        InstructionPreviewView(store: appModel.instructionPreviewStore())
-                    case .agentProfiles:
-                        AgentProfilesView(store: appModel.agentProfilesStore())
-                    case .telegram:
-                        TelegramView(store: appModel.telegramStore())
-                    case .scheduler:
-                        SchedulerView(jobsStore: appModel.jobsStore(), dashboardStore: appModel.dashboardStore())
                     }
                 } else {
                     PlaceholderView(route: .dashboard)

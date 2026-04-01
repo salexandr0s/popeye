@@ -78,6 +78,12 @@ import {
   TelegramReplyDeliveryMarkSentRequestSchema,
   TelegramReplyDeliveryStateUpdateRequestSchema,
   TelegramSendAttemptRecordSchema,
+  TelegramConfigUpdateInputSchema,
+  TelegramConfigSnapshotSchema,
+  TelegramApplyResponseSchema,
+  DaemonRestartResponseSchema,
+  MutationReceiptListResponseSchema,
+  MutationReceiptRecordSchema,
   PolicyGrantRevokeRequestSchema,
   StandingApprovalCreateRequestSchema,
   VaultCreateRequestSchema,
@@ -85,6 +91,12 @@ import {
   WorkspaceIdentityDefaultSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
+} from '@popeye/contracts';
+import type {
+  TelegramApplyResponse,
+  TelegramConfigSnapshot,
+  TelegramConfigUpdateInput,
+  TelegramManagementMode,
 } from '@popeye/contracts';
 import { z } from 'zod';
 import {
@@ -105,6 +117,23 @@ import {
 import { nowIso, stripUndefined, type AuthRole, type AuthRotationRecord, type SecurityAuditEvent } from '@popeye/contracts';
 import type { PopeyeLogger } from '@popeye/observability';
 
+export interface TelegramConfigControl {
+  getSnapshot(): TelegramConfigSnapshot;
+  updateConfig(input: TelegramConfigUpdateInput): {
+    snapshot: TelegramConfigSnapshot;
+    changedFields: Array<'enabled' | 'allowedUserId' | 'secretRefId'>;
+  };
+  applyTelegramConfig(): Promise<TelegramApplyResponse>;
+}
+
+export interface DaemonControl {
+  getManagementStatus(): {
+    managementMode: TelegramManagementMode;
+    restartSupported: boolean;
+  };
+  restartDaemonNow(): { ok: boolean; output: string };
+}
+
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
   /** @deprecated Use generateCspNonce instead. Static nonce reused for all responses. */
@@ -120,6 +149,8 @@ export interface ControlApiDependencies {
   rateLimitMax?: number;
   /** Optional structured logger for security and operational events. */
   logger?: PopeyeLogger;
+  telegramConfigControl?: TelegramConfigControl;
+  daemonControl?: DaemonControl;
 }
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -195,6 +226,11 @@ const WorkspaceIdentityDefaultInputSchema = WorkspaceIdentityDefaultSchema.pick(
 
 const TelegramRelayCheckpointQueryParamsSchema = z.object({
   workspaceId: z.string().min(1),
+});
+
+const MutationReceiptListQueryParamsSchema = z.object({
+  component: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
 function parseIdParam(params: unknown): string {
@@ -338,6 +374,7 @@ function requiredRoleForRoute(path: string, method: string): AuthRole {
     '/v1/events/stream',
     '/v1/usage/summary',
     '/v1/security/csrf-token',
+    '/v1/config/telegram',
   ]);
   if (readonlyPaths.has(path)) {
     return 'readonly';
@@ -357,6 +394,7 @@ function requiredRoleForRoute(path: string, method: string): AuthRole {
     || path.startsWith('/v1/telegram/relay/checkpoint')
     || path.startsWith('/v1/telegram/deliveries/')
     || path === '/v1/telegram/deliveries/uncertain'
+    || path.startsWith('/v1/governance/mutation-receipts')
   ) {
     if (method === 'GET' || method === 'HEAD') {
       return 'readonly';
@@ -548,6 +586,19 @@ function recordCsrfFailureAudit(
     },
   };
   runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
+}
+
+
+function readActorRole(request: { popeyeAuthContext?: RequestAuthContext }): AuthRole {
+  return request.popeyeAuthContext?.role ?? 'operator';
+}
+
+function summarizeBooleanChange(label: string, before: boolean, after: boolean): string {
+  return `${label} ${before ? 'enabled' : 'disabled'} -> ${after ? 'enabled' : 'disabled'}`;
+}
+
+function summarizePresenceChange(label: string, before: string | null, after: string | null): string {
+  return `${label} present ${before ? 'true' : 'false'} -> ${after ? 'true' : 'false'}`;
 }
 
 export async function createControlApi(
@@ -1946,6 +1997,272 @@ export async function createControlApi(
       ...(body.connectionId !== undefined ? { connectionId: body.connectionId } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
     });
+  });
+
+  app.get('/v1/config/telegram', async (_request, reply) => {
+    if (!dependencies.telegramConfigControl) {
+      return reply.code(503).send({ error: 'telegram_config_unavailable' });
+    }
+    return TelegramConfigSnapshotSchema.parse(dependencies.telegramConfigControl.getSnapshot());
+  });
+
+  app.post('/v1/config/telegram', async (request, reply) => {
+    if (!dependencies.telegramConfigControl) {
+      return reply.code(503).send({ error: 'telegram_config_unavailable' });
+    }
+
+    const actorRole = readActorRole(request);
+    const before = dependencies.telegramConfigControl.getSnapshot();
+    const body = TelegramConfigUpdateInputSchema.parse(request.body);
+
+    try {
+      const result = dependencies.telegramConfigControl.updateConfig(body);
+      const after = result.snapshot;
+      const summary = result.changedFields.length > 0
+        ? `Saved Telegram config: ${result.changedFields.join(', ')}`
+        : 'Saved Telegram config with no field changes.';
+      const details = [
+        summarizeBooleanChange('enabled', before.persisted.enabled, after.persisted.enabled),
+        summarizePresenceChange('allowedUserId', before.persisted.allowedUserId, after.persisted.allowedUserId),
+        summarizePresenceChange('secretRefId', before.persisted.secretRefId, after.persisted.secretRefId),
+        `effective workspace ${after.effectiveWorkspaceId}`,
+      ].join('; ');
+      dependencies.runtime.writeMutationReceipt({
+        kind: 'telegram_config_update',
+        component: 'telegram',
+        status: 'succeeded',
+        summary,
+        details,
+        actorRole,
+        metadata: {
+          changedFields: result.changedFields.join(','),
+          enabledBefore: String(before.persisted.enabled),
+          enabledAfter: String(after.persisted.enabled),
+          allowedUserIdPresentBefore: String(Boolean(before.persisted.allowedUserId)),
+          allowedUserIdPresentAfter: String(Boolean(after.persisted.allowedUserId)),
+          secretRefIdPresentBefore: String(Boolean(before.persisted.secretRefId)),
+          secretRefIdPresentAfter: String(Boolean(after.persisted.secretRefId)),
+          effectiveWorkspaceId: after.effectiveWorkspaceId,
+        },
+      });
+      dependencies.runtime.recordSecurityAuditEvent({
+        code: 'telegram_config_updated',
+        severity: 'info',
+        message: summary,
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          changedFields: result.changedFields.join(','),
+          effectiveWorkspaceId: after.effectiveWorkspaceId,
+        },
+      });
+      return TelegramConfigSnapshotSchema.parse(after);
+    } catch (error) {
+      if (error instanceof RuntimeConflictError || error instanceof RuntimeValidationError) {
+        const statusCode = error instanceof RuntimeConflictError ? 409 : 400;
+        const errorCode = error instanceof RuntimeConflictError ? 'telegram_config_conflict' : 'invalid_telegram_config';
+        const summary = error instanceof RuntimeConflictError
+          ? 'Telegram config save was blocked by an overlapping update.'
+          : 'Telegram config save was rejected by validation.';
+        dependencies.runtime.writeMutationReceipt({
+          kind: 'telegram_config_update',
+          component: 'telegram',
+          status: 'failed',
+          summary,
+          details: error.message,
+          actorRole,
+          metadata: {
+            failureCode: errorCode,
+            enabledRequested: String(body.enabled),
+            allowedUserIdPresentRequested: String(Boolean(body.allowedUserId)),
+            secretRefIdPresentRequested: String(Boolean(body.secretRefId)),
+          },
+        });
+        dependencies.runtime.recordSecurityAuditEvent({
+          code: 'telegram_config_update_failed',
+          severity: 'warn',
+          message: summary,
+          component: 'control-api',
+          timestamp: nowIso(),
+          details: {
+            failureCode: errorCode,
+          },
+        });
+        return reply.code(statusCode).send({ error: errorCode, details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/daemon/components/telegram/apply', async (request, reply) => {
+    if (!dependencies.telegramConfigControl) {
+      return reply.code(503).send({ error: 'telegram_config_unavailable' });
+    }
+    const actorRole = readActorRole(request);
+    const result = await dependencies.telegramConfigControl.applyTelegramConfig();
+    const failed = result.status.startsWith('failed');
+    dependencies.runtime.writeMutationReceipt({
+      kind: 'telegram_apply',
+      component: 'telegram',
+      status: failed ? 'failed' : 'succeeded',
+      summary: result.summary,
+      details: [
+        `apply status ${result.status}`,
+        `effective workspace ${result.snapshot.effectiveWorkspaceId}`,
+        `bridge active ${String(result.status === 'reloaded_active')}`,
+        `stale ${String(result.snapshot.staleComparedToApplied)}`,
+      ].join('; '),
+      actorRole,
+      metadata: {
+        applyStatus: result.status,
+        effectiveWorkspaceId: result.snapshot.effectiveWorkspaceId,
+        managementMode: result.snapshot.managementMode,
+        restartSupported: String(result.snapshot.restartSupported),
+      },
+    });
+    dependencies.runtime.recordSecurityAuditEvent({
+      code: failed ? 'telegram_apply_failed' : 'telegram_apply_succeeded',
+      severity: failed ? 'warn' : 'info',
+      message: result.summary,
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        applyStatus: result.status,
+        effectiveWorkspaceId: result.snapshot.effectiveWorkspaceId,
+      },
+    });
+    return TelegramApplyResponseSchema.parse(result);
+  });
+
+  app.post('/v1/daemon/restart', async (request, reply) => {
+    const actorRole = readActorRole(request);
+    const management = dependencies.daemonControl?.getManagementStatus() ?? { managementMode: 'manual' as const, restartSupported: false };
+
+    if (!dependencies.daemonControl || !management.restartSupported) {
+      const response = DaemonRestartResponseSchema.parse({
+        status: 'manual_required',
+        summary: 'This daemon is not launchd-managed. Restart it manually after applying config.',
+        managementMode: management.managementMode,
+        restartSupported: management.restartSupported,
+      });
+      dependencies.runtime.writeMutationReceipt({
+        kind: 'daemon_restart',
+        component: 'daemon',
+        status: 'failed',
+        summary: response.summary,
+        details: `restart supported ${String(management.restartSupported)}`,
+        actorRole,
+        metadata: {
+          managementMode: management.managementMode,
+          restartSupported: String(management.restartSupported),
+        },
+      });
+      dependencies.runtime.recordSecurityAuditEvent({
+        code: 'daemon_restart_failed',
+        severity: 'warn',
+        message: response.summary,
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          managementMode: management.managementMode,
+        },
+      });
+      return response;
+    }
+
+    const response = DaemonRestartResponseSchema.parse({
+      status: 'scheduled',
+      summary: 'Daemon restart scheduled through launchd.',
+      managementMode: management.managementMode,
+      restartSupported: management.restartSupported,
+    });
+    dependencies.runtime.writeMutationReceipt({
+      kind: 'daemon_restart',
+      component: 'daemon',
+      status: 'scheduled',
+      summary: response.summary,
+      details: `restart supported ${String(management.restartSupported)}`,
+      actorRole,
+      metadata: {
+        managementMode: management.managementMode,
+        restartSupported: String(management.restartSupported),
+      },
+    });
+    dependencies.runtime.recordSecurityAuditEvent({
+      code: 'daemon_restart_scheduled',
+      severity: 'info',
+      message: response.summary,
+      component: 'control-api',
+      timestamp: nowIso(),
+      details: {
+        managementMode: management.managementMode,
+      },
+    });
+
+    reply.raw.once('finish', () => {
+      try {
+        const restart = dependencies.daemonControl?.restartDaemonNow();
+        if (!restart || restart.ok) return;
+        dependencies.runtime.writeMutationReceipt({
+          kind: 'daemon_restart',
+          component: 'daemon',
+          status: 'failed',
+          summary: 'Daemon restart request failed after scheduling.',
+          details: restart.output,
+          actorRole,
+          metadata: {
+            managementMode: management.managementMode,
+          },
+        });
+        dependencies.runtime.recordSecurityAuditEvent({
+          code: 'daemon_restart_failed',
+          severity: 'warn',
+          message: 'Daemon restart request failed after scheduling.',
+          component: 'control-api',
+          timestamp: nowIso(),
+          details: {
+            managementMode: management.managementMode,
+          },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        dependencies.runtime.writeMutationReceipt({
+          kind: 'daemon_restart',
+          component: 'daemon',
+          status: 'failed',
+          summary: 'Daemon restart request threw an error after scheduling.',
+          details: detail,
+          actorRole,
+          metadata: {
+            managementMode: management.managementMode,
+          },
+        });
+        dependencies.runtime.recordSecurityAuditEvent({
+          code: 'daemon_restart_failed',
+          severity: 'warn',
+          message: 'Daemon restart request threw an error after scheduling.',
+          component: 'control-api',
+          timestamp: nowIso(),
+          details: {
+            managementMode: management.managementMode,
+          },
+        });
+      }
+    });
+
+    return reply.code(202).send(response);
+  });
+
+  app.get('/v1/governance/mutation-receipts', async (request) => {
+    const query = MutationReceiptListQueryParamsSchema.parse(request.query);
+    return MutationReceiptListResponseSchema.parse(dependencies.runtime.listMutationReceipts(query.component, query.limit ?? 50));
+  });
+
+  app.get('/v1/governance/mutation-receipts/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const receipt = dependencies.runtime.getMutationReceipt(id);
+    if (!receipt) return reply.code(404).send({ error: 'not_found' });
+    return MutationReceiptRecordSchema.parse(receipt);
   });
 
   // --- File roots routes ---
