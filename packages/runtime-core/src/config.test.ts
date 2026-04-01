@@ -87,6 +87,23 @@ describe('scaffoldAssistantWorkspace', () => {
     scaffoldAssistantWorkspace(root);
 
     expect(readFileSync(workspacePath, 'utf8')).toBe('operator-owned custom workspace\n');
-    expect(original).toContain('default Popeye workspace');
+    expect(original).toContain('default Popeye-owned workspace');
+  });
+
+  it('keeps identity thin and stores persona guidance in SOUL.md', () => {
+    const root = mkdtempSync(join(tmpdir(), 'popeye-assistant-'));
+
+    scaffoldAssistantWorkspace(root);
+
+    const identity = readFileSync(join(root, 'identities', 'default.md'), 'utf8');
+    const soul = readFileSync(join(root, 'SOUL.md'), 'utf8');
+    const workspace = readFileSync(join(root, 'WORKSPACE.md'), 'utf8');
+
+    expect(identity).toContain('Default mode: personal assistant first');
+    expect(identity).not.toContain('# SOUL.md');
+    expect(soul).toContain('## Core stance');
+    expect(soul).toContain('## Failure handling');
+    expect(workspace).toContain('## Instruction authority');
+    expect(workspace).toContain('## Scope / Non-scope');
   });
 });
