@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 
 import type { CommandContext } from '../formatters.js';
-import { getFlagValue, parseCsvLine } from '../formatters.js';
+import { getFlagValue, parseCsvLine, pickLatestVault } from '../formatters.js';
 
 export async function handleFinance(ctx: CommandContext): Promise<void> {
   const { client, subcommand, arg1, jsonFlag } = ctx;
@@ -87,52 +87,52 @@ export async function handleFinance(ctx: CommandContext): Promise<void> {
     const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
     const importType = (['csv', 'ofx', 'qfx'].includes(ext) ? ext : 'other') as 'csv' | 'ofx' | 'qfx' | 'other';
 
-    const vaultId = getFlagValue('--vault');
+    let vaultId = getFlagValue('--vault');
     if (!vaultId) {
       const vaults = await client.listVaults('finance');
-      if (vaults.length === 0) {
+      const defaultVault = pickLatestVault(vaults);
+      if (!defaultVault) {
         console.error('No finance vaults found. Create one first: pop vaults create finance <name>');
         process.exitCode = 1;
         return;
       }
-      const defaultVault = vaults[0]!;
-      const imp = await client.createFinanceImport({ vaultId: defaultVault.id, importType, fileName });
-      if (importType === 'csv') {
-        const content = readFileSync(filePath, 'utf-8');
-        const lines = content.trim().split('\n');
-        const header = parseCsvLine(lines[0] ?? '');
-        const dateIdx = header.findIndex((h) => /date/i.test(h));
-        const descIdx = header.findIndex((h) => /desc|memo|name/i.test(h));
-        const amountIdx = header.findIndex((h) => /amount/i.test(h));
-        const catIdx = header.findIndex((h) => /category|cat/i.test(h));
-        const transactions: Array<{
-          date: string;
-          description: string;
-          amount: number;
-          category?: string | null;
-        }> = [];
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]!);
-          if (cols.length < 3) continue;
-          transactions.push({
-            date: cols[dateIdx >= 0 ? dateIdx : 0]?.trim() ?? '',
-            description: cols[descIdx >= 0 ? descIdx : 1]?.trim() ?? '',
-            amount: parseFloat(cols[amountIdx >= 0 ? amountIdx : 2]?.trim() ?? '0') || 0,
-            category: catIdx >= 0 ? (cols[catIdx]?.trim() || null) : null,
-          });
-        }
-        if (transactions.length > 0) {
-          await client.insertFinanceTransactionBatch({ importId: imp.id, transactions });
-        }
-        await client.updateFinanceImportStatus(imp.id, 'completed', transactions.length);
-        console.info(`Imported ${transactions.length} transactions from ${fileName}`);
-      } else {
-        console.info(`Import created: ${imp.id.slice(0, 8)} (${importType}). Parse and add transactions via API or web inspector.`);
+      vaultId = defaultVault.id;
+    }
+
+    const imp = await client.createFinanceImport({ vaultId, importType, fileName });
+    if (importType === 'csv') {
+      const content = readFileSync(filePath, 'utf-8');
+      const lines = content.trim().split('\n');
+      const header = parseCsvLine(lines[0] ?? '');
+      const dateIdx = header.findIndex((h) => /date/i.test(h));
+      const descIdx = header.findIndex((h) => /desc|memo|name/i.test(h));
+      const amountIdx = header.findIndex((h) => /amount/i.test(h));
+      const catIdx = header.findIndex((h) => /category|cat/i.test(h));
+      const transactions: Array<{
+        date: string;
+        description: string;
+        amount: number;
+        category?: string | null;
+      }> = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseCsvLine(lines[i]!);
+        if (cols.length < 3) continue;
+        transactions.push({
+          date: cols[dateIdx >= 0 ? dateIdx : 0]?.trim() ?? '',
+          description: cols[descIdx >= 0 ? descIdx : 1]?.trim() ?? '',
+          amount: parseFloat(cols[amountIdx >= 0 ? amountIdx : 2]?.trim() ?? '0') || 0,
+          category: catIdx >= 0 ? (cols[catIdx]?.trim() || null) : null,
+        });
       }
+      if (transactions.length > 0) {
+        await client.insertFinanceTransactionBatch({ importId: imp.id, transactions });
+      }
+      await client.updateFinanceImportStatus(imp.id, 'completed', transactions.length);
+      console.info(`Imported ${transactions.length} transactions from ${fileName}`);
       return;
     }
-    const imp = await client.createFinanceImport({ vaultId, importType, fileName });
-    console.info(`Import created: ${imp.id.slice(0, 8)} (${importType})`);
+
+    console.info(`Import created: ${imp.id.slice(0, 8)} (${importType}). Parse and add transactions via API or web inspector.`);
     return;
   }
 }

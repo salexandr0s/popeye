@@ -264,14 +264,14 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   finance: {
     imports: { desc: 'List finance imports', usage: 'pop finance imports [--json]' },
-    import: { desc: 'Import a finance file', usage: 'pop finance import <file>' },
+    import: { desc: 'Import a finance file', usage: 'pop finance import <file> [--vault <vaultId>]' },
     transactions: { desc: 'List transactions', usage: 'pop finance transactions [--category <cat>] [--limit <n>] [--json]' },
     search: { desc: 'Search finance data', usage: 'pop finance search <query> [--json]' },
     digest: { desc: 'Show finance digest', usage: 'pop finance digest [--period <YYYY-MM>] [--json]' },
   },
   medical: {
     imports: { desc: 'List medical imports', usage: 'pop medical imports [--json]' },
-    import: { desc: 'Import a medical file', usage: 'pop medical import <file>' },
+    import: { desc: 'Import a medical file', usage: 'pop medical import <file> [--vault <vaultId>]' },
     appointments: { desc: 'List appointments', usage: 'pop medical appointments [--limit <n>] [--json]' },
     medications: { desc: 'List medications', usage: 'pop medical medications [--json]' },
     search: { desc: 'Search medical data', usage: 'pop medical search <query> [--json]' },

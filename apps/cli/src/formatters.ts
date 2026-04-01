@@ -100,6 +100,15 @@ export function readCsvFlag(flag: string): string[] | undefined {
   return value.split(',').map((entry) => entry.trim()).filter(Boolean);
 }
 
+export function pickLatestVault(vaults: VaultRecord[]): VaultRecord | null {
+  if (vaults.length === 0) return null;
+  return [...vaults].sort((left, right) => {
+    const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
+    if (byCreatedAt !== 0) return byCreatedAt;
+    return right.id.localeCompare(left.id);
+  })[0] ?? null;
+}
+
 export function formatRun(run: RunRecord, envelope?: ExecutionEnvelopeResponse | null): string {
   const lines = [
     `Run ${run.id}`,

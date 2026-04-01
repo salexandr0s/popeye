@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import type { CommandContext } from '../formatters.js';
-import { getFlagValue } from '../formatters.js';
+import { getFlagValue, pickLatestVault } from '../formatters.js';
 
 export async function handleMedical(ctx: CommandContext): Promise<void> {
   const { client, subcommand, arg1, jsonFlag } = ctx;
@@ -98,12 +98,13 @@ export async function handleMedical(ctx: CommandContext): Promise<void> {
     let resolvedVaultId = vaultId;
     if (!resolvedVaultId) {
       const vaults = await client.listVaults('medical');
-      if (vaults.length === 0) {
+      const defaultVault = pickLatestVault(vaults);
+      if (!defaultVault) {
         console.error('No medical vaults found. Create one first: pop vaults create medical <name>');
         process.exitCode = 1;
         return;
       }
-      resolvedVaultId = vaults[0]!.id;
+      resolvedVaultId = defaultVault.id;
     }
     const imp = await client.createMedicalImport({ vaultId: resolvedVaultId, importType, fileName });
     console.info(`Import created: ${imp.id.slice(0, 8)} (${importType})`);
