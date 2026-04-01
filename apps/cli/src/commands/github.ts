@@ -12,6 +12,7 @@ export async function handleGithub(ctx: CommandContext): Promise<void> {
       mode: process.argv.includes('--read-write') ? 'read_write' : 'read_only',
       syncIntervalSeconds: 900,
       ...(reconnectId ? { connectionId: reconnectId } : {}),
+      openBrowser: !process.argv.includes('--no-open'),
     });
     console.info('Run "pop github sync" to fetch repos, PRs, issues, and notifications.');
     return;

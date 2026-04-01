@@ -245,8 +245,8 @@ import type { GoogleCalendarAdapter } from '@popeye/cap-calendar';
 import { createCalendarCapability, CalendarService, CalendarSearchService } from '@popeye/cap-calendar';
 import { createTodosCapability, TodoService, TodoSearchService } from '@popeye/cap-todos';
 import { createPeopleCapability, PeopleService } from '@popeye/cap-people';
-import { createFinanceCapability, FinanceService, FinanceSearchService } from '@popeye/cap-finance';
-import { createMedicalCapability, MedicalService, MedicalSearchService } from '@popeye/cap-medical';
+import { createFinanceCapability, FinanceService, FinanceSearchService, FinanceDigestService } from '@popeye/cap-finance';
+import { createMedicalCapability, MedicalService, MedicalSearchService, MedicalDigestService } from '@popeye/cap-medical';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   clearBrowserSessions,
@@ -3827,6 +3827,22 @@ export class PopeyeRuntimeService {
     return this.financeFacade.getService()?.getDigest(period) ?? null;
   }
 
+  triggerFinanceDigest(period?: string): FinanceDigestRecord {
+    const cap = this.capabilityRegistry.getCapability('finance');
+    if (!cap) throw new Error('Finance capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/finance.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new FinanceService(writeDb as unknown as CapabilityContext['appDb']);
+      const digestService = new FinanceDigestService(svc, this.buildCapabilityContext());
+      const result = digestService.generateDigest(period);
+      this.financeFacade.invalidate();
+      return result;
+    } finally {
+      writeDb.close();
+    }
+  }
+
   createFinanceImport(data: { vaultId: string; importType: FinanceImportRecord['importType']; fileName: string }): FinanceImportRecord {
     const cap = this.capabilityRegistry.getCapability('finance');
     if (!cap) throw new Error('Finance capability not initialized');
@@ -3958,6 +3974,22 @@ export class PopeyeRuntimeService {
 
   getMedicalDigest(period?: string): MedicalDigestRecord | null {
     return this.medicalFacade.getService()?.getDigest(period) ?? null;
+  }
+
+  triggerMedicalDigest(period?: string): MedicalDigestRecord {
+    const cap = this.capabilityRegistry.getCapability('medical');
+    if (!cap) throw new Error('Medical capability not initialized');
+    const dbPath = `${this.databases.paths.capabilityStoresDir}/medical.db`;
+    const writeDb = new BetterSqlite3(dbPath);
+    try {
+      const svc = new MedicalService(writeDb as unknown as CapabilityContext['appDb']);
+      const digestService = new MedicalDigestService(svc, this.buildCapabilityContext());
+      const result = digestService.generateDigest(period);
+      this.medicalFacade.invalidate();
+      return result;
+    } finally {
+      writeDb.close();
+    }
   }
 
   createMedicalImport(data: { vaultId: string; importType: MedicalImportRecord['importType']; fileName: string }): MedicalImportRecord {

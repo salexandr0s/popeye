@@ -26,6 +26,19 @@ async function openBrowserUrl(url: string): Promise<boolean> {
   });
 }
 
+function buildLoopbackTunnelHint(authorizationUrl: string): string | null {
+  try {
+    const redirectUri = new URL(new URL(authorizationUrl).searchParams.get('redirect_uri') ?? '');
+    if (!['127.0.0.1', 'localhost'].includes(redirectUri.hostname)) {
+      return null;
+    }
+    const port = redirectUri.port || (redirectUri.protocol === 'https:' ? '443' : '80');
+    return `If you're approving from another machine over SSH, forward the callback port first:\n  ssh -L ${port}:127.0.0.1:${port} <remote-host>`;
+  } catch {
+    return null;
+  }
+}
+
 async function runOAuthConnectFlow(
   client: PopeyeApiClient,
   input: {
@@ -33,6 +46,7 @@ async function runOAuthConnectFlow(
     mode: 'read_only' | 'read_write';
     syncIntervalSeconds?: number;
     connectionId?: string;
+    openBrowser?: boolean;
   },
 ): Promise<void> {
   const session = await client.startOAuthConnection({
@@ -42,13 +56,17 @@ async function runOAuthConnectFlow(
     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
   });
 
-  const opened = await openBrowserUrl(session.authorizationUrl);
+  const shouldOpenBrowser = input.openBrowser ?? true;
+  const opened = shouldOpenBrowser ? await openBrowserUrl(session.authorizationUrl) : false;
   console.info(`Starting ${input.providerKind} connection...`);
   if (opened) {
     console.info('Opened browser for OAuth approval.');
-  } else {
-    console.info('Open this URL in your browser:');
-    console.info(`  ${session.authorizationUrl}`);
+  }
+  console.info('Open this URL in your browser:');
+  console.info(`  ${session.authorizationUrl}`);
+  const tunnelHint = buildLoopbackTunnelHint(session.authorizationUrl);
+  if (tunnelHint) {
+    console.info(tunnelHint);
   }
 
   for (let attempt = 0; attempt < 150; attempt += 1) {
@@ -177,6 +195,7 @@ export async function handleEmail(ctx: CommandContext): Promise<void> {
         mode,
         syncIntervalSeconds: 900,
         ...(reconnectId ? { connectionId: reconnectId } : {}),
+        openBrowser: !process.argv.includes('--no-open'),
       });
       console.info('Run "pop email sync" to fetch your inbox.');
     } else if (isGmailExperimental) {

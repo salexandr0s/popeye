@@ -57,12 +57,18 @@ export async function handleFinance(ctx: CommandContext): Promise<void> {
 
   if (subcommand === 'digest') {
     const period = getFlagValue('--period');
-    const digest = await client.getFinanceDigest(period ?? undefined);
+    const generateFlag = process.argv.includes('--generate');
+    const digest = generateFlag
+      ? await client.generateFinanceDigest(period ?? undefined)
+      : await client.getFinanceDigest(period ?? undefined);
     if (jsonFlag) {
       console.info(JSON.stringify(digest, null, 2));
     } else if (!digest) {
-      console.info('No finance digest available.');
+      console.info('No finance digest available. Import transactions first, or use --generate.');
     } else {
+      if (generateFlag) {
+        console.info('Digest generated:');
+      }
       console.info(`Period: ${digest.period}`);
       console.info(`Income:   $${digest.totalIncome.toFixed(2)}`);
       console.info(`Expenses: $${digest.totalExpenses.toFixed(2)}`);

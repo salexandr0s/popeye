@@ -131,12 +131,16 @@ describe('finance/medical CLI vault targeting', () => {
     process.argv = ['node', 'pop'];
 
     const createMedicalImport = vi.fn().mockResolvedValue({ id: 'med-1' });
+    const insertMedicalDocument = vi.fn().mockResolvedValue({ id: 'doc-1' });
+    const updateMedicalImportStatus = vi.fn().mockResolvedValue(undefined);
     const client = {
       listVaults: vi.fn().mockResolvedValue([
         { ...makeVault('old-medical', '2026-03-01T00:00:00.000Z'), domain: 'medical' },
         { ...makeVault('new-medical', '2026-04-01T00:00:00.000Z'), domain: 'medical' },
       ]),
       createMedicalImport,
+      insertMedicalDocument,
+      updateMedicalImportStatus,
     };
 
     await handleMedical(makeCtx(client, 'import', filePath));
@@ -146,6 +150,102 @@ describe('finance/medical CLI vault targeting', () => {
       vaultId: 'new-medical',
       importType: 'pdf',
       fileName: 'sample.pdf',
+    });
+    expect(insertMedicalDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        importId: 'med-1',
+        fileName: 'sample.pdf',
+        mimeType: 'application/pdf',
+      }),
+    );
+    expect(updateMedicalImportStatus).toHaveBeenCalledWith('med-1', 'completed');
+  });
+
+  it('finance digest --generate calls the digest generation API', async () => {
+    process.argv = ['node', 'pop', 'finance', 'digest', '--period', '2026-03', '--generate'];
+    const generateFinanceDigest = vi.fn().mockResolvedValue({
+      id: 'fd-1',
+      period: '2026-03',
+      totalIncome: 4200,
+      totalExpenses: 84.12,
+      categoryBreakdown: { groceries: -84.12 },
+      anomalyFlags: [],
+      generatedAt: '2026-04-01T00:00:00.000Z',
+    });
+
+    await handleFinance(makeCtx({ generateFinanceDigest }, 'digest'));
+
+    expect(generateFinanceDigest).toHaveBeenCalledWith('2026-03');
+  });
+
+  it('medical digest --generate calls the digest generation API', async () => {
+    process.argv = ['node', 'pop', 'medical', 'digest', '--period', '2026-03', '--generate'];
+    const generateMedicalDigest = vi.fn().mockResolvedValue({
+      id: 'md-1',
+      period: '2026-03',
+      appointmentCount: 1,
+      activeMedications: 1,
+      summary: 'Digest summary',
+      generatedAt: '2026-04-01T00:00:00.000Z',
+    });
+
+    await handleMedical(makeCtx({ generateMedicalDigest }, 'digest'));
+
+    expect(generateMedicalDigest).toHaveBeenCalledWith('2026-03');
+  });
+
+  it('medical add-appointment creates a structured appointment record', async () => {
+    process.argv = ['node', 'pop', 'medical', 'add-appointment', 'imp-1', '--date', '2026-03-10', '--provider', 'Dr. Smith', '--specialty', 'cardiology', '--location', 'Vienna', '--summary', 'Follow-up'];
+    const insertMedicalAppointment = vi.fn().mockResolvedValue({
+      id: 'appt-1',
+      importId: 'imp-1',
+      date: '2026-03-10',
+      provider: 'Dr. Smith',
+      specialty: 'cardiology',
+      location: 'Vienna',
+      redactedSummary: 'Follow-up',
+    });
+
+    await handleMedical(makeCtx({ insertMedicalAppointment }, 'add-appointment', 'imp-1'));
+
+    expect(insertMedicalAppointment).toHaveBeenCalledWith({
+      importId: 'imp-1',
+      date: '2026-03-10',
+      provider: 'Dr. Smith',
+      specialty: 'cardiology',
+      location: 'Vienna',
+      redactedSummary: 'Follow-up',
+    });
+  });
+
+  it('medical add-medication creates a structured medication record', async () => {
+    process.argv = ['node', 'pop', 'medical', 'add-medication', 'imp-1', 'Metformin', '--dosage', '500mg', '--frequency', 'twice daily', '--prescriber', 'Dr. Smith', '--start-date', '2026-03-10', '--summary', 'Blood sugar management'];
+    const insertMedicalMedication = vi.fn().mockResolvedValue({
+      id: 'med-1',
+      importId: 'imp-1',
+      name: 'Metformin',
+      dosage: '500mg',
+      frequency: 'twice daily',
+      prescriber: 'Dr. Smith',
+      startDate: '2026-03-10',
+      endDate: null,
+      redactedSummary: 'Blood sugar management',
+    });
+
+    await handleMedical({
+      ...makeCtx({ insertMedicalMedication }, 'add-medication', 'imp-1'),
+      arg2: 'Metformin',
+    });
+
+    expect(insertMedicalMedication).toHaveBeenCalledWith({
+      importId: 'imp-1',
+      name: 'Metformin',
+      dosage: '500mg',
+      frequency: 'twice daily',
+      prescriber: 'Dr. Smith',
+      startDate: '2026-03-10',
+      endDate: null,
+      redactedSummary: 'Blood sugar management',
     });
   });
 });

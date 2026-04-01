@@ -2899,6 +2899,13 @@ export async function createControlApi(
     return dependencies.runtime.getFinanceDigest(query.period);
   });
 
+  app.post('/v1/finance/digest', async (request) => {
+    const body = z.object({
+      period: z.string().optional(),
+    }).parse(request.body ?? {});
+    return dependencies.runtime.triggerFinanceDigest(body.period);
+  });
+
   app.post('/v1/finance/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
@@ -3003,6 +3010,13 @@ export async function createControlApi(
     return dependencies.runtime.getMedicalDigest(query.period);
   });
 
+  app.post('/v1/medical/digest', async (request) => {
+    const body = z.object({
+      period: z.string().optional(),
+    }).parse(request.body ?? {});
+    return dependencies.runtime.triggerMedicalDigest(body.period);
+  });
+
   app.post('/v1/medical/imports', async (request) => {
     const body = z.object({
       vaultId: z.string().min(1),
@@ -3036,6 +3050,17 @@ export async function createControlApi(
       redactedSummary: z.string().default(''),
     }).parse(request.body);
     return dependencies.runtime.insertMedicalMedication(body);
+  });
+
+  app.post('/v1/medical/documents', async (request) => {
+    const body = z.object({
+      importId: z.string().min(1),
+      fileName: z.string().min(1),
+      mimeType: z.string().min(1),
+      sizeBytes: z.number().int().nonnegative(),
+      redactedSummary: z.string().default(''),
+    }).parse(request.body);
+    return dependencies.runtime.insertMedicalDocument(body);
   });
 
   app.post('/v1/medical/imports/:id/status', async (request) => {

@@ -433,6 +433,20 @@ describe('CLI help and discoverability', () => {
     expect(r.stdout).toContain('--token-file <path>');
   });
 
+  it('pop medical --help prints structured medical proof subcommands', async () => {
+    const r = await runPop('medical', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('add-appointment');
+    expect(r.stdout).toContain('add-medication');
+    expect(r.stdout).toContain('--generate');
+  });
+
+  it('pop github --help prints the SSH-friendly no-open OAuth flag', async () => {
+    const r = await runPop('github', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('--no-open');
+  });
+
   it('pop approvals --help prints approval subcommands', async () => {
     const r = await runPop('approvals', '--help');
     expect(r.code).toBe(0);

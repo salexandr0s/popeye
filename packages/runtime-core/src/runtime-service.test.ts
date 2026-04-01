@@ -595,6 +595,76 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('generates finance and medical digests from stored restricted-domain records', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-domain-digests-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const financeImport = runtime.createFinanceImport({
+      vaultId: 'finance-vault',
+      importType: 'csv',
+      fileName: 'statement.csv',
+    });
+    runtime.insertFinanceTransactionBatch({
+      importId: financeImport.id,
+      transactions: [
+        { date: '2025-03-02', description: 'Salary', amount: 4200, category: 'income' },
+        { date: '2025-03-03', description: 'Groceries', amount: -84.12, category: 'groceries' },
+      ],
+    });
+    runtime.updateFinanceImportStatus(financeImport.id, 'completed', 2);
+
+    const financeDigest = runtime.triggerFinanceDigest('2025-03');
+    expect(financeDigest.period).toBe('2025-03');
+    expect(financeDigest.totalIncome).toBe(4200);
+    expect(financeDigest.totalExpenses).toBeCloseTo(84.12, 2);
+    expect(runtime.getFinanceDigest('2025-03')).toMatchObject({
+      id: financeDigest.id,
+      period: '2025-03',
+    });
+
+    const medicalImport = runtime.createMedicalImport({
+      vaultId: 'medical-vault',
+      importType: 'pdf',
+      fileName: 'visit.pdf',
+    });
+    runtime.insertMedicalDocument({
+      importId: medicalImport.id,
+      fileName: 'visit.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 512,
+      redactedSummary: 'Imported visit summary',
+    });
+    runtime.insertMedicalAppointment({
+      importId: medicalImport.id,
+      date: '2025-03-10',
+      provider: 'Dr. Smith',
+      specialty: 'cardiology',
+      redactedSummary: 'Follow-up visit',
+    });
+    runtime.insertMedicalMedication({
+      importId: medicalImport.id,
+      name: 'Metformin',
+      dosage: '500mg',
+      frequency: 'twice daily',
+      startDate: '2025-03-10',
+      redactedSummary: 'Blood sugar management',
+    });
+    runtime.updateMedicalImportStatus(medicalImport.id, 'completed');
+
+    const medicalDigest = runtime.triggerMedicalDigest('2025-03');
+    expect(medicalDigest.period).toBe('2025-03');
+    expect(medicalDigest.appointmentCount).toBe(1);
+    expect(medicalDigest.activeMedications).toBe(1);
+    expect(runtime.getMedicalDigest('2025-03')).toMatchObject({
+      id: medicalDigest.id,
+      period: '2025-03',
+    });
+
+    await runtime.close();
+  });
+
   it('updates email drafts using persisted draft-to-account mappings across multiple accounts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-email-drafts-'));
     chmodSync(dir, 0o700);

@@ -148,6 +148,10 @@ These commands open browser OAuth for the blessed direct-provider paths. The
 Todoist flow uses a manual API token and stores it in the secret store. The
 legacy CLI-backed adapters remain available only as experimental fallbacks.
 
+If you are driving a remote host over SSH, prefer `--no-open`, establish a
+local port forward for the callback port first, and then open the printed URL
+in your local browser.
+
 ### 15. Verify generated contracts
 
 ```bash

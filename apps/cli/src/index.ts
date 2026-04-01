@@ -200,7 +200,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   },
   email: {
     accounts: { desc: 'List email accounts', usage: 'pop email accounts [--json]' },
-    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail [--read-write] [--reconnect <connectionId>] | --proton | --gmail-experimental' },
+    connect: { desc: 'Connect email provider', usage: 'pop email connect --gmail [--read-write] [--reconnect <connectionId>] [--no-open] | --proton | --gmail-experimental' },
     sync: { desc: 'Trigger email sync', usage: 'pop email sync [accountId]' },
     threads: { desc: 'List email threads', usage: 'pop email threads [--unread] [--limit <n>] [--json]' },
     search: { desc: 'Search email', usage: 'pop email search <query> [--limit <n>] [--json]' },
@@ -208,7 +208,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     providers: { desc: 'Show available email providers', usage: 'pop email providers [--json]' },
   },
   github: {
-    connect: { desc: 'Connect GitHub via browser OAuth', usage: 'pop github connect [--read-write] [--reconnect <connectionId>]' },
+    connect: { desc: 'Connect GitHub via browser OAuth', usage: 'pop github connect [--read-write] [--reconnect <connectionId>] [--no-open]' },
     accounts: { desc: 'List GitHub accounts', usage: 'pop github accounts [--json]' },
     sync: { desc: 'Trigger GitHub sync', usage: 'pop github sync [accountId]' },
     repos: { desc: 'List synced repos', usage: 'pop github repos [--limit <n>] [--json]' },
@@ -219,7 +219,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     digest: { desc: 'Show GitHub digest', usage: 'pop github digest [--json]' },
   },
   calendar: {
-    connect: { desc: 'Connect Google Calendar via browser OAuth', usage: 'pop calendar connect [--read-write] [--reconnect <connectionId>]' },
+    connect: { desc: 'Connect Google Calendar via browser OAuth', usage: 'pop calendar connect [--read-write] [--reconnect <connectionId>] [--no-open]' },
     accounts: { desc: 'List calendar accounts', usage: 'pop calendar accounts [--json]' },
     sync: { desc: 'Trigger calendar sync', usage: 'pop calendar sync [accountId]' },
     events: { desc: 'List calendar events', usage: 'pop calendar events [--today] [--upcoming] [--limit <n>] [--json]' },
@@ -267,15 +267,17 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     import: { desc: 'Import a finance file', usage: 'pop finance import <file> [--vault <vaultId>]' },
     transactions: { desc: 'List transactions', usage: 'pop finance transactions [--category <cat>] [--limit <n>] [--json]' },
     search: { desc: 'Search finance data', usage: 'pop finance search <query> [--json]' },
-    digest: { desc: 'Show finance digest', usage: 'pop finance digest [--period <YYYY-MM>] [--json]' },
+    digest: { desc: 'Show finance digest', usage: 'pop finance digest [--period <YYYY-MM>] [--generate] [--json]' },
   },
   medical: {
     imports: { desc: 'List medical imports', usage: 'pop medical imports [--json]' },
     import: { desc: 'Import a medical file', usage: 'pop medical import <file> [--vault <vaultId>]' },
     appointments: { desc: 'List appointments', usage: 'pop medical appointments [--limit <n>] [--json]' },
     medications: { desc: 'List medications', usage: 'pop medical medications [--json]' },
+    'add-appointment': { desc: 'Add a medical appointment record', usage: 'pop medical add-appointment <importId> --date <YYYY-MM-DD> --provider <name> [--specialty <name>] [--location <place>] [--summary <text>]' },
+    'add-medication': { desc: 'Add a medical medication record', usage: 'pop medical add-medication <importId> <name> [--dosage <text>] [--frequency <text>] [--prescriber <name>] [--start-date <YYYY-MM-DD>] [--end-date <YYYY-MM-DD>] [--summary <text>]' },
     search: { desc: 'Search medical data', usage: 'pop medical search <query> [--json]' },
-    digest: { desc: 'Show medical digest', usage: 'pop medical digest [--json]' },
+    digest: { desc: 'Show medical digest', usage: 'pop medical digest [--period <YYYY-MM>] [--generate] [--json]' },
   },
   telegram: {
     configure: {

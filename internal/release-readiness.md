@@ -641,7 +641,7 @@ pop finance import ~/popeye-release-fixtures/finance/sample.csv
 pop finance imports --json
 pop finance transactions --limit 20 --json
 pop finance search "groceries" --json
-pop finance digest --period 2026-03 --json
+pop finance digest --period 2026-03 --generate --json
 ```
 
 ### Pass criteria
@@ -665,10 +665,13 @@ pop vaults create medical "Release Readiness Medical" --restricted
 pop vaults list --domain medical --json
 pop medical import ~/popeye-release-fixtures/medical/sample.pdf
 pop medical imports --json
+MEDICAL_IMPORT_ID="$(pop medical imports --json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data[0][\"id\"])')"
+pop medical add-appointment "$MEDICAL_IMPORT_ID" --date 2026-03-12 --provider "Dr. Release" --specialty general --location "Vienna Clinic" --summary "Release-readiness follow-up"
+pop medical add-medication "$MEDICAL_IMPORT_ID" "Metformin" --dosage 500mg --frequency "twice daily" --prescriber "Dr. Release" --start-date 2026-03-12 --summary "Release-readiness prescription"
 pop medical appointments --json
 pop medical medications --json
-pop medical search "prescription" --json
-pop medical digest --json
+pop medical search "Metformin" --json
+pop medical digest --period 2026-03 --generate --json
 ```
 
 ### Pass criteria
@@ -994,6 +997,26 @@ And via API snapshots:
 - `/v1/daemon/scheduler`
 - `/v1/security/audit`
 - `/v1/usage/summary`
+
+Use the repo-owned soak runner so the monitoring loop survives shell detach and
+records an explicit summary:
+
+```bash
+nohup node scripts/release-soak.mjs \
+  --host "$HOST" \
+  --evidence-dir "$LOCAL_EVIDENCE/03-soak" \
+  --pid-file "$LOCAL_EVIDENCE/03-soak/soak-runner.pid" \
+  > "$LOCAL_EVIDENCE/03-soak/soak-runner.out" 2>&1 &
+echo $! > "$LOCAL_EVIDENCE/03-soak/soak-runner-shell.pid"
+```
+
+Expect these files:
+
+- `soak-start.log`
+- `soak-run.log`
+- `soak-<timestamp>.log`
+- `soak-summary.json`
+- `soak-end.log`
 
 ## 13.4 Soak thresholds
 

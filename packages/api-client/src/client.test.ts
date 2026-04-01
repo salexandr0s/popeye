@@ -485,6 +485,14 @@ describe('PopeyeApiClient', () => {
     expect(imports).toHaveLength(1);
     const transactions = await client.listFinanceTransactions({ importId: imp.id });
     expect(transactions).toHaveLength(1);
+    const digest = await client.generateFinanceDigest('2025-01');
+    expect(digest.period).toBe('2025-01');
+    expect(digest.totalExpenses).toBe(4.5);
+    expect(digest.totalIncome).toBe(0);
+    expect(await client.getFinanceDigest('2025-01')).toMatchObject({
+      id: digest.id,
+      period: '2025-01',
+    });
 
     await runtime.close();
     await app.close();
@@ -529,15 +537,35 @@ describe('PopeyeApiClient', () => {
     expect(med.name).toBe('Aspirin');
     expect(med.dosage).toBe('81mg');
 
+    const doc = await client.insertMedicalDocument({
+      importId: imp.id,
+      fileName: 'scan.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 128,
+      redactedSummary: 'Imported medical document',
+    });
+    expect(doc.fileName).toBe('scan.pdf');
+    expect(doc.mimeType).toBe('application/pdf');
+
     // Update import status
     await client.updateMedicalImportStatus(imp.id, 'completed');
     const updated = await client.getMedicalImport(imp.id);
     expect(updated.status).toBe('completed');
 
+    const digest = await client.generateMedicalDigest('2025-02');
+    expect(digest.period).toBe('2025-02');
+    expect(digest.appointmentCount).toBe(1);
+    expect(digest.activeMedications).toBe(1);
+
     // Verify lists return data
     expect(await client.listMedicalImports()).toHaveLength(1);
     expect(await client.listMedicalAppointments()).toHaveLength(1);
     expect(await client.listMedicalMedications()).toHaveLength(1);
+    expect(await client.listMedicalDocuments()).toHaveLength(1);
+    expect(await client.getMedicalDigest('2025-02')).toMatchObject({
+      id: digest.id,
+      period: '2025-02',
+    });
 
     await runtime.close();
     await app.close();

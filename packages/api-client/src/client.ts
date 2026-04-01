@@ -1654,6 +1654,10 @@ export class PopeyeApiClient {
     return this.get(`/v1/finance/digest${this.buildQuery({ period })}`, FinanceDigestRecordSchema.nullable());
   }
 
+  async generateFinanceDigest(period?: string): Promise<FinanceDigestRecord> {
+    return this.post('/v1/finance/digest', period ? { period } : {}, FinanceDigestRecordSchema);
+  }
+
   async createFinanceImport(data: { vaultId: string; importType?: string; fileName: string }): Promise<FinanceImportRecord> {
     return this.post('/v1/finance/imports', data, FinanceImportRecordSchema);
   }
@@ -1739,6 +1743,10 @@ export class PopeyeApiClient {
     return this.get(`/v1/medical/digest${this.buildQuery({ period })}`, MedicalDigestRecordSchema.nullable());
   }
 
+  async generateMedicalDigest(period?: string): Promise<MedicalDigestRecord> {
+    return this.post('/v1/medical/digest', period ? { period } : {}, MedicalDigestRecordSchema);
+  }
+
   async createMedicalImport(data: { vaultId: string; importType?: string; fileName: string }): Promise<MedicalImportRecord> {
     return this.post('/v1/medical/imports', data, MedicalImportRecordSchema);
   }
@@ -1765,6 +1773,16 @@ export class PopeyeApiClient {
     redactedSummary?: string;
   }): Promise<MedicalMedicationRecord> {
     return this.post('/v1/medical/medications', data, MedicalMedicationRecordSchema);
+  }
+
+  async insertMedicalDocument(data: {
+    importId: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    redactedSummary?: string;
+  }): Promise<MedicalDocumentRecord> {
+    return this.post('/v1/medical/documents', data, MedicalDocumentRecordSchema);
   }
 
   async updateMedicalImportStatus(id: string, status: string): Promise<void> {

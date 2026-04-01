@@ -811,7 +811,7 @@ ssh "$HOST" "
   pop finance imports --json
   pop finance transactions --limit 20 --json
   pop finance search groceries --json
-  pop finance digest --period 2026-03 --json
+  pop finance digest --period 2026-03 --generate --json
 " | tee "$LOCAL_EVIDENCE/02-remote/finance.log"
 ```
 
@@ -826,10 +826,13 @@ ssh "$HOST" "
   pop vaults list --domain medical --json
   pop medical import \$HOME/popeye-release-fixtures/medical/sample.pdf
   pop medical imports --json
+  MEDICAL_IMPORT_ID=\"\$(pop medical imports --json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data[0][\"id\"])')\"
+  pop medical add-appointment \"\$MEDICAL_IMPORT_ID\" --date 2026-03-12 --provider 'Dr. Release' --specialty general --location 'Vienna Clinic' --summary 'Release-readiness follow-up'
+  pop medical add-medication \"\$MEDICAL_IMPORT_ID\" Metformin --dosage 500mg --frequency 'twice daily' --prescriber 'Dr. Release' --start-date 2026-03-12 --summary 'Release-readiness prescription'
   pop medical appointments --json
   pop medical medications --json
-  pop medical search prescription --json
-  pop medical digest --json
+  pop medical search Metformin --json
+  pop medical digest --period 2026-03 --generate --json
 " | tee "$LOCAL_EVIDENCE/02-remote/medical.log"
 ```
 
@@ -1257,30 +1260,15 @@ ssh "$HOST" "
 ### 15.2 Snapshot loop (run locally and leave it alone)
 
 ```bash
-cat > "$LOCAL_EVIDENCE/03-soak/soak-loop.sh" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-HOST="${HOST:?}"
-OUT_DIR="${LOCAL_EVIDENCE:?}/03-soak"
-for i in $(seq 1 12); do
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  ssh "$HOST" '
-    set -e
-    . "$HOME/.popeye-rr-env.sh"
-    cd "$POPEYE_REPO_DIR"
-    printf "=== %s ===\n" "'"$stamp"'"
-    pop daemon health
-    pop daemon status
-    pop runs tail
-    pop runs failures
-    pop interventions list
-    pop security audit
-  ' | tee "$OUT_DIR/soak-$stamp.log"
-  sleep 7200
-done
-SH
-chmod +x "$LOCAL_EVIDENCE/03-soak/soak-loop.sh"
-HOST="$HOST" LOCAL_EVIDENCE="$LOCAL_EVIDENCE" "$LOCAL_EVIDENCE/03-soak/soak-loop.sh"
+nohup node scripts/release-soak.mjs \
+  --host "$HOST" \
+  --evidence-dir "$LOCAL_EVIDENCE/03-soak" \
+  --pid-file "$LOCAL_EVIDENCE/03-soak/soak-runner.pid" \
+  > "$LOCAL_EVIDENCE/03-soak/soak-runner.out" 2>&1 &
+echo $! | tee "$LOCAL_EVIDENCE/03-soak/soak-runner-shell.pid"
+sleep 2
+kill -0 "$(cat "$LOCAL_EVIDENCE/03-soak/soak-runner-shell.pid")"
+cat "$LOCAL_EVIDENCE/03-soak/soak-start.log"
 ```
 
 ### 15.3 End-condition snapshot
