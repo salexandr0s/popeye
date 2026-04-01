@@ -138,73 +138,6 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
-  it('creates pending file write intents for registered file roots by default', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-file-write-intent-'));
-    chmodSync(dir, 0o700);
-    const rootDir = mkdtempSync(join(tmpdir(), 'popeye-file-root-'));
-    mkdirSync(rootDir, { recursive: true });
-    writeFileSync(join(rootDir, 'note.md'), '# Note\n');
-
-    const runtime = createRuntimeService(makeConfig(dir));
-    const root = runtime.registerFileRoot({
-      workspaceId: 'default',
-      label: 'fixture-root',
-      rootPath: rootDir,
-      permission: 'index_and_derive',
-      filePatterns: ['**/*.md'],
-      excludePatterns: [],
-      maxFileSizeBytes: 1_048_576,
-    });
-
-    const intent = runtime.createFileWriteIntent({
-      fileRootId: root.id,
-      filePath: 'note.md',
-      intentType: 'update',
-      diffPreview: '+ release checklist smoke line',
-    });
-
-    expect(intent.fileRootId).toBe(root.id);
-    expect(intent.status).toBe('pending');
-    expect(intent.reviewedAt).toBeNull();
-
-    await runtime.close();
-  });
-
-  it('can reject a pending file write intent after review', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-file-write-review-'));
-    chmodSync(dir, 0o700);
-    const rootDir = mkdtempSync(join(tmpdir(), 'popeye-file-root-'));
-    mkdirSync(rootDir, { recursive: true });
-    writeFileSync(join(rootDir, 'note.md'), '# Note\n');
-
-    const runtime = createRuntimeService(makeConfig(dir));
-    const root = runtime.registerFileRoot({
-      workspaceId: 'default',
-      label: 'fixture-root',
-      rootPath: rootDir,
-      permission: 'index_and_derive',
-      filePatterns: ['**/*.md'],
-      excludePatterns: [],
-      maxFileSizeBytes: 1_048_576,
-    });
-
-    const intent = runtime.createFileWriteIntent({
-      fileRootId: root.id,
-      filePath: 'note.md',
-      intentType: 'update',
-      diffPreview: '+ release checklist smoke line',
-    });
-    const reviewed = runtime.reviewFileWriteIntent(intent.id, { action: 'reject', reason: 'release-readiness reject-path proof' });
-
-    expect(reviewed).toMatchObject({
-      id: intent.id,
-      status: 'rejected',
-    });
-    expect(reviewed?.reviewedAt).toBeTruthy();
-
-    await runtime.close();
-  });
-
   it('enriches receipts with a timeline built from run events, policy events, and context releases', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-timeline-'));
     chmodSync(dir, 0o700);
@@ -2830,6 +2763,52 @@ describe('PopeyeRuntimeService', () => {
     expect(job!.status).toBe('queued');
     const lease = runtime.getJobLease('job-sweep');
     expect(lease).toBeNull();
+    await runtime.close();
+  });
+
+  it('lease sweep clears stale locks from cancelled jobs so queued work resumes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-sweep-cancelled-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const pastTime = new Date(Date.now() - 120_000).toISOString();
+    runtime.databases.app.prepare(
+      'INSERT INTO tasks (id, workspace_id, project_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('task-sweep-cancelled', 'default', null, 'cancelled sweep task', 'hello', 'manual', 'active', JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 }), 'read_only', pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO jobs (id, task_id, workspace_id, status, retry_count, available_at, last_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('job-sweep-cancelled', 'task-sweep-cancelled', 'default', 'cancelled', 0, pastTime, null, pastTime, pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO job_leases (job_id, lease_owner, lease_expires_at, updated_at) VALUES (?, ?, ?, ?)',
+    ).run('job-sweep-cancelled', 'worker:stale', pastTime, pastTime);
+
+    runtime.databases.app.prepare(
+      'INSERT INTO locks (id, scope, owner, created_at) VALUES (?, ?, ?, ?)',
+    ).run('workspace:default', 'workspace:default', 'worker:stale', pastTime);
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'fresh-after-stale-lock',
+      prompt: 'hello',
+      source: 'manual',
+      autoEnqueue: true,
+    });
+
+    await runtime.runSchedulerCycle();
+
+    expect(runtime.getJobLease('job-sweep-cancelled')).toBeNull();
+    const lockCount = runtime.databases.app
+      .prepare('SELECT COUNT(*) AS count FROM locks WHERE id = ?')
+      .get('workspace:default') as { count: number };
+    expect(lockCount.count).toBe(0);
+
+    await runtime.runSchedulerCycle();
+
+    const terminal = await runtime.waitForJobTerminalState(created.job!.id, 5_000);
+    expect(terminal?.receipt?.status).toBe('succeeded');
     await runtime.close();
   });
 

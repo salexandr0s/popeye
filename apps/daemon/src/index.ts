@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import fastifyStatic from '@fastify/static';
@@ -13,7 +13,6 @@ import {
   loadAppConfig,
 } from '@popeye/runtime-core';
 import { WebBootstrapNonceStore } from './web-bootstrap.js';
-import { resolveWebInspectorAssets } from './web-assets.js';
 import { startTelegramBridge } from './telegram-bridge.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
@@ -44,18 +43,16 @@ const runtime = createRuntimeService(config);
 runtime.startScheduler();
 const generateCspNonce = () => randomBytes(16).toString('base64');
 const webBootstrap = new WebBootstrapNonceStore();
-const currentModuleDir = (): string => {
-  const invokedPath = process.argv[1];
-  if (typeof invokedPath === 'string' && invokedPath.length > 0) {
-    return dirname(resolve(invokedPath));
+const currentScriptDir = (): string => {
+  if (typeof process.argv[1] === 'string' && process.argv[1].length > 0) {
+    return dirname(realpathSync(process.argv[1]));
   }
-  if (typeof __dirname === 'string') {
-    return __dirname;
+  if (typeof __filename === 'string' && __filename.length > 0) {
+    return dirname(realpathSync(__filename));
   }
-  throw new Error('Unable to determine daemon entrypoint path');
+  throw new Error('Unable to resolve current daemon script path');
 };
 
-// Serve web inspector static files
 let shuttingDown = false;
 let telegramBridge: Awaited<ReturnType<typeof startTelegramBridge>> | null = null;
 let app: Awaited<ReturnType<typeof createControlApi>> | null = null;
@@ -84,7 +81,7 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-async function main(): Promise<void> {
+const start = async (): Promise<void> => {
   app = await createControlApi({
     runtime,
     generateCspNonce,
@@ -93,10 +90,13 @@ async function main(): Promise<void> {
     logger: log.child({}),
   });
 
-  const webInspectorAssets = resolveWebInspectorAssets(currentModuleDir());
-  if (webInspectorAssets) {
+  const webInspectorDist = resolve(
+    currentScriptDir(),
+    '../../web-inspector/dist',
+  );
+  if (existsSync(webInspectorDist)) {
     const rawHtml = readFileSync(
-      webInspectorAssets.indexPath,
+      resolve(webInspectorDist, 'index.html'),
       'utf8',
     );
     const renderWebInspector = (nonce: string) => rawHtml
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
     ));
 
     await app.register(fastifyStatic, {
-      root: webInspectorAssets.distDir,
+      root: webInspectorDist,
       prefix: '/',
       decorateReply: false,
       wildcard: false,
@@ -121,10 +121,6 @@ async function main(): Promise<void> {
       }
       return reply.code(200).type('text/html').send(renderWebInspector(request.popeyeCspNonce ?? generateCspNonce()));
     });
-  } else {
-    log.warn('web inspector assets missing; continuing without static UI', {
-      expectedDist: resolve(currentModuleDir(), '../../web-inspector/dist'),
-    });
   }
 
   await app.listen({
@@ -132,15 +128,17 @@ async function main(): Promise<void> {
     port: config.security.bindPort,
   });
   log.info('control api listening', { host: config.security.bindHost, port: config.security.bindPort });
-  telegramBridge = await startTelegramBridge(config);
+  telegramBridge = await startTelegramBridge(config, {
+    getSecretValue: (id) => runtime.getSecretValue(id),
+  });
   if (telegramBridge) {
     log.info('telegram bridge started');
   }
-}
+};
 
-void main().catch((error) => {
+void start().catch((error) => {
   const msg = error instanceof Error ? error.stack ?? error.message : String(error);
   const redacted = redactText(msg, config.security.redactionPatterns);
-  log.error('daemon bootstrap failed', { detail: redacted.text });
-  void shutdown(1);
+  log.error('startupFailure', { detail: redacted.text });
+  process.exit(1);
 });

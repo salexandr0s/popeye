@@ -184,7 +184,7 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/vaults/:id/restore` | `VaultBackupResultSchema` (req: `{ backupPath }`) |
 | GET | `/v1/vaults/:id/backup/verify` | `VaultVerifyResultSchema` |
 | POST | `/v1/context-release/preview` | context release preview result |
-| POST | `/v1/secrets` | secret storage result |
+| POST | `/v1/secrets` | secret storage result (req: `{ key, value, provider?, connectionId?, description? }`) |
 | DELETE | `/v1/files/roots/:id` | `FileRootResponseSchema` |
 | GET | `/v1/events/stream` | SSE `text/event-stream` |
 | POST | `/v1/messages/ingest` | `MessageIngressResponseSchema` (req: `IngestMessageInputSchema`) |

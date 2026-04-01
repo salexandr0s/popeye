@@ -31,7 +31,7 @@ describe('launchd retry behavior', () => {
       })
       .mockReturnValueOnce({ status: 0, stdout: 'loaded\n', stderr: '' });
 
-    const { getLaunchAgentPath, installLaunchAgent, loadLaunchAgent } = await import('./launchd.js');
+    const { getLaunchAgentDomain, getLaunchAgentPath, installLaunchAgent, loadLaunchAgent } = await import('./launchd.js');
     installLaunchAgent({
       label: 'dev.popeye.retry.test',
       configPath: '/tmp/config.json',
@@ -46,7 +46,7 @@ describe('launchd retry behavior', () => {
       expect(spawnSyncMock).toHaveBeenNthCalledWith(
         1,
         'launchctl',
-        ['bootstrap', `gui/${uid}`, getLaunchAgentPath('dev.popeye.retry.test')],
+        ['bootstrap', getLaunchAgentDomain(), getLaunchAgentPath('dev.popeye.retry.test')],
         { encoding: 'utf8' },
       );
       expect(spawnSyncMock).toHaveBeenNthCalledWith(
@@ -58,12 +58,27 @@ describe('launchd retry behavior', () => {
       expect(spawnSyncMock).toHaveBeenNthCalledWith(
         3,
         'launchctl',
-        ['bootstrap', `gui/${uid}`, getLaunchAgentPath('dev.popeye.retry.test')],
+        ['bootstrap', getLaunchAgentDomain(), getLaunchAgentPath('dev.popeye.retry.test')],
         { encoding: 'utf8' },
       );
     } finally {
       rmSync(getLaunchAgentPath('dev.popeye.retry.test'), { force: true });
     }
+  });
+
+  it('uses plist-path bootout when unloading', async () => {
+    spawnSyncMock.mockReturnValueOnce({ status: 0, stdout: '', stderr: '' });
+
+    const { getLaunchAgentDomain, getLaunchAgentPath, unloadLaunchAgent } = await import('./launchd.js');
+    const result = unloadLaunchAgent('dev.popeye.unload.test');
+
+    expect(result.ok).toBe(true);
+    expect(spawnSyncMock).toHaveBeenNthCalledWith(
+      1,
+      'launchctl',
+      ['bootout', getLaunchAgentDomain(), getLaunchAgentPath('dev.popeye.unload.test')],
+      { encoding: 'utf8' },
+    );
   });
 
   it('uses kickstart for restart when the agent is already loaded', async () => {
@@ -103,3 +118,4 @@ describe('launchd retry behavior', () => {
     }
   });
 });
+

@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 
-const CLI_BUNDLE = resolve('apps', 'cli', 'dist', 'index.js');
+const CLI_BUNDLE = resolve('apps', 'cli', 'dist', 'index.cjs');
 
 describe.skipIf(!existsSync(CLI_BUNDLE))('CLI bundle smoke test', () => {
   it('--help exits 0 and contains version string', async () => {

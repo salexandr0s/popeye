@@ -37,6 +37,7 @@ New platform implementation.
 | `pop backup verify <path>`     | Verify a backup archive                          |
 | `pop backup restore <path>`    | Restore from a backup archive                    |
 | `pop task run [title] [prompt]`| Create and execute a task                        |
+| `pop telegram configure ...`   | Store Telegram bot token in Popeye and update config |
 | `pop run show <id>`            | Inspect a run record                             |
 | `pop runs tail`                | Show recent runs                                 |
 | `pop runs failures`            | Show failed runs                                 |

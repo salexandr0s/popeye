@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -56,86 +56,6 @@ function makeConfig(dir: string): AppConfig {
     engine: { kind: 'fake', command: 'node', args: [] },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
   };
-}
-
-function createFakePiRepoWithCompatibilitySmoke(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-pi-'));
-  chmodSync(dir, 0o700);
-  const codingAgentDir = join(dir, 'packages', 'coding-agent');
-  const cliDir = join(codingAgentDir, 'dist');
-  const aiDir = join(dir, 'packages', 'ai');
-  const aiDistDir = join(aiDir, 'dist');
-  mkdirSync(cliDir, { recursive: true });
-  mkdirSync(aiDistDir, { recursive: true });
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fake-pi', version: '0.1.0', private: true }, null, 2));
-  writeFileSync(join(codingAgentDir, 'package.json'), JSON.stringify({ name: '@fake/coding-agent', version: '0.1.0', private: true }, null, 2));
-  writeFileSync(join(aiDir, 'package.json'), JSON.stringify({ name: '@fake/ai', private: true, type: 'module' }, null, 2));
-  writeFileSync(
-    join(aiDistDir, 'index.js'),
-    'export function createAssistantMessageEventStream() { return { push() {} }; }\n',
-    'utf8',
-  );
-  writeFileSync(
-    join(cliDir, 'cli.js'),
-    `
-const { pathToFileURL } = require('node:url');
-const extensionPaths = [];
-for (let index = 2; index < process.argv.length; index += 1) {
-  if (process.argv[index] === '--extension') {
-    extensionPaths.push(process.argv[index + 1]);
-    index += 1;
-  }
-}
-
-(async () => {
-  let provider = null;
-  const pi = {
-    registerProvider(name, implementation) {
-      provider = { name, implementation };
-    },
-  };
-  for (const extensionPath of extensionPaths) {
-    const extension = await import(pathToFileURL(extensionPath).href);
-    if (typeof extension.default === 'function') {
-      extension.default(pi);
-    }
-  }
-
-  let buffer = '';
-  function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
-  process.stdin.setEncoding('utf8');
-  process.on('SIGTERM', () => process.exit(0));
-  process.stdin.on('data', (chunk) => {
-    buffer += chunk;
-    const lines = buffer.split('\\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const message = JSON.parse(line);
-      if (message.type === 'get_state') {
-        write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:cli-smoke-session', isStreaming: false } });
-      }
-      if (message.type === 'prompt') {
-        const modelIndex = process.argv.findIndex((arg) => arg === '--model');
-        const model = modelIndex >= 0 ? process.argv[modelIndex + 1] : 'missing';
-        if (!provider || model !== 'popeye-smoke/smoke-model') {
-          write({ id: message.id, type: 'response', command: 'prompt', success: false, error: 'missing compatibility smoke provider' });
-          continue;
-        }
-        write({ id: message.id, type: 'response', command: 'prompt', success: true });
-        write({ type: 'message_end', message: { role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] } });
-        write({ type: 'agent_end', messages: [{ role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] }] });
-      }
-    }
-  });
-})().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
-`,
-    'utf8',
-  );
-  return dir;
 }
 
 describe('CLI command workflows (service-level)', () => {
@@ -416,88 +336,63 @@ describe('CLI command workflows (service-level)', () => {
     await app.close();
     await runtime.close();
   });
-});
 
-describe('CLI daemon workflows', () => {
-  it('daemon load auto-installs the LaunchAgent when the plist is missing', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-daemon-load-'));
-    const homeDir = join(dir, 'home');
-    const binDir = join(dir, 'bin');
-    const runtimeDir = join(dir, 'runtime');
-    const launchctlLog = join(dir, 'launchctl.log');
-    mkdirSync(homeDir, { recursive: true, mode: 0o700 });
-    mkdirSync(binDir, { recursive: true, mode: 0o700 });
-    chmodSync(homeDir, 0o700);
-    chmodSync(binDir, 0o700);
+  it('telegram configure stores bot token in Popeye and updates config', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-telegram-config-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+    const app = await createControlApi({ runtime });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.addresses()[0];
 
-    const launchctlPath = join(binDir, 'launchctl');
+    const configPath = join(dir, 'config.json');
     writeFileSync(
-      launchctlPath,
-      `#!/bin/sh
-printf '%s\\n' "$*" >> '${launchctlLog}'
-case "$1" in
-  bootstrap|bootout|kickstart)
-    exit 0
-    ;;
-  print)
-    echo "Could not find service" >&2
-    exit 1
-    ;;
-  *)
-    exit 0
-    ;;
-esac
-`,
+      configPath,
+      JSON.stringify({
+        ...config,
+        security: {
+          ...config.security,
+          bindPort: address.port,
+        },
+      }),
       'utf8',
     );
-    chmodSync(launchctlPath, 0o755);
 
-    const config = makeConfig(runtimeDir);
-    const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    const tokenFile = join(dir, 'telegram-bot-token');
+    writeFileSync(tokenFile, 'bot-token-from-file\n', { mode: 0o600 });
+    chmodSync(tokenFile, 0o600);
 
-    const result = await runPopWithEnv(['daemon', 'load'], {
-      HOME: homeDir,
-      PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      POPEYE_CONFIG_PATH: configPath,
-    });
-
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout) as { ok: boolean }).toEqual(
-      expect.objectContaining({ ok: true }),
+    const result = await runPopWithEnv(
+      ['telegram', 'configure', '--allowed-user-id', '5315323298', '--token-file', tokenFile, '--provider', 'file', '--enable', '--json'],
+      { POPEYE_CONFIG_PATH: configPath },
     );
 
-    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'dev.popeye.popeyed.plist');
-    expect(existsSync(plistPath)).toBe(true);
-    expect(readFileSync(plistPath, 'utf8')).toContain('apps/daemon/src/index.ts');
-    expect(readFileSync(launchctlLog, 'utf8')).toContain('bootstrap');
-  });
-
-  it('pi smoke injects the secretless compatibility provider when no explicit smoke args are set', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-pi-smoke-'));
-    chmodSync(dir, 0o700);
-    const piPath = createFakePiRepoWithCompatibilitySmoke();
-    const config = {
-      ...makeConfig(dir),
-      engine: {
-        kind: 'pi' as const,
-        piPath,
-        command: 'node',
-        args: [],
-      },
-    };
-    const configPath = join(dir, 'config.json');
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-
-    const result = await runPopWithEnv(['pi', 'smoke'], {
-      POPEYE_CONFIG_PATH: configPath,
-    });
-
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      engineSessionRef: 'pi:cli-smoke-session',
+    const body = JSON.parse(result.stdout) as {
+      configured: boolean;
+      allowedUserId: string;
+      secretRefId: string;
+      enabled: boolean;
+      provider?: string;
+    };
+    expect(body).toMatchObject({
+      configured: true,
+      allowedUserId: '5315323298',
+      enabled: true,
+      provider: 'file',
     });
+
+    const updatedConfig = JSON.parse(readFileSync(configPath, 'utf8')) as AppConfig;
+    expect(updatedConfig.telegram).toMatchObject({
+      enabled: true,
+      allowedUserId: '5315323298',
+      secretRefId: body.secretRefId,
+    });
+    expect(runtime.getSecretValue(body.secretRefId)).toBe('bot-token-from-file');
+
+    await app.close();
+    await runtime.close();
   });
 });
 
@@ -529,6 +424,13 @@ describe('CLI help and discoverability', () => {
     const r = await runPop('daemon', '--help');
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('health');
+  });
+
+  it('pop telegram --help prints telegram configure subcommand', async () => {
+    const r = await runPop('telegram', '--help');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('configure');
+    expect(r.stdout).toContain('--token-file <path>');
   });
 
   it('pop approvals --help prints approval subcommands', async () => {

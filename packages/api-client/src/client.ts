@@ -1059,7 +1059,7 @@ export class PopeyeApiClient {
     return this.del(`/v1/connections/${encodeURIComponent(id)}`);
   }
 
-  async storeSecret(input: { key: string; value: string; connectionId?: string; description?: string }): Promise<SecretRefRecord> {
+  async storeSecret(input: { provider?: 'keychain' | 'file' | 'env'; key: string; value: string; connectionId?: string; description?: string }): Promise<SecretRefRecord> {
     return this.post('/v1/secrets', input, SecretRefRecordSchema);
   }
 

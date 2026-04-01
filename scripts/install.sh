@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# Popeye install script — builds, bundles, and installs a `pop` launcher.
+# Popeye install script — builds, bundles, and symlinks `pop` to /usr/local/bin.
 # Usage: bash scripts/install.sh [--prefix /custom/path] [--force]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && -d "/opt/homebrew/bin" ]]; then
-  PREFIX="/opt/homebrew/bin"
-else
-  PREFIX="/usr/local/bin"
-fi
+PREFIX="/usr/local/bin"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/Popeye"
+DEFAULT_ASSISTANT_ROOT="$HOME/popeye-assistant"
 FORCE=0
 
 while [[ $# -gt 0 ]]; do
@@ -45,39 +42,51 @@ pnpm pack:cli
 echo "==> Bundling daemon"
 pnpm pack:daemon
 
-echo "==> Building web inspector"
-pnpm --filter @popeye/web-inspector build
-
-echo "==> Installing pop launcher → $PREFIX/pop"
-CLI_BUNDLE="$ROOT_DIR/apps/cli/dist/index.js"
+echo "==> Symlinking pop → $PREFIX/pop"
+CLI_BUNDLE="$ROOT_DIR/apps/cli/dist/index.cjs"
 if [[ ! -f "$CLI_BUNDLE" ]]; then
   echo "Error: CLI bundle not found at $CLI_BUNDLE"
   exit 1
 fi
-if [[ ! -d "$PREFIX" ]]; then
-  echo "Error: install prefix $PREFIX does not exist. Pass --prefix <path> to override."
-  exit 1
-fi
-if [[ ! -w "$PREFIX" ]]; then
-  echo "Error: install prefix $PREFIX is not writable. Pass --prefix <path> to override."
-  exit 1
-fi
 chmod +x "$CLI_BUNDLE"
-cat > "$PREFIX/pop" <<EOF
-#!/usr/bin/env bash
-exec node "$CLI_BUNDLE" "\$@"
-EOF
-chmod 755 "$PREFIX/pop"
+ln -sf "$CLI_BUNDLE" "$PREFIX/pop"
 
 echo "==> Ensuring config directory"
 mkdir -p "$APP_SUPPORT_DIR"
 chmod 700 "$APP_SUPPORT_DIR"
 if [[ ! -f "$APP_SUPPORT_DIR/config.json" ]]; then
   cp "$ROOT_DIR/config/example.json" "$APP_SUPPORT_DIR/config.json"
+  python3 - "$APP_SUPPORT_DIR/config.json" "$APP_SUPPORT_DIR" "$DEFAULT_ASSISTANT_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+runtime_dir = Path(sys.argv[2])
+assistant_root = Path(sys.argv[3])
+config = json.loads(config_path.read_text())
+config['runtimeDataDir'] = str(runtime_dir)
+config['authFile'] = str(runtime_dir / 'config' / 'auth.json')
+workspaces = config.setdefault('workspaces', [])
+if not workspaces:
+    workspaces.append({
+        'id': 'default',
+        'name': 'Default workspace',
+        'rootPath': str(assistant_root),
+        'heartbeatEnabled': True,
+        'heartbeatIntervalSeconds': 3600,
+        'projects': [],
+        'fileRoots': [],
+    })
+elif workspaces[0].get('id') == 'default' and not workspaces[0].get('rootPath'):
+    workspaces[0]['rootPath'] = str(assistant_root)
+config_path.write_text(json.dumps(config, indent=2) + '\n')
+PY
   echo "    Created default config at $APP_SUPPORT_DIR/config.json"
+  echo "    Default assistant workspace root: $DEFAULT_ASSISTANT_ROOT"
   echo "    Edit it before first run (set engine.kind, engine.piPath, etc.)"
-elif [[ "$FORCE" -eq 1 ]]; then
-  echo "    Preserving existing config at $APP_SUPPORT_DIR/config.json"
+else
+  echo "    Preserved existing config at $APP_SUPPORT_DIR/config.json"
 fi
 
 echo ""

@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-03-31
+// Generated: 2026-04-01
 import Foundation
 
 // MARK: - Enums

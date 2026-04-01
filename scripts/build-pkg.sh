@@ -34,13 +34,12 @@ PAYLOAD_DIR="$DIST_DIR/payload"
 SCRIPTS_DIR="$DIST_DIR/scripts-pkg"
 rm -rf "$PAYLOAD_DIR" "$SCRIPTS_DIR"
 
-# Stage payload using the same apps/* layout the bundled CLI expects.
-mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/apps/cli/dist"
-mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/apps/daemon/dist"
-mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/apps/web-inspector"
-cp apps/cli/dist/index.js "$PAYLOAD_DIR/usr/local/lib/popeye/apps/cli/dist/index.js"
-cp apps/daemon/dist/index.js "$PAYLOAD_DIR/usr/local/lib/popeye/apps/daemon/dist/index.js"
-cp -R apps/web-inspector/dist "$PAYLOAD_DIR/usr/local/lib/popeye/apps/web-inspector/dist"
+# Stage payload
+mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye"
+mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/cli"
+mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/daemon"
+cp apps/cli/dist/index.cjs "$PAYLOAD_DIR/usr/local/lib/popeye/cli/pop.cjs"
+cp apps/daemon/dist/index.cjs "$PAYLOAD_DIR/usr/local/lib/popeye/daemon/popeyed.cjs"
 
 # Include native dependencies alongside the bundles
 mkdir -p "$PAYLOAD_DIR/usr/local/lib/popeye/node_modules"
@@ -60,13 +59,13 @@ mkdir -p /usr/local/bin
 # Create wrapper scripts
 cat > /usr/local/bin/pop << 'WRAPPER'
 #!/usr/bin/env bash
-exec node /usr/local/lib/popeye/apps/cli/dist/index.js "$@"
+exec node /usr/local/lib/popeye/cli/pop.cjs "$@"
 WRAPPER
 chmod 755 /usr/local/bin/pop
 
 cat > /usr/local/bin/popeyed << 'WRAPPER'
 #!/usr/bin/env bash
-exec node /usr/local/lib/popeye/apps/daemon/dist/index.js "$@"
+exec node /usr/local/lib/popeye/daemon/popeyed.cjs "$@"
 WRAPPER
 chmod 755 /usr/local/bin/popeyed
 

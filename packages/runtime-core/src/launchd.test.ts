@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createLaunchdPlist,
   getLaunchAgentPath,
+  getLaunchAgentDomain,
   getLaunchAgentTarget,
   installLaunchAgent,
   daemonStatus,
@@ -66,6 +67,11 @@ describe('launchd pure functions', () => {
   it('getLaunchAgentPath uses custom label', () => {
     const path = getLaunchAgentPath('com.test.agent');
     expect(path).toContain('Library/LaunchAgents/com.test.agent.plist');
+  });
+
+  it('getLaunchAgentDomain returns gui/uid format', () => {
+    const domain = getLaunchAgentDomain();
+    expect(domain).toMatch(/^gui\/\d+$/);
   });
 
   it('getLaunchAgentTarget returns gui/uid/label format', () => {

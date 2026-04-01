@@ -30,6 +30,7 @@ import {
 
   // Config domain
   AppConfigSchema,
+  EngineConfigSchema,
   MemoryConfigSchema,
   WorkspaceRecordSchema,
   SecurityConfigSchema,
@@ -1050,6 +1051,14 @@ describe('Config validation', () => {
       expect(result.telegram.allowedUserId).toBe('123');
     });
 
+    it('accepts enabled=true with allowedUserId and secretRefId', () => {
+      const result = AppConfigSchema.parse({
+        ...completeConfig,
+        telegram: { enabled: true, allowedUserId: '123', secretRefId: 'telegram-bot-secret' },
+      });
+      expect(result.telegram.secretRefId).toBe('telegram-bot-secret');
+    });
+
     it('accepts enabled=false without allowedUserId', () => {
       const result = AppConfigSchema.parse({
         ...completeConfig,
@@ -1462,6 +1471,13 @@ describe('Additional schema smoke tests', () => {
     expect(result.allowedClassifications).toEqual(['embeddable']);
   });
 
+  it('EngineConfigSchema applies model failover defaults', () => {
+    const result = EngineConfigSchema.parse({ kind: 'pi' });
+    expect(result.defaultModel).toBeUndefined();
+    expect(result.fallbackModels).toEqual([]);
+    expect(result.autoFailoverEnabled).toBe(false);
+  });
+
   it('MemoryConfigSchema applies defaults', () => {
     const result = MemoryConfigSchema.parse({});
     expect(result.confidenceHalfLifeDays).toBe(30);
@@ -1544,6 +1560,26 @@ describe('Additional schema smoke tests', () => {
       payload: { size: 1024 },
     });
     expect(result.type).toBe('compaction');
+  });
+
+  it('NormalizedEngineEventSchema accepts model failover event types', () => {
+    const attempt = NormalizedEngineEventSchema.parse({
+      type: 'model_attempt',
+      payload: { attempt: 1, totalAttempts: 3, model: 'anthropic/claude-sonnet-4-5', source: 'primary' },
+    });
+    const fallback = NormalizedEngineEventSchema.parse({
+      type: 'model_fallback',
+      payload: {
+        attempt: 1,
+        totalAttempts: 3,
+        fromModel: 'anthropic/claude-sonnet-4-5',
+        toModel: 'openai-codex/gpt-5.4',
+        exhausted: false,
+        classification: 'transient_failure',
+      },
+    });
+    expect(attempt.type).toBe('model_attempt');
+    expect(fallback.type).toBe('model_fallback');
   });
 
   describe('Coding agent memory extension', () => {

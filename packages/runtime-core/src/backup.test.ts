@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createBackup, migrateBackupManifest, resolveAppDbBackupPath, restoreBackup, verifyBackup } from './backup.js';
+import { createBackup, migrateBackupManifest, restoreBackup, verifyBackup } from './backup.js';
 import { deriveRuntimePaths } from './config.js';
 
 function setupBackupFixture() {
@@ -32,25 +32,6 @@ describe('backup and restore', () => {
     restoreBackup(backupDir, restorePaths);
     const restoredVerification = verifyBackup(backupDir);
     expect(restoredVerification.valid).toBe(true);
-  });
-
-  it('resolves app.db from a backup root directory', () => {
-    const { dir, paths } = setupBackupFixture();
-    const backupDir = createBackup({ destinationDir: join(dir, 'snapshot'), runtimePaths: paths });
-    expect(resolveAppDbBackupPath(backupDir)).toBe(join(backupDir, 'state', 'app.db'));
-  });
-
-  it('returns file backup paths unchanged', () => {
-    const { dir, paths } = setupBackupFixture();
-    const backupDir = createBackup({ destinationDir: join(dir, 'snapshot'), runtimePaths: paths });
-    const appDbBackupPath = join(backupDir, 'state', 'app.db');
-    expect(resolveAppDbBackupPath(appDbBackupPath)).toBe(appDbBackupPath);
-  });
-
-  it('rejects backup roots without state/app.db', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'popeye-backup-empty-'));
-    chmodSync(dir, 0o700);
-    expect(() => resolveAppDbBackupPath(dir)).toThrow('Backup root does not contain state/app.db');
   });
 
   it('detects corrupt checksum', () => {

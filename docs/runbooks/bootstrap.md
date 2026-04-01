@@ -54,6 +54,19 @@ The default Popeye Pi path is the sibling checkout `../pi`.
 cp config/example.json ~/Library/Application\ Support/Popeye/config.json
 ```
 
+If you copy `config/example.json` directly, either delete or replace its sample
+`runtimeDataDir` / `authFile` values before first real use. When those fields
+are omitted, Popeye defaults them to:
+
+- `runtimeDataDir`: `~/Library/Application Support/Popeye`
+- `authFile`: `~/Library/Application Support/Popeye/config/auth.json`
+
+For the built-in `default` workspace, Popeye also defaults `rootPath` to:
+
+- `~/popeye-assistant`
+
+and scaffolds a Popeye-owned assistant workspace there on first daemon start.
+
 ### 6. Set config path
 
 Add to `~/.zprofile`:
@@ -70,8 +83,10 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
 - `engine.kind` should be `"pi"` when using the real engine
 - `engine.piPath` should usually stay `../pi`
 - `engine.piVersion` must match `../pi/packages/coding-agent/package.json`
-- if omitted, `runtimeDataDir` now defaults to `~/Library/Application Support/Popeye/`
+- if omitted, `runtimeDataDir` defaults to `~/Library/Application Support/Popeye/`
 - if omitted, `authFile` now defaults to `<runtimeDataDir>/config/auth.json`
+- if omitted for the built-in `default` workspace, `workspaces[0].rootPath` defaults to `~/popeye-assistant`
+- on first daemon start, Popeye scaffolds `WORKSPACE.md` and `identities/default.md` in `~/popeye-assistant`
 - set `providerAuth.google.clientId` / `providerAuth.google.clientSecret` to
   enable the blessed Gmail and Google Calendar browser-OAuth flows
 - set `providerAuth.github.clientId` / `providerAuth.github.clientSecret` to
@@ -162,19 +177,22 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 
 | Flag | Effect |
 |------|--------|
-| `--prefix <path>` | Launcher location (default: `/opt/homebrew/bin` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin`) |
-| `--force` | Rebuild/reinstall bundles and launcher, while preserving an existing `config.json` |
+| `--prefix <path>` | Symlink location (default: `/usr/local/bin`) |
+| `--force` | Rebuild/relink bundles and symlink; preserves existing `config.json` |
 
 ### What install.sh does
 
 1. Checks for `pnpm` and warns if Node < 22
 2. Runs `pnpm install --frozen-lockfile`
 3. Type-checks the project
-4. Bundles CLI → `apps/cli/dist/index.js` (tsup, inlines all `@popeye/*` packages)
-5. Bundles daemon → `apps/daemon/dist/index.js`
-6. Builds the web inspector → `apps/web-inspector/dist/`
-7. Writes a `pop` launcher to `<prefix>/pop`
-8. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` only if it does not already exist
+4. Bundles CLI → `apps/cli/dist/index.cjs` (tsup, inlines all `@popeye/*` packages)
+5. Bundles daemon → `apps/daemon/dist/index.cjs`
+6. Symlinks `pop` → `<prefix>/pop`
+7. Creates `~/Library/Application Support/Popeye/config.json` from `config/example.json` (skips if exists, unless `--force`)
+8. Rewrites first-run config defaults to local paths:
+   - `runtimeDataDir` → `~/Library/Application Support/Popeye`
+   - `authFile` → `~/Library/Application Support/Popeye/config/auth.json`
+   - built-in default workspace root → `~/popeye-assistant`
 
 Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 `src/*.d.ts`, and sourcemap artifacts are intentionally rejected by
@@ -184,11 +202,11 @@ Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 
 | Artifact | Location |
 |----------|----------|
-| CLI bundle | `apps/cli/dist/index.js` |
-| Daemon bundle | `apps/daemon/dist/index.js` |
-| Web inspector bundle | `apps/web-inspector/dist/` |
-| Launcher | `/opt/homebrew/bin/pop` on Apple Silicon Homebrew hosts, otherwise `/usr/local/bin/pop` (or custom prefix) |
+| CLI bundle | `apps/cli/dist/index.cjs` |
+| Daemon bundle | `apps/daemon/dist/index.cjs` |
+| Symlink | `/usr/local/bin/pop` (or custom prefix) |
 | Config | `~/Library/Application Support/Popeye/config.json` |
+| Default assistant workspace | `~/popeye-assistant/` |
 | Runtime data | `~/Library/Application Support/Popeye/` by default, or configured via `runtimeDataDir` |
 | Auth store | `<runtimeDataDir>/config/auth.json` by default, or configured via `authFile` |
 
@@ -203,7 +221,10 @@ export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
 # 3. Initialize auth
 pop auth init
 
-# 4. Verify
+# 4. Start once to scaffold the default assistant workspace
+pop daemon start
+
+# 5. Verify
 pop --version
 ```
 
@@ -211,11 +232,11 @@ pop --version
 
 When running from a bundle, `pop daemon install` detects bundled mode and resolves the daemon entrypoint relative to the CLI bundle:
 
-- CLI: `apps/cli/dist/index.js`
-- Daemon: `apps/daemon/dist/index.js` (resolved as `../../daemon/dist/index.js` from CLI bundle)
+- CLI: `apps/cli/dist/index.cjs`
+- Daemon: `apps/daemon/dist/index.cjs` (resolved as `../../daemon/dist/index.cjs` from CLI bundle)
 - Working directory: monorepo root (resolved as `../../../` from CLI bundle)
 
-The generated LaunchAgent plist points to `node apps/daemon/dist/index.js` with `POPEYE_CONFIG_PATH` set. In dev mode, it points to `apps/daemon/src/index.ts` via tsx instead.
+The generated LaunchAgent plist points to `node apps/daemon/dist/index.cjs` with `POPEYE_CONFIG_PATH` set. In dev mode, it points to `apps/daemon/src/index.ts` via tsx instead.
 
 ## Common issues
 
@@ -224,5 +245,6 @@ The generated LaunchAgent plist points to `node apps/daemon/dist/index.js` with 
 - **Pi version mismatch** — run `pnpm verify:pi-checkout -- --pi-path ../pi` and copy the `packages/coding-agent/package.json` version into `engine.piVersion`
 - **Security audit fails** — most common: directory permissions not 700
 - **LaunchAgent not loading** — check `~/Library/LaunchAgents/` permissions
+- **LaunchAgent stop/load flake** — use `pop daemon stop`/`pop daemon load`; Popeye unloads via plist-path `launchctl bootout` because raw label-target bootout can leave services stuck `SIGTERMed` on macOS.
 - **CLI bundle not found** — run `pnpm pack:cli` to regenerate the bundle
 - **Daemon bundle not found** — run `pnpm pack:daemon` to regenerate the bundle

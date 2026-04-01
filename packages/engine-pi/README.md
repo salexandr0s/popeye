@@ -101,12 +101,22 @@ Notes:
 ## Configuration note
 
 - `engine.command` and `engine.args` must resolve to a runnable Pi CLI
+- when `engine.command` is exactly `node`, `@popeye/engine-pi` resolves the
+  actual launch command to `process.execPath` so launchd-style minimal PATHs do
+  not break daemon-managed runs
 - If `command` is `node` and `args` is empty, the adapter defaults to
   `packages/coding-agent/dist/cli.js` inside the configured Pi checkout
 - If `command` is `node` and `args` begins with Pi flags (for example
   `--extension` or `--model`), the adapter prepends the built Pi CLI path
 - A request-level `modelOverride` replaces any configured `--model`
 - A request-level `cwd` overrides the default Pi checkout working directory
+- `engine.defaultModel` pins the primary model for runs without a request-level
+  override
+- `engine.fallbackModels` declares the ordered backup chain
+- `engine.autoFailoverEnabled` retries only on pre-side-effect
+  `startup_failure`, `auth_failure`, and `transient_failure` attempts; the
+  adapter will not fail over after any tool call/result or non-empty assistant
+  output
 - `engine.allowRuntimeToolBridgeFallback` defaults to `true` for compatibility;
   disable it to require native Pi host-tool RPC only
 

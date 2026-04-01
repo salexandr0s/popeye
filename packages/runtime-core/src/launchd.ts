@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 const DEFAULT_LABEL = 'dev.popeye.popeyed';
 const RETRYABLE_BOOTSTRAP_OUTPUT = 'Bootstrap failed: 5: Input/output error';
@@ -60,8 +60,12 @@ export function getLaunchAgentPath(label = DEFAULT_LABEL): string {
   return join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
 }
 
+export function getLaunchAgentDomain(): string {
+  return `gui/${getUid()}`;
+}
+
 export function getLaunchAgentTarget(label = DEFAULT_LABEL): string {
-  return `gui/${getUid()}/${label}`;
+  return `${getLaunchAgentDomain()}/${label}`;
 }
 
 function xmlEscape(s: string): string {
@@ -129,7 +133,7 @@ export function loadLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
   const outputs: string[] = [];
 
   for (let attempt = 0; attempt <= LAUNCHD_RETRY_DELAYS_MS.length; attempt += 1) {
-    const result = runLaunchctl(['bootstrap', `gui/${getUid()}`, plistPath]);
+    const result = runLaunchctl(['bootstrap', getLaunchAgentDomain(), plistPath]);
     if (result.output) {
       outputs.push(result.output.trimEnd());
     }
@@ -159,7 +163,7 @@ export function loadLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
 }
 
 export function unloadLaunchAgent(label = DEFAULT_LABEL): LaunchdCommandResult {
-  const result = runLaunchctl(['bootout', getLaunchAgentTarget(label)]);
+  const result = runLaunchctl(['bootout', getLaunchAgentDomain(), getLaunchAgentPath(label)]);
   if (result.ok) {
     waitForLaunchAgentState(label, false);
   }

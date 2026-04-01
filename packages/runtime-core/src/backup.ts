@@ -17,19 +17,6 @@ export interface BackupVerificationResult {
   mismatches: string[];
 }
 
-export function resolveAppDbBackupPath(backupPath: string): string {
-  const resolvedPath = resolve(backupPath);
-  const stats = statSync(resolvedPath);
-  if (stats.isFile()) {
-    return resolvedPath;
-  }
-  const appDbPath = join(resolvedPath, 'state', 'app.db');
-  if (!existsSync(appDbPath)) {
-    throw new Error(`Backup root does not contain state/app.db: ${resolvedPath}`);
-  }
-  return appDbPath;
-}
-
 function copyPath(source: string, destination: string): void {
   if (!existsSync(source)) {
     return;

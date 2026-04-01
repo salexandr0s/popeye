@@ -50,10 +50,8 @@ Use the install script:
 bash scripts/install.sh [--prefix /custom/path] [--force]
 ```
 
-This builds, bundles the CLI and daemon, builds the web inspector, and installs a `pop` launcher in the
-default local bin directory (`/opt/homebrew/bin` on Apple Silicon Homebrew
-hosts, otherwise `/usr/local/bin`),
-and creates a default config at `~/Library/Application Support/Popeye/` only when one does not already exist.
+This builds, bundles the CLI and daemon, symlinks `pop` to `/usr/local/bin`,
+and creates a default config at `~/Library/Application Support/Popeye/`.
 
 ## Smoke test
 
@@ -89,7 +87,7 @@ bash scripts/uninstall.sh
 This will:
 1. Unload the LaunchAgent if active
 2. Remove the LaunchAgent plist
-3. Remove `pop` / `popeyed` launchers from both `/usr/local/bin/` and `/opt/homebrew/bin/` when present
+3. Remove `/usr/local/bin/pop` and `/usr/local/bin/popeyed` symlinks
 4. Preserve data at `~/Library/Application Support/Popeye/`
 
 To fully remove data after uninstalling:

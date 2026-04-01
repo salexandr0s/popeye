@@ -58,6 +58,7 @@ Telegram adapter configuration. The adapter is a thin bridge to the control API.
 |---|---|---|---|---|---|
 | `enabled` | `boolean` | No | `false` | -- | Enable the Telegram adapter. When `true`, `allowedUserId` is required. |
 | `allowedUserId` | `string` | Conditional | -- | Min length 1; required when `enabled` is `true` | Telegram user ID allowed to send messages. Allowlist-only DM policy. |
+| `secretRefId` | `string` | No | -- | Min length 1 | Optional Popeye secret-store reference for the Telegram bot token. Used when `TELEGRAM_BOT_TOKEN` is not present in the daemon environment. Set it with `pop telegram configure` or `/v1/secrets`. |
 | `maxMessagesPerMinute` | `integer` | No | `10` | Must be positive | Per-user rate limit within the rate limit window. |
 | `globalMaxMessagesPerMinute` | `integer` | No | `30` | Must be positive | Global rate limit across all users within the rate limit window. |
 | `rateLimitWindowSeconds` | `integer` | No | `60` | Must be positive | Duration of the sliding rate limit window in seconds. |
@@ -92,6 +93,9 @@ Engine adapter configuration. Controls how Pi (or a fake engine) is invoked.
 | `timeoutMs` | `integer` | No | `300000` (5 min) | Must be positive | Maximum run duration in milliseconds before timeout. |
 | `runtimeToolTimeoutMs` | `integer` | No | `30000` (30 sec) | Must be positive | Timeout for runtime-provided tool executions during a run. |
 | `allowRuntimeToolBridgeFallback` | `boolean` | No | `true` | -- | Allows the temporary Pi extension/UI runtime-tool bridge when native host-tool RPC is unavailable. Disable for stricter deployments. |
+| `defaultModel` | `string` | No | unset | Min length 1 | Default Pi model identifier when no per-run `modelOverride` is supplied and complexity routing does not select a model. |
+| `fallbackModels` | `string[]` | No | `[]` | Each item min length 1 | Ordered failover chain attempted after `defaultModel` when safe automatic failover is enabled. |
+| `autoFailoverEnabled` | `boolean` | No | `false` | -- | Retries the run on the next configured model only for pre-side-effect `startup_failure`, `auth_failure`, or `transient_failure` attempts. Popeye stops failover after any tool call, tool result, or non-empty assistant output. |
 
 ---
 
@@ -126,7 +130,7 @@ Each workspace object:
 |---|---|---|---|---|---|
 | `id` | `string` | Yes | -- | Min length 1 | Unique workspace identifier. |
 | `name` | `string` | Yes | -- | Min length 1 | Human-readable workspace name. |
-| `rootPath` | `string \| null` | No | `null` | -- | Absolute path to the workspace root directory. Used as the default `cwd` for runs. |
+| `rootPath` | `string \| null` | No | `null` | -- | Absolute path to the workspace root directory. Used as the default `cwd` for runs. When file-loaded config omits this for the built-in `default` workspace, Popeye defaults it to `~/popeye-assistant` and scaffolds a Popeye-owned assistant workspace there on first daemon start. |
 | `projects` | `ProjectConfig[]` | No | `[]` | -- | Projects within this workspace. |
 | `heartbeatEnabled` | `boolean` | No | `true` | -- | Enable scheduled heartbeat runs for this workspace. |
 | `heartbeatIntervalSeconds` | `integer` | No | `3600` | Must be positive | Seconds between heartbeat runs. |

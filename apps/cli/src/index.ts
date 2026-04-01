@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 
 import type { PopeyeApiClient } from '@popeye/api-client';
 import type { AppConfig } from '@popeye/contracts';
@@ -16,6 +16,7 @@ import {
   installLaunchAgent,
   loadLaunchAgent,
   loadAppConfig,
+  PiEngineAdapter,
   restoreBackup,
   restartLaunchAgent,
   rotateAuthStore,
@@ -264,6 +265,15 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     search: { desc: 'Search medical data', usage: 'pop medical search <query> [--json]' },
     digest: { desc: 'Show medical digest', usage: 'pop medical digest [--json]' },
   },
+  telegram: {
+    configure: {
+      desc: 'Store a Telegram bot token in Popeye and update config',
+      usage: 'pop telegram configure [--allowed-user-id <id>] [--token-file <path>] [--provider <file|keychain>] [--enable]',
+      examples: [
+        'pop telegram configure --allowed-user-id 5315323298 --token-file ./telegram-bot-token --provider file --enable',
+      ],
+    },
+  },
   upgrade: {
     verify: { desc: 'Verify post-upgrade state', usage: 'pop upgrade verify [--json]' },
     rollback: { desc: 'Restore from pre-upgrade backup', usage: 'pop upgrade rollback <backupPath>' },
@@ -348,19 +358,21 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
 }
 
 function isBundledMode(): boolean {
-  const selfPath = getSelfPath();
-  return selfPath.includes(`${join('dist', 'index')}`);
+  return currentScriptPath().includes(`${join('dist', 'index')}`);
 }
 
-function getSelfPath(): string {
-  const invokedPath = process.argv[1];
-  if (typeof invokedPath === 'string' && invokedPath.length > 0) {
-    return resolve(invokedPath);
+function currentScriptPath(): string {
+  if (typeof process.argv[1] === 'string' && process.argv[1].length > 0) {
+    return realpathSync(process.argv[1]);
   }
-  if (typeof __filename === 'string') {
-    return __filename;
+  if (typeof __filename === 'string' && __filename.length > 0) {
+    return realpathSync(__filename);
   }
-  throw new Error('Unable to determine CLI entrypoint path');
+  throw new Error('Unable to resolve current CLI script path');
+}
+
+function bundledDaemonPath(selfPath: string): string {
+  return resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.cjs');
 }
 
 // Early exits that don't require configuration
@@ -414,19 +426,12 @@ function readRoleFlag(): 'operator' | 'service' | 'readonly' {
   );
 }
 
-function resolveDaemonLaunchAgentOptions(configPath: string): { configPath: string; daemonEntryPoint: string; workingDirectory: string } {
-  let daemonEntryPoint: string;
-  let workingDirectory: string;
-  if (isBundledMode()) {
-    const selfPath = getSelfPath();
-    const selfDir = dirname(selfPath);
-    daemonEntryPoint = resolve(selfDir, '..', '..', 'daemon', 'dist', 'index.js');
-    workingDirectory = resolve(selfDir, '..', '..', '..');
-  } else {
-    daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
-    workingDirectory = process.cwd();
-  }
-  return { configPath, daemonEntryPoint, workingDirectory };
+function readFlagValue(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('--')) return undefined;
+  return value;
 }
 
 async function main(): Promise<void> {
@@ -453,7 +458,6 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'pi' && subcommand === 'smoke') {
-    const hasExplicitSmokeArgs = Object.prototype.hasOwnProperty.call(process.env, 'POPEYE_PI_SMOKE_ARGS');
     let smokeArgs = config.engine.args;
     if (process.env.POPEYE_PI_SMOKE_ARGS) {
       try {
@@ -464,17 +468,32 @@ async function main(): Promise<void> {
       }
     }
     const piPath = process.env.POPEYE_PI_SMOKE_PATH ?? config.engine.piPath;
-    console.info(JSON.stringify(await runPiCompatibilityCheck({
+    const adapter = new PiEngineAdapter({
       ...(piPath !== undefined && { piPath }),
       command: process.env.POPEYE_PI_SMOKE_COMMAND ?? config.engine.command,
       args: smokeArgs,
-    }, 'compatibility-check', { injectSecretlessProvider: !hasExplicitSmokeArgs }), null, 2));
+    });
+    console.info(JSON.stringify(await runPiCompatibilityCheck(adapter), null, 2));
     return;
   }
   if (command === 'daemon' && subcommand === 'install') {
+    let daemonEntryPoint: string;
+    let workingDirectory: string;
+    if (isBundledMode()) {
+      const selfPath = currentScriptPath();
+      daemonEntryPoint = bundledDaemonPath(selfPath);
+      workingDirectory = resolve(dirname(selfPath), '..', '..', '..');
+    } else {
+      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+      workingDirectory = process.cwd();
+    }
     console.info(
       JSON.stringify(
-        installLaunchAgent(resolveDaemonLaunchAgentOptions(configPath)),
+        installLaunchAgent({
+          configPath,
+          daemonEntryPoint,
+          workingDirectory,
+        }),
         null,
         2,
       ),
@@ -484,8 +503,8 @@ async function main(): Promise<void> {
   if (command === 'daemon' && subcommand === 'start') {
     let execArgs: [string, string[]];
     if (isBundledMode()) {
-      const selfPath = getSelfPath();
-      const bundledDaemon = resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.js');
+      const selfPath = currentScriptPath();
+      const bundledDaemon = bundledDaemonPath(selfPath);
       if (!existsSync(bundledDaemon)) {
         console.error(`Bundled daemon not found at ${bundledDaemon}. Run 'pnpm pack:daemon' first.`);
         process.exit(1);
@@ -538,9 +557,6 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'load') {
-    if (!daemonStatus().installed) {
-      installLaunchAgent(resolveDaemonLaunchAgentOptions(configPath));
-    }
     console.info(JSON.stringify(loadLaunchAgent(), null, 2));
     return;
   }
@@ -557,8 +573,22 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'plist') {
+    let daemonEntryPoint: string;
+    let workingDirectory: string;
+    if (isBundledMode()) {
+      const selfPath = currentScriptPath();
+      daemonEntryPoint = bundledDaemonPath(selfPath);
+      workingDirectory = resolve(dirname(selfPath), '..', '..', '..');
+    } else {
+      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+      workingDirectory = process.cwd();
+    }
     console.info(
-      createLaunchdPlist(resolveDaemonLaunchAgentOptions(configPath)),
+      createLaunchdPlist({
+        configPath,
+        daemonEntryPoint,
+        workingDirectory,
+      }),
     );
     return;
   }
@@ -688,6 +718,82 @@ async function main(): Promise<void> {
     const client = await requireDaemonClient(config);
     return handleMedical({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
+  if (command === 'telegram' && subcommand === 'configure') {
+    const client = await requireDaemonClient(config);
+    const allowedUserId = readFlagValue('--allowed-user-id') ?? config.telegram.allowedUserId;
+    if (!allowedUserId) {
+      console.error('Telegram allowed user is required. Pass --allowed-user-id <id> or set telegram.allowedUserId in config first.');
+      process.exit(1);
+    }
+
+    const tokenFile = readFlagValue('--token-file');
+    const shouldEnable = process.argv.includes('--enable');
+    const providerFlag = readFlagValue('--provider');
+    const provider = providerFlag ? z.enum(['file', 'keychain']).parse(providerFlag) : 'file';
+
+    let secretRefId = config.telegram.secretRefId ?? null;
+    let storedProvider: 'file' | 'keychain' | null = null;
+
+    if (tokenFile) {
+      const tokenPath = resolve(tokenFile);
+      if (!existsSync(tokenPath)) {
+        console.error(`Telegram token file not found: ${tokenPath}`);
+        process.exit(1);
+      }
+      const token = readFileSync(tokenPath, 'utf8').trim();
+      if (token.length === 0) {
+        console.error(`Telegram token file is empty: ${tokenPath}`);
+        process.exit(1);
+      }
+      const secretRef = await client.storeSecret({
+        provider,
+        key: 'telegram-bot-token',
+        value: token,
+        description: 'Telegram bot token',
+      });
+      secretRefId = secretRef.id;
+      storedProvider = provider;
+    }
+
+    if (!secretRefId) {
+      console.error('Telegram bot token is required. Pass --token-file <path> to store one in Popeye first.');
+      process.exit(1);
+    }
+
+    const updatedConfig: AppConfig = {
+      ...config,
+      telegram: {
+        ...config.telegram,
+        allowedUserId,
+        secretRefId,
+        enabled: shouldEnable ? true : config.telegram.enabled,
+      },
+    };
+    writeFileSync(configPath, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf8');
+
+    const result = {
+      configured: true,
+      configPath,
+      allowedUserId,
+      secretRefId,
+      enabled: updatedConfig.telegram.enabled,
+      ...(storedProvider ? { provider: storedProvider } : {}),
+    };
+    if (jsonFlag) {
+      console.info(JSON.stringify(result, null, 2));
+    } else {
+      console.info('Telegram configured.');
+      console.info(`  Config:           ${configPath}`);
+      console.info(`  Allowed user:     ${allowedUserId}`);
+      console.info(`  Secret ref:       ${secretRefId}`);
+      if (storedProvider) {
+        console.info(`  Secret provider:  ${storedProvider}`);
+      }
+      console.info(`  Enabled:          ${updatedConfig.telegram.enabled ? 'yes' : 'no'}`);
+      console.info('Restart the daemon to apply the updated Telegram configuration.');
+    }
+    return;
+  }
 
   // --- Upgrade CLI ---
 
@@ -727,15 +833,14 @@ async function main(): Promise<void> {
     }
     const upgradePaths = deriveRuntimePaths(config.runtimeDataDir);
     try {
-      const { MigrationManager, resolveAppDbBackupPath } = await import('@popeye/runtime-core');
+      const { MigrationManager } = await import('@popeye/runtime-core');
       const Database = (await import('better-sqlite3')).default;
       const appDbPath = upgradePaths.appDbPath;
-      const backupDbPath = resolveAppDbBackupPath(targetPath);
       const tempDb = new Database(':memory:');
       const mgr = new MigrationManager(tempDb);
-      mgr.rollbackMigration(backupDbPath, appDbPath);
+      mgr.rollbackMigration(targetPath, appDbPath);
       tempDb.close();
-      console.info(`Restored app database from backup: ${backupDbPath}`);
+      console.info(`Restored app database from backup: ${targetPath}`);
       console.info('Restart the daemon to apply the restored state.');
     } catch (error) {
       console.error(`Rollback failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -812,15 +917,25 @@ async function main(): Promise<void> {
         }
         const obj = parsed as Record<string, unknown>;
         const telegramSection = obj['telegram'] as Record<string, unknown> | undefined;
+        const channelsSection = obj['channels'] as Record<string, unknown> | undefined;
+        const channelTelegramSection = channelsSection?.['telegram'] as Record<string, unknown> | undefined;
+        const sourceTelegram = telegramSection ?? channelTelegramSection;
 
-        const botToken = telegramSection?.['botToken'] ?? telegramSection?.['bot_token'] ?? null;
-        const allowedUsers = telegramSection?.['allowedUsers'] ?? telegramSection?.['allowed_users'] ?? [];
+        const botToken = sourceTelegram?.['botToken'] ?? sourceTelegram?.['bot_token'] ?? null;
+        const allowedUsers = sourceTelegram?.['allowedUsers']
+          ?? sourceTelegram?.['allowed_users']
+          ?? sourceTelegram?.['allowFrom']
+          ?? [];
+        const enabled = sourceTelegram?.['enabled'] === false ? false : true;
+        const extractedAllowedUserId = Array.isArray(allowedUsers)
+          ? String(allowedUsers[0] ?? '').trim()
+          : String(allowedUsers ?? '').trim();
 
         const popeyeConfig = {
           telegram: {
-            botToken: botToken ? '<REDACTED — set via POPEYE_TELEGRAM_BOT_TOKEN env var>' : null,
-            allowedUsers: Array.isArray(allowedUsers) ? allowedUsers : [],
-            rateLimitPerMinute: 30,
+            enabled,
+            allowedUserId: extractedAllowedUserId || '<telegram-user-id>',
+            secretRefId: '<set with pop telegram configure>',
           },
         };
 
@@ -829,14 +944,19 @@ async function main(): Promise<void> {
         console.info(JSON.stringify(popeyeConfig, null, 2));
         console.info('');
         if (botToken) {
-          console.info('NOTE: Bot token was found but redacted. Set it via environment variable:');
-          console.info('  export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
+          console.info('NOTE: A bot token was found but redacted.');
+          console.info('Store it in Popeye and update config with:');
+          console.info('  pop telegram configure --allowed-user-id <telegram-user-id> --token-file /path/to/token --provider file --enable');
         } else {
-          console.info('NOTE: No bot token found in the source config.');
-          console.info('Set it via environment variable: export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
+          console.info('NOTE: No bot token was found in the source config.');
+          console.info('Once you have the token, store it in Popeye with:');
+          console.info('  pop telegram configure --allowed-user-id <telegram-user-id> --token-file /path/to/token --provider file --enable');
+        }
+        if (Array.isArray(allowedUsers) && allowedUsers.length > 1) {
+          console.info('NOTE: Multiple allowed Telegram users were found; Popeye currently accepts a single allowedUserId, so only the first was surfaced.');
         }
         console.info('');
-        console.info('Paste the JSON above into your Popeye config.json under the "telegram" key.');
+        console.info('Paste the JSON above into your Popeye config.json under the "telegram" key, or let "pop telegram configure" update it for you.');
       } catch (error) {
         if (error instanceof SyntaxError) {
           console.error(`Failed to parse config file as JSON: ${error.message}`);
@@ -849,9 +969,9 @@ async function main(): Promise<void> {
       // No source config — output a template
       const template = {
         telegram: {
-          botToken: '<set via POPEYE_TELEGRAM_BOT_TOKEN env var>',
-          allowedUsers: ['<telegram-user-id-1>', '<telegram-user-id-2>'],
-          rateLimitPerMinute: 30,
+          enabled: true,
+          allowedUserId: '<telegram-user-id>',
+          secretRefId: '<set with pop telegram configure>',
         },
       };
       console.info('Popeye telegram config template:');
@@ -860,10 +980,10 @@ async function main(): Promise<void> {
       console.info('');
       console.info('Instructions:');
       console.info('  1. Create a Telegram bot via @BotFather and note the token');
-      console.info('  2. Set the token as an environment variable:');
-      console.info('     export POPEYE_TELEGRAM_BOT_TOKEN="<your-token>"');
-      console.info('  3. Replace allowedUsers with numeric Telegram user IDs');
-      console.info('  4. Paste the config into your Popeye config.json');
+      console.info('  2. Save the token to a local file with 0600 permissions');
+      console.info('  3. Run:');
+      console.info('     pop telegram configure --allowed-user-id <telegram-user-id> --token-file /path/to/token --provider file --enable');
+      console.info('  4. Restart the daemon');
       console.info('');
       console.info('To import from an existing OpenClaw config:');
       console.info('  pop migrate telegram /path/to/openclaw/config.json');
@@ -881,6 +1001,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+  console.error(message);
   process.exit(1);
 });

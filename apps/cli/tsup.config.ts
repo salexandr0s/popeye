@@ -24,6 +24,7 @@ export default defineConfig({
   clean: true,
   noExternal: [/@popeye\//],
   external: ['better-sqlite3', 'sqlite-vec', 'pino'],
+  outExtension: () => ({ js: '.cjs' }),
   sourcemap: true,
   define: {
     'process.env.POPEYE_VERSION': JSON.stringify(meta.version),

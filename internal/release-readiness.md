@@ -164,12 +164,8 @@ pnpm install --frozen-lockfile 2>&1 | tee "$LOCAL_EVIDENCE/01-local/install.log"
 pnpm dev-verify 2>&1 | tee "$LOCAL_EVIDENCE/01-local/dev-verify.log"
 pnpm exec playwright install chromium 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-install.log"
 pnpm test:e2e 2>&1 | tee "$LOCAL_EVIDENCE/01-local/playwright-e2e.log"
-pnpm verify:pi-checkout -- --pi-path "$LOCAL_PI_DIR" 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
+pnpm verify:pi-checkout -- --pi-path ../pi 2>&1 | tee "$LOCAL_EVIDENCE/01-local/pi-checkout.log"
 ```
-
-When running from the required clean release worktree, resolve `LOCAL_PI_DIR` to
-the actual sibling Pi checkout before this block (for example `../../pi` from
-`../popeye-release-worktrees/rc`).
 
 ## 5.3 Exit criteria
 
@@ -306,13 +302,6 @@ Update the remote config for the real candidate environment:
 - ensure loopback bind remains `127.0.0.1`
 - confirm runtime paths are correct and writable
 
-If this pass is supposed to validate a **fresh staging install** and
-`config.json` did not exist at the start, but the runtime directory already
-contains stale `state/`, `memory/`, `receipts/`, or `vaults/` data from an
-earlier dev snapshot, archive the runtime directory and regenerate the config
-before continuing. That stale snapshot is environmental contamination, not
-evidence of a supported release-candidate upgrade path.
-
 ## 7.5 Foreground daemon proof
 
 ```bash
@@ -320,8 +309,7 @@ ssh savorgserver '
   set -e
   export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
   cd ~/src/popeye
-  rm -f "$HOME/Library/Application Support/Popeye/config/auth.json"
-  pop auth init > /dev/null
+  pop auth init
   pnpm verify:pi-checkout -- --pi-path ~/src/pi
   pop daemon start
 ' | tee "$LOCAL_EVIDENCE/02-remote/foreground-daemon-start.log"

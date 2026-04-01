@@ -2093,6 +2093,7 @@ export class PopeyeRuntimeService {
     this.databases.app.prepare('UPDATE runs SET state = ?, finished_at = ? WHERE id = ?').run('cancelled', nowIso(), runId);
     this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', nowIso(), run.jobId);
     this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(run.jobId);
+    this.releaseWorkspaceLock(run.workspaceId);
     const receipt = this.writeRuntimeReceipt({
       runId,
       jobId: run.jobId,
@@ -2822,11 +2823,23 @@ export class PopeyeRuntimeService {
       }
       for (const lease of expiredLeases) {
         const job = this.getJob(lease.job_id);
-        if (!job) continue;
-        if (job.status === 'leased') {
+        const workspaceId = job?.workspaceId ?? null;
+        if (job?.status === 'leased') {
           this.databases.app.prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?').run('queued', nowIso(), job.id);
-          this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(job.id);
-          this.releaseWorkspaceLock(job.workspaceId);
+        }
+        this.databases.app.prepare('DELETE FROM job_leases WHERE job_id = ?').run(lease.job_id);
+        if (workspaceId && !this.workspaceHasRunningOrLeasedJobs(workspaceId)) {
+          this.releaseWorkspaceLock(workspaceId);
+        }
+      }
+
+      const staleWorkspaceLocks = z.array(IdRowSchema).parse(this.databases.app
+        .prepare("SELECT id FROM locks WHERE scope LIKE 'workspace:%'")
+        .all());
+      for (const lock of staleWorkspaceLocks) {
+        const workspaceId = lock.id.slice('workspace:'.length);
+        if (!this.workspaceHasRunningOrLeasedJobs(workspaceId)) {
+          this.releaseWorkspaceLock(workspaceId);
         }
       }
     } catch (error) {
@@ -2840,6 +2853,10 @@ export class PopeyeRuntimeService {
     const rawLock = this.databases.app.prepare('SELECT id FROM locks WHERE scope = ?').get(`workspace:${workspaceId}`);
     const lock = rawLock ? IdRowSchema.parse(rawLock) : null;
     if (lock) return true;
+    return this.workspaceHasRunningOrLeasedJobs(workspaceId);
+  }
+
+  private workspaceHasRunningOrLeasedJobs(workspaceId: string): boolean {
     const active = parseCountRow(this.databases.app
       .prepare("SELECT COUNT(*) AS count FROM jobs WHERE workspace_id = ? AND status IN ('leased', 'running')")
       .get(workspaceId));
@@ -3230,13 +3247,7 @@ export class PopeyeRuntimeService {
     const root = this.getFileRootRecord(input.fileRootId);
     if (!root) throw new RuntimeNotFoundError(`File root ${input.fileRootId} not found`);
 
-    const rawWritePosture = (root as Record<string, unknown>)['writePosture'];
-    const writePosture =
-      rawWritePosture === 'agent_owned'
-        ? 'agent_owned'
-        : rawWritePosture === 'read_only'
-          ? 'read_only'
-          : 'operator_review';
+    const writePosture = (root as Record<string, unknown>)['writePosture'] as string ?? 'read_only';
     if (writePosture === 'read_only') {
       throw new RuntimeValidationError(`File root ${input.fileRootId} is read-only`);
     }

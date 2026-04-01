@@ -29,75 +29,6 @@ function createFakePiRepo(script: string, options: { defaultCli?: boolean } = {}
   return dir;
 }
 
-function createFakePiRepoWithCompatibilitySmoke(): string {
-  const dir = createFakePiRepo(`
-    const { pathToFileURL } = require('node:url');
-    const extensionPaths = [];
-    for (let index = 2; index < process.argv.length; index += 1) {
-      if (process.argv[index] === '--extension') {
-        extensionPaths.push(process.argv[index + 1]);
-        index += 1;
-      }
-    }
-
-    (async () => {
-      let provider = null;
-      const pi = {
-        registerProvider(name, implementation) {
-          provider = { name, implementation };
-        },
-      };
-      for (const extensionPath of extensionPaths) {
-        const extension = await import(pathToFileURL(extensionPath).href);
-        if (typeof extension.default === 'function') {
-          extension.default(pi);
-        }
-      }
-
-      let buffer = '';
-      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
-      process.stdin.setEncoding('utf8');
-      process.on('SIGTERM', () => process.exit(0));
-      process.stdin.on('data', (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split('\\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const message = JSON.parse(line);
-          if (message.type === 'get_state') {
-            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:smoke-session', isStreaming: false } });
-          }
-          if (message.type === 'prompt') {
-            const modelIndex = process.argv.findIndex((arg) => arg === '--model');
-            const model = modelIndex >= 0 ? process.argv[modelIndex + 1] : 'missing';
-            if (!provider || model !== 'popeye-smoke/smoke-model') {
-              write({ id: message.id, type: 'response', command: 'prompt', success: false, error: 'missing compatibility smoke provider' });
-              continue;
-            }
-            write({ id: message.id, type: 'response', command: 'prompt', success: true });
-            write({ type: 'message_end', message: { role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] } });
-            write({ type: 'agent_end', messages: [{ role: 'assistant', provider: provider.name, model: 'smoke-model', stopReason: 'stop', usage: { input: 1, output: 1, cost: { total: 0 } }, content: [{ type: 'text', text: 'smoke ok' }] }] });
-          }
-        }
-      });
-    })().catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    });
-  `);
-  const aiPackageDir = join(dir, 'packages', 'ai');
-  const aiDistDir = join(aiPackageDir, 'dist');
-  mkdirSync(aiDistDir, { recursive: true });
-  writeFileSync(join(aiPackageDir, 'package.json'), JSON.stringify({ name: '@fake/ai', private: true, type: 'module' }, null, 2));
-  writeFileSync(
-    join(aiDistDir, 'index.js'),
-    'export function createAssistantMessageEventStream() { return { push() {} }; }\n',
-    'utf8',
-  );
-  return dir;
-}
-
 function explicitConfig(piPath: string): PiAdapterConfig {
   return { piPath, command: 'node', args: ['bin/pi.js'] };
 }
@@ -357,6 +288,287 @@ describe('engine-pi', () => {
     expect(compatibility.eventsObserved).toBeGreaterThan(0);
   });
 
+  it('resolves node launch command through process.execPath for Pi runs', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:argv0-session', isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'argv0=' + process.argv0 }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
+    try {
+      const adapter = new PiEngineAdapter({ piPath, command: 'node', args: ['bin/pi.js'] });
+      const result = await adapter.run(runRequest('argv0'));
+      expect(result.failureClassification).toBeNull();
+      expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain(`argv0=${process.execPath}`);
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
+  });
+
+  it('surfaces spawn failures with concrete command diagnostics', async () => {
+    const piPath = createFakePiRepo('', { defaultCli: false });
+    const adapter = new PiEngineAdapter({
+      piPath,
+      command: 'definitely-missing-popeye-node',
+      args: ['bin/pi.js'],
+    });
+
+    const result = await adapter.run(runRequest('spawn-failure'));
+    expect(result.failureClassification).toBe('startup_failure');
+    expect(result.failureMessage).toContain('Failed to spawn Pi command');
+    expect(result.failureMessage).toContain('definitely-missing-popeye-node');
+    expect(result.events.find((event) => event.type === 'failed')?.payload.message).toContain('definitely-missing-popeye-node');
+  });
+
+  it('auto-fails over to the next configured model before any side effects', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      function modelName() {
+        const index = process.argv.findIndex((arg) => arg === '--model');
+        return index >= 0 ? process.argv[index + 1] : 'default';
+      }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          const model = modelName();
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:' + model, isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            if (model === 'primary-model') {
+              write({ id: message.id, type: 'response', command: 'prompt', success: false, error: 'temporary network outage' });
+              continue;
+            }
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model,
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'model=' + model }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({
+      piPath,
+      command: 'node',
+      args: ['bin/pi.js'],
+      defaultModel: 'primary-model',
+      fallbackModels: ['backup-model'],
+      autoFailoverEnabled: true,
+    });
+
+    const result = await adapter.run(runRequest('failover-success'));
+    expect(result.failureClassification).toBeNull();
+    expect(result.failureMessage).toBeUndefined();
+    expect(result.usage.model).toBe('backup-model');
+    expect(result.events.filter((event) => event.type === 'model_attempt').map((event) => event.payload.model)).toEqual([
+      'primary-model',
+      'backup-model',
+    ]);
+    expect(result.events.find((event) => event.type === 'model_fallback')?.payload.fromModel).toBe('primary-model');
+    expect(result.events.find((event) => event.type === 'model_fallback')?.payload.toModel).toBe('backup-model');
+    expect(result.events.find((event) => event.type === 'completed')?.payload.output).toContain('model=backup-model');
+  });
+
+  it('does not auto-fail over after a tool call has started', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      function modelName() {
+        const index = process.argv.findIndex((arg) => arg === '--model');
+        return index >= 0 ? process.argv[index + 1] : 'default';
+      }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          const model = modelName();
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:' + model, isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            if (model === 'primary-model') {
+              write({ type: 'tool_execution_start', toolCallId: 'tool-1', toolName: 'read', args: { path: 'README.md' } });
+              write({
+                type: 'agent_end',
+                messages: [{
+                  role: 'assistant',
+                  provider: 'pi',
+                  model,
+                  stopReason: 'error',
+                  errorMessage: 'temporary network outage',
+                  usage: { input: 1, output: 0, cost: { total: 0 } },
+                  content: [],
+                }],
+              });
+              continue;
+            }
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model,
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'should-not-run' }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({
+      piPath,
+      command: 'node',
+      args: ['bin/pi.js'],
+      defaultModel: 'primary-model',
+      fallbackModels: ['backup-model'],
+      autoFailoverEnabled: true,
+    });
+
+    const result = await adapter.run(runRequest('tool-call-no-failover'));
+    expect(result.failureClassification).toBe('transient_failure');
+    expect(result.events.filter((event) => event.type === 'model_attempt')).toHaveLength(1);
+    expect(result.events.some((event) => event.type === 'model_fallback')).toBe(false);
+  });
+
+  it('does not auto-fail over after assistant output has started', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      function modelName() {
+        const index = process.argv.findIndex((arg) => arg === '--model');
+        return index >= 0 ? process.argv[index + 1] : 'default';
+      }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          const model = modelName();
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:' + model, isStreaming: false } });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            if (model === 'primary-model') {
+              write({
+                type: 'message_end',
+                message: {
+                  role: 'assistant',
+                  provider: 'pi',
+                  model,
+                  stopReason: 'error',
+                  errorMessage: 'temporary network outage',
+                  usage: { input: 1, output: 1, cost: { total: 0 } },
+                  content: [{ type: 'text', text: 'partial answer' }],
+                },
+              });
+              write({
+                type: 'agent_end',
+                messages: [{
+                  role: 'assistant',
+                  provider: 'pi',
+                  model,
+                  stopReason: 'error',
+                  errorMessage: 'temporary network outage',
+                  usage: { input: 1, output: 1, cost: { total: 0 } },
+                  content: [{ type: 'text', text: 'partial answer' }],
+                }],
+              });
+              continue;
+            }
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model,
+                stopReason: 'stop',
+                usage: { input: 1, output: 1, cost: { total: 0 } },
+                content: [{ type: 'text', text: 'should-not-run' }],
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter({
+      piPath,
+      command: 'node',
+      args: ['bin/pi.js'],
+      defaultModel: 'primary-model',
+      fallbackModels: ['backup-model'],
+      autoFailoverEnabled: true,
+    });
+
+    const result = await adapter.run(runRequest('assistant-output-no-failover'));
+    expect(result.failureClassification).toBe('transient_failure');
+    expect(result.events.filter((event) => event.type === 'model_attempt')).toHaveLength(1);
+    expect(result.events.some((event) => event.type === 'model_fallback')).toBe(false);
+  });
+
   it('captures stderr as warnings on successful runs', async () => {
     const piPath = createFakePiRepo(`
       let buffer = '';
@@ -387,31 +599,6 @@ describe('engine-pi', () => {
     const result = await adapter.run(runRequest('warn'));
     expect(result.failureClassification).toBeNull();
     expect(result.warnings).toBe('deprecation warning: old API');
-  });
-
-  it('runPiCompatibilityCheck injects a secretless smoke provider when requested', async () => {
-    const piPath = createFakePiRepoWithCompatibilitySmoke();
-    const previousSmokeApiKey = process.env.POPEYE_SMOKE_API_KEY;
-    delete process.env.POPEYE_SMOKE_API_KEY;
-
-    try {
-      const result = await runPiCompatibilityCheck(
-        { piPath, command: 'node' },
-        'hello',
-        { injectSecretlessProvider: true },
-      );
-
-      expect(result.ok).toBe(true);
-      expect(result.engineSessionRef).toBe('pi:smoke-session');
-      expect(result.eventTypes).toContain('completed');
-      expect(process.env.POPEYE_SMOKE_API_KEY).toBeUndefined();
-    } finally {
-      if (previousSmokeApiKey === undefined) {
-        delete process.env.POPEYE_SMOKE_API_KEY;
-      } else {
-        process.env.POPEYE_SMOKE_API_KEY = previousSmokeApiKey;
-      }
-    }
   });
 
   it('does not set warnings when stderr is empty', async () => {
@@ -720,6 +907,87 @@ describe('engine-pi', () => {
     expect(result.failureMessage).toBe('Pi native host-tool registration timed out and runtime-tool bridge fallback is disabled');
     expect(result.events.some((event) => event.type === 'started')).toBe(false);
     expect(result.events.find((event) => event.type === 'failed')?.payload.classification).toBe('policy_failure');
+  });
+
+  it('falls back to the runtime-tool bridge when Pi rejects register_host_tools without echoing the request id', async () => {
+    const piPath = createFakePiRepo(`
+      let buffer = '';
+      function write(line) { process.stdout.write(JSON.stringify(line) + '\\n'); }
+      process.stdin.setEncoding('utf8');
+      process.on('SIGTERM', () => process.exit(0));
+      process.stdin.on('data', (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const message = JSON.parse(line);
+          if (message.type === 'get_state') {
+            write({ id: message.id, type: 'response', command: 'get_state', success: true, data: { sessionId: 'pi:missing-register-id', isStreaming: false } });
+          }
+          if (message.type === 'register_host_tools') {
+            write({ type: 'response', command: 'register_host_tools', success: false, error: 'Unknown command: register_host_tools' });
+          }
+          if (message.type === 'prompt') {
+            write({ id: message.id, type: 'response', command: 'prompt', success: true });
+            write({
+              type: 'extension_ui_request',
+              id: 'ui-missing-id',
+              method: 'editor',
+              title: 'popeye.runtime_tool',
+              prefill: JSON.stringify({
+                op: 'runtime_tool_call',
+                toolCallId: 'tc-missing-id',
+                tool: 'popeye_memory_search',
+                params: { query: 'fallback' },
+              }),
+            });
+          }
+          if (message.type === 'extension_ui_response' && message.id === 'ui-missing-id') {
+            const response = JSON.parse(message.value);
+            write({
+              type: 'agent_end',
+              messages: [{
+                role: 'assistant',
+                provider: 'pi',
+                model: 'stub',
+                stopReason: 'stop',
+                usage: { input: 2, output: 3, cost: { total: 0.01 } },
+                content: response.content,
+              }],
+            });
+          }
+        }
+      });
+    `, { defaultCli: false });
+
+    const adapter = new PiEngineAdapter(explicitConfig(piPath));
+    const result = await adapter.run({
+      prompt: 'missing-register-id',
+      runtimeTools: [{
+        name: 'popeye_memory_search',
+        description: 'Search Popeye memory',
+        inputSchema: {},
+        async execute(params) {
+          expect(params).toEqual({ query: 'fallback' });
+          return {
+            content: [{ type: 'text', text: 'fallback bridge ok' }],
+          };
+        },
+      }],
+    });
+
+    expect(result.failureClassification).toBeNull();
+    expect(result.warnings).toContain('Pi runtime-tool bridge fallback was used for this run.');
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      payload: expect.objectContaining({
+        toolCallId: 'tc-missing-id',
+        toolName: 'popeye_memory_search',
+        bridge: 'runtime_tool_bridge',
+        isError: false,
+      }),
+    }));
   });
 
   it('times out runtime-tool bridge calls and emits structured bridge diagnostics', async () => {

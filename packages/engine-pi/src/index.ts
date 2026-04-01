@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import {
   type AppConfig,
@@ -27,9 +26,6 @@ const MAX_STDOUT_BUFFER_BYTES = 1_048_576;
 const MAX_EVENTS = 10_000;
 const CANCEL_GRACE_MS = 5_000;
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30_000;
-const PI_TEMP_DIR_PREFIX = 'popeye-pi-extension-';
-const PI_SMOKE_MODEL = 'popeye-smoke/smoke-model';
-const PI_SMOKE_API_KEY_ENV = 'POPEYE_SMOKE_API_KEY';
 const INTERNAL_IDS = {
   getState: 'popeye:get_state',
   registerHostTools: 'popeye:register_host_tools',
@@ -39,6 +35,7 @@ const INTERNAL_IDS = {
 const PASSIVE_EXTENSION_UI_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text']);
 
 export function cleanStalePiTempDirs(maxAgeMs = 60 * 60 * 1000): number {
+  const prefix = 'popeye-pi-extension-';
   const base = tmpdir();
   let cleaned = 0;
   let entries: string[];
@@ -49,7 +46,7 @@ export function cleanStalePiTempDirs(maxAgeMs = 60 * 60 * 1000): number {
   }
   const cutoff = Date.now() - maxAgeMs;
   for (const entry of entries) {
-    if (!entry.startsWith(PI_TEMP_DIR_PREFIX)) continue;
+    if (!entry.startsWith(prefix)) continue;
     const fullPath = join(base, entry);
     try {
       const mtime = statSync(fullPath).mtimeMs;
@@ -89,6 +86,7 @@ export interface EngineRunCompletion {
   engineSessionRef: string | null;
   usage: UsageMetrics;
   failureClassification: EngineFailureClassification | null;
+  failureMessage?: string | undefined;
   warnings?: string | undefined;
   iterationsUsed?: number | undefined;
 }
@@ -157,6 +155,9 @@ export interface PiAdapterConfig {
   runtimeToolTimeoutMs?: number;
   allowRuntimeToolBridgeFallback?: boolean;
   modelRouting?: ModelRoutingConfig;
+  defaultModel?: string;
+  fallbackModels?: string[];
+  autoFailoverEnabled?: boolean;
   maxIterationsPerRun?: number;
   budgetWarningThreshold?: number;
 }
@@ -176,10 +177,6 @@ export interface PiCompatibilityResult {
   eventTypes: string[];
   eventsObserved: number;
   engineSessionRef: string | null;
-}
-
-export interface PiCompatibilityCheckOptions {
-  injectSecretlessProvider?: boolean;
 }
 
 interface PrimitiveRecord {
@@ -231,13 +228,6 @@ interface PreparedRuntimeToolBridge {
   extensionPaths: string[];
   cleanup(): void;
   toolsByName: Map<string, RuntimeToolDescriptor>;
-}
-
-interface PreparedPiCompatibilitySmoke {
-  args: string[];
-  modelOverride: string;
-  cleanup(): void;
-  restoreEnv(): void;
 }
 
 const PackageVersionSchema = z.object({
@@ -427,6 +417,54 @@ class ProcessHandle implements EngineRunHandle {
   }
 }
 
+class RetryingProcessHandle implements EngineRunHandle {
+  private currentHandle: EngineRunHandle | null = null;
+  private cancelRequested = false;
+  private readonly completionPromise: Promise<EngineRunCompletion>;
+  private readonly resolveCompletion: (value: EngineRunCompletion) => void;
+  private readonly rejectCompletion: (reason?: unknown) => void;
+
+  constructor() {
+    let resolveCompletion: ((value: EngineRunCompletion) => void) | undefined;
+    let rejectCompletion: ((reason?: unknown) => void) | undefined;
+    this.completionPromise = new Promise<EngineRunCompletion>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    this.resolveCompletion = resolveCompletion!;
+    this.rejectCompletion = rejectCompletion!;
+  }
+
+  get pid(): number | null {
+    return this.currentHandle?.pid ?? null;
+  }
+
+  setCurrentHandle(handle: EngineRunHandle): void {
+    this.currentHandle = handle;
+  }
+
+  attachCompletionPromise(promise: Promise<EngineRunCompletion>): void {
+    promise.then(this.resolveCompletion, this.rejectCompletion);
+  }
+
+  async cancel(): Promise<void> {
+    this.cancelRequested = true;
+    await this.currentHandle?.cancel();
+  }
+
+  wasCancelled(): boolean {
+    return this.cancelRequested;
+  }
+
+  async wait(): Promise<EngineRunCompletion> {
+    return this.completionPromise;
+  }
+
+  isAlive(): boolean {
+    return this.currentHandle?.isAlive?.() ?? false;
+  }
+}
+
 function emitEvent(events: NormalizedEngineEvent[], event: NormalizedEngineEvent, onEvent?: (event: NormalizedEngineEvent) => void): void {
   if (events.length < MAX_EVENTS) {
     events.push(event);
@@ -541,6 +579,89 @@ function classifyFailure(message: string | undefined, started: boolean): EngineF
   return started ? 'permanent_failure' : 'startup_failure';
 }
 
+function resolveLaunchCommand(command: string): string {
+  return command === 'node' ? process.execPath : command;
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function dedupeModelSequence(models: Array<string | undefined>): Array<string | undefined> {
+  const seen = new Set<string>();
+  const unique: Array<string | undefined> = [];
+  let sawDefault = false;
+  for (const model of models) {
+    const normalized = normalizeOptionalString(model);
+    if (normalized === undefined) {
+      if (!sawDefault) {
+        unique.push(undefined);
+        sawDefault = true;
+      }
+      continue;
+    }
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function buildModelAttemptChain(input: {
+  requestModelOverride?: string;
+  routedModel?: string;
+  defaultModel?: string;
+  fallbackModels: string[];
+  autoFailoverEnabled: boolean;
+}): Array<string | undefined> {
+  const primaryModel = normalizeOptionalString(input.requestModelOverride)
+    ?? normalizeOptionalString(input.routedModel)
+    ?? normalizeOptionalString(input.defaultModel);
+  const baseChain = primaryModel === undefined ? [undefined] : [primaryModel];
+  if (!input.autoFailoverEnabled) {
+    return baseChain;
+  }
+  return dedupeModelSequence([
+    ...baseChain,
+    ...input.fallbackModels.map((model) => normalizeOptionalString(model)),
+  ]);
+}
+
+function shouldAutoFailoverAttempt(input: {
+  completion: EngineRunCompletion;
+  sawToolCall: boolean;
+  sawToolResult: boolean;
+  sawAssistantOutput: boolean;
+  cancelRequested: boolean;
+  hasNextAttempt: boolean;
+}): boolean {
+  if (!input.hasNextAttempt || input.cancelRequested) {
+    return false;
+  }
+  if (input.sawToolCall || input.sawToolResult || input.sawAssistantOutput) {
+    return false;
+  }
+  return input.completion.failureClassification === 'startup_failure'
+    || input.completion.failureClassification === 'auth_failure'
+    || input.completion.failureClassification === 'transient_failure';
+}
+
+function joinWarnings(warnings: Array<string | undefined>): string | undefined {
+  const lines = warnings
+    .flatMap((warning) => (warning ?? '').split('\n'))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines.length > 0 ? Array.from(new Set(lines)).join('\n') : undefined;
+}
+
+function formatSpawnFailureMessage(configuredCommand: string, launchCommand: string, error: Error): string {
+  const commandDetail = configuredCommand === launchCommand
+    ? `"${launchCommand}"`
+    : `"${configuredCommand}" (resolved to "${launchCommand}")`;
+  return `Failed to spawn Pi command ${commandDetail}: ${error.message}`;
+}
+
 function buildPiCommand(
   piPath: string,
   command: string,
@@ -622,7 +743,7 @@ function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRunti
     toolsByName.set(tool.name, tool);
   }
 
-  const dir = mkdtempSync(join(tmpdir(), PI_TEMP_DIR_PREFIX));
+  const dir = mkdtempSync(join(tmpdir(), 'popeye-pi-extension-'));
   chmodSync(dir, 0o700);
   const extensionPath = join(dir, 'popeye-runtime-tools.mjs');
   writeFileSync(extensionPath, createRuntimeToolExtensionSource(tools), 'utf8');
@@ -633,90 +754,6 @@ function prepareRuntimeToolBridge(tools: RuntimeToolDescriptor[]): PreparedRunti
       rmSync(dir, { recursive: true, force: true });
     },
     toolsByName,
-  };
-}
-
-function preparePiCompatibilitySmoke(config: PiAdapterConfig): PreparedPiCompatibilitySmoke {
-  const piPath = assertPiCheckoutAvailable(config.piPath).path;
-  const aiIndexPath = resolve(piPath, 'packages', 'ai', 'dist', 'index.js');
-  if (!existsSync(aiIndexPath)) {
-    throw new PiEngineAdapterNotConfiguredError(
-      `Could not find built Pi AI module at ${aiIndexPath}. Build Pi or set POPEYE_PI_SMOKE_ARGS explicitly.`,
-    );
-  }
-
-  const dir = mkdtempSync(join(tmpdir(), PI_TEMP_DIR_PREFIX));
-  chmodSync(dir, 0o700);
-  const extensionPath = join(dir, 'popeye-smoke-provider.mjs');
-  const aiIndexUrl = pathToFileURL(aiIndexPath).href;
-  writeFileSync(
-    extensionPath,
-    `
-import { createAssistantMessageEventStream } from ${JSON.stringify(aiIndexUrl)};
-
-export default function(pi) {
-  pi.registerProvider('popeye-smoke', {
-    baseUrl: 'http://localhost/popeye-smoke',
-    apiKey: ${JSON.stringify(PI_SMOKE_API_KEY_ENV)},
-    api: 'popeye-smoke-api',
-    authHeader: false,
-    models: [
-      {
-        id: 'smoke-model',
-        name: 'Popeye Smoke Model',
-        reasoning: false,
-        input: ['text'],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 8192,
-        maxTokens: 1024
-      }
-    ],
-    streamSimple(model) {
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => {
-        const message = {
-          role: 'assistant',
-          api: 'popeye-smoke-api',
-          provider: 'popeye-smoke',
-          model: model.id,
-          usage: {
-            input: 1,
-            output: 1,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 2,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          },
-          stopReason: 'stop',
-          timestamp: Date.now(),
-          content: [{ type: 'text', text: 'smoke ok' }]
-        };
-        stream.push({ type: 'done', reason: 'stop', message });
-      });
-      return stream;
-    }
-  });
-}
-`,
-    'utf8',
-  );
-
-  const previousApiKey = process.env[PI_SMOKE_API_KEY_ENV];
-  process.env[PI_SMOKE_API_KEY_ENV] = previousApiKey ?? 'popeye-smoke-key';
-
-  return {
-    args: [...(config.args ?? []), '--extension', extensionPath],
-    modelOverride: PI_SMOKE_MODEL,
-    cleanup() {
-      rmSync(dir, { recursive: true, force: true });
-    },
-    restoreEnv() {
-      if (previousApiKey === undefined) {
-        delete process.env[PI_SMOKE_API_KEY_ENV];
-        return;
-      }
-      process.env[PI_SMOKE_API_KEY_ENV] = previousApiKey;
-    },
   };
 }
 
@@ -1098,6 +1135,9 @@ export class PiEngineAdapter implements EngineAdapter {
   private readonly expectedPiVersion: string | undefined;
   private readonly allowRuntimeToolBridgeFallback: boolean;
   private readonly modelRouting: ModelRoutingConfig | undefined;
+  private readonly defaultModel: string | undefined;
+  private readonly fallbackModels: string[];
+  private readonly autoFailoverEnabled: boolean;
   private readonly maxIterationsPerRun: number;
   private readonly budgetWarningThreshold: number;
 
@@ -1111,6 +1151,9 @@ export class PiEngineAdapter implements EngineAdapter {
     this.expectedPiVersion = config.piVersion;
     this.allowRuntimeToolBridgeFallback = config.allowRuntimeToolBridgeFallback ?? true;
     this.modelRouting = config.modelRouting;
+    this.defaultModel = normalizeOptionalString(config.defaultModel);
+    this.fallbackModels = config.fallbackModels?.map((model) => model.trim()).filter((model) => model.length > 0) ?? [];
+    this.autoFailoverEnabled = config.autoFailoverEnabled ?? false;
     this.maxIterationsPerRun = config.maxIterationsPerRun ?? 200;
     this.budgetWarningThreshold = config.budgetWarningThreshold ?? 0.8;
     if (config.piVersion) {
@@ -1122,6 +1165,155 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 
   async startRun(request: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunHandle> {
+    const routingDecision = request.modelOverride === undefined
+      ? resolveModelForPrompt(this.modelRouting, request.prompt)
+      : undefined;
+    const modelAttempts = buildModelAttemptChain({
+      ...(request.modelOverride === undefined ? {} : { requestModelOverride: request.modelOverride }),
+      ...(routingDecision?.model === undefined ? {} : { routedModel: routingDecision.model }),
+      ...(this.defaultModel === undefined ? {} : { defaultModel: this.defaultModel }),
+      fallbackModels: this.fallbackModels,
+      autoFailoverEnabled: this.autoFailoverEnabled,
+    });
+
+    if (routingDecision) {
+      options.onEvent?.(normalizeStructuredEvent('model_routing', {
+        classification: routingDecision.classification,
+        score: routingDecision.score,
+        signals: routingDecision.signals.join(','),
+        selectedModel: routingDecision.model ?? 'default',
+      }));
+    }
+
+    const handle = new RetryingProcessHandle();
+    const completionPromise = this.runWithFailover(request, modelAttempts, options, handle);
+    handle.attachCompletionPromise(completionPromise);
+    options.onHandle?.(handle);
+    void completionPromise.then(() => undefined, () => undefined);
+    return handle;
+  }
+
+  private async runWithFailover(
+    request: EngineRunRequest,
+    modelAttempts: Array<string | undefined>,
+    options: EngineRunOptions,
+    handle: RetryingProcessHandle,
+  ): Promise<EngineRunCompletion> {
+    let lastCompletion: EngineRunCompletion | null = null;
+    const collectedWarnings: Array<string | undefined> = [];
+    let totalIterations = 0;
+
+    for (let index = 0; index < modelAttempts.length; index += 1) {
+      const effectiveModelOverride = modelAttempts[index];
+      const hasNextAttempt = index < modelAttempts.length - 1;
+      const attemptNumber = index + 1;
+      let sawToolCall = false;
+      let sawToolResult = false;
+      let sawAssistantOutput = false;
+
+      if (modelAttempts.length > 1 || effectiveModelOverride !== undefined) {
+        options.onEvent?.(normalizeStructuredEvent('model_attempt', {
+          attempt: attemptNumber,
+          totalAttempts: modelAttempts.length,
+          model: effectiveModelOverride ?? 'default',
+          source: attemptNumber === 1 ? 'primary' : 'fallback',
+        }));
+      }
+
+      const singleHandle = await this.startSingleRun(
+        request,
+        {
+          onEvent: (event) => {
+            if (event.type === 'tool_call') {
+              sawToolCall = true;
+            }
+            if (event.type === 'tool_result') {
+              sawToolResult = true;
+            }
+            if (event.type === 'message' && event.payload.role === 'assistant') {
+              const text = typeof event.payload.text === 'string' ? event.payload.text.trim() : '';
+              if (text.length > 0) {
+                sawAssistantOutput = true;
+              }
+            }
+            options.onEvent?.(event);
+          },
+        },
+        effectiveModelOverride,
+      );
+      handle.setCurrentHandle(singleHandle);
+
+      if (handle.wasCancelled()) {
+        await singleHandle.cancel();
+      }
+
+      const completion = await singleHandle.wait();
+      lastCompletion = completion;
+      totalIterations += completion.iterationsUsed ?? 0;
+      collectedWarnings.push(completion.warnings);
+
+      if (!shouldAutoFailoverAttempt({
+        completion,
+        sawToolCall,
+        sawToolResult,
+        sawAssistantOutput,
+        cancelRequested: handle.wasCancelled(),
+        hasNextAttempt,
+      })) {
+        return {
+          ...completion,
+          warnings: joinWarnings(collectedWarnings),
+          iterationsUsed: totalIterations,
+        };
+      }
+
+      const nextModel = modelAttempts[index + 1];
+      options.onEvent?.(normalizeStructuredEvent('model_fallback', {
+        attempt: attemptNumber,
+        totalAttempts: modelAttempts.length,
+        fromModel: effectiveModelOverride ?? 'default',
+        toModel: nextModel ?? 'default',
+        exhausted: false,
+        classification: completion.failureClassification,
+        reason: completion.failureMessage ?? '',
+      }));
+    }
+
+    if (!lastCompletion) {
+      return {
+        engineSessionRef: null,
+        usage: defaultUsage('pi', 'unknown'),
+        failureClassification: 'startup_failure',
+        failureMessage: 'Pi failover chain completed without starting an attempt',
+        warnings: joinWarnings(collectedWarnings),
+        iterationsUsed: totalIterations,
+      };
+    }
+
+    if (modelAttempts.length > 1 && lastCompletion.failureClassification !== null) {
+      options.onEvent?.(normalizeStructuredEvent('model_fallback', {
+        attempt: modelAttempts.length,
+        totalAttempts: modelAttempts.length,
+        fromModel: modelAttempts[modelAttempts.length - 1] ?? 'default',
+        toModel: null,
+        exhausted: true,
+        classification: lastCompletion.failureClassification,
+        reason: lastCompletion.failureMessage ?? '',
+      }));
+    }
+
+    return {
+      ...lastCompletion,
+      warnings: joinWarnings(collectedWarnings),
+      iterationsUsed: totalIterations,
+    };
+  }
+
+  private async startSingleRun(
+    request: EngineRunRequest,
+    options: EngineRunOptions = {},
+    effectiveModelOverride?: string,
+  ): Promise<EngineRunHandle> {
     const runtimeTools = request.runtimeTools ?? [];
     const runtimeToolBridge = this.allowRuntimeToolBridgeFallback
       ? prepareRuntimeToolBridge(runtimeTools)
@@ -1130,10 +1322,6 @@ export class PiEngineAdapter implements EngineAdapter {
           cleanup() {},
           toolsByName: new Map<string, RuntimeToolDescriptor>(),
         };
-    const routingDecision = request.modelOverride === undefined
-      ? resolveModelForPrompt(this.modelRouting, request.prompt)
-      : undefined;
-    const effectiveModelOverride = request.modelOverride ?? routingDecision?.model;
     const launch = buildPiCommand(
       this.piPath,
       this.command,
@@ -1142,7 +1330,8 @@ export class PiEngineAdapter implements EngineAdapter {
         ? { extensionPaths: runtimeToolBridge.extensionPaths }
         : { extensionPaths: runtimeToolBridge.extensionPaths, modelOverride: effectiveModelOverride },
     );
-    const child = spawn(launch.command, launch.args, {
+    const launchCommand = resolveLaunchCommand(launch.command);
+    const child = spawn(launchCommand, launch.args, {
       cwd: resolveSpawnCwd(this.piPath, request.cwd),
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -1205,15 +1394,6 @@ export class PiEngineAdapter implements EngineAdapter {
       if (event.type === 'session') sessionEmitted = true;
       emitEvent(events, event, options.onEvent);
     };
-
-    if (routingDecision) {
-      safeEmit(normalizeStructuredEvent('model_routing', {
-        classification: routingDecision.classification,
-        score: routingDecision.score,
-        signals: routingDecision.signals.join(','),
-        selectedModel: routingDecision.model ?? 'default',
-      }));
-    }
 
     const markFailure = (classification: EngineFailureClassification, message?: string, raw?: string): void => {
       if (failureClassification === null || failureClassification === 'cancelled') {
@@ -1473,7 +1653,11 @@ export class PiEngineAdapter implements EngineAdapter {
         return;
       }
 
-      if (response.id === INTERNAL_IDS.registerHostTools && response.command === 'register_host_tools') {
+      const isRegisterHostToolsResponse = response.command === 'register_host_tools'
+        && hostToolRegistrationAttempted
+        && (response.id === undefined || response.id === INTERNAL_IDS.registerHostTools);
+
+      if (isRegisterHostToolsResponse) {
         if (hostToolRegistrationTimeout) {
           clearTimeout(hostToolRegistrationTimeout);
           hostToolRegistrationTimeout = undefined;
@@ -1716,6 +1900,7 @@ export class PiEngineAdapter implements EngineAdapter {
 
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelEscalationTimer: ReturnType<typeof setTimeout> | undefined;
+    let spawnErrorMessage: string | undefined;
 
     if (this.timeoutMs != null) {
       timeoutTimer = setTimeout(() => {
@@ -1771,8 +1956,12 @@ export class PiEngineAdapter implements EngineAdapter {
       }
     };
 
-    const completionPromise = new Promise<EngineRunCompletion>((resolveCompletion, rejectCompletion) => {
-      child.on('error', rejectCompletion);
+    const completionPromise = new Promise<EngineRunCompletion>((resolveCompletion) => {
+      child.on('error', (error) => {
+        spawnErrorMessage = formatSpawnFailureMessage(this.command, launchCommand, error);
+        failureClassification = 'startup_failure';
+        failureMessage = spawnErrorMessage;
+      });
       child.on('close', (code) => {
         if (timeoutTimer != null) clearTimeout(timeoutTimer);
         if (cancelEscalationTimer != null) clearTimeout(cancelEscalationTimer);
@@ -1795,6 +1984,11 @@ export class PiEngineAdapter implements EngineAdapter {
           failureMessage = stderr.trim() || `Pi RPC process failed with code ${exitCode}`;
         }
 
+        if (spawnErrorMessage && failureClassification === null) {
+          failureClassification = 'startup_failure';
+          failureMessage = spawnErrorMessage;
+        }
+
         if (!promptState.requested && failureClassification === null) {
           failureClassification = 'startup_failure';
           failureMessage = failureMessage ?? 'Pi RPC process exited before state handshake completed';
@@ -1806,6 +2000,7 @@ export class PiEngineAdapter implements EngineAdapter {
           engineSessionRef,
           usage,
           failureClassification,
+          failureMessage,
           warnings: collectWarnings(),
           iterationsUsed: iterationCount,
         });
@@ -1828,13 +2023,13 @@ export class PiEngineAdapter implements EngineAdapter {
 
   async run(input: EngineRunRequest, options: EngineRunOptions = {}): Promise<EngineRunResult> {
     const events: NormalizedEngineEvent[] = [];
-    let failureMessage: string | undefined;
+    let lastFailedEventMessage: string | undefined;
     const handle = await this.startRun(input, {
       ...options,
       onEvent: (event) => {
         events.push(event);
         if (event.type === 'failed' && typeof event.payload.message === 'string') {
-          failureMessage = event.payload.message;
+          lastFailedEventMessage = event.payload.message;
         }
         options.onEvent?.(event);
       },
@@ -1847,7 +2042,7 @@ export class PiEngineAdapter implements EngineAdapter {
       engineSessionRef: completion.engineSessionRef ?? (typeof sessionRef === 'string' ? sessionRef : null),
       usage: completion.usage,
       failureClassification: completion.failureClassification,
-      failureMessage,
+      failureMessage: completion.failureClassification === null ? undefined : (completion.failureMessage ?? lastFailedEventMessage),
       warnings: completion.warnings,
       iterationsUsed: completion.iterationsUsed,
     };
@@ -1885,52 +2080,15 @@ export class PiEngineAdapter implements EngineAdapter {
   }
 }
 
-export async function runPiCompatibilityCheck(
-  adapterOrConfig: EngineAdapter | PiAdapterConfig,
-  prompt = 'compatibility-check',
-  options: PiCompatibilityCheckOptions = {},
-): Promise<PiCompatibilityResult> {
-  if ('startRun' in adapterOrConfig) {
-    if (options.injectSecretlessProvider) {
-      throw new Error('Secretless Pi smoke injection requires a Pi adapter config, not an EngineAdapter instance.');
-    }
-    const result = await adapterOrConfig.run({ prompt });
-    return {
-      ok: result.failureClassification === null && Boolean(result.engineSessionRef),
-      eventTypes: result.events.map((event) => event.type),
-      eventsObserved: result.events.length,
-      engineSessionRef: result.engineSessionRef,
-    };
-  }
-
-  let adapterConfig = adapterOrConfig;
-  let modelOverride: string | undefined;
-  let cleanup = () => {};
-  let restoreEnv = () => {};
-  if (options.injectSecretlessProvider) {
-    const prepared = preparePiCompatibilitySmoke(adapterOrConfig);
-    adapterConfig = { ...adapterOrConfig, args: prepared.args };
-    modelOverride = prepared.modelOverride;
-    cleanup = prepared.cleanup;
-    restoreEnv = prepared.restoreEnv;
-  }
-
-  try {
-    const adapter = new PiEngineAdapter(adapterConfig);
-    const result = await adapter.run({
-      prompt,
-      ...(modelOverride === undefined ? {} : { modelOverride }),
-    });
-    return {
-      ok: result.failureClassification === null && Boolean(result.engineSessionRef),
-      eventTypes: result.events.map((event) => event.type),
-      eventsObserved: result.events.length,
-      engineSessionRef: result.engineSessionRef,
-    };
-  } finally {
-    restoreEnv();
-    cleanup();
-  }
+export async function runPiCompatibilityCheck(adapterOrConfig: EngineAdapter | PiAdapterConfig, prompt = 'compatibility-check'): Promise<PiCompatibilityResult> {
+  const adapter = 'startRun' in adapterOrConfig ? adapterOrConfig : new PiEngineAdapter(adapterOrConfig);
+  const result = await adapter.run({ prompt });
+  return {
+    ok: result.failureClassification === null && Boolean(result.engineSessionRef),
+    eventTypes: result.events.map((event) => event.type),
+    eventsObserved: result.events.length,
+    engineSessionRef: result.engineSessionRef,
+  };
 }
 
 export function createEngineAdapter(config: AppConfig): EngineAdapter {
@@ -1948,6 +2106,9 @@ export function createEngineAdapter(config: AppConfig): EngineAdapter {
       ...(config.engine.allowRuntimeToolBridgeFallback === undefined
         ? {}
         : { allowRuntimeToolBridgeFallback: config.engine.allowRuntimeToolBridgeFallback }),
+      ...(config.engine.defaultModel === undefined ? {} : { defaultModel: config.engine.defaultModel }),
+      fallbackModels: config.engine.fallbackModels,
+      autoFailoverEnabled: config.engine.autoFailoverEnabled,
       maxIterationsPerRun: config.engine.maxIterationsPerRun,
       budgetWarningThreshold: config.engine.budgetWarningThreshold,
       modelRouting: config.engine.modelRouting,

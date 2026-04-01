@@ -16,6 +16,7 @@ export interface StartedTelegramBridge {
 export interface TelegramBridgeDeps {
   createBotClient?: (token: string) => TelegramBotClient;
   createControlClient?: (baseUrl: string, token: string) => TelegramRunTrackingClient;
+  getSecretValue?: (id: string) => string | null;
 }
 
 export function resolveTelegramWorkspaceId(config: AppConfig): string {
@@ -29,9 +30,17 @@ export async function startTelegramBridge(
   if (!config.telegram.enabled) return null;
 
   const log = createLogger('telegram-bridge', config.security.redactionPatterns);
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const envBotToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const secretBotToken = config.telegram.secretRefId ? deps.getSecretValue?.(config.telegram.secretRefId)?.trim() ?? null : null;
+  const botToken = envBotToken && envBotToken.length > 0 ? envBotToken : secretBotToken;
   if (!botToken) {
-    log.warn('Telegram enabled but TELEGRAM_BOT_TOKEN is not set; skipping bridge startup');
+    if (config.telegram.secretRefId) {
+      log.warn('Telegram enabled but configured bot token secret is unavailable; skipping bridge startup', {
+        secretRefId: config.telegram.secretRefId,
+      });
+    } else {
+      log.warn('Telegram enabled but TELEGRAM_BOT_TOKEN is not set; skipping bridge startup');
+    }
     return null;
   }
 

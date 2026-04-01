@@ -1869,12 +1869,14 @@ export async function createControlApi(
 
   app.post('/v1/secrets', async (request) => {
     const body = z.object({
+      provider: z.enum(['keychain', 'file', 'env']).optional(),
       key: z.string().min(1),
       value: z.string().min(1),
       connectionId: z.string().optional(),
       description: z.string().optional(),
     }).parse(request.body);
     return dependencies.runtime.setSecret({
+      ...(body.provider !== undefined ? { provider: body.provider } : {}),
       key: body.key,
       value: body.value,
       ...(body.connectionId !== undefined ? { connectionId: body.connectionId } : {}),
