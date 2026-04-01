@@ -108,6 +108,21 @@ export const PlaybookSearchResultSchema = z.object({
 });
 export type PlaybookSearchResult = z.infer<typeof PlaybookSearchResultSchema>;
 
+export const PlaybookRecommendationSchema = z.object({
+  recordId: z.string().min(1),
+  playbookId: z.string().min(1),
+  title: z.string().min(1),
+  scope: PlaybookScopeSchema,
+  workspaceId: z.string().nullable().default(null),
+  projectId: z.string().nullable().default(null),
+  currentRevisionHash: z.string().min(1),
+  allowedProfileIds: z.array(z.string().min(1)).default([]),
+  snippet: z.string().default(''),
+  score: z.number().nonnegative(),
+  reason: z.string().min(1),
+});
+export type PlaybookRecommendation = z.infer<typeof PlaybookRecommendationSchema>;
+
 export const PlaybookRevisionRecordSchema = z.object({
   playbookRecordId: z.string().min(1),
   revisionHash: z.string().min(1),

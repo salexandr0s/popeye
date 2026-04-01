@@ -6,12 +6,14 @@ bundle respecting a defined precedence chain.
 
 ## Purpose
 
-Implements the instruction resolution pipeline: discover sources (WORKSPACE.md,
-PROJECT.md, active playbooks, IDENTITY.md, task briefs, trigger overlays,
-runtime notes), order them by precedence, detect conflicts, and compile into a
-hashed bundle. Only active canonical playbooks participate; drafts and pending
-proposals remain outside instruction compilation until activation. Content is
-hashed via `@popeye/observability` for change detection and dedup.
+Implements the instruction resolution pipeline: discover sources
+(`AGENTS.md` compatibility context, `.popeye/context/**/*.md`, `WORKSPACE.md`,
+`PROJECT.md`, active playbooks, `identities/<name>.md`, `SOUL.md`, task
+briefs, trigger overlays, runtime notes), order them by precedence, detect
+unexpected conflicts, and compile into a hashed bundle. Only active canonical
+playbooks participate; drafts and pending proposals remain outside instruction
+compilation until activation. Content is hashed via `@popeye/observability`
+for change detection and dedup.
 
 ## Layer
 
@@ -35,10 +37,10 @@ New platform implementation.
 1. Pi base instructions
 2. Popeye base instructions
 3. Global operator instructions
-4. Workspace (`WORKSPACE.md`)
+4. Compatibility context (`AGENTS.md` root→leaf), then native context (`.popeye/context/**/*.md` lexical order), then Workspace (`WORKSPACE.md`)
 5. Project (`PROJECT.md`)
 6. Playbooks
-7. Identity (`identities/<name>.md`)
+7. Identity (`identities/<name>.md`), then Soul (`SOUL.md`)
 8. Task brief
 9. Trigger overlay
 10. Runtime notes

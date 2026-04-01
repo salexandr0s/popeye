@@ -26,14 +26,17 @@ describe('golden: instruction precedence', () => {
     const projDir = join(dir, 'proj');
     mkdirSync(join(dir, 'identities'), { recursive: true });
     mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(dir, 'AGENTS.md'), 'compat instructions');
     writeFileSync(join(dir, 'WORKSPACE.md'), 'workspace instructions');
     writeFileSync(join(projDir, 'PROJECT.md'), 'project instructions');
     writeFileSync(join(dir, 'identities', 'agent.md'), 'identity instructions');
+    writeFileSync(join(dir, 'SOUL.md'), 'soul instructions');
 
     const sources = resolveInstructionSources(
       {
         workspaceId: 'ws',
         projectId: 'proj',
+        cwd: projDir,
         identity: 'agent',
         taskBrief: 'task brief text',
         triggerOverlay: 'trigger overlay text',
@@ -47,13 +50,15 @@ describe('golden: instruction precedence', () => {
       }),
     );
 
-    expect(sources.map((s) => s.precedence)).toEqual([2, 3, 4, 5, 7, 8, 9, 10]);
+    expect(sources.map((s) => s.precedence)).toEqual([2, 3, 4, 4, 5, 7, 7, 8, 9, 10]);
     expect(sources.map((s) => s.type)).toEqual([
       'popeye_base',
       'global_operator',
+      'context_compat',
       'workspace',
       'project',
       'identity',
+      'soul',
       'task_brief',
       'trigger_overlay',
       'runtime_notes',
@@ -116,5 +121,24 @@ describe('golden: instruction precedence', () => {
 workspace part
 
 brief part"`);
+  });
+
+  it('preserves expected same-band source ordering without warnings', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'golden-bands-'));
+    mkdirSync(join(dir, 'identities'), { recursive: true });
+    writeFileSync(join(dir, 'AGENTS.md'), 'compat');
+    writeFileSync(join(dir, 'WORKSPACE.md'), 'workspace');
+    writeFileSync(join(dir, 'identities', 'default.md'), 'identity');
+    writeFileSync(join(dir, 'SOUL.md'), 'soul');
+
+    const bundle = compileInstructionBundle(
+      resolveInstructionSources(
+        { workspaceId: 'ws', cwd: dir, identity: 'default' },
+        makeDeps({ getWorkspace: () => ({ id: 'ws', name: 'Test', rootPath: dir }) }),
+      ),
+    );
+
+    expect(bundle.sources.map((source) => source.type)).toEqual(['context_compat', 'workspace', 'identity', 'soul']);
+    expect(bundle.warnings).toEqual([]);
   });
 });

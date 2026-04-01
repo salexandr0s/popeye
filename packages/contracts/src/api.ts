@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EngineCapabilitiesSchema, EngineKindSchema } from './engine.js';
 import { TaskRecordSchema, JobRecordSchema, RunRecordSchema, ProjectRecordSchema, AgentProfileRecordSchema, ExecutionEnvelopeSchema } from './execution.js';
+import { CompiledInstructionBundleSchema, InstructionSourceSchema } from './instructions.js';
 import { MemorySourceTypeSchema, MemoryTypeSchema } from './memory.js';
 import { SecurityAuditFindingSchema } from './security.js';
 import { WorkspaceRecordSchema, DataClassificationSchema } from './config.js';
@@ -29,6 +30,7 @@ import {
   PlaybookDetailSchema,
   PlaybookProposalKindSchema,
   PlaybookProposalRecordSchema,
+  PlaybookRecommendationSchema,
   PlaybookProposalStatusSchema,
   PlaybookRecordSchema,
   PlaybookSearchResultSchema,
@@ -43,6 +45,7 @@ export const TaskCreateInputSchema = z.object({
   workspaceId: z.string().default('default'),
   projectId: z.string().nullable().default(null),
   profileId: z.string().default('default'),
+  identityId: z.string().nullable().default(null),
   title: z.string(),
   prompt: z.string(),
   source: z.enum(['manual', 'heartbeat', 'schedule', 'telegram', 'api', 'delegation']).default('manual'),
@@ -221,6 +224,19 @@ export const PlaybookListQueryParamsSchema = z.object({
   offset: z.coerce.number().int().nonnegative().optional(),
 });
 export type PlaybookListQueryParams = z.infer<typeof PlaybookListQueryParamsSchema>;
+
+export const PlaybookRecommendQueryParamsSchema = z.object({
+  q: z.string().min(1),
+  workspaceId: z.string().min(1),
+  projectId: z.string().optional(),
+  profileId: z.string().optional(),
+  identityId: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(25).optional(),
+});
+export type PlaybookRecommendQueryParams = z.infer<typeof PlaybookRecommendQueryParamsSchema>;
+
+export const PlaybookRecommendationListResponseSchema = z.array(PlaybookRecommendationSchema);
+export type PlaybookRecommendationListResponse = z.infer<typeof PlaybookRecommendationListResponseSchema>;
 
 export const PlaybookProposalListQueryParamsSchema = z.object({
   q: z.string().optional(),
@@ -433,12 +449,72 @@ export const InstructionResolutionContextSchema = z.object({
   workspaceId: z.string().min(1),
   projectId: z.string().min(1).optional(),
   profileId: z.string().min(1).optional(),
+  cwd: z.string().min(1).optional(),
   identity: z.string().min(1).optional(),
   taskBrief: z.string().optional(),
   triggerOverlay: z.string().optional(),
   runtimeNotes: z.string().optional(),
 });
 export type InstructionResolutionContext = z.infer<typeof InstructionResolutionContextSchema>;
+
+export const InstructionPreviewSourceMetadataSchema = InstructionSourceSchema.pick({
+  precedence: true,
+  type: true,
+  path: true,
+  inlineId: true,
+  contentHash: true,
+}).extend({
+  bandOrder: z.number().int().nonnegative(),
+});
+export type InstructionPreviewSourceMetadata = z.infer<typeof InstructionPreviewSourceMetadataSchema>;
+
+export const InstructionPreviewExplainResponseSchema = z.object({
+  bundle: CompiledInstructionBundleSchema,
+  context: InstructionResolutionContextSchema,
+  sources: z.array(InstructionPreviewSourceMetadataSchema),
+});
+export type InstructionPreviewExplainResponse = z.infer<typeof InstructionPreviewExplainResponseSchema>;
+
+export const InstructionPreviewDiffRequestSchema = z.object({
+  left: InstructionResolutionContextSchema,
+  right: InstructionResolutionContextSchema,
+});
+export type InstructionPreviewDiffRequest = z.infer<typeof InstructionPreviewDiffRequestSchema>;
+
+export const InstructionPreviewSourceReorderSchema = z.object({
+  source: InstructionPreviewSourceMetadataSchema,
+  leftIndex: z.number().int().nonnegative(),
+  rightIndex: z.number().int().nonnegative(),
+});
+export type InstructionPreviewSourceReorder = z.infer<typeof InstructionPreviewSourceReorderSchema>;
+
+export const InstructionPreviewDiffResponseSchema = z.object({
+  leftContext: InstructionResolutionContextSchema,
+  rightContext: InstructionResolutionContextSchema,
+  leftBundleHash: z.string(),
+  rightBundleHash: z.string(),
+  compiledTextChanged: z.boolean(),
+  addedSources: z.array(InstructionPreviewSourceMetadataSchema),
+  removedSources: z.array(InstructionPreviewSourceMetadataSchema),
+  reorderedSources: z.array(InstructionPreviewSourceReorderSchema),
+});
+export type InstructionPreviewDiffResponse = z.infer<typeof InstructionPreviewDiffResponseSchema>;
+
+export const IdentityRecordSchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  path: z.string().min(1),
+  exists: z.boolean(),
+  selected: z.boolean().default(false),
+});
+export type IdentityRecord = z.infer<typeof IdentityRecordSchema>;
+
+export const WorkspaceIdentityDefaultSchema = z.object({
+  workspaceId: z.string().min(1),
+  identityId: z.string().min(1),
+  updatedAt: z.string().nullable().default(null),
+});
+export type WorkspaceIdentityDefault = z.infer<typeof WorkspaceIdentityDefaultSchema>;
 
 // --- File roots API schemas ---
 

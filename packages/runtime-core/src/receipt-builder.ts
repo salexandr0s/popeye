@@ -263,6 +263,7 @@ export class ReceiptBuilder {
     const runtimeSummary: NonNullable<ReceiptRecord['runtime']> = {
       projectId: task?.projectId ?? null,
       profileId: run?.profileId ?? null,
+      identityId: run?.identityId ?? task?.identityId ?? null,
       execution: envelope
         ? {
             mode: envelope.mode,
@@ -282,7 +283,7 @@ export class ReceiptBuilder {
       delegationSummary: null,
     };
 
-    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
+    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.identityId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
       return undefined;
     }
     return runtimeSummary;
@@ -317,6 +318,7 @@ export class ReceiptBuilder {
     return {
       projectId: receipt.runtime.projectId ?? derived.projectId ?? null,
       profileId: receipt.runtime.profileId ?? derived.profileId ?? null,
+      identityId: receipt.runtime.identityId ?? derived.identityId ?? null,
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
       playbooks: sortAppliedPlaybooks(Array.from(playbooksByKey.values())),

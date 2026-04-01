@@ -3,6 +3,11 @@ import {
   type AgentProfileListItem,
   AgentProfileListItemSchema,
   type CompiledInstructionBundle,
+  type InstructionPreviewDiffRequest,
+  type InstructionPreviewDiffResponse,
+  InstructionPreviewDiffResponseSchema,
+  type InstructionPreviewExplainResponse,
+  InstructionPreviewExplainResponseSchema,
   type MemoryImportInputSchema,
   type MemoryImportResponse,
   MemoryImportResponseSchema,
@@ -50,6 +55,8 @@ import {
   type PlaybookProposalSubmitReviewRequest,
   type PlaybookProposalUpdateRequest,
   type PlaybookProposalStatus,
+  type PlaybookRecommendation,
+  PlaybookRecommendationSchema,
   type PlaybookRecord,
   PlaybookRecordResponseSchema,
   PlaybookRevisionListResponseSchema,
@@ -112,7 +119,11 @@ import {
   type DelegationTreeNode,
   DelegationTreeNodeSchema,
   type WorkspaceListItem,
+  type WorkspaceIdentityDefault,
+  WorkspaceIdentityDefaultSchema,
   WorkspaceListItemSchema,
+  type IdentityRecord,
+  IdentityRecordSchema,
   type IngestMessageInput,
   type ApprovalRequest,
   type ApprovalRecord,
@@ -848,10 +859,78 @@ export class PopeyeApiClient {
     );
   }
 
-  async getInstructionPreview(scope: string, projectId?: string): Promise<CompiledInstructionBundle> {
+  async getInstructionPreview(scope: string, projectId?: string): Promise<CompiledInstructionBundle>;
+  async getInstructionPreview(
+    scope: string,
+    options?: { projectId?: string; profileId?: string; cwd?: string; identity?: string },
+  ): Promise<CompiledInstructionBundle>;
+  async getInstructionPreview(
+    scope: string,
+    projectIdOrOptions?: string | { projectId?: string; profileId?: string; cwd?: string; identity?: string },
+  ): Promise<CompiledInstructionBundle> {
+    const options = typeof projectIdOrOptions === 'string'
+      ? { projectId: projectIdOrOptions }
+      : projectIdOrOptions;
     return this.get(
-      `/v1/instruction-previews/${encodeURIComponent(scope)}${this.buildQuery({ projectId })}`,
+      `/v1/instruction-previews/${encodeURIComponent(scope)}${this.buildQuery(options ?? {})}`,
       CompiledInstructionBundleSchema,
+    );
+  }
+
+  async explainInstructionPreview(
+    scope: string,
+    options?: { projectId?: string; profileId?: string; cwd?: string; identity?: string },
+  ): Promise<InstructionPreviewExplainResponse> {
+    return this.get(
+      `/v1/instruction-previews/${encodeURIComponent(scope)}/explain${this.buildQuery(options ?? {})}`,
+      InstructionPreviewExplainResponseSchema,
+    );
+  }
+
+  async diffInstructionPreviews(input: InstructionPreviewDiffRequest): Promise<InstructionPreviewDiffResponse> {
+    return this.post('/v1/instruction-previews/diff', input, InstructionPreviewDiffResponseSchema);
+  }
+
+  async listIdentities(workspaceId: string): Promise<IdentityRecord[]> {
+    return this.getArray(
+      `/v1/identities${this.buildQuery({ workspaceId })}`,
+      IdentityRecordSchema,
+    );
+  }
+
+  async getDefaultIdentity(workspaceId: string): Promise<WorkspaceIdentityDefault> {
+    return this.get(
+      `/v1/identities/default${this.buildQuery({ workspaceId })}`,
+      WorkspaceIdentityDefaultSchema,
+    );
+  }
+
+  async setDefaultIdentity(workspaceId: string, identityId: string): Promise<WorkspaceIdentityDefault> {
+    return this.post(
+      '/v1/identities/default',
+      { workspaceId, identityId },
+      WorkspaceIdentityDefaultSchema,
+    );
+  }
+
+  async recommendPlaybooks(options: {
+    query: string;
+    workspaceId: string;
+    projectId?: string;
+    profileId?: string;
+    identityId?: string;
+    limit?: number;
+  }): Promise<PlaybookRecommendation[]> {
+    return this.getArray(
+      `/v1/playbooks/recommend${this.buildQuery({
+        q: options.query,
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        profileId: options.profileId,
+        identityId: options.identityId,
+        limit: options.limit,
+      })}`,
+      PlaybookRecommendationSchema,
     );
   }
 

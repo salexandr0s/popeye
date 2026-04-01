@@ -5,8 +5,11 @@ import type {
   DaemonStateRecord,
   DaemonStatusResponse,
   EngineCapabilities,
+  InstructionPreviewDiffResponse,
+  InstructionPreviewExplainResponse,
   SecurityAuditFinding,
   SchedulerStatusResponse,
+  InstructionResolutionContext,
 } from '@popeye/contracts';
 import {
   AgentProfileRecordSchema,
@@ -20,7 +23,13 @@ import type { WorkspaceRegistry } from '@popeye/workspace';
 
 import { readAuthStore, issueCsrfToken } from './auth.js';
 import type { RuntimeDatabases } from './database.js';
-import { createInstructionPreview, resolveInstructionBundleForTask, type ResolvedInstructionRunBundle } from './instruction-query.js';
+import {
+  createInstructionPreview,
+  diffInstructionPreviews,
+  explainInstructionPreview,
+  resolveInstructionBundleForTask,
+  type ResolvedInstructionRunBundle,
+} from './instruction-query.js';
 import type { PlaybookService } from './playbook-service.js';
 
 export interface QueryServiceState {
@@ -150,11 +159,26 @@ export class QueryService {
     return parseAgentProfileRow(row);
   }
 
-  getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
-    return createInstructionPreview(this.databases, this.workspaceRegistry, this.playbookService, scope, projectId);
+  getInstructionPreview(context: InstructionResolutionContext): CompiledInstructionBundle {
+    return createInstructionPreview(this.databases, this.workspaceRegistry, this.playbookService, context);
   }
 
-  resolveInstructionsForRun(task: { workspaceId: string; projectId: string | null; profileId: string | null; prompt: string }): ResolvedInstructionRunBundle {
+  explainInstructionPreview(context: InstructionResolutionContext): InstructionPreviewExplainResponse {
+    return explainInstructionPreview(this.databases, this.workspaceRegistry, this.playbookService, context);
+  }
+
+  diffInstructionPreviews(input: { left: InstructionResolutionContext; right: InstructionResolutionContext }): InstructionPreviewDiffResponse {
+    return diffInstructionPreviews(this.databases, this.workspaceRegistry, this.playbookService, input);
+  }
+
+  resolveInstructionsForRun(task: {
+    workspaceId: string;
+    projectId: string | null;
+    profileId: string | null;
+    identityId: string | null;
+    prompt: string;
+    cwd?: string | null;
+  }): ResolvedInstructionRunBundle {
     return resolveInstructionBundleForTask(this.databases, this.workspaceRegistry, this.playbookService, task);
   }
 

@@ -86,7 +86,14 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
 - if omitted, `runtimeDataDir` defaults to `~/Library/Application Support/Popeye/`
 - if omitted, `authFile` now defaults to `<runtimeDataDir>/config/auth.json`
 - if omitted for the built-in `default` workspace, `workspaces[0].rootPath` defaults to `~/popeye-assistant`
-- on first daemon start, Popeye scaffolds `WORKSPACE.md` and `identities/default.md` in `~/popeye-assistant`
+- on first daemon start, Popeye scaffolds:
+  - `WORKSPACE.md`
+  - `AGENTS.md` (compatibility context)
+  - `.popeye/context/README.md` (preferred native context location)
+  - `SOUL.md` (persona overlay)
+  - `IDENTITY.md` (operator-facing mirror)
+  - `identities/default.md` (canonical runtime identity)
+  in `~/popeye-assistant`
 - set `providerAuth.google.clientId` / `providerAuth.google.clientSecret` to
   enable the blessed Gmail and Google Calendar browser-OAuth flows
 - set `providerAuth.github.clientId` / `providerAuth.github.clientSecret` to
@@ -158,6 +165,9 @@ pop daemon install && pop daemon load
 ```bash
 pop daemon status
 pop daemon health
+pop instructions preview --workspace default --explain
+pop identity list --workspace default
+pop playbook recommend "triage inbox" --workspace default
 ```
 
 ## Bundled install (alternative)

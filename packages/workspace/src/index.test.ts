@@ -80,6 +80,14 @@ describe('canWriteWorkspacePath', () => {
     expect(canWriteWorkspacePath('/ws/projects/foo/PROJECT.md', false)).toBe(false);
   });
 
+  it('blocks unapproved write to SOUL.md', () => {
+    expect(canWriteWorkspacePath('/ws/SOUL.md', false)).toBe(false);
+  });
+
+  it('blocks unapproved write to AGENTS.md', () => {
+    expect(canWriteWorkspacePath('/ws/AGENTS.md', false)).toBe(false);
+  });
+
   it('allows approved write to WORKSPACE.md', () => {
     expect(canWriteWorkspacePath('/ws/WORKSPACE.md', true)).toBe(true);
   });

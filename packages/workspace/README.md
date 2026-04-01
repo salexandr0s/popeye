@@ -5,10 +5,11 @@ from silently mutating instruction files that define platform behavior.
 
 ## Purpose
 
-Enforces that critical instruction files (`WORKSPACE.md`, `PROJECT.md`,
-`IDENTITY.md`, `HEARTBEAT.md`) are read-only by default and require explicit
-operator approval before any modification. This is a security boundary that
-ensures operator-owned files remain under human control.
+Enforces that critical instruction and compatibility files (`WORKSPACE.md`,
+`PROJECT.md`, `IDENTITY.md`, `SOUL.md`, `AGENTS.md`, `HEARTBEAT.md`, and
+`.popeye/context/**`) are read-only by default and require explicit operator
+approval before any modification. This is a security boundary that ensures
+operator-owned files remain under human control.
 
 ## Layer
 

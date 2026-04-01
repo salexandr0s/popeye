@@ -17,6 +17,24 @@ interface CompileInstructionBundleInput {
   playbooks?: AppliedPlaybook[];
 }
 
+function isExpectedSharedPrecedenceGroup(group: InstructionSource[]): boolean {
+  if (group.length <= 1) return true;
+  const precedence = group[0]?.precedence;
+  if (precedence === 4) {
+    const workspaceCount = group.filter((source) => source.type === 'workspace').length;
+    return workspaceCount <= 1
+      && group.every((source) => source.type === 'context_compat' || source.type === 'context_native' || source.type === 'workspace');
+  }
+  if (precedence === 7) {
+    const identityCount = group.filter((source) => source.type === 'identity').length;
+    const soulCount = group.filter((source) => source.type === 'soul').length;
+    return identityCount <= 1
+      && soulCount <= 1
+      && group.every((source) => source.type === 'identity' || source.type === 'soul');
+  }
+  return false;
+}
+
 function normalizeCompileInput(
   input: InstructionSource[] | CompileInstructionBundleInput,
 ): CompileInstructionBundleInput {
@@ -48,11 +66,16 @@ export function compileInstructionBundle(
   const orderedSources = [...normalized.sources].sort((left, right) => left.precedence - right.precedence);
   const warnings: string[] = [];
 
-  for (let index = 1; index < orderedSources.length; index += 1) {
-    const previousSource = orderedSources[index - 1];
-    const currentSource = orderedSources[index];
-    if (previousSource && currentSource && previousSource.precedence === currentSource.precedence) {
-      warnings.push(`Multiple sources share precedence ${currentSource.precedence}`);
+  for (let index = 0; index < orderedSources.length;) {
+    const precedence = orderedSources[index]?.precedence;
+    if (precedence == null) break;
+    const group: InstructionSource[] = [];
+    while (orderedSources[index]?.precedence === precedence) {
+      group.push(orderedSources[index]!);
+      index += 1;
+    }
+    if (group.length > 1 && !isExpectedSharedPrecedenceGroup(group)) {
+      warnings.push(`Multiple sources share precedence ${precedence}`);
     }
   }
 

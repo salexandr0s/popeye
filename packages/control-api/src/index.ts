@@ -34,6 +34,7 @@ import {
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
   MemoryPromotionProposalRequestSchema,
+  PlaybookRecommendQueryParamsSchema,
   PlaybookLifecycleActionRequestSchema,
   PlaybookDetailResponseSchema,
   PlaybookListQueryParamsSchema,
@@ -55,6 +56,7 @@ import {
   ProjectRegistrationInputSchema,
   RunReplySchema,
   RunStateSchema,
+  InstructionPreviewDiffRequestSchema,
   TaskCreateInputSchema,
   TodoCreateInputSchema,
   ConnectionResourceRuleCreateInputSchema,
@@ -81,6 +83,7 @@ import {
   StandingApprovalCreateRequestSchema,
   VaultCreateRequestSchema,
   VaultOpenRequestSchema,
+  WorkspaceIdentityDefaultSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -177,6 +180,18 @@ const RunListQueryParamsSchema = z.object({
 
 const InstructionPreviewQueryParamsSchema = z.object({
   projectId: z.string().min(1).optional(),
+  profileId: z.string().min(1).optional(),
+  cwd: z.string().min(1).optional(),
+  identity: z.string().min(1).optional(),
+});
+
+const WorkspaceIdentityQueryParamsSchema = z.object({
+  workspaceId: z.string().min(1),
+});
+
+const WorkspaceIdentityDefaultInputSchema = WorkspaceIdentityDefaultSchema.pick({
+  workspaceId: true,
+  identityId: true,
 });
 
 const TelegramRelayCheckpointQueryParamsSchema = z.object({
@@ -744,6 +759,19 @@ export async function createControlApi(
     return AgentProfileRecordSchema.parse(profile);
   });
 
+  app.get('/v1/identities', async (request) => {
+    const query = WorkspaceIdentityQueryParamsSchema.parse(request.query);
+    return dependencies.runtime.listIdentities(query.workspaceId);
+  });
+  app.get('/v1/identities/default', async (request) => {
+    const query = WorkspaceIdentityQueryParamsSchema.parse(request.query);
+    return dependencies.runtime.getWorkspaceDefaultIdentity(query.workspaceId);
+  });
+  app.post('/v1/identities/default', async (request) => {
+    const body = WorkspaceIdentityDefaultInputSchema.parse(request.body);
+    return dependencies.runtime.setWorkspaceDefaultIdentity(body.workspaceId, body.identityId);
+  });
+
   app.get('/v1/tasks', async () => dependencies.runtime.listTasks());
   app.get('/v1/tasks/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
@@ -845,11 +873,36 @@ export async function createControlApi(
 
   const ScopeParamSchema = z.object({ scope: z.string().min(1).max(100) });
 
+  app.get('/v1/instruction-previews/:scope/explain', async (request, reply) => {
+    const { scope } = ScopeParamSchema.parse(request.params);
+    const query = InstructionPreviewQueryParamsSchema.parse(request.query);
+    try {
+      return dependencies.runtime.explainInstructionPreview(scope, query);
+    } catch (error) {
+      if (error instanceof InstructionPreviewContextError) {
+        const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;
+        return reply.code(statusCode).send({ error: error.errorCode });
+      }
+      throw error;
+    }
+  });
   app.get('/v1/instruction-previews/:scope', async (request, reply) => {
     const { scope } = ScopeParamSchema.parse(request.params);
     const query = InstructionPreviewQueryParamsSchema.parse(request.query);
     try {
-      return dependencies.runtime.getInstructionPreview(scope, query.projectId);
+      return dependencies.runtime.getInstructionPreview(scope, query);
+    } catch (error) {
+      if (error instanceof InstructionPreviewContextError) {
+        const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;
+        return reply.code(statusCode).send({ error: error.errorCode });
+      }
+      throw error;
+    }
+  });
+  app.post('/v1/instruction-previews/diff', async (request, reply) => {
+    const body = InstructionPreviewDiffRequestSchema.parse(request.body);
+    try {
+      return dependencies.runtime.diffInstructionPreviews(body);
     } catch (error) {
       if (error instanceof InstructionPreviewContextError) {
         const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;
@@ -1278,6 +1331,18 @@ export async function createControlApi(
         ...(query.offset !== undefined ? { offset: query.offset } : {}),
       })),
     );
+  });
+
+  app.get('/v1/playbooks/recommend', async (request) => {
+    const query = PlaybookRecommendQueryParamsSchema.parse(request.query);
+    return dependencies.runtime.recommendPlaybooks(stripUndefined({
+      query: query.q,
+      workspaceId: query.workspaceId,
+      ...(query.projectId !== undefined ? { projectId: query.projectId } : {}),
+      ...(query.profileId !== undefined ? { profileId: query.profileId } : {}),
+      ...(query.identityId !== undefined ? { identityId: query.identityId } : {}),
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
+    }));
   });
 
   app.get('/v1/playbooks/stale-candidates', async () => {

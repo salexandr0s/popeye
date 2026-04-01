@@ -127,7 +127,14 @@ export interface RunExecutorDeps {
   messageIngestion: {
     linkAcceptedIngressToRun: (taskId: string, jobId: string, runId: string) => void;
   };
-  resolveInstructionsForRun: (task: { workspaceId: string; projectId: string | null; profileId: string | null; prompt: string }) => {
+  resolveInstructionsForRun: (task: {
+    workspaceId: string;
+    projectId: string | null;
+    profileId: string | null;
+    identityId: string | null;
+    prompt: string;
+    cwd?: string | null;
+  }) => {
     bundle: CompiledInstructionBundle;
     resolvedPlaybooks: ResolvedPlaybook[];
   };
@@ -215,6 +222,7 @@ export class RunExecutor {
       taskId: task.id,
       workspaceId: job.workspaceId,
       profileId: task.profileId,
+      identityId: task.identityId,
       sessionRootId: sessionRoot.id,
       engineSessionRef: null,
       state: 'starting',
@@ -227,12 +235,13 @@ export class RunExecutor {
     };
 
     this.deps.db.prepare('UPDATE jobs SET status = ?, updated_at = ?, last_run_id = ? WHERE id = ?').run('running', nowIso(), run.id, job.id);
-    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    this.deps.db.prepare('INSERT INTO runs (id, job_id, task_id, workspace_id, profile_id, identity_id, session_root_id, engine_session_ref, state, started_at, finished_at, error, iterations_used, parent_run_id, delegation_depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       run.id,
       run.jobId,
       run.taskId,
       run.workspaceId,
       run.profileId,
+      run.identityId,
       run.sessionRootId,
       run.engineSessionRef,
       run.state,
@@ -243,18 +252,6 @@ export class RunExecutor {
       run.parentRunId,
       run.delegationDepth,
     );
-
-    const instructionResolution = this.deps.resolveInstructionsForRun(task);
-    const instructionBundle = instructionResolution.bundle;
-    this.deps.recordPlaybookUsage(run.id, instructionResolution.resolvedPlaybooks);
-    const redactedPrompt = redactText(task.prompt, this.deps.config.security.redactionPatterns);
-    for (const event of redactedPrompt.events) this.deps.recordSecurityAudit(event);
-    const fullPrompt = instructionBundle.compiledText
-      ? `${instructionBundle.compiledText}\n\n---\n\n${redactedPrompt.text}`
-      : redactedPrompt.text;
-
-    this.deps.messageIngestion.linkAcceptedIngressToRun(task.id, job.id, run.id);
-    this.deps.emit('run_started', run);
 
     const runLog = this.log.child({
       workspaceId: task.workspaceId,
@@ -318,6 +315,24 @@ export class RunExecutor {
       });
       mkdirSync(envelope.scratchRoot, { recursive: true });
       this.deps.persistExecutionEnvelope(envelope);
+      const instructionResolution = this.deps.resolveInstructionsForRun({
+        workspaceId: task.workspaceId,
+        projectId: task.projectId,
+        profileId: task.profileId,
+        identityId: task.identityId,
+        prompt: task.prompt,
+        cwd: envelope.cwd,
+      });
+      const instructionBundle = instructionResolution.bundle;
+      this.deps.recordPlaybookUsage(run.id, instructionResolution.resolvedPlaybooks);
+      const redactedPrompt = redactText(task.prompt, this.deps.config.security.redactionPatterns);
+      for (const event of redactedPrompt.events) this.deps.recordSecurityAudit(event);
+      const fullPrompt = instructionBundle.compiledText
+        ? `${instructionBundle.compiledText}\n\n---\n\n${redactedPrompt.text}`
+        : redactedPrompt.text;
+
+      this.deps.messageIngestion.linkAcceptedIngressToRun(task.id, job.id, run.id);
+      this.deps.emit('run_started', run);
 
       const engineRequest = {
         prompt: fullPrompt,

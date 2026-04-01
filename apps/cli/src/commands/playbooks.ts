@@ -32,6 +32,26 @@ export async function handlePlaybook(ctx: CommandContext): Promise<void> {
     return;
   }
 
+  if (subcommand === 'recommend') {
+    requireArg(arg1, 'query');
+    const workspaceIndex = process.argv.indexOf('--workspace');
+    const projectIndex = process.argv.indexOf('--project');
+    const profileIndex = process.argv.indexOf('--profile');
+    const identityIndex = process.argv.indexOf('--identity');
+    const workspaceId = workspaceIndex !== -1 ? process.argv[workspaceIndex + 1] ?? 'default' : 'default';
+    const projectId = projectIndex !== -1 ? process.argv[projectIndex + 1] : undefined;
+    const profileId = profileIndex !== -1 ? process.argv[profileIndex + 1] : undefined;
+    const identityId = identityIndex !== -1 ? process.argv[identityIndex + 1] : undefined;
+    console.info(JSON.stringify(await client.recommendPlaybooks({
+      query: arg1,
+      workspaceId,
+      ...(projectId ? { projectId } : {}),
+      ...(profileId ? { profileId } : {}),
+      ...(identityId ? { identityId } : {}),
+    }), null, 2));
+    return;
+  }
+
   if (subcommand === 'proposals') {
     console.info(JSON.stringify(await client.listPlaybookProposals(), null, 2));
     return;

@@ -105,6 +105,7 @@ export function buildExecutionEnvelope(input: {
     ...(workspaceRoot
       ? [
           ...WORKSPACE_CRITICAL_FILES.map((fileName) => resolve(workspaceRoot, fileName)),
+          resolve(workspaceRoot, WORKSPACE_LAYOUT.contextDir),
           resolve(workspaceRoot, WORKSPACE_LAYOUT.playbooksDir),
           resolve(workspaceRoot, WORKSPACE_LAYOUT.memory),
           resolve(workspaceRoot, WORKSPACE_LAYOUT.dailyDir),
@@ -142,6 +143,7 @@ export function buildExecutionEnvelope(input: {
       derivedAt: new Date().toISOString(),
       engineKind: input.engineKind,
       sessionPolicy: input.sessionPolicy,
+      identityId: input.task.identityId,
       warnings: input.warnings ?? [],
     },
   });

@@ -757,6 +757,20 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_playbook_proposals_target_base_status ON playbook_proposals(target_record_id, base_revision_hash, status);',
     ],
   },
+  {
+    id: '028-app-workspace-identities',
+    statements: [
+      "ALTER TABLE tasks ADD COLUMN identity_id TEXT NOT NULL DEFAULT 'default';",
+      "ALTER TABLE runs ADD COLUMN identity_id TEXT NOT NULL DEFAULT 'default';",
+      'CREATE INDEX IF NOT EXISTS idx_tasks_identity_id ON tasks(identity_id);',
+      'CREATE INDEX IF NOT EXISTS idx_runs_identity_id ON runs(identity_id);',
+      `CREATE TABLE IF NOT EXISTS workspace_identity_defaults (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+        identity_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`,
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

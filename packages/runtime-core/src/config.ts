@@ -30,7 +30,9 @@ Purpose: this is the default Popeye workspace for the local personal assistant. 
 ## Identity
 
 - \`identities/default.md\` defines the default assistant persona for this workspace.
-- \`AGENTS.md\`, \`SOUL.md\`, and \`IDENTITY.md\` in this directory are operator-facing mirrors for continuity.
+- \`SOUL.md\` is an additive persona overlay loaded after the default identity.
+- \`AGENTS.md\` is a compatibility context file loaded before \`WORKSPACE.md\`.
+- \`IDENTITY.md\` in this directory is an operator-facing mirror for continuity.
 `;
 
 const DEFAULT_ASSISTANT_IDENTITY_MD = `# default identity — Popeye personal assistant
@@ -59,7 +61,9 @@ This directory is the default Popeye-owned assistant workspace.
 Authority:
 - \`WORKSPACE.md\` is the canonical workspace instruction file for Popeye.
 - \`identities/default.md\` is the Popeye-native identity source used at runtime.
-- \`SOUL.md\` and \`IDENTITY.md\` mirror the operator-facing persona notes.
+- \`SOUL.md\` is loaded as an additive voice/persona overlay after the default identity.
+- \`AGENTS.md\` is a lower-precedence compatibility context source.
+- \`IDENTITY.md\` mirrors the operator-facing identity card.
 `;
 
 const DEFAULT_ASSISTANT_SOUL_MD = `# SOUL.md — Default assistant voice
@@ -76,6 +80,15 @@ const DEFAULT_ASSISTANT_IDENTITY_CARD_MD = `# IDENTITY.md — Default assistant 
 - Name: Popeye Assistant
 - Vibe: short, direct, trusted operator
 - Role: local personal assistant
+`;
+
+const DEFAULT_ASSISTANT_CONTEXT_README_MD = `# Popeye context fragments
+
+Put low-precedence workspace context fragments in this directory.
+
+- Files in \`.popeye/context/**/*.md\` are loaded before \`WORKSPACE.md\`.
+- \`AGENTS.md\` remains supported as a compatibility source, but new context should live here.
+- Keep these files operator-owned and reviewable.
 `;
 
 export function defaultAuthFilePath(runtimeDataDir = DEFAULT_RUNTIME_DATA_DIR): string {
@@ -107,15 +120,19 @@ function writeFileIfMissing(path: string, content: string): void {
 export function scaffoldAssistantWorkspace(rootPath: string): void {
   const workspaceRoot = resolve(rootPath);
   const identitiesDir = join(workspaceRoot, 'identities');
+  const contextDir = join(workspaceRoot, '.popeye', 'context');
   mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
   chmodSync(workspaceRoot, 0o700);
   mkdirSync(identitiesDir, { recursive: true, mode: 0o700 });
   chmodSync(identitiesDir, 0o700);
+  mkdirSync(contextDir, { recursive: true, mode: 0o700 });
+  chmodSync(contextDir, 0o700);
   writeFileIfMissing(join(workspaceRoot, 'WORKSPACE.md'), DEFAULT_ASSISTANT_WORKSPACE_MD);
   writeFileIfMissing(join(workspaceRoot, 'AGENTS.md'), DEFAULT_ASSISTANT_AGENTS_MD);
   writeFileIfMissing(join(workspaceRoot, 'SOUL.md'), DEFAULT_ASSISTANT_SOUL_MD);
   writeFileIfMissing(join(workspaceRoot, 'IDENTITY.md'), DEFAULT_ASSISTANT_IDENTITY_CARD_MD);
   writeFileIfMissing(join(identitiesDir, 'default.md'), DEFAULT_ASSISTANT_IDENTITY_MD);
+  writeFileIfMissing(join(contextDir, 'README.md'), DEFAULT_ASSISTANT_CONTEXT_README_MD);
 }
 
 export function ensureDefaultAssistantWorkspace(config: AppConfig): void {

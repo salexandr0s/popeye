@@ -60,6 +60,7 @@ export type DelegationReceiptSummary = z.infer<typeof DelegationReceiptSummarySc
 export const ReceiptRuntimeSummarySchema = z.object({
   projectId: z.string().nullable().default(null),
   profileId: z.string().nullable().default(null),
+  identityId: z.string().nullable().default(null),
   execution: ReceiptExecutionSummarySchema.nullable().default(null),
   contextReleases: ReceiptContextReleaseSummarySchema.nullable().default(null),
   playbooks: z.array(AppliedPlaybookSchema).default([]),

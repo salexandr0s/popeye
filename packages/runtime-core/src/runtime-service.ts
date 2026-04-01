@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import type {
   ActionApprovalRequestInput,
@@ -24,8 +25,12 @@ import type {
   DomainKind,
   EngineCapabilities,
   ExecutionEnvelope,
+  IdentityRecord,
   IntegrityReport,
   InterventionRecord,
+  InstructionPreviewDiffResponse,
+  InstructionPreviewExplainResponse,
+  InstructionResolutionContext,
   JobLeaseRecord,
   JobRecord,
   MemoryAuditResponse,
@@ -70,6 +75,7 @@ import type {
   DelegationTreeNode,
   VaultRecord,
   WorkspaceRecord,
+  WorkspaceIdentityDefault,
   WorkspaceRegistrationInput,
   OAuthConnectStartRequest,
   OAuthSessionRecord,
@@ -83,6 +89,7 @@ import type {
   PlaybookProposalReviewRequest,
   PlaybookProposalSubmitReviewRequest,
   PlaybookProposalUpdateRequest,
+  PlaybookRecommendation,
   PlaybookRecord,
   PlaybookRevisionRecord,
   PlaybookSearchResult,
@@ -533,7 +540,7 @@ export class PopeyeRuntimeService {
     });
     this.messageIngestion = new MessageIngestionService(this.databases, config, {
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
-      createTask: (input) => this.createTask({ ...input, profileId: 'default' }),
+      createTask: (input) => this.createTask({ ...input, profileId: 'default', identityId: null }),
       createIntervention: (code, runId, reason) => this.createIntervention(code, runId, reason),
     });
     const self = this;
@@ -836,7 +843,12 @@ export class PopeyeRuntimeService {
     if (contextError) {
       throw new RuntimeValidationError(contextError);
     }
-    return this.taskManager.createTask(parsed);
+    const identityId = this.resolveWorkspaceIdentityId(parsed.workspaceId, parsed.identityId);
+    this.assertWorkspaceIdentityExists(parsed.workspaceId, identityId);
+    return this.taskManager.createTask({
+      ...parsed,
+      identityId,
+    });
   }
 
   enqueueTask(taskId: string, options?: { availableAt?: string; retryCount?: number }): JobRecord | null {
@@ -1053,6 +1065,7 @@ export class PopeyeRuntimeService {
     const runtimeSummary: NonNullable<ReceiptRecord['runtime']> = {
       projectId: task?.projectId ?? null,
       profileId: run?.profileId ?? null,
+      identityId: run?.identityId ?? task?.identityId ?? null,
       execution: envelope
         ? {
             mode: envelope.mode,
@@ -1072,7 +1085,7 @@ export class PopeyeRuntimeService {
       delegationSummary: null,
     };
 
-    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
+    if (!runtimeSummary.projectId && !runtimeSummary.profileId && !runtimeSummary.identityId && !runtimeSummary.execution && !runtimeSummary.contextReleases && runtimeSummary.playbooks.length === 0 && runtimeSummary.timeline.length === 0) {
       return undefined;
     }
     return runtimeSummary;
@@ -1107,6 +1120,7 @@ export class PopeyeRuntimeService {
     return {
       projectId: receipt.runtime.projectId ?? derived.projectId ?? null,
       profileId: receipt.runtime.profileId ?? derived.profileId ?? null,
+      identityId: receipt.runtime.identityId ?? derived.identityId ?? null,
       execution: receipt.runtime.execution ?? derived.execution ?? null,
       contextReleases: receipt.runtime.contextReleases ?? derived.contextReleases ?? null,
       playbooks: Array.from(playbooksByKey.values()),
@@ -1264,6 +1278,123 @@ export class PopeyeRuntimeService {
     return this.workspaceRegistry.registerProject(input);
   }
 
+  private readStoredWorkspaceIdentityDefault(workspaceId: string): { identityId: string; updatedAt: string } | null {
+    const row = this.databases.app
+      .prepare('SELECT identity_id, updated_at FROM workspace_identity_defaults WHERE workspace_id = ?')
+      .get(workspaceId) as { identity_id: string; updated_at: string } | undefined;
+    if (!row) return null;
+    return {
+      identityId: row.identity_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private identityPathForWorkspace(workspaceId: string, identityId: string): string | null {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace?.rootPath) return null;
+    return join(workspace.rootPath, 'identities', `${identityId}.md`);
+  }
+
+  private resolveWorkspaceIdentityId(workspaceId: string, requestedIdentityId?: string | null): string {
+    if (requestedIdentityId && requestedIdentityId.trim().length > 0) {
+      return requestedIdentityId.trim();
+    }
+    return this.readStoredWorkspaceIdentityDefault(workspaceId)?.identityId ?? 'default';
+  }
+
+  private assertWorkspaceIdentityExists(workspaceId: string, identityId: string): void {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new RuntimeNotFoundError(`Workspace ${workspaceId} not found`);
+    }
+    if (!workspace.rootPath) {
+      return;
+    }
+    const identityPath = this.identityPathForWorkspace(workspaceId, identityId);
+    if (identityId === 'default' && (!identityPath || !existsSync(identityPath))) {
+      return;
+    }
+    if (!identityPath || !existsSync(identityPath)) {
+      throw new RuntimeValidationError(`Identity ${identityId} not found for workspace ${workspaceId}`);
+    }
+  }
+
+  listIdentities(workspaceId: string): IdentityRecord[] {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new RuntimeNotFoundError(`Workspace ${workspaceId} not found`);
+    }
+    if (!workspace.rootPath) {
+      return [];
+    }
+    const selectedIdentityId = this.resolveWorkspaceIdentityId(workspaceId);
+    const identitiesDir = join(workspace.rootPath, 'identities');
+    const records: IdentityRecord[] = existsSync(identitiesDir)
+      ? readdirSync(identitiesDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+          .map((entry) => {
+            const identityId = entry.name.slice(0, -3);
+            const path = join(identitiesDir, entry.name);
+            return {
+              id: identityId,
+              workspaceId,
+              path,
+              exists: true,
+              selected: identityId === selectedIdentityId,
+            } satisfies IdentityRecord;
+          })
+      : [];
+
+    if (!records.some((record) => record.id === selectedIdentityId)) {
+      const selectedPath = this.identityPathForWorkspace(workspaceId, selectedIdentityId);
+      if (selectedPath) {
+        records.push({
+          id: selectedIdentityId,
+          workspaceId,
+          path: selectedPath,
+          exists: existsSync(selectedPath),
+          selected: true,
+        });
+      }
+    }
+
+    return records.sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  getWorkspaceDefaultIdentity(workspaceId: string): WorkspaceIdentityDefault {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new RuntimeNotFoundError(`Workspace ${workspaceId} not found`);
+    }
+    const stored = this.readStoredWorkspaceIdentityDefault(workspaceId);
+    return {
+      workspaceId,
+      identityId: stored?.identityId ?? 'default',
+      updatedAt: stored?.updatedAt ?? null,
+    };
+  }
+
+  setWorkspaceDefaultIdentity(workspaceId: string, identityId: string): WorkspaceIdentityDefault {
+    const workspace = this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new RuntimeNotFoundError(`Workspace ${workspaceId} not found`);
+    }
+    this.assertWorkspaceIdentityExists(workspaceId, identityId);
+    const updatedAt = nowIso();
+    this.databases.app.prepare(`
+      INSERT INTO workspace_identity_defaults (workspace_id, identity_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(workspace_id) DO UPDATE SET
+        identity_id = excluded.identity_id,
+        updated_at = excluded.updated_at
+    `).run(workspaceId, identityId, updatedAt);
+    return {
+      workspaceId,
+      identityId,
+      updatedAt,
+    };
+  }
+
   resolveWorkspaceFromCwd(cwd: string): { workspaceId: string; projectId: string | null } | null {
     const projects = z.array(ProjectPathRowSchema).parse(
       this.databases.app.prepare('SELECT id, workspace_id, path FROM projects WHERE path IS NOT NULL ORDER BY LENGTH(path) DESC').all(),
@@ -1416,8 +1547,37 @@ export class PopeyeRuntimeService {
     return this.sessionService.listSessionRoots();
   }
 
-  getInstructionPreview(scope: string, projectId?: string): CompiledInstructionBundle {
-    return this.queryService.getInstructionPreview(scope, projectId);
+  getInstructionPreview(
+    scope: string,
+    projectIdOrContext?: string | Omit<InstructionResolutionContext, 'workspaceId'>,
+  ): CompiledInstructionBundle {
+    const context = typeof projectIdOrContext === 'string' || projectIdOrContext === undefined
+      ? {
+          workspaceId: scope,
+          ...(projectIdOrContext ? { projectId: projectIdOrContext } : {}),
+        }
+      : {
+          workspaceId: scope,
+          ...projectIdOrContext,
+        };
+    return this.queryService.getInstructionPreview(context);
+  }
+
+  explainInstructionPreview(
+    scope: string,
+    context: Omit<InstructionResolutionContext, 'workspaceId'> = {},
+  ): InstructionPreviewExplainResponse {
+    return this.queryService.explainInstructionPreview({
+      workspaceId: scope,
+      ...context,
+    });
+  }
+
+  diffInstructionPreviews(input: {
+    left: InstructionResolutionContext;
+    right: InstructionResolutionContext;
+  }): InstructionPreviewDiffResponse {
+    return this.queryService.diffInstructionPreviews(input);
   }
 
   listPlaybooks(filter?: {
@@ -1437,6 +1597,80 @@ export class PopeyeRuntimeService {
     status?: PlaybookStatus;
   }): PlaybookSearchResult[] {
     return this.playbookService.searchPlaybooks(input);
+  }
+
+  recommendPlaybooks(input: {
+    query: string;
+    workspaceId: string;
+    projectId?: string | null;
+    profileId?: string | null;
+    identityId?: string | null;
+    limit?: number;
+  }): PlaybookRecommendation[] {
+    if (input.query.trim().length === 0) {
+      return [];
+    }
+    const limit = Math.max(1, Math.min(input.limit ?? 5, 25));
+    const searched = this.playbookService.searchPlaybooks({
+      query: input.query,
+      status: 'active',
+    });
+
+    const recommended = searched
+      .filter((result) => {
+        if (result.scope === 'global') {
+          return result.allowedProfileIds.length === 0 || (input.profileId != null && result.allowedProfileIds.includes(input.profileId));
+        }
+        if (result.workspaceId !== input.workspaceId) {
+          return false;
+        }
+        if (result.scope === 'project' && result.projectId !== (input.projectId ?? null)) {
+          return false;
+        }
+        return result.allowedProfileIds.length === 0 || (input.profileId != null && result.allowedProfileIds.includes(input.profileId));
+      })
+      .map((result) => {
+        const detail = this.playbookService.getPlaybook(result.recordId);
+        const effectiveness = detail ? this.buildPlaybookEffectiveness(detail) : null;
+        const scopeBonus = result.scope === 'project' ? 3 : result.scope === 'workspace' ? 2 : 1;
+        const profileBonus = result.allowedProfileIds.length === 0 ? 0.5 : 1.5;
+        const effectivenessBonus = effectiveness
+          ? Math.min(2, effectiveness.successRate30d * 1.5 + Math.log10(effectiveness.useCount30d + 1))
+          : 0;
+        const score = result.score + scopeBonus + profileBonus + effectivenessBonus;
+        const reasons = ['matches query'];
+        if (result.scope === 'project') reasons.push('project-scoped');
+        else if (result.scope === 'workspace') reasons.push('workspace-scoped');
+        else reasons.push('global');
+        if (result.allowedProfileIds.length > 0 && input.profileId) {
+          reasons.push(`allowed for profile ${input.profileId}`);
+        }
+        if (effectiveness && effectiveness.useCount30d > 0) {
+          reasons.push(`${Math.round(effectiveness.successRate30d * 100)}% success over ${effectiveness.useCount30d} recent runs`);
+        }
+        return {
+          recordId: result.recordId,
+          playbookId: result.playbookId,
+          title: result.title,
+          scope: result.scope,
+          workspaceId: result.workspaceId,
+          projectId: result.projectId,
+          currentRevisionHash: result.currentRevisionHash,
+          allowedProfileIds: result.allowedProfileIds,
+          snippet: result.snippet,
+          score,
+          reason: reasons.join('; '),
+        } satisfies PlaybookRecommendation;
+      })
+      .sort((left, right) => {
+        const byScore = right.score - left.score;
+        if (byScore !== 0) return byScore;
+        return left.recordId.localeCompare(right.recordId);
+      })
+      .slice(0, limit);
+
+    void input.identityId;
+    return recommended;
   }
 
   getPlaybook(recordId: string): PlaybookDetail | null {
@@ -2673,12 +2907,13 @@ export class PopeyeRuntimeService {
       const retryPolicy = JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 });
 
       this.databases.app
-        .prepare('INSERT OR IGNORE INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .prepare('INSERT OR IGNORE INTO tasks (id, workspace_id, project_id, profile_id, identity_id, title, prompt, source, status, retry_policy_json, side_effect_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(
           heartbeatTaskId,
           workspace.id,
           null,
           'default',
+          this.resolveWorkspaceIdentityId(workspace.id),
           heartbeatTitle,
           heartbeatPrompt,
           'heartbeat',
@@ -2688,8 +2923,8 @@ export class PopeyeRuntimeService {
           this.startedAt,
         );
       this.databases.app
-        .prepare('UPDATE tasks SET title = ?, prompt = ?, profile_id = ?, status = ?, retry_policy_json = ?, side_effect_profile = ? WHERE id = ?')
-        .run(heartbeatTitle, heartbeatPrompt, 'default', heartbeatStatus, retryPolicy, 'read_only', heartbeatTaskId);
+        .prepare('UPDATE tasks SET title = ?, prompt = ?, profile_id = ?, identity_id = ?, status = ?, retry_policy_json = ?, side_effect_profile = ? WHERE id = ?')
+        .run(heartbeatTitle, heartbeatPrompt, 'default', this.resolveWorkspaceIdentityId(workspace.id), heartbeatStatus, retryPolicy, 'read_only', heartbeatTaskId);
 
       if (workspace.heartbeatEnabled) {
         this.databases.app

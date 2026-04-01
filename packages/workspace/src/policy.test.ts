@@ -13,4 +13,9 @@ describe('evaluateCriticalFileMutation', () => {
     const result = evaluateCriticalFileMutation({ path: '/tmp/WORKSPACE.md', approved: true });
     expect(result.allowed).toBe(true);
   });
+
+  it('treats SOUL.md and AGENTS.md as protected files', () => {
+    expect(evaluateCriticalFileMutation({ path: '/tmp/SOUL.md', approved: false }).allowed).toBe(false);
+    expect(evaluateCriticalFileMutation({ path: '/tmp/AGENTS.md', approved: false }).allowed).toBe(false);
+  });
 });

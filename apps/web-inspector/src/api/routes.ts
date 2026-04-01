@@ -33,11 +33,56 @@ export interface PlaybookUsageListPathOptions {
   offset?: number;
 }
 
-export function buildInstructionPreviewPath(scope: string, projectId?: string): string {
-  const basePath = `/v1/instruction-previews/${encodeURIComponent(scope)}`;
-  if (!projectId) return basePath;
-  const params = new URLSearchParams({ projectId });
-  return `${basePath}?${params.toString()}`;
+export interface InstructionPreviewPathOptions {
+  projectId?: string;
+  profileId?: string;
+  cwd?: string;
+  identity?: string;
+  explain?: boolean;
+}
+
+export interface PlaybookRecommendPathOptions {
+  query: string;
+  workspaceId: string;
+  projectId?: string;
+  profileId?: string;
+  identityId?: string;
+  limit?: number;
+}
+
+export function buildInstructionPreviewPath(
+  scope: string,
+  projectIdOrOptions: string | InstructionPreviewPathOptions = {},
+): string {
+  const options = typeof projectIdOrOptions === 'string'
+    ? { projectId: projectIdOrOptions }
+    : projectIdOrOptions;
+  const basePath = options.explain
+    ? `/v1/instruction-previews/${encodeURIComponent(scope)}/explain`
+    : `/v1/instruction-previews/${encodeURIComponent(scope)}`;
+  const params = new URLSearchParams();
+  if (options.projectId) params.set('projectId', options.projectId);
+  if (options.profileId) params.set('profileId', options.profileId);
+  if (options.cwd) params.set('cwd', options.cwd);
+  if (options.identity) params.set('identity', options.identity);
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
+}
+
+export function buildPlaybookRecommendPath(options: PlaybookRecommendPathOptions): string {
+  const params = new URLSearchParams({
+    q: options.query,
+    workspaceId: options.workspaceId,
+  });
+  if (options.projectId) params.set('projectId', options.projectId);
+  if (options.profileId) params.set('profileId', options.profileId);
+  if (options.identityId) params.set('identityId', options.identityId);
+  if (typeof options.limit === 'number') params.set('limit', String(options.limit));
+  return `/v1/playbooks/recommend?${params.toString()}`;
+}
+
+export function buildInstructionDiffPath(): string {
+  return '/v1/instruction-previews/diff';
 }
 
 export function buildMemorySearchPath(options: MemorySearchPathOptions): string {

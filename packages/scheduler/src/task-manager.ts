@@ -27,6 +27,7 @@ export class TaskManager {
       workspaceId: parsed.workspaceId,
       projectId: parsed.projectId,
       profileId: parsed.profileId ?? 'default',
+      identityId: parsed.identityId ?? 'default',
       title: parsed.title,
       prompt: parsed.prompt,
       source: parsed.source,
@@ -37,8 +38,8 @@ export class TaskManager {
       createdAt: nowIso(),
     };
     this.databases.app
-      .prepare('INSERT INTO tasks (id, workspace_id, project_id, profile_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(task.id, task.workspaceId, task.projectId, task.profileId, task.title, task.prompt, task.source, task.status, JSON.stringify(task.retryPolicy), task.sideEffectProfile, task.coalesceKey, task.createdAt);
+      .prepare('INSERT INTO tasks (id, workspace_id, project_id, profile_id, identity_id, title, prompt, source, status, retry_policy_json, side_effect_profile, coalesce_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(task.id, task.workspaceId, task.projectId, task.profileId, task.identityId, task.title, task.prompt, task.source, task.status, JSON.stringify(task.retryPolicy), task.sideEffectProfile, task.coalesceKey, task.createdAt);
     this.callbacks.emit('task_created', task);
     if (!parsed.autoEnqueue) return { task, job: null, run: null };
     const job = this.enqueueTask(task.id);

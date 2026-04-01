@@ -108,6 +108,7 @@ export function formatRun(run: RunRecord, envelope?: ExecutionEnvelopeResponse |
     `  Task:       ${run.taskId}`,
     `  Workspace:  ${run.workspaceId}`,
     `  Profile:    ${run.profileId}`,
+    `  Identity:   ${run.identityId}`,
     `  Session:    ${run.sessionRootId}`,
     `  Started:    ${run.startedAt}`,
   ];
@@ -135,6 +136,7 @@ export function formatEnvelope(envelope: ExecutionEnvelopeResponse): string {
     `  Project:              ${envelope.projectId ?? '(none)'}`,
     `  Mode:                 ${envelope.mode}`,
     `  Model policy:         ${envelope.modelPolicy}`,
+    `  Identity:             ${envelope.provenance.identityId}`,
     `  Memory scope:         ${envelope.memoryScope}`,
     `  Recall scope:         ${envelope.recallScope}`,
     `  Filesystem policy:    ${envelope.filesystemPolicyClass}`,

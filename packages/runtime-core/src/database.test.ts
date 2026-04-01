@@ -905,6 +905,7 @@ describe('openRuntimeDatabases', () => {
           '025-app-playbook-proposals',
           '026-app-playbook-search-fts',
           '027-app-playbook-drafting-and-evidence',
+          '028-app-workspace-identities',
         ]);
 
         const memMigrations = databases.memory

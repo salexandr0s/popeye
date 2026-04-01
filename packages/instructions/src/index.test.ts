@@ -44,4 +44,24 @@ describe('compileInstructionBundle', () => {
       },
     ]);
   });
+
+  it('does not warn for expected compatibility and soul precedence groups', () => {
+    const bundle = compileInstructionBundle([
+      { precedence: 4, type: 'context_compat', content: 'compat', contentHash: 'a' },
+      { precedence: 4, type: 'workspace', content: 'workspace', contentHash: 'b' },
+      { precedence: 7, type: 'identity', content: 'identity', contentHash: 'c' },
+      { precedence: 7, type: 'soul', content: 'soul', contentHash: 'd' },
+    ]);
+
+    expect(bundle.warnings).toEqual([]);
+  });
+
+  it('warns for unexpected shared precedence groups', () => {
+    const bundle = compileInstructionBundle([
+      { precedence: 4, type: 'workspace', content: 'one', contentHash: 'a' },
+      { precedence: 4, type: 'workspace', content: 'two', contentHash: 'b' },
+    ]);
+
+    expect(bundle.warnings).toEqual(['Multiple sources share precedence 4']);
+  });
 });

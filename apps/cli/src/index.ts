@@ -30,6 +30,7 @@ import { formatEngineCapabilities, formatSecurityPolicy, requireArg } from './fo
 import { handleApprovals, handleStandingApprovals, handleAutomationGrants } from './commands/approvals.js';
 import { handleMemory, handleKnowledge } from './commands/memory.js';
 import { handleRun, handleRuns, handleReceipt, handleInterventions, handleTask, handleRecovery, handleJobs, handleSessions, handleProfile } from './commands/runs.js';
+import { handleIdentity, handleInstructions } from './commands/instructions.js';
 import { handleVaults } from './commands/vaults.js';
 import { handleConnection } from './commands/connection.js';
 import { handleEmail } from './commands/email.js';
@@ -91,7 +92,7 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     restore: { desc: 'Restore from backup', usage: 'pop backup restore <path>' },
   },
   task: {
-    run: { desc: 'Create and enqueue a task', usage: 'pop task run [title] [prompt] [--profile <id>]' },
+    run: { desc: 'Create and enqueue a task', usage: 'pop task run [title] [prompt] [--profile <id>] [--identity <id>]' },
   },
   run: {
     envelope: { desc: 'Show run execution envelope', usage: 'pop run envelope <runId>' },
@@ -162,11 +163,22 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     list: { desc: 'List execution profiles', usage: 'pop profile list' },
     show: { desc: 'Show execution profile details', usage: 'pop profile show <id>' },
   },
+  identity: {
+    list: { desc: 'List workspace identities', usage: 'pop identity list [--workspace <id>]' },
+    show: { desc: 'Show one identity', usage: 'pop identity show <id> [--workspace <id>]' },
+    current: { desc: 'Show current workspace identity', usage: 'pop identity current [--workspace <id>]' },
+    use: { desc: 'Set the default workspace identity', usage: 'pop identity use <id> [--workspace <id>]' },
+  },
+  instructions: {
+    preview: { desc: 'Preview compiled instructions', usage: 'pop instructions preview [--workspace <id>] [--project <id>] [--profile <id>] [--identity <id>] [--cwd <path>] [--explain]' },
+    diff: { desc: 'Diff two instruction contexts', usage: 'pop instructions diff --left-workspace <id> --right-workspace <id> [--left-project <id>] [--right-project <id>] [--left-profile <id>] [--right-profile <id>] [--left-identity <id>] [--right-identity <id>] [--left-cwd <path>] [--right-cwd <path>]' },
+  },
   playbook: {
     list: { desc: 'List canonical playbooks', usage: 'pop playbook list' },
     show: { desc: 'Show one playbook', usage: 'pop playbook show <recordId>' },
     revisions: { desc: 'List playbook revisions', usage: 'pop playbook revisions <recordId>' },
     usage: { desc: 'List recent playbook usage runs', usage: 'pop playbook usage <recordId>' },
+    recommend: { desc: 'Recommend playbooks for a task/query', usage: 'pop playbook recommend <query> [--workspace <id>] [--project <id>] [--profile <id>] [--identity <id>]' },
     proposals: { desc: 'List playbook proposals', usage: 'pop playbook proposals' },
     proposal: { desc: 'Show one playbook proposal', usage: 'pop playbook proposal <proposalId>' },
     approve: { desc: 'Approve a playbook proposal', usage: 'pop playbook approve <proposalId> [note]' },
@@ -677,6 +689,14 @@ async function main(): Promise<void> {
   if (command === 'profile') {
     const client = await requireDaemonClient(config);
     return handleProfile({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
+  }
+  if (command === 'identity') {
+    const client = await requireDaemonClient(config);
+    return handleIdentity({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
+  }
+  if (command === 'instructions') {
+    const client = await requireDaemonClient(config);
+    return handleInstructions({ client, subcommand: subcommand ?? '', arg1, arg2: _arg2, jsonFlag, positionalArgs });
   }
   if (command === 'playbook') {
     const client = await requireDaemonClient(config);

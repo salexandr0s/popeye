@@ -12,6 +12,7 @@ function createDeps(): SchedulerDeps & { app: Database.Database } {
       workspace_id TEXT NOT NULL,
       project_id TEXT,
       profile_id TEXT NOT NULL DEFAULT 'default',
+      identity_id TEXT NOT NULL DEFAULT 'default',
       title TEXT NOT NULL,
       prompt TEXT NOT NULL,
       source TEXT NOT NULL,

@@ -130,7 +130,7 @@ Each workspace object:
 |---|---|---|---|---|---|
 | `id` | `string` | Yes | -- | Min length 1 | Unique workspace identifier. |
 | `name` | `string` | Yes | -- | Min length 1 | Human-readable workspace name. |
-| `rootPath` | `string \| null` | No | `null` | -- | Absolute path to the workspace root directory. Used as the default `cwd` for runs. When file-loaded config omits this for the built-in `default` workspace, Popeye defaults it to `~/popeye-assistant` and scaffolds a Popeye-owned assistant workspace there on first daemon start. |
+| `rootPath` | `string \| null` | No | `null` | -- | Absolute path to the workspace root directory. Used as the default `cwd` for runs. When file-loaded config omits this for the built-in `default` workspace, Popeye defaults it to `~/popeye-assistant` and scaffolds a Popeye-owned assistant workspace there on first daemon start, including `WORKSPACE.md`, `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `identities/default.md`, and `.popeye/context/README.md`. |
 | `projects` | `ProjectConfig[]` | No | `[]` | -- | Projects within this workspace. |
 | `heartbeatEnabled` | `boolean` | No | `true` | -- | Enable scheduled heartbeat runs for this workspace. |
 | `heartbeatIntervalSeconds` | `integer` | No | `3600` | Must be positive | Seconds between heartbeat runs. |

@@ -5,12 +5,13 @@ import { evaluateCriticalFileMutation } from './policy.js';
 export { evaluateCriticalFileMutation } from './policy.js';
 export { WorkspaceRegistry, type WorkspaceDeps } from './workspace-registry.js';
 
-export const WORKSPACE_CRITICAL_FILES = ['WORKSPACE.md', 'PROJECT.md', 'IDENTITY.md', 'HEARTBEAT.md'] as const;
+export const WORKSPACE_CRITICAL_FILES = ['WORKSPACE.md', 'PROJECT.md', 'IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'HEARTBEAT.md'] as const;
 
 export const WORKSPACE_LAYOUT = {
   instructions: 'WORKSPACE.md',
   heartbeat: 'HEARTBEAT.md',
   memory: 'MEMORY.md',
+  contextDir: '.popeye/context',
   playbooksDir: '.popeye/playbooks',
   memoryDir: 'memory',
   dailyDir: 'memory/daily',

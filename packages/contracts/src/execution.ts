@@ -67,6 +67,7 @@ export const TaskRecordSchema = z.object({
   workspaceId: z.string(),
   projectId: z.string().nullable(),
   profileId: z.string().default('default'),
+  identityId: z.string().default('default'),
   title: z.string(),
   prompt: z.string(),
   source: TaskSourceSchema,
@@ -97,6 +98,7 @@ export const RunRecordSchema = z.object({
   taskId: z.string(),
   workspaceId: z.string(),
   profileId: z.string().default('default'),
+  identityId: z.string().default('default'),
   sessionRootId: z.string(),
   engineSessionRef: z.string().nullable(),
   state: RunStateSchema,
@@ -169,6 +171,7 @@ const ExecutionEnvelopeProvenanceSchema = z.object({
   derivedAt: z.string(),
   engineKind: z.string(),
   sessionPolicy: z.enum(['dedicated', 'ephemeral', 'per_task']),
+  identityId: z.string().default('default'),
   warnings: z.array(z.string()).default([]),
 });
 

@@ -164,14 +164,18 @@ export async function handleTask(ctx: CommandContext): Promise<void> {
   if (subcommand === 'run') {
     const profileIdx = process.argv.indexOf('--profile');
     const profileId = profileIdx !== -1 ? process.argv[profileIdx + 1] ?? 'default' : 'default';
+    const identityIdx = process.argv.indexOf('--identity');
+    const identityId = identityIdx !== -1 ? process.argv[identityIdx + 1] ?? 'default' : undefined;
     const taskArgs = positionalArgs.slice(4);
-    const nonFlagTaskArgs = taskArgs.filter((value, index) => value !== '--profile' && taskArgs[index - 1] !== '--profile');
+    const flagNames = new Set(['--profile', '--identity']);
+    const nonFlagTaskArgs = taskArgs.filter((value, index) => !flagNames.has(value) && !flagNames.has(taskArgs[index - 1] ?? ''));
     const title = nonFlagTaskArgs[0] ?? 'cli-task';
     const prompt = nonFlagTaskArgs[1] ?? nonFlagTaskArgs[0] ?? 'hello from pop';
     const result = await client.createTask({
       workspaceId: 'default',
       projectId: null,
       profileId,
+      ...(identityId ? { identityId } : {}),
       title,
       prompt,
       source: 'manual',
@@ -184,6 +188,7 @@ export async function handleTask(ctx: CommandContext): Promise<void> {
         `Task: ${result.task.title} (${result.task.id})`,
         `  Status: ${result.task.status}`,
         `  Profile: ${result.task.profileId}`,
+        `  Identity: ${result.task.identityId}`,
       ];
       if (result.job) lines.push(`  Job:    ${result.job.status} (${result.job.id})`);
       if (result.run) lines.push(`  Run:    ${result.run.state} (${result.run.id})`);

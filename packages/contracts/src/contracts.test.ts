@@ -81,6 +81,7 @@ import {
   UsageSummarySchema,
   ErrorResponseSchema,
   SseEventEnvelopeSchema,
+  InstructionSourceSchema,
   InstructionResolutionContextSchema,
 } from '@popeye/contracts';
 
@@ -1100,6 +1101,7 @@ describe('Cross-schema consistency', () => {
     const taskRecord = TaskRecordSchema.parse({
       id: 'task-cross-001',
       ...createInput,
+      identityId: 'default',
       retryPolicy: { maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 },
       sideEffectProfile: 'read_only',
       createdAt: '2026-03-13T00:00:00Z',
@@ -1146,10 +1148,32 @@ describe('Cross-schema consistency', () => {
       workspaceId: 'ws-1',
       projectId: 'proj-1',
       profileId: 'default',
+      cwd: '/tmp/ws/projects/proj-1',
       taskBrief: 'Do the thing',
     });
 
     expect(result.profileId).toBe('default');
+    expect(result.cwd).toBe('/tmp/ws/projects/proj-1');
+  });
+
+  it('InstructionSourceSchema accepts compatibility and soul source types', () => {
+    const compat = InstructionSourceSchema.parse({
+      precedence: 4,
+      type: 'context_compat',
+      path: '/tmp/ws/AGENTS.md',
+      contentHash: 'hash-compat',
+      content: 'compat',
+    });
+    const soul = InstructionSourceSchema.parse({
+      precedence: 7,
+      type: 'soul',
+      path: '/tmp/ws/SOUL.md',
+      contentHash: 'hash-soul',
+      content: 'voice',
+    });
+
+    expect(compat.type).toBe('context_compat');
+    expect(soul.type).toBe('soul');
   });
 
   it('SessionRootRecordSchema kind aligns with SessionRootKindSchema', () => {

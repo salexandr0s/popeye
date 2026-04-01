@@ -73,6 +73,7 @@ public struct TaskRecord: Codable, Sendable {
     public let workspaceId: String
     public let projectId: String
     public let profileId: String
+    public let identityId: String
     public let title: String
     public let prompt: String
     public let source: String
@@ -101,6 +102,7 @@ public struct RunRecord: Codable, Sendable {
     public let taskId: String
     public let workspaceId: String
     public let profileId: String
+    public let identityId: String
     public let sessionRootId: String
     public let engineSessionRef: String
     public let state: String
@@ -262,6 +264,7 @@ public struct TaskCreateInput: Codable, Sendable {
     public let workspaceId: String
     public let projectId: String
     public let profileId: String
+    public let identityId: String
     public let title: String
     public let prompt: String
     public let source: String
