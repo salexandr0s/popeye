@@ -27,18 +27,46 @@ public actor ControlAPIClient {
         try await ensureCsrfToken()
 
         do {
-            return try await executePost(endpoint, body: body)
+            return try await executeMutation(endpoint, method: .post, body: body)
         } catch APIError.csrfInvalid {
             // CSRF token expired — clear and retry once
             csrfToken = nil
             try await ensureCsrfToken()
-            return try await executePost(endpoint, body: body)
+            return try await executeMutation(endpoint, method: .post, body: body)
         }
     }
 
-    private func executePost<T: Decodable & Sendable>(_ endpoint: Endpoint, body: (any Encodable & Sendable)? = nil) async throws -> T {
+    public func patch<T: Decodable & Sendable>(_ endpoint: Endpoint, body: (any Encodable & Sendable)? = nil) async throws -> T {
+        try await ensureCsrfToken()
+
+        do {
+            return try await executeMutation(endpoint, method: .patch, body: body)
+        } catch APIError.csrfInvalid {
+            csrfToken = nil
+            try await ensureCsrfToken()
+            return try await executeMutation(endpoint, method: .patch, body: body)
+        }
+    }
+
+    public func delete<T: Decodable & Sendable>(_ endpoint: Endpoint, body: (any Encodable & Sendable)? = nil) async throws -> T {
+        try await ensureCsrfToken()
+
+        do {
+            return try await executeMutation(endpoint, method: .delete, body: body)
+        } catch APIError.csrfInvalid {
+            csrfToken = nil
+            try await ensureCsrfToken()
+            return try await executeMutation(endpoint, method: .delete, body: body)
+        }
+    }
+
+    private func executeMutation<T: Decodable & Sendable>(
+        _ endpoint: Endpoint,
+        method: HTTPMethod,
+        body: (any Encodable & Sendable)? = nil
+    ) async throws -> T {
         var request = try buildRequest(for: endpoint)
-        request.httpMethod = HTTPMethod.post.rawValue
+        request.httpMethod = method.rawValue
 
         if let body {
             request.httpBody = try encoder.encode(body)
@@ -62,6 +90,10 @@ public actor ControlAPIClient {
         try await get(.status)
     }
 
+    public func homeSummary(workspaceId: String) async throws -> HomeSummaryDTO {
+        try await get(.homeSummary(workspaceId: workspaceId))
+    }
+
     public func schedulerStatus() async throws -> SchedulerStatusDTO {
         try await get(.schedulerStatus)
     }
@@ -80,6 +112,22 @@ public actor ControlAPIClient {
 
     public func listWorkspaces() async throws -> [WorkspaceRecordDTO] {
         try await get(.workspaces)
+    }
+
+    public func listVaults(domain: String? = nil) async throws -> [VaultRecordDTO] {
+        try await get(.vaults(domain: domain))
+    }
+
+    public func listAutomations(workspaceId: String? = nil) async throws -> [AutomationRecordDTO] {
+        try await get(.automations(workspaceId: workspaceId))
+    }
+
+    public func getAutomation(id: String) async throws -> AutomationDetailDTO {
+        try await get(.automation(id: id))
+    }
+
+    public func updateAutomation(id: String, input: AutomationUpdateInput) async throws -> AutomationDetailDTO {
+        try await patch(.updateAutomation(id: id), body: input)
     }
 
     // MARK: - Execution
@@ -142,6 +190,10 @@ public actor ControlAPIClient {
         try await get(.approvals)
     }
 
+    public func createApproval(input: ApprovalRequestInput) async throws -> ApprovalDTO {
+        try await post(.createApproval, body: input)
+    }
+
     // MARK: - Connections
 
     public func listConnections() async throws -> [ConnectionDTO] {
@@ -188,6 +240,18 @@ public actor ControlAPIClient {
         try await post(.enqueueJob(id: id))
     }
 
+    public func runAutomationNow(id: String) async throws -> AutomationDetailDTO {
+        try await post(.runAutomationNow(id: id))
+    }
+
+    public func pauseAutomation(id: String) async throws -> AutomationDetailDTO {
+        try await post(.pauseAutomation(id: id))
+    }
+
+    public func resumeAutomation(id: String) async throws -> AutomationDetailDTO {
+        try await post(.resumeAutomation(id: id))
+    }
+
     public func resolveIntervention(id: String, note: String? = nil) async throws -> InterventionDTO {
         try await post(.resolveIntervention(id: id), body: InterventionResolveInput(resolutionNote: note))
     }
@@ -214,6 +278,14 @@ public actor ControlAPIClient {
 
     public func restartDaemon() async throws -> DaemonRestartResponseDTO {
         try await post(.restartDaemon)
+    }
+
+    public func openVault(id: String, approvalId: String) async throws -> VaultRecordDTO {
+        try await post(.openVault(id: id), body: VaultOpenInput(approvalId: approvalId))
+    }
+
+    public func closeVault(id: String) async throws -> VaultRecordDTO {
+        try await post(.closeVault(id: id))
     }
 
     public func listMutationReceipts(component: String? = nil, limit: Int = 10) async throws -> [MutationReceiptDTO] {
@@ -290,6 +362,250 @@ public actor ControlAPIClient {
 
     public func instructionPreview(scope: String) async throws -> InstructionPreviewDTO {
         try await get(.instructionPreview(scope: scope))
+    }
+
+    public func listCuratedDocuments(workspaceId: String) async throws -> [CuratedDocumentSummaryDTO] {
+        try await get(.curatedDocuments(workspaceId: workspaceId))
+    }
+
+    public func getCuratedDocument(id: String) async throws -> CuratedDocumentRecordDTO {
+        try await get(.curatedDocument(id: id))
+    }
+
+    public func proposeCuratedDocumentSave(id: String, input: CuratedDocumentProposeSaveInput) async throws -> CuratedDocumentSaveProposalDTO {
+        try await post(.proposeCuratedDocumentSave(id: id), body: input)
+    }
+
+    public func applyCuratedDocumentSave(id: String, input: CuratedDocumentApplySaveInput) async throws -> CuratedDocumentApplyResultDTO {
+        try await post(.applyCuratedDocumentSave(id: id), body: input)
+    }
+
+    public func listEmailAccounts() async throws -> [EmailAccountDTO] {
+        try await get(.emailAccounts)
+    }
+
+    public func listEmailThreads(accountId: String, limit: Int = 50, unreadOnly: Bool = false) async throws -> [EmailThreadDTO] {
+        try await get(.emailThreads(accountId: accountId, limit: limit, unreadOnly: unreadOnly))
+    }
+
+    public func getEmailThread(id: String) async throws -> EmailThreadDTO {
+        try await get(.emailThread(id: id))
+    }
+
+    public func emailDigest(accountId: String) async throws -> EmailDigestDTO? {
+        try? await get(.emailDigest(accountId: accountId))
+    }
+
+    public func listCalendarAccounts() async throws -> [CalendarAccountDTO] {
+        try await get(.calendarAccounts)
+    }
+
+    public func listCalendarEvents(accountId: String, dateFrom: String? = nil, dateTo: String? = nil, limit: Int = 80) async throws -> [CalendarEventDTO] {
+        try await get(.calendarEvents(accountId: accountId, dateFrom: dateFrom, dateTo: dateTo, limit: limit))
+    }
+
+    public func getCalendarEvent(id: String) async throws -> CalendarEventDTO {
+        try await get(.calendarEvent(id: id))
+    }
+
+    public func calendarDigest(accountId: String) async throws -> CalendarDigestDTO? {
+        try? await get(.calendarDigest(accountId: accountId))
+    }
+
+    public func listTodoAccounts() async throws -> [TodoAccountDTO] {
+        try await get(.todoAccounts)
+    }
+
+    public func listTodoItems(accountId: String, project: String? = nil, limit: Int = 100) async throws -> [TodoItemDTO] {
+        try await get(.todoItems(accountId: accountId, project: project, limit: limit))
+    }
+
+    public func getTodoItem(id: String) async throws -> TodoItemDTO {
+        try await get(.todoItem(id: id))
+    }
+
+    public func listTodoProjects(accountId: String) async throws -> [TodoProjectDTO] {
+        try await get(.todoProjects(accountId: accountId))
+    }
+
+    public func todoDigest(accountId: String) async throws -> TodoDigestDTO? {
+        try? await get(.todoDigest(accountId: accountId))
+    }
+
+    public func listPeople() async throws -> [PersonDTO] {
+        try await get(.people)
+    }
+
+    public func searchPeople(query: String, limit: Int = 20) async throws -> PersonSearchResponseDTO {
+        try await get(.peopleSearch(query: query, limit: limit))
+    }
+
+    public func getPerson(id: String) async throws -> PersonDTO {
+        try await get(.person(id: id))
+    }
+
+    public func listPersonMergeEvents(id: String) async throws -> [PersonMergeEventDTO] {
+        try await get(.personMergeEvents(id: id))
+    }
+
+    public func listPersonMergeSuggestions() async throws -> [PersonMergeSuggestionDTO] {
+        try await get(.personMergeSuggestions)
+    }
+
+    public func listPersonActivity(id: String) async throws -> [PersonActivityRollupDTO] {
+        try await get(.personActivity(id: id))
+    }
+
+    public func mergePeople(input: PersonMergeInput) async throws -> PersonDTO {
+        try await post(.mergePeople, body: input)
+    }
+
+    public func splitPerson(id: String, input: PersonSplitInput) async throws -> PersonDTO {
+        try await post(.splitPerson(id: id), body: input)
+    }
+
+    public func attachPersonIdentity(input: PersonIdentityAttachInput) async throws -> PersonDTO {
+        try await post(.attachPersonIdentity, body: input)
+    }
+
+    public func detachPersonIdentity(id: String, input: PersonIdentityDetachInput = PersonIdentityDetachInput()) async throws -> PersonDTO {
+        try await post(.detachPersonIdentity(id: id), body: input)
+    }
+
+    public func listFileRoots(workspaceId: String? = nil) async throws -> [FileRootDTO] {
+        try await get(.fileRoots(workspaceId: workspaceId))
+    }
+
+    public func getFileRoot(id: String) async throws -> FileRootDTO {
+        try await get(.fileRoot(id: id))
+    }
+
+    public func searchFiles(query: String, rootId: String? = nil, workspaceId: String? = nil, limit: Int = 10) async throws -> FileSearchResponseDTO {
+        try await get(.fileSearch(query: query, rootId: rootId, workspaceId: workspaceId, limit: limit))
+    }
+
+    public func getFileDocument(id: String) async throws -> FileDocumentDTO {
+        try await get(.fileDocument(id: id))
+    }
+
+    public func listFileWriteIntents(rootId: String? = nil, status: String? = nil) async throws -> [FileWriteIntentDTO] {
+        try await get(.fileWriteIntents(rootId: rootId, status: status))
+    }
+
+    public func getFileWriteIntent(id: String) async throws -> FileWriteIntentDTO {
+        try await get(.fileWriteIntent(id: id))
+    }
+
+    public func createFileRoot(input: FileRootRegistrationInput) async throws -> FileRootDTO {
+        try await post(.createFileRoot, body: input)
+    }
+
+    public func updateFileRoot(id: String, input: FileRootUpdateInput) async throws -> FileRootDTO {
+        try await patch(.updateFileRoot(id: id), body: input)
+    }
+
+    public func deleteFileRoot(id: String) async throws -> EmptyResponseDTO {
+        try await delete(.deleteFileRoot(id: id))
+    }
+
+    public func reindexFileRoot(id: String) async throws -> FileIndexResultDTO {
+        try await post(.reindexFileRoot(id: id))
+    }
+
+    public func reviewFileWriteIntent(id: String, input: FileWriteIntentReviewInput) async throws -> FileWriteIntentDTO {
+        try await post(.reviewFileWriteIntent(id: id), body: input)
+    }
+
+    public func listFinanceImports() async throws -> [FinanceImportDTO] {
+        try await get(.financeImports)
+    }
+
+    public func getFinanceImport(id: String) async throws -> FinanceImportDTO {
+        try await get(.financeImport(id: id))
+    }
+
+    public func listFinanceTransactions(importId: String? = nil, category: String? = nil, dateFrom: String? = nil, dateTo: String? = nil, limit: Int? = nil) async throws -> [FinanceTransactionDTO] {
+        try await get(.financeTransactions(importId: importId, category: category, dateFrom: dateFrom, dateTo: dateTo, limit: limit))
+    }
+
+    public func listFinanceDocuments(importId: String? = nil) async throws -> [FinanceDocumentDTO] {
+        try await get(.financeDocuments(importId: importId))
+    }
+
+    public func searchFinance(query: String, category: String? = nil, dateFrom: String? = nil, dateTo: String? = nil, limit: Int = 20) async throws -> FinanceSearchResponseDTO {
+        try await get(.financeSearch(query: query, category: category, dateFrom: dateFrom, dateTo: dateTo, limit: limit))
+    }
+
+    public func financeDigest(period: String? = nil) async throws -> FinanceDigestDTO? {
+        try? await get(.financeDigest(period: period))
+    }
+
+    public func triggerFinanceDigest(period: String? = nil) async throws -> FinanceDigestDTO {
+        try await post(.triggerFinanceDigest, body: FinanceDigestTriggerInput(period: period))
+    }
+
+    public func createFinanceImport(input: FinanceImportCreateInput) async throws -> FinanceImportDTO {
+        try await post(.createFinanceImport, body: input)
+    }
+
+    public func createFinanceTransaction(input: FinanceTransactionCreateInput) async throws -> FinanceTransactionDTO {
+        try await post(.createFinanceTransaction, body: input)
+    }
+
+    public func updateFinanceImportStatus(id: String, input: FinanceImportStatusUpdateInput) async throws -> EmptyResponseDTO {
+        try await post(.updateFinanceImportStatus(id: id), body: input)
+    }
+
+    public func listMedicalImports() async throws -> [MedicalImportDTO] {
+        try await get(.medicalImports)
+    }
+
+    public func getMedicalImport(id: String) async throws -> MedicalImportDTO {
+        try await get(.medicalImport(id: id))
+    }
+
+    public func listMedicalAppointments(importId: String? = nil, limit: Int? = nil) async throws -> [MedicalAppointmentDTO] {
+        try await get(.medicalAppointments(importId: importId, limit: limit))
+    }
+
+    public func listMedicalMedications(importId: String? = nil) async throws -> [MedicalMedicationDTO] {
+        try await get(.medicalMedications(importId: importId))
+    }
+
+    public func listMedicalDocuments(importId: String? = nil) async throws -> [MedicalDocumentDTO] {
+        try await get(.medicalDocuments(importId: importId))
+    }
+
+    public func searchMedical(query: String, limit: Int = 20) async throws -> MedicalSearchResponseDTO {
+        try await get(.medicalSearch(query: query, limit: limit))
+    }
+
+    public func medicalDigest(period: String? = nil) async throws -> MedicalDigestDTO? {
+        try? await get(.medicalDigest(period: period))
+    }
+
+    public func triggerMedicalDigest(period: String? = nil) async throws -> MedicalDigestDTO {
+        try await post(.triggerMedicalDigest, body: MedicalDigestTriggerInput(period: period))
+    }
+
+    public func createMedicalImport(input: MedicalImportCreateInput) async throws -> MedicalImportDTO {
+        try await post(.createMedicalImport, body: input)
+    }
+
+    public func createMedicalAppointment(input: MedicalAppointmentCreateInput) async throws -> MedicalAppointmentDTO {
+        try await post(.createMedicalAppointment, body: input)
+    }
+
+    public func createMedicalMedication(input: MedicalMedicationCreateInput) async throws -> MedicalMedicationDTO {
+        try await post(.createMedicalMedication, body: input)
+    }
+
+    public func createMedicalDocument(input: MedicalDocumentCreateInput) async throws -> MedicalDocumentDTO {
+        try await post(.createMedicalDocument, body: input)
+    }
+
+    public func updateMedicalImportStatus(id: String, input: MedicalImportStatusUpdateInput) async throws -> EmptyResponseDTO {
+        try await post(.updateMedicalImportStatus(id: id), body: input)
     }
 
     // MARK: - Telegram

@@ -259,6 +259,320 @@ struct DTODecodingTests {
         #expect(dto.description == "Telegram bot token")
     }
 
+    @Test("Decode curated document DTOs from inline JSON")
+    func decodeCuratedDocuments() throws {
+        let summaryData = Data("""
+        {
+          "id": "workspace:default:instructions",
+          "kind": "workspace_instructions",
+          "workspace_id": "default",
+          "project_id": null,
+          "title": "Workspace Instructions",
+          "subtitle": "Default workspace",
+          "file_path": "/tmp/default/WORKSPACE.md",
+          "writable": true,
+          "critical": true,
+          "exists": true,
+          "updated_at": "2026-04-02T09:00:00Z"
+        }
+        """.utf8)
+        let recordData = Data("""
+        {
+          "id": "workspace:default:instructions",
+          "kind": "workspace_instructions",
+          "workspace_id": "default",
+          "project_id": null,
+          "title": "Workspace Instructions",
+          "subtitle": "Default workspace",
+          "file_path": "/tmp/default/WORKSPACE.md",
+          "writable": true,
+          "critical": true,
+          "exists": true,
+          "updated_at": "2026-04-02T09:00:00Z",
+          "markdown_text": "# Workspace\\n\\nHello.\\n",
+          "revision_hash": "sha256:abc"
+        }
+        """.utf8)
+        let proposalData = Data("""
+        {
+          "document_id": "workspace:default:instructions",
+          "status": "ready",
+          "normalized_markdown": "# Workspace\\n\\nUpdated.\\n",
+          "diff_preview": "@@ -1 +1 @@",
+          "base_revision_hash": "sha256:abc",
+          "current_revision_hash": "sha256:abc",
+          "requires_explicit_confirmation": true,
+          "redaction_applied": false,
+          "conflict_message": null
+        }
+        """.utf8)
+
+        let summary = try decoder.decode(CuratedDocumentSummaryDTO.self, from: summaryData)
+        let record = try decoder.decode(CuratedDocumentRecordDTO.self, from: recordData)
+        let proposal = try decoder.decode(CuratedDocumentSaveProposalDTO.self, from: proposalData)
+
+        #expect(summary.kind == "workspace_instructions")
+        #expect(record.markdownText.contains("Hello"))
+        #expect(record.revisionHash == "sha256:abc")
+        #expect(proposal.requiresExplicitConfirmation == true)
+        #expect(proposal.status == "ready")
+    }
+
+    @Test("Decode HomeSummaryDTO from inline JSON")
+    func decodeHomeSummary() throws {
+        let data = Data("""
+        {
+          "workspace_id": "default",
+          "workspace_name": "Default workspace",
+          "status": {
+            "ok": true,
+            "running_jobs": 1,
+            "queued_jobs": 0,
+            "open_interventions": 0,
+            "active_leases": 1,
+            "engine_kind": "fake",
+            "scheduler_running": true,
+            "started_at": "2026-04-02T08:00:00Z",
+            "last_shutdown_at": null
+          },
+          "scheduler": {
+            "running": true,
+            "active_leases": 1,
+            "active_runs": 1,
+            "next_heartbeat_due_at": "2026-04-02T09:00:00Z"
+          },
+          "capabilities": {
+            "engine_kind": "fake",
+            "persistent_session_support": false,
+            "resume_by_session_ref_support": false,
+            "host_tool_mode": "none",
+            "compaction_event_support": false,
+            "cancellation_mode": "none",
+            "accepted_request_metadata": [],
+            "warnings": []
+          },
+          "setup": {
+            "supported_provider_count": 4,
+            "healthy_provider_count": 3,
+            "attention_provider_count": 1,
+            "telegram_status_label": "Token stored; apply pending",
+            "telegram_effective_workspace_id": "default"
+          },
+          "automation_attention": [{
+            "id": "task:heartbeat:default",
+            "workspace_id": "default",
+            "task_id": "task:heartbeat:default",
+            "source": "heartbeat",
+            "title": "Heartbeat automation",
+            "task_status": "active",
+            "job_id": null,
+            "job_status": null,
+            "status": "healthy",
+            "enabled": true,
+            "schedule_summary": "Every 15m",
+            "interval_seconds": 900,
+            "last_run_at": null,
+            "last_success_at": null,
+            "last_failure_at": null,
+            "next_expected_at": "2026-04-02T09:00:00Z",
+            "blocked_reason": null,
+            "attention_reason": null,
+            "open_intervention_count": 0,
+            "pending_approval_count": 0,
+            "controls": {
+              "run_now": true,
+              "pause": true,
+              "resume": false,
+              "enabled_edit": true,
+              "cadence_edit": true
+            }
+          }],
+          "automation_due_soon": [],
+          "upcoming_events": [],
+          "calendar_digest": null,
+          "upcoming_todos": [],
+          "todo_digest": null,
+          "recent_memories": [],
+          "control_changes": [],
+          "pending_approval_count": 1
+        }
+        """.utf8)
+
+        let dto = try decoder.decode(HomeSummaryDTO.self, from: data)
+
+        #expect(dto.workspaceId == "default")
+        #expect(dto.setup.telegramStatusLabel.contains("Token stored"))
+        #expect(dto.automationAttention.count == 1)
+        #expect(dto.pendingApprovalCount == 1)
+    }
+
+    @Test("Decode AutomationDetailDTO from fixture")
+    func decodeAutomationDetail() throws {
+        let data = try loadFixture("automation_detail")
+        let dto = try decoder.decode(AutomationDetailDTO.self, from: data)
+
+        #expect(dto.id == "task:heartbeat:default")
+        #expect(dto.workspaceId == "default")
+        #expect(dto.source == "heartbeat")
+        #expect(dto.enabled == true)
+        #expect(dto.controls.runNow == true)
+        #expect(dto.controls.pause == true)
+        #expect(dto.recentRuns.count == 1)
+        #expect(dto.recentRuns[0].pendingApprovalCount == 1)
+    }
+
+    @Test("Decode Email account, thread, and digest fixtures")
+    func decodeEmailDomainDTOs() throws {
+        let accountData = try loadFixture("email_account")
+        let threadData = try loadFixture("email_thread")
+        let digestData = try loadFixture("email_digest")
+
+        let account = try decoder.decode(EmailAccountDTO.self, from: accountData)
+        let thread = try decoder.decode(EmailThreadDTO.self, from: threadData)
+        let digest = try decoder.decode(EmailDigestDTO.self, from: digestData)
+
+        #expect(account.id == "email-acct-1")
+        #expect(account.emailAddress == "operator@example.com")
+        #expect(thread.id == "thread-1")
+        #expect(thread.isUnread == true)
+        #expect(thread.labelIds.contains("INBOX"))
+        #expect(digest.accountId == "email-acct-1")
+        #expect(digest.unreadCount == 12)
+    }
+
+    @Test("Decode Calendar account, event, and digest fixtures")
+    func decodeCalendarDomainDTOs() throws {
+        let accountData = try loadFixture("calendar_account")
+        let eventData = try loadFixture("calendar_event")
+        let digestData = try loadFixture("calendar_digest")
+
+        let account = try decoder.decode(CalendarAccountDTO.self, from: accountData)
+        let event = try decoder.decode(CalendarEventDTO.self, from: eventData)
+        let digest = try decoder.decode(CalendarDigestDTO.self, from: digestData)
+
+        #expect(account.id == "calendar-acct-1")
+        #expect(account.calendarEmail == "operator@example.com")
+        #expect(event.id == "event-1")
+        #expect(event.isAllDay == false)
+        #expect(event.attendees.count == 2)
+        #expect(digest.accountId == "calendar-acct-1")
+        #expect(digest.todayEventCount == 3)
+    }
+
+    @Test("Decode Todo account, project, item, and digest fixtures")
+    func decodeTodoDomainDTOs() throws {
+        let accountData = try loadFixture("todo_account")
+        let projectData = try loadFixture("todo_project")
+        let itemData = try loadFixture("todo_item")
+        let digestData = try loadFixture("todo_digest")
+
+        let account = try decoder.decode(TodoAccountDTO.self, from: accountData)
+        let project = try decoder.decode(TodoProjectDTO.self, from: projectData)
+        let item = try decoder.decode(TodoItemDTO.self, from: itemData)
+        let digest = try decoder.decode(TodoDigestDTO.self, from: digestData)
+
+        #expect(account.id == "todo-acct-1")
+        #expect(account.providerKind == "todoist")
+        #expect(project.id == "project-1")
+        #expect(project.todoCount == 8)
+        #expect(item.id == "todo-1")
+        #expect(item.projectName == "Inbox")
+        #expect(item.labels.contains("today"))
+        #expect(digest.pendingCount == 14)
+    }
+
+    @Test("Decode people fixtures")
+    func decodePeopleDTOs() throws {
+        let personData = try loadFixture("person")
+        let searchData = try loadFixture("person_search")
+        let mergeEventData = try loadFixture("person_merge_event")
+        let mergeSuggestionData = try loadFixture("person_merge_suggestion")
+        let activityData = try loadFixture("person_activity")
+
+        let person = try decoder.decode(PersonDTO.self, from: personData)
+        let search = try decoder.decode(PersonSearchResponseDTO.self, from: searchData)
+        let mergeEvent = try decoder.decode(PersonMergeEventDTO.self, from: mergeEventData)
+        let mergeSuggestion = try decoder.decode(PersonMergeSuggestionDTO.self, from: mergeSuggestionData)
+        let activity = try decoder.decode(PersonActivityRollupDTO.self, from: activityData)
+
+        #expect(person.id == "person-1")
+        #expect(person.displayName == "Annie Case")
+        #expect(person.identities.count == 1)
+        #expect(search.results.first?.personId == "person-1")
+        #expect(mergeEvent.eventType == "merge")
+        #expect(mergeSuggestion.confidence == 0.91)
+        #expect(activity.domain == "email")
+    }
+
+    @Test("Decode files fixtures")
+    func decodeFilesDTOs() throws {
+        let rootData = try loadFixture("file_root")
+        let documentData = try loadFixture("file_document")
+        let searchData = try loadFixture("file_search")
+        let writeIntentData = try loadFixture("file_write_intent")
+
+        let root = try decoder.decode(FileRootDTO.self, from: rootData)
+        let document = try decoder.decode(FileDocumentDTO.self, from: documentData)
+        let search = try decoder.decode(FileSearchResponseDTO.self, from: searchData)
+        let writeIntent = try decoder.decode(FileWriteIntentDTO.self, from: writeIntentData)
+
+        #expect(root.id == "root-1")
+        #expect(root.workspaceId == "default")
+        #expect(document.id == "doc-1")
+        #expect(document.relativePath == "notes/design.md")
+        #expect(search.results.first?.documentId == "doc-1")
+        #expect(writeIntent.status == "pending")
+    }
+
+    @Test("Decode finance and vault fixtures")
+    func decodeFinanceDTOs() throws {
+        let vaultData = try loadFixture("vault_record")
+        let importData = try loadFixture("finance_import")
+        let transactionData = try loadFixture("finance_transaction")
+        let documentData = try loadFixture("finance_document")
+        let digestData = try loadFixture("finance_digest")
+        let searchData = try loadFixture("finance_search")
+
+        let vault = try decoder.decode(VaultRecordDTO.self, from: vaultData)
+        let entry = try decoder.decode(FinanceImportDTO.self, from: importData)
+        let transaction = try decoder.decode(FinanceTransactionDTO.self, from: transactionData)
+        let document = try decoder.decode(FinanceDocumentDTO.self, from: documentData)
+        let digest = try decoder.decode(FinanceDigestDTO.self, from: digestData)
+        let search = try decoder.decode(FinanceSearchResponseDTO.self, from: searchData)
+
+        #expect(vault.domain == "finance")
+        #expect(vault.encrypted == true)
+        #expect(entry.id == "finance-import-1")
+        #expect(transaction.amount == -84.25)
+        #expect(document.fileName == "statement.pdf")
+        #expect(digest.anomalyFlags.count == 1)
+        #expect(search.results.first?.transactionId == "txn-1")
+    }
+
+    @Test("Decode medical fixtures")
+    func decodeMedicalDTOs() throws {
+        let importData = try loadFixture("medical_import")
+        let appointmentData = try loadFixture("medical_appointment")
+        let medicationData = try loadFixture("medical_medication")
+        let documentData = try loadFixture("medical_document")
+        let digestData = try loadFixture("medical_digest")
+        let searchData = try loadFixture("medical_search")
+
+        let entry = try decoder.decode(MedicalImportDTO.self, from: importData)
+        let appointment = try decoder.decode(MedicalAppointmentDTO.self, from: appointmentData)
+        let medication = try decoder.decode(MedicalMedicationDTO.self, from: medicationData)
+        let document = try decoder.decode(MedicalDocumentDTO.self, from: documentData)
+        let digest = try decoder.decode(MedicalDigestDTO.self, from: digestData)
+        let search = try decoder.decode(MedicalSearchResponseDTO.self, from: searchData)
+
+        #expect(entry.id == "medical-import-1")
+        #expect(appointment.provider == "Dr. Rivera")
+        #expect(medication.name == "Amoxicillin")
+        #expect(document.fileName == "visit-summary.pdf")
+        #expect(digest.activeMedications == 2)
+        #expect(search.results.first?.recordId == "medication-1")
+    }
+
     // MARK: - Memory DTOs
 
     @Test("Decode MemoryRecordDTO from fixture")

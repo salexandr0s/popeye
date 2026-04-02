@@ -42,7 +42,7 @@ final class AppModel {
            let route = AppRoute(rawValue: raw) {
             selectedRoute = route
         } else {
-            selectedRoute = .dashboard
+            selectedRoute = .home
         }
     }
     private var eventStream: EventStreamService?
@@ -67,6 +67,15 @@ final class AppModel {
     private var _memoryStore: MemoryStore?
     private var _agentProfilesStore: AgentProfilesStore?
     private var _instructionPreviewStore: InstructionPreviewStore?
+    private var _automationStore: AutomationStore?
+    private var _homeStore: HomeStore?
+    private var _emailStore: EmailStore?
+    private var _calendarStore: CalendarStore?
+    private var _todosStore: TodosStore?
+    private var _peopleStore: PeopleStore?
+    private var _filesStore: FilesStore?
+    private var _financeStore: FinanceStore?
+    private var _medicalStore: MedicalStore?
     private var _telegramStore: TelegramStore?
 
     struct BadgeCounts {
@@ -200,6 +209,75 @@ final class AppModel {
         return s
     }
 
+    func automationStore() -> AutomationStore {
+        if let s = _automationStore { return s }
+        let s = AutomationStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _automationStore = s
+        return s
+    }
+
+    func homeStore() -> HomeStore {
+        if let s = _homeStore { return s }
+        let s = HomeStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _homeStore = s
+        return s
+    }
+
+    func emailStore() -> EmailStore {
+        if let s = _emailStore { return s }
+        let s = EmailStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _emailStore = s
+        return s
+    }
+
+    func calendarStore() -> CalendarStore {
+        if let s = _calendarStore { return s }
+        let s = CalendarStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _calendarStore = s
+        return s
+    }
+
+    func todosStore() -> TodosStore {
+        if let s = _todosStore { return s }
+        let s = TodosStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _todosStore = s
+        return s
+    }
+
+    func peopleStore() -> PeopleStore {
+        if let s = _peopleStore { return s }
+        let s = PeopleStore(client: connectedClient)
+        _peopleStore = s
+        return s
+    }
+
+    func filesStore() -> FilesStore {
+        if let s = _filesStore { return s }
+        let s = FilesStore(client: connectedClient)
+        s.workspaceID = selectedWorkspaceID
+        _filesStore = s
+        return s
+    }
+
+    func financeStore() -> FinanceStore {
+        if let s = _financeStore { return s }
+        let s = FinanceStore(client: connectedClient)
+        _financeStore = s
+        return s
+    }
+
+    func medicalStore() -> MedicalStore {
+        if let s = _medicalStore { return s }
+        let s = MedicalStore(client: connectedClient)
+        _medicalStore = s
+        return s
+    }
+
     func telegramStore() -> TelegramStore {
         if let s = _telegramStore { return s }
         let s = TelegramStore(client: connectedClient)
@@ -221,8 +299,48 @@ final class AppModel {
         selectedRoute = .connections
     }
 
+    func navigateToHome() {
+        selectedRoute = .home
+    }
+
+    func navigateToSetup() {
+        selectedRoute = .setup
+    }
+
     func navigateToBrain() {
         selectedRoute = .brain
+    }
+
+    func navigateToAutomations() {
+        selectedRoute = .automations
+    }
+
+    func navigateToMail() {
+        selectedRoute = .email
+    }
+
+    func navigateToCalendar() {
+        selectedRoute = .calendar
+    }
+
+    func navigateToTodos() {
+        selectedRoute = .todos
+    }
+
+    func navigateToPeople() {
+        selectedRoute = .people
+    }
+
+    func navigateToFiles() {
+        selectedRoute = .files
+    }
+
+    func navigateToFinance() {
+        selectedRoute = .finance
+    }
+
+    func navigateToMedical() {
+        selectedRoute = .medical
     }
 
     func navigateToInstructions() {
@@ -307,6 +425,12 @@ final class AppModel {
         _brainStore?.workspaceID = selectedWorkspaceID
         _memoryStore?.workspaceID = selectedWorkspaceID
         _instructionPreviewStore?.adoptWorkspaceScope(selectedWorkspaceID)
+        _automationStore?.workspaceID = selectedWorkspaceID
+        _homeStore?.workspaceID = selectedWorkspaceID
+        _emailStore?.workspaceID = selectedWorkspaceID
+        _calendarStore?.workspaceID = selectedWorkspaceID
+        _todosStore?.workspaceID = selectedWorkspaceID
+        _filesStore?.workspaceID = selectedWorkspaceID
     }
 
     private func clearStores() {
@@ -327,6 +451,15 @@ final class AppModel {
         _memoryStore = nil
         _agentProfilesStore = nil
         _instructionPreviewStore = nil
+        _automationStore = nil
+        _homeStore = nil
+        _emailStore = nil
+        _calendarStore = nil
+        _todosStore = nil
+        _peopleStore = nil
+        _filesStore = nil
+        _financeStore = nil
+        _medicalStore = nil
         _telegramStore = nil
     }
 

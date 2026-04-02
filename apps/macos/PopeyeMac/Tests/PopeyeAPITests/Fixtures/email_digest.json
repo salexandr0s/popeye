@@ -1,0 +1,10 @@
+{
+  "id": "email-digest-1",
+  "account_id": "email-acct-1",
+  "workspace_id": "default",
+  "date": "2026-04-02",
+  "unread_count": 12,
+  "high_signal_count": 3,
+  "summary_markdown": "3 important threads need attention today.",
+  "generated_at": "2026-04-02T08:00:00Z"
+}

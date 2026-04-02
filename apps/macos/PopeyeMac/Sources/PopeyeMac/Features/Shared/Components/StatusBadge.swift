@@ -28,9 +28,11 @@ struct StatusBadge: View {
             .blue
         case "succeeded", "approved", "resolved", "connected", "sent", "healthy", "ready", "configured":
             .green
+        case "scheduled", "running_now":
+            .blue
         case "failed", "failed_retryable", "failed_final", "failed_permanent", "failed_transient", "permanent_failure", "denied", "revoked", "stuck-risk", "error":
             .red
-        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn", "uncertain", "ambiguous", "retryable_failure", "degraded", "reauth_required", "expired", "invalid_scopes", "stale", "partial", "incomplete":
+        case "paused", "blocked_operator", "idle", "open", "pending", "needs_auth", "warn", "uncertain", "ambiguous", "retryable_failure", "degraded", "reauth_required", "expired", "invalid_scopes", "stale", "partial", "incomplete", "attention", "manual_required":
             .orange
         case "cancelled", "abandoned", "queued", "waiting_retry", "leased", "closed", "info", "missing", "disabled", "unknown":
             .secondary

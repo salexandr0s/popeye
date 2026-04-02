@@ -1,0 +1,8 @@
+{
+  "id": "medical-digest-1",
+  "period": "quarter",
+  "appointment_count": 3,
+  "active_medications": 2,
+  "summary": "One follow-up appointment and two active medications.",
+  "generated_at": "2026-04-02T08:00:00Z"
+}

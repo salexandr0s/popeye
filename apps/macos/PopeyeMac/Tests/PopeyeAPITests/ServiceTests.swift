@@ -114,6 +114,207 @@ struct ServiceTests {
         #expect(mutationReceipts.queryItems.contains(URLQueryItem(name: "limit", value: "6")))
     }
 
+    @Test("Automation endpoints encode workspace and action paths")
+    func automationEndpoints() {
+        let automations = Endpoint.automations(workspaceId: "default")
+        let automation = Endpoint.automation(id: "task:heartbeat:default")
+        let update = Endpoint.updateAutomation(id: "task:heartbeat:default")
+        let runNow = Endpoint.runAutomationNow(id: "task:heartbeat:default")
+        let pause = Endpoint.pauseAutomation(id: "task:heartbeat:default")
+        let resume = Endpoint.resumeAutomation(id: "task:heartbeat:default")
+
+        #expect(automations.path == "/v1/automations")
+        #expect(automations.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(automation.path == "/v1/automations/task:heartbeat:default")
+        #expect(update.path == "/v1/automations/task:heartbeat:default")
+        #expect(update.method == .patch)
+        #expect(runNow.path == "/v1/automations/task:heartbeat:default/run-now")
+        #expect(runNow.method == .post)
+        #expect(pause.path == "/v1/automations/task:heartbeat:default/pause")
+        #expect(pause.method == .post)
+        #expect(resume.path == "/v1/automations/task:heartbeat:default/resume")
+        #expect(resume.method == .post)
+    }
+
+    @Test("Home and curated document endpoints encode workspace-aware paths")
+    func homeAndCuratedEndpoints() {
+        let home = Endpoint.homeSummary(workspaceId: "default")
+        let curated = Endpoint.curatedDocuments(workspaceId: "default")
+        let curatedDocument = Endpoint.curatedDocument(id: "workspace:default:instructions")
+        let propose = Endpoint.proposeCuratedDocumentSave(id: "workspace:default:instructions")
+        let apply = Endpoint.applyCuratedDocumentSave(id: "workspace:default:instructions")
+
+        #expect(home.path == "/v1/home/summary")
+        #expect(home.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(curated.path == "/v1/curated-documents")
+        #expect(curated.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(curatedDocument.path == "/v1/curated-documents/workspace:default:instructions")
+        #expect(propose.path == "/v1/curated-documents/workspace:default:instructions/propose-save")
+        #expect(propose.method == .post)
+        #expect(apply.path == "/v1/curated-documents/workspace:default:instructions/apply-save")
+        #expect(apply.method == .post)
+    }
+
+    @Test("Mail, Calendar, and Todos endpoints encode filters")
+    func lifeDomainEndpoints() {
+        let emailThreads = Endpoint.emailThreads(accountId: "acct-email-1", limit: 25, unreadOnly: true)
+        let emailDigest = Endpoint.emailDigest(accountId: "acct-email-1")
+        let calendarEvents = Endpoint.calendarEvents(
+            accountId: "acct-cal-1",
+            dateFrom: "2026-04-01T00:00:00Z",
+            dateTo: "2026-04-08T00:00:00Z",
+            limit: 40
+        )
+        let calendarDigest = Endpoint.calendarDigest(accountId: "acct-cal-1")
+        let todoItems = Endpoint.todoItems(accountId: "acct-todo-1", project: "Inbox", limit: 75)
+        let todoProjects = Endpoint.todoProjects(accountId: "acct-todo-1")
+        let todoDigest = Endpoint.todoDigest(accountId: "acct-todo-1")
+
+        #expect(emailThreads.path == "/v1/email/threads")
+        #expect(emailThreads.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-email-1")))
+        #expect(emailThreads.queryItems.contains(URLQueryItem(name: "limit", value: "25")))
+        #expect(emailThreads.queryItems.contains(URLQueryItem(name: "unreadOnly", value: "true")))
+        #expect(emailDigest.path == "/v1/email/digest")
+
+        #expect(calendarEvents.path == "/v1/calendar/events")
+        #expect(calendarEvents.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-cal-1")))
+        #expect(calendarEvents.queryItems.contains(URLQueryItem(name: "dateFrom", value: "2026-04-01T00:00:00Z")))
+        #expect(calendarEvents.queryItems.contains(URLQueryItem(name: "dateTo", value: "2026-04-08T00:00:00Z")))
+        #expect(calendarEvents.queryItems.contains(URLQueryItem(name: "limit", value: "40")))
+        #expect(calendarDigest.path == "/v1/calendar/digest")
+
+        #expect(todoItems.path == "/v1/todos/items")
+        #expect(todoItems.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-todo-1")))
+        #expect(todoItems.queryItems.contains(URLQueryItem(name: "project", value: "Inbox")))
+        #expect(todoItems.queryItems.contains(URLQueryItem(name: "limit", value: "75")))
+        #expect(todoProjects.path == "/v1/todos/projects")
+        #expect(todoProjects.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-todo-1")))
+        #expect(todoDigest.path == "/v1/todos/digest")
+    }
+
+    @Test("People and files endpoints encode filters")
+    func peopleAndFilesEndpoints() {
+        let peopleSearch = Endpoint.peopleSearch(query: "annie", limit: 15)
+        let person = Endpoint.person(id: "person-1")
+        let personActivity = Endpoint.personActivity(id: "person-1")
+        let mergeEvents = Endpoint.personMergeEvents(id: "person-1")
+        let mergePeople = Endpoint.mergePeople
+        let splitPerson = Endpoint.splitPerson(id: "person-1")
+        let attachIdentity = Endpoint.attachPersonIdentity
+        let detachIdentity = Endpoint.detachPersonIdentity(id: "identity-1")
+        let fileRoots = Endpoint.fileRoots(workspaceId: "default")
+        let createFileRoot = Endpoint.createFileRoot
+        let updateFileRoot = Endpoint.updateFileRoot(id: "root-1")
+        let deleteFileRoot = Endpoint.deleteFileRoot(id: "root-1")
+        let reindexFileRoot = Endpoint.reindexFileRoot(id: "root-1")
+        let fileSearch = Endpoint.fileSearch(query: "design", rootId: "root-1", workspaceId: "default", limit: 25)
+        let fileWriteIntents = Endpoint.fileWriteIntents(rootId: "root-1", status: "pending")
+        let reviewWriteIntent = Endpoint.reviewFileWriteIntent(id: "intent-1")
+        let vaults = Endpoint.vaults(domain: "finance")
+
+        #expect(peopleSearch.path == "/v1/people/search")
+        #expect(peopleSearch.queryItems.contains(URLQueryItem(name: "query", value: "annie")))
+        #expect(peopleSearch.queryItems.contains(URLQueryItem(name: "limit", value: "15")))
+        #expect(person.path == "/v1/people/person-1")
+        #expect(personActivity.path == "/v1/people/person-1/activity")
+        #expect(mergeEvents.path == "/v1/people/person-1/merge-events")
+        #expect(mergePeople.path == "/v1/people/merge")
+        #expect(mergePeople.method == .post)
+        #expect(splitPerson.path == "/v1/people/person-1/split")
+        #expect(splitPerson.method == .post)
+        #expect(attachIdentity.path == "/v1/people/identities/attach")
+        #expect(detachIdentity.path == "/v1/people/identities/identity-1/detach")
+
+        #expect(fileRoots.path == "/v1/files/roots")
+        #expect(fileRoots.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(createFileRoot.path == "/v1/files/roots")
+        #expect(createFileRoot.method == .post)
+        #expect(updateFileRoot.path == "/v1/files/roots/root-1")
+        #expect(updateFileRoot.method == .patch)
+        #expect(deleteFileRoot.path == "/v1/files/roots/root-1")
+        #expect(deleteFileRoot.method == .delete)
+        #expect(reindexFileRoot.path == "/v1/files/roots/root-1/reindex")
+        #expect(reindexFileRoot.method == .post)
+        #expect(fileSearch.path == "/v1/files/search")
+        #expect(fileSearch.queryItems.contains(URLQueryItem(name: "query", value: "design")))
+        #expect(fileSearch.queryItems.contains(URLQueryItem(name: "rootId", value: "root-1")))
+        #expect(fileSearch.queryItems.contains(URLQueryItem(name: "workspaceId", value: "default")))
+        #expect(fileSearch.queryItems.contains(URLQueryItem(name: "limit", value: "25")))
+        #expect(fileWriteIntents.path == "/v1/files/write-intents")
+        #expect(fileWriteIntents.queryItems.contains(URLQueryItem(name: "rootId", value: "root-1")))
+        #expect(fileWriteIntents.queryItems.contains(URLQueryItem(name: "status", value: "pending")))
+        #expect(reviewWriteIntent.path == "/v1/files/write-intents/intent-1/review")
+        #expect(reviewWriteIntent.method == .post)
+        #expect(vaults.path == "/v1/vaults")
+        #expect(vaults.queryItems.contains(URLQueryItem(name: "domain", value: "finance")))
+    }
+
+    @Test("Finance and medical endpoints encode filters")
+    func restrictedDomainEndpoints() {
+        let financeTransactions = Endpoint.financeTransactions(importId: "import-1", category: "travel", dateFrom: "2026-03-01", dateTo: "2026-03-31", limit: 30)
+        let financeDocuments = Endpoint.financeDocuments(importId: "import-1")
+        let financeSearch = Endpoint.financeSearch(query: "flight", category: "travel", dateFrom: "2026-03-01", dateTo: "2026-03-31", limit: 10)
+        let financeDigest = Endpoint.financeDigest(period: "month")
+        let createFinanceImport = Endpoint.createFinanceImport
+        let createFinanceTransaction = Endpoint.createFinanceTransaction
+        let updateFinanceImport = Endpoint.updateFinanceImportStatus(id: "import-1")
+        let openVault = Endpoint.openVault(id: "vault-1")
+        let closeVault = Endpoint.closeVault(id: "vault-1")
+
+        let medicalAppointments = Endpoint.medicalAppointments(importId: "import-med-1", limit: 20)
+        let medicalMedications = Endpoint.medicalMedications(importId: "import-med-1")
+        let medicalDocuments = Endpoint.medicalDocuments(importId: "import-med-1")
+        let medicalSearch = Endpoint.medicalSearch(query: "prescription", limit: 12)
+        let medicalDigest = Endpoint.medicalDigest(period: "quarter")
+        let createMedicalImport = Endpoint.createMedicalImport
+        let createMedicalAppointment = Endpoint.createMedicalAppointment
+        let createMedicalMedication = Endpoint.createMedicalMedication
+        let createMedicalDocument = Endpoint.createMedicalDocument
+        let updateMedicalImport = Endpoint.updateMedicalImportStatus(id: "import-med-1")
+
+        #expect(financeTransactions.path == "/v1/finance/transactions")
+        #expect(financeTransactions.queryItems.contains(URLQueryItem(name: "importId", value: "import-1")))
+        #expect(financeTransactions.queryItems.contains(URLQueryItem(name: "category", value: "travel")))
+        #expect(financeTransactions.queryItems.contains(URLQueryItem(name: "dateFrom", value: "2026-03-01")))
+        #expect(financeTransactions.queryItems.contains(URLQueryItem(name: "dateTo", value: "2026-03-31")))
+        #expect(financeTransactions.queryItems.contains(URLQueryItem(name: "limit", value: "30")))
+        #expect(financeDocuments.path == "/v1/finance/documents")
+        #expect(financeDocuments.queryItems.contains(URLQueryItem(name: "importId", value: "import-1")))
+        #expect(financeSearch.path == "/v1/finance/search")
+        #expect(financeSearch.queryItems.contains(URLQueryItem(name: "query", value: "flight")))
+        #expect(financeSearch.queryItems.contains(URLQueryItem(name: "limit", value: "10")))
+        #expect(financeDigest.path == "/v1/finance/digest")
+        #expect(financeDigest.queryItems.contains(URLQueryItem(name: "period", value: "month")))
+        #expect(createFinanceImport.path == "/v1/finance/imports")
+        #expect(createFinanceImport.method == .post)
+        #expect(createFinanceTransaction.path == "/v1/finance/transactions")
+        #expect(createFinanceTransaction.method == .post)
+        #expect(updateFinanceImport.path == "/v1/finance/imports/import-1/status")
+        #expect(updateFinanceImport.method == .post)
+        #expect(openVault.path == "/v1/vaults/vault-1/open")
+        #expect(closeVault.path == "/v1/vaults/vault-1/close")
+
+        #expect(medicalAppointments.path == "/v1/medical/appointments")
+        #expect(medicalAppointments.queryItems.contains(URLQueryItem(name: "importId", value: "import-med-1")))
+        #expect(medicalAppointments.queryItems.contains(URLQueryItem(name: "limit", value: "20")))
+        #expect(medicalMedications.path == "/v1/medical/medications")
+        #expect(medicalMedications.queryItems.contains(URLQueryItem(name: "importId", value: "import-med-1")))
+        #expect(medicalDocuments.path == "/v1/medical/documents")
+        #expect(medicalDocuments.queryItems.contains(URLQueryItem(name: "importId", value: "import-med-1")))
+        #expect(medicalSearch.path == "/v1/medical/search")
+        #expect(medicalSearch.queryItems.contains(URLQueryItem(name: "query", value: "prescription")))
+        #expect(medicalSearch.queryItems.contains(URLQueryItem(name: "limit", value: "12")))
+        #expect(medicalDigest.path == "/v1/medical/digest")
+        #expect(medicalDigest.queryItems.contains(URLQueryItem(name: "period", value: "quarter")))
+        #expect(createMedicalImport.path == "/v1/medical/imports")
+        #expect(createMedicalImport.method == .post)
+        #expect(createMedicalAppointment.path == "/v1/medical/appointments")
+        #expect(createMedicalMedication.path == "/v1/medical/medications")
+        #expect(createMedicalDocument.path == "/v1/medical/documents")
+        #expect(updateMedicalImport.path == "/v1/medical/imports/import-med-1/status")
+        #expect(updateMedicalImport.method == .post)
+    }
+
     @Test("Memory list endpoint encodes optional filters")
     func memoryListEndpoint() {
         let endpoint = Endpoint.memories(

@@ -7,6 +7,7 @@ final class MemoryStore {
         case search
         case browse
         case daily
+        case curated
     }
 
     // MARK: - State
@@ -36,6 +37,7 @@ final class MemoryStore {
 
     private let memoryService: MemoryService
     private let client: ControlAPIClient
+    let curatedDocuments: CuratedDocumentsStore
     var workspaceID = "default" {
         didSet {
             guard oldValue != workspaceID else { return }
@@ -44,12 +46,24 @@ final class MemoryStore {
             selectedDetail = nil
             memoryHistory = nil
             selectedDayID = nil
+            curatedDocuments.workspaceID = workspaceID
         }
     }
 
     init(client: ControlAPIClient) {
         self.client = client
         self.memoryService = MemoryService(client: client)
+        self.curatedDocuments = CuratedDocumentsStore(
+            client: client,
+            allowedKinds: [
+                "curated_memory",
+                "daily_memory_note",
+            ],
+            preferredKinds: [
+                "daily_memory_note",
+                "curated_memory",
+            ]
+        )
     }
 
     // MARK: - Computed
@@ -201,5 +215,9 @@ final class MemoryStore {
         guard let memoryID else { return }
         guard let group = dayGroups.first(where: { group in group.memories.contains(where: { $0.id == memoryID }) }) else { return }
         selectedDayID = group.id
+    }
+
+    func loadCuratedDocumentsIfNeeded() async {
+        await curatedDocuments.loadIfNeeded()
     }
 }

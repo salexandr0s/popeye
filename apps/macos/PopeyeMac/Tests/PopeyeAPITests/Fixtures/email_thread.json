@@ -1,0 +1,15 @@
+{
+  "id": "thread-1",
+  "account_id": "email-acct-1",
+  "gmail_thread_id": "gmail-thread-1",
+  "subject": "Project kickoff",
+  "snippet": "Let's align on the plan for next week.",
+  "last_message_at": "2026-04-02T07:50:00Z",
+  "message_count": 4,
+  "label_ids": ["INBOX", "IMPORTANT"],
+  "is_unread": true,
+  "is_starred": false,
+  "importance": "high",
+  "created_at": "2026-03-29T09:00:00Z",
+  "updated_at": "2026-04-02T07:50:00Z"
+}

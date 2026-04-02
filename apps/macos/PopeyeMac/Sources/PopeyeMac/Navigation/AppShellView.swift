@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct AppShellView: View {
     @Environment(AppModel.self) private var appModel
-    // Route persistence handled by AppModel init + onChange below
 
     var body: some View {
         @Bindable var model = appModel
@@ -13,7 +12,9 @@ struct AppShellView: View {
             Group {
                 if appModel.client != nil {
                     switch appModel.selectedRoute {
-                    case .dashboard, nil:
+                    case .home, nil:
+                        HomeView(store: appModel.homeStore())
+                    case .dashboard:
                         DashboardView(store: appModel.dashboardStore())
                     case .commandCenter:
                         CommandCenterView(store: appModel.commandCenterStore())
@@ -31,6 +32,22 @@ struct AppShellView: View {
                         InstructionPreviewView(store: appModel.instructionPreviewStore())
                     case .agentProfiles:
                         AgentProfilesView(store: appModel.agentProfilesStore())
+                    case .automations:
+                        AutomationsView(store: appModel.automationStore())
+                    case .email:
+                        EmailView(store: appModel.emailStore())
+                    case .calendar:
+                        CalendarView(store: appModel.calendarStore())
+                    case .todos:
+                        TodosView(store: appModel.todosStore())
+                    case .people:
+                        PeopleView(store: appModel.peopleStore())
+                    case .files:
+                        FilesView(store: appModel.filesStore())
+                    case .finance:
+                        FinanceView(store: appModel.financeStore())
+                    case .medical:
+                        MedicalView(store: appModel.medicalStore())
                     case .scheduler:
                         SchedulerView(jobsStore: appModel.jobsStore(), dashboardStore: appModel.dashboardStore())
                     case .usage:
@@ -49,7 +66,7 @@ struct AppShellView: View {
                         UsageSecurityView(store: appModel.usageSecurityStore())
                     }
                 } else {
-                    PlaceholderView(route: .dashboard)
+                    PlaceholderView(route: .home)
                 }
             }
         }

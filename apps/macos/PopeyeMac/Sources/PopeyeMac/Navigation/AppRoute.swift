@@ -1,6 +1,7 @@
 import Foundation
 
 enum AppRoute: String, CaseIterable, Identifiable, Hashable {
+    case home
     case dashboard
     case commandCenter
     case setup
@@ -10,6 +11,14 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case memory
     case instructionPreview
     case agentProfiles
+    case automations
+    case email
+    case calendar
+    case todos
+    case people
+    case files
+    case finance
+    case medical
     case scheduler
     case usage
     case runs
@@ -23,6 +32,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
+        case .home: "Home"
         case .dashboard: "Dashboard"
         case .commandCenter: "Command Center"
         case .setup: "Setup"
@@ -32,6 +42,14 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .memory: "Memory"
         case .instructionPreview: "Instructions"
         case .agentProfiles: "Agent Profiles"
+        case .automations: "Automations"
+        case .email: "Mail"
+        case .calendar: "Calendar"
+        case .todos: "Todos"
+        case .people: "People"
+        case .files: "Files"
+        case .finance: "Finance"
+        case .medical: "Medical"
         case .scheduler: "Scheduler"
         case .usage: "Usage"
         case .runs: "Runs"
@@ -45,6 +63,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
 
     var systemImage: String {
         switch self {
+        case .home: "house"
         case .dashboard: "gauge.with.dots.needle.33percent"
         case .commandCenter: "command.square.fill"
         case .setup: "checklist"
@@ -54,6 +73,14 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .memory: "brain"
         case .instructionPreview: "doc.plaintext"
         case .agentProfiles: "person.2"
+        case .automations: "bolt.badge.clock"
+        case .email: "envelope"
+        case .calendar: "calendar"
+        case .todos: "checklist"
+        case .people: "person.crop.circle.badge.2"
+        case .files: "folder"
+        case .finance: "creditcard"
+        case .medical: "cross.case"
         case .scheduler: "clock.arrow.2.circlepath"
         case .usage: "dollarsign.circle"
         case .runs: "play.circle"
@@ -67,9 +94,12 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
 
     var group: RouteGroup {
         switch self {
-        case .dashboard, .commandCenter: .overview
+        case .home, .dashboard, .commandCenter: .overview
         case .setup, .connections, .telegram: .setup
         case .brain, .memory, .instructionPreview, .agentProfiles: .brain
+        case .automations: .automations
+        case .email, .calendar, .todos, .people, .files: .life
+        case .finance, .medical: .privateDomains
         case .scheduler, .usage, .runs, .jobs, .receipts, .interventions, .approvals, .usageSecurity: .system
         }
     }
@@ -79,6 +109,9 @@ enum RouteGroup: String, CaseIterable, Identifiable {
     case overview
     case setup
     case brain
+    case automations
+    case life
+    case privateDomains
     case system
 
     var id: String { rawValue }
@@ -88,6 +121,9 @@ enum RouteGroup: String, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .setup: "Setup"
         case .brain: "Brain"
+        case .automations: "Automations"
+        case .life: "Life"
+        case .privateDomains: "Private"
         case .system: "System"
         }
     }

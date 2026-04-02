@@ -51,6 +51,18 @@ describe('launchd pure functions', () => {
     expect(plist).toContain('/usr/local/bin/node22');
   });
 
+  it('createLaunchdPlist honors explicit program arguments', () => {
+    const plist = createLaunchdPlist({
+      configPath: '/tmp/config.json',
+      daemonEntryPoint: '/app/daemon.js',
+      programArguments: ['/usr/local/bin/node22', '/app/tsx-cli.mjs', '/app/daemon.ts'],
+      workingDirectory: '/app',
+    });
+    expect(plist).toContain('/usr/local/bin/node22');
+    expect(plist).toContain('/app/tsx-cli.mjs');
+    expect(plist).toContain('/app/daemon.ts');
+  });
+
   it('createLaunchdPlist includes log paths', () => {
     const plist = createLaunchdPlist({
       configPath: '/tmp/config.json',

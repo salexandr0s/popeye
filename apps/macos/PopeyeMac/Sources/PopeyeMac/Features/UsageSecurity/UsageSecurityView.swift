@@ -7,7 +7,7 @@ struct UsageSecurityView: View {
 
     var body: some View {
         Group {
-            if store.isLoading && store.usage == nil {
+            if store.isLoading && store.usage == nil && store.controlChanges.isEmpty {
                 LoadingStateView(title: "Loading usage & security...")
             } else {
                 usageSecurityContent
@@ -21,7 +21,8 @@ struct UsageSecurityView: View {
             Task { await store.load() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.security, .general].contains(signal) {
+            if let signal = notification.object as? InvalidationSignal,
+               [.security, .telegram, .general].contains(signal) {
                 debouncer.schedule { [store] in await store.load() }
             }
         }
@@ -32,6 +33,7 @@ struct UsageSecurityView: View {
             VStack(alignment: .leading, spacing: 24) {
                 UsageSection(usage: store.usage)
                 SecuritySection(audit: store.securityAudit)
+                ControlChangesSection(receipts: store.controlChanges)
             }
             .padding(20)
         }

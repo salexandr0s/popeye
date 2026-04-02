@@ -1,0 +1,11 @@
+{
+  "id": "medication-1",
+  "import_id": "medical-import-1",
+  "name": "Amoxicillin",
+  "dosage": "500mg",
+  "frequency": "Twice daily",
+  "prescriber": "Dr. Rivera",
+  "start_date": "2026-04-01",
+  "end_date": "2026-04-10",
+  "redacted_summary": "Current antibiotic course."
+}

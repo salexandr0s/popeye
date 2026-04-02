@@ -1,0 +1,13 @@
+{
+  "query": "flight",
+  "results": [
+    {
+      "transaction_id": "txn-1",
+      "date": "2026-03-31",
+      "description": "Airline ticket",
+      "amount": -84.25,
+      "redacted_summary": "Travel expense charged to checking.",
+      "score": 0.96
+    }
+  ]
+}

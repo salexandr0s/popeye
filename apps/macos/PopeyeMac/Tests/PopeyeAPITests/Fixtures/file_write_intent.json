@@ -1,0 +1,13 @@
+{
+  "id": "write-intent-1",
+  "file_root_id": "root-1",
+  "file_path": "notes/design.md",
+  "intent_type": "promotion",
+  "diff_preview": "+ Added summary section",
+  "status": "pending",
+  "run_id": "run-abc123",
+  "approval_id": "approval-1",
+  "receipt_id": "receipt-1",
+  "created_at": "2026-04-02T08:10:00Z",
+  "reviewed_at": null
+}

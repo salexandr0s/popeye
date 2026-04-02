@@ -28,6 +28,7 @@
     "generate:contracts": "pnpm generate:swift && pnpm generate:typescript && pnpm generate:schemas",
     "pack:cli": "pnpm --filter @popeye/cli exec tsup",
     "pack:daemon": "pnpm --filter @popeye/daemon exec tsup",
+    "qa:telegram-smoke": "node scripts/telegram-smoke.mjs",
     "dev-verify:quick": "pnpm lint && pnpm typecheck && pnpm verify:generated-artifacts && pnpm test",
     "test:coverage": "node -e \"require('node:fs').mkdirSync('.vitest-coverage/.tmp',{recursive:true})\" && vitest run --coverage"
   },

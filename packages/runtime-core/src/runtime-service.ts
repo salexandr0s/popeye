@@ -74,6 +74,14 @@ import type {
   AnalyticsUsageResponse,
   AnalyticsModelsResponse,
   AnalyticsProjectsResponse,
+  AutomationDetail,
+  AutomationRecord,
+  AutomationUpdateInput,
+  CuratedDocumentApplyResult,
+  CuratedDocumentApplySaveInput,
+  CuratedDocumentRecord,
+  CuratedDocumentSaveProposal,
+  CuratedDocumentSummary,
   SessionSearchQuery,
   SessionSearchResponse,
   TrajectoryFormat,
@@ -218,6 +226,8 @@ import { MessageIngestionService, MessageIngressError } from './message-ingestio
 import { QueryService } from './query-service.js';
 import { SecretStore } from './secret-store.js';
 import { OAuthSessionService } from './oauth-session-service.js';
+import { AutomationService } from './automation-service.js';
+import { CuratedDocumentService } from './curated-document-service.js';
 import { ApprovalService } from './approval-service.js';
 import { ActionPolicyEvaluator } from './action-policy-evaluator.js';
 import { type VaultHandle, VaultManager } from './vault-manager.js';
@@ -241,6 +251,7 @@ import { CalendarFacade } from './calendar-facade.js';
 import { TodoFacade } from './todo-facade.js';
 import { OAuthConnectService } from './oauth-connect.js';
 import { MutationReceiptManager } from './mutation-receipt-manager.js';
+import { updateWorkspaceHeartbeatConfigFile } from './workspace-config-manager.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, type EmailProviderAdapter } from '@popeye/cap-email';
 import type { GithubApiAdapter } from '@popeye/cap-github';
@@ -359,6 +370,8 @@ export class PopeyeRuntimeService {
   private readonly mutationReceiptManager: MutationReceiptManager;
   private readonly messageIngestion: MessageIngestionService;
   private readonly taskManager: TaskManager;
+  private readonly automationService: AutomationService;
+  private readonly curatedDocumentService: CuratedDocumentService;
   private readonly queryService: QueryService;
   private readonly secretStore: SecretStore;
   private readonly oauthSessionService: OAuthSessionService;
@@ -391,6 +404,7 @@ export class PopeyeRuntimeService {
   private readonly peopleFacade: CapabilityFacade<PeopleService>;
   private readonly financeFacade: CapabilityFacade<FinanceService, FinanceSearchService>;
   private readonly medicalFacade: CapabilityFacade<MedicalService, MedicalSearchService>;
+  private readonly configPath: string | null;
 
   private static validateRegexPatterns(config: AppConfig): void {
     const fields: Array<{ name: string; patterns: string[] }> = [
@@ -414,13 +428,19 @@ export class PopeyeRuntimeService {
     }
   }
 
-  constructor(config: AppConfig, engineOverride?: EngineAdapter, loggerOverride?: PopeyeLogger) {
+  constructor(
+    config: AppConfig,
+    engineOverride?: EngineAdapter,
+    loggerOverride?: PopeyeLogger,
+    options: { configPath?: string } = {},
+  ) {
     const startupStart = performance.now();
     if (config.security.bindHost !== '127.0.0.1') {
       throw new Error(`Popeye requires config.security.bindHost to be 127.0.0.1, received ${config.security.bindHost}`);
     }
     PopeyeRuntimeService.validateRegexPatterns(config);
     this.config = config;
+    this.configPath = options.configPath ?? null;
     this.log = loggerOverride ?? createLogger('runtime', config.security.redactionPatterns);
     initAuthStore(config.authFile);
     this.startedAt = nowIso();
@@ -545,9 +565,25 @@ export class PopeyeRuntimeService {
       redactionPatterns: config.security.redactionPatterns,
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
     });
+    this.curatedDocumentService = new CuratedDocumentService({
+      workspaceRegistry: this.workspaceRegistry,
+      redactionPatterns: config.security.redactionPatterns,
+      writeMutationReceipt: (input) => this.writeMutationReceipt(input),
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+    });
     this.taskManager = new TaskManager(this.databases, {
       emit: (event, payload) => this.emit(event, payload),
       processSchedulerTick: () => this.processSchedulerTick(),
+    });
+    this.automationService = new AutomationService({
+      db: this.databases.app,
+      schedulerRunning: () => this.scheduler.running,
+      enqueueTask: (taskId, options) => this.enqueueTask(taskId, options),
+      processSchedulerTick: () => this.processSchedulerTick(),
+      getHeartbeatConfig: (workspaceId) => this.getHeartbeatConfig(workspaceId),
+      persistHeartbeatConfig: (workspaceId, input) => this.persistHeartbeatConfig(workspaceId, input),
+      writeMutationReceipt: (input) => this.writeMutationReceipt(input),
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
     });
     this.messageIngestion = new MessageIngestionService(this.databases, config, {
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
@@ -885,6 +921,57 @@ export class PopeyeRuntimeService {
 
   getTask(taskId: string): TaskRecord | null {
     return this.taskManager.getTask(taskId);
+  }
+
+  listAutomations(filter?: { workspaceId?: string | null }): AutomationRecord[] {
+    return this.automationService.listAutomations(filter);
+  }
+
+  getAutomation(automationId: string): AutomationDetail | null {
+    return this.automationService.getAutomation(automationId);
+  }
+
+  listCuratedDocuments(workspaceId: string): CuratedDocumentSummary[] {
+    return this.curatedDocumentService.listDocuments(workspaceId);
+  }
+
+  getCuratedDocument(documentId: string): CuratedDocumentRecord | null {
+    return this.curatedDocumentService.getDocument(documentId);
+  }
+
+  proposeCuratedDocumentSave(
+    documentId: string,
+    input: { markdownText: string; baseRevisionHash?: string | null },
+  ): CuratedDocumentSaveProposal {
+    return this.curatedDocumentService.proposeSave(documentId, input);
+  }
+
+  applyCuratedDocumentSave(
+    documentId: string,
+    input: CuratedDocumentApplySaveInput,
+    actorRole: AuthRole = 'operator',
+  ): CuratedDocumentApplyResult {
+    return this.curatedDocumentService.applySave(documentId, input, actorRole);
+  }
+
+  async updateAutomation(
+    automationId: string,
+    input: AutomationUpdateInput,
+    actorRole: AuthRole = 'operator',
+  ): Promise<AutomationDetail | null> {
+    return this.automationService.update(automationId, input, actorRole);
+  }
+
+  async runAutomationNow(automationId: string, actorRole: AuthRole = 'operator'): Promise<AutomationDetail | null> {
+    return this.automationService.runNow(automationId, actorRole);
+  }
+
+  async pauseAutomation(automationId: string, actorRole: AuthRole = 'operator'): Promise<AutomationDetail | null> {
+    return this.automationService.pause(automationId, actorRole);
+  }
+
+  async resumeAutomation(automationId: string, actorRole: AuthRole = 'operator'): Promise<AutomationDetail | null> {
+    return this.automationService.resume(automationId, actorRole);
   }
 
   listJobs(): JobRecord[] {
@@ -1302,6 +1389,47 @@ export class PopeyeRuntimeService {
 
   getProject(id: string): ProjectRecord | null {
     return this.workspaceRegistry.getProject(id);
+  }
+
+  private getHeartbeatConfig(workspaceId: string): { enabled: boolean; intervalSeconds: number } | null {
+    const workspace = this.config.workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return null;
+    return {
+      enabled: workspace.heartbeatEnabled,
+      intervalSeconds: workspace.heartbeatIntervalSeconds,
+    };
+  }
+
+  private async persistHeartbeatConfig(
+    workspaceId: string,
+    input: { enabled?: boolean; intervalSeconds?: number },
+  ): Promise<{ enabled: boolean; intervalSeconds: number } | null> {
+    const workspace = this.config.workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      return null;
+    }
+
+    const enabled = input.enabled ?? workspace.heartbeatEnabled;
+    const intervalSeconds = input.intervalSeconds ?? workspace.heartbeatIntervalSeconds;
+
+    if (this.configPath) {
+      const result = updateWorkspaceHeartbeatConfigFile(this.configPath, workspaceId, {
+        enabled,
+        intervalSeconds,
+      });
+      this.config.workspaces = result.config.workspaces;
+      return {
+        enabled: result.enabled,
+        intervalSeconds: result.intervalSeconds,
+      };
+    }
+
+    workspace.heartbeatEnabled = enabled;
+    workspace.heartbeatIntervalSeconds = intervalSeconds;
+    return {
+      enabled,
+      intervalSeconds,
+    };
   }
 
   registerWorkspace(input: WorkspaceRegistrationInput): WorkspaceRecord {
@@ -2937,7 +3065,10 @@ export class PopeyeRuntimeService {
       const scheduleId = `schedule:heartbeat:${workspace.id}`;
       const heartbeatTitle = `heartbeat:${workspace.id}`;
       const heartbeatPrompt = `Heartbeat check for workspace ${workspace.name}`;
-      const heartbeatStatus = workspace.heartbeatEnabled ? 'active' : 'paused';
+      const existingTask = this.getTask(heartbeatTaskId);
+      const heartbeatStatus = workspace.heartbeatEnabled
+        ? (existingTask?.status === 'paused' ? 'paused' : 'active')
+        : 'paused';
       const retryPolicy = JSON.stringify({ maxAttempts: 3, baseDelaySeconds: 5, multiplier: 2, maxDelaySeconds: 900 });
 
       this.databases.app
@@ -3157,7 +3288,7 @@ export class PopeyeRuntimeService {
     const schedules = z.array(ScheduleRowSchema).parse(this.databases.app.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all());
     for (const schedule of schedules) {
       const task = this.getTask(schedule.task_id);
-      if (!task || task.source !== 'heartbeat') continue;
+      if (!task || task.source !== 'heartbeat' || task.status !== 'active') continue;
       const existing = parseCountRow(this.databases.app
         .prepare("SELECT COUNT(*) AS count FROM jobs WHERE task_id = ? AND status IN ('queued', 'leased', 'running', 'waiting_retry')")
         .get(task.id));
@@ -3175,6 +3306,8 @@ export class PopeyeRuntimeService {
     if (schedules.length === 0) return null;
     let nextDueAt: string | null = null;
     for (const schedule of schedules) {
+      const task = this.getTask(schedule.task_id);
+      if (!task || task.source !== 'heartbeat' || task.status !== 'active') continue;
       const lastTime = parseCreatedAt(this.databases.app.prepare('SELECT created_at FROM jobs WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(schedule.task_id)) ?? schedule.created_at;
       const dueAt = new Date(new Date(lastTime).getTime() + schedule.interval_seconds * 1000).toISOString();
       if (!nextDueAt || dueAt < nextDueAt) nextDueAt = dueAt;
@@ -4175,6 +4308,11 @@ export class PopeyeRuntimeService {
   }
 }
 
-export function createRuntimeService(config: AppConfig, engineOverride?: EngineAdapter, loggerOverride?: PopeyeLogger): PopeyeRuntimeService {
-  return new PopeyeRuntimeService(config, engineOverride, loggerOverride);
+export function createRuntimeService(
+  config: AppConfig,
+  engineOverride?: EngineAdapter,
+  loggerOverride?: PopeyeLogger,
+  options?: { configPath?: string },
+): PopeyeRuntimeService {
+  return new PopeyeRuntimeService(config, engineOverride, loggerOverride, options);
 }

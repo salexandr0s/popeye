@@ -2,9 +2,15 @@ import SwiftUI
 import PopeyeAPI
 
 struct InstructionPreviewView: View {
+    private enum DisplayMode: String, CaseIterable {
+        case compiled
+        case curated
+    }
+
     @Bindable var store: InstructionPreviewStore
     @Environment(AppModel.self) private var appModel
     @State private var debouncer = ReloadDebouncer()
+    @State private var displayMode: DisplayMode = .compiled
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -16,36 +22,73 @@ struct InstructionPreviewView: View {
         .task(id: appModel.selectedWorkspaceID) {
             store.adoptWorkspaceScope(appModel.selectedWorkspaceID)
             await store.loadDefaultPreviewIfNeeded()
+            if displayMode == .curated {
+                await store.loadCuratedDocumentsIfNeeded()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.loadPreview() }
+            Task {
+                await store.loadPreview()
+                if displayMode == .curated {
+                    await store.curatedDocuments.load()
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
             if let signal = notification.object as? InvalidationSignal, [.general].contains(signal) {
-                debouncer.schedule { [store] in await store.loadPreview() }
+                debouncer.schedule {
+                    await store.loadPreview()
+                    if displayMode == .curated {
+                        await store.curatedDocuments.load()
+                    }
+                }
             }
+        }
+        .onChange(of: displayMode) { _, newMode in
+            guard newMode == .curated else { return }
+            Task { await store.loadCuratedDocumentsIfNeeded() }
         }
     }
 
     private var scopeBar: some View {
         HStack(spacing: 12) {
-            TextField("Scope (e.g. default or default/project-1)", text: $store.scopeInput)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit {
+            Picker("Mode", selection: $displayMode) {
+                Text("Compiled").tag(DisplayMode.compiled)
+                Text("Curated Docs").tag(DisplayMode.curated)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+
+            if displayMode == .compiled {
+                TextField("Scope (e.g. default or default/project-1)", text: $store.scopeInput)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        Task { await store.loadPreview() }
+                    }
+
+                Button("Load") {
                     Task { await store.loadPreview() }
                 }
-
-            Button("Load") {
-                Task { await store.loadPreview() }
+                .disabled(store.scopeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isLoading)
+            } else {
+                Text("Curated instruction documents for \(appModel.selectedWorkspace?.name ?? appModel.selectedWorkspaceID)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(store.scopeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isLoading)
         }
         .padding(12)
     }
 
     @ViewBuilder
     private var contentArea: some View {
-        if store.isLoading {
+        if displayMode == .curated {
+            CuratedDocumentEditorView(
+                store: store.curatedDocuments,
+                emptyTitle: "Instruction Documents",
+                emptyDescription: "Workspace instructions, project instructions, soul, and identity files appear here for governed editing."
+            )
+        } else if store.isLoading {
             LoadingStateView(title: "Loading instructions...")
         } else if let error = store.error {
             VStack(spacing: 8) {

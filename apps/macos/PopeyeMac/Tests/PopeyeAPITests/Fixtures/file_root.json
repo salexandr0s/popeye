@@ -1,0 +1,15 @@
+{
+  "id": "root-1",
+  "workspace_id": "default",
+  "label": "Notes",
+  "root_path": "/Users/operator/Documents/Notes",
+  "permission": "read_write",
+  "file_patterns": ["**/*.md"],
+  "exclude_patterns": ["**/.git/**"],
+  "max_file_size_bytes": 1048576,
+  "enabled": true,
+  "last_indexed_at": "2026-04-02T07:45:00Z",
+  "last_indexed_count": 42,
+  "created_at": "2026-04-01T08:00:00Z",
+  "updated_at": "2026-04-02T07:45:00Z"
+}

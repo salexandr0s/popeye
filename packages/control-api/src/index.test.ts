@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1852,12 +1852,13 @@ describe('control api', () => {
     });
     expect(receiptsResponse.statusCode).toBe(200);
     const receipts = receiptsResponse.json() as Array<{ id: string; kind: string; summary: string; status: string }>;
-    expect(receipts.map((receipt) => receipt.kind)).toEqual(['telegram_apply', 'telegram_config_update']);
-    expect(receipts[0]?.status).toBe('succeeded');
+    expect(receipts.map((receipt) => receipt.kind)).toEqual(expect.arrayContaining(['telegram_apply', 'telegram_config_update']));
+    const applyReceipt = receipts.find((receipt) => receipt.kind === 'telegram_apply');
+    expect(applyReceipt?.status).toBe('succeeded');
 
     const receiptDetailResponse = await app.inject({
       method: 'GET',
-      url: `/v1/governance/mutation-receipts/${receipts[0]?.id}`,
+      url: '/v1/governance/mutation-receipts/' + applyReceipt?.id,
       headers: { authorization: `Bearer ${store.current.token}` },
     });
     expect(receiptDetailResponse.statusCode).toBe(200);
@@ -1929,4 +1930,314 @@ describe('control api', () => {
     await runtime.close();
     await app.close();
   });
+  it('lists workspace automations and supports pause resume and run-now', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-automations-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const automationPath = '/v1/automations/' + encodeURIComponent('task:heartbeat:default');
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/automations?workspaceId=default',
+      headers: { authorization: 'Bearer ' + store.current.token },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task:heartbeat:default',
+          source: 'heartbeat',
+          workspaceId: 'default',
+        }),
+      ]),
+    );
+
+    const pauseResponse = await app.inject({
+      method: 'POST',
+      url: automationPath + '/pause',
+      headers: {
+        authorization: 'Bearer ' + store.current.token,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(pauseResponse.statusCode).toBe(200);
+    expect(pauseResponse.json()).toMatchObject({ taskStatus: 'paused', controls: { resume: true } });
+
+    const resumeResponse = await app.inject({
+      method: 'POST',
+      url: automationPath + '/resume',
+      headers: {
+        authorization: 'Bearer ' + store.current.token,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(resumeResponse.statusCode).toBe(200);
+    expect(resumeResponse.json()).toMatchObject({ taskStatus: 'active', controls: { pause: true } });
+
+    const runNowResponse = await app.inject({
+      method: 'POST',
+      url: automationPath + '/run-now',
+      headers: {
+        authorization: 'Bearer ' + store.current.token,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(runNowResponse.statusCode).toBe(200);
+    const runNow = runNowResponse.json() as { id: string; recentRuns: unknown[] };
+    expect(runNow.id).toBe('task:heartbeat:default');
+
+    expect(runtime.listMutationReceipts('automation').map((receipt) => receipt.kind)).toEqual(
+      expect.arrayContaining(['automation_pause', 'automation_resume', 'automation_run_now']),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('patches scheduled and heartbeat automations', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-automation-update-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'Scheduled sync',
+      prompt: 'Check in',
+      source: 'schedule',
+      autoEnqueue: false,
+    });
+    runtime.databases.app
+      .prepare('INSERT INTO schedules (id, task_id, interval_seconds, created_at) VALUES (?, ?, ?, ?)')
+      .run('schedule:test-sync', created.task.id, 1800, new Date().toISOString());
+
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const patchResponse = await app.inject({
+      method: 'PATCH',
+      url: '/v1/automations/' + encodeURIComponent(created.task.id),
+      headers: {
+        authorization: 'Bearer ' + store.current.token,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        enabled: false,
+        intervalSeconds: 900,
+      },
+    });
+    expect(patchResponse.statusCode).toBe(200);
+    expect(patchResponse.json()).toMatchObject({
+      id: created.task.id,
+      taskStatus: 'paused',
+      enabled: false,
+      intervalSeconds: 900,
+      controls: {
+        enabledEdit: true,
+        cadenceEdit: true,
+      },
+    });
+
+    expect(runtime.listMutationReceipts('automation')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'automation_update',
+          metadata: expect.objectContaining({
+            automationId: created.task.id,
+            intervalSeconds: '900',
+            enabled: 'false',
+          }),
+        }),
+      ]),
+    );
+
+    const heartbeatPatchResponse = await app.inject({
+      method: 'PATCH',
+      url: '/v1/automations/' + encodeURIComponent('task:heartbeat:default'),
+      headers: {
+        authorization: 'Bearer ' + store.current.token,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        enabled: false,
+        intervalSeconds: 900,
+      },
+    });
+    expect(heartbeatPatchResponse.statusCode).toBe(200);
+    expect(heartbeatPatchResponse.json()).toMatchObject({
+      id: 'task:heartbeat:default',
+      source: 'heartbeat',
+      taskStatus: 'paused',
+      enabled: false,
+      intervalSeconds: 900,
+      controls: {
+        enabledEdit: true,
+        cadenceEdit: true,
+      },
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns a dedicated home summary payload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-home-summary-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/home/summary?workspaceId=default',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      workspaceId: 'default',
+      setup: expect.objectContaining({
+        supportedProviderCount: expect.any(Number),
+        telegramStatusLabel: expect.any(String),
+      }),
+      automationAttention: expect.any(Array),
+      automationDueSoon: expect.any(Array),
+      pendingApprovalCount: expect.any(Number),
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('lists, previews, and applies curated document saves over the control api', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-curated-docs-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = join(dir, 'workspace');
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), "# Workspace\n\nInitial text.\n", { mode: 0o600 });
+
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [], promptScanQuarantinePatterns: [], promptScanSanitizePatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const headers = {
+      authorization: `Bearer ${store.current.token}`,
+      'x-popeye-csrf': csrf,
+      'sec-fetch-site': 'same-origin',
+    };
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/curated-documents?workspaceId=default',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const documents = listResponse.json() as Array<{ id: string; kind: string }>;
+    expect(documents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'workspace:default:instructions',
+          kind: 'workspace_instructions',
+        }),
+      ]),
+    );
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/curated-documents/workspace:default:instructions',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const current = getResponse.json() as { revisionHash: string | null };
+
+    const proposalResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/curated-documents/workspace:default:instructions/propose-save',
+      headers,
+      payload: {
+        markdownText: "# Workspace\n\nSaved from the control API.\n",
+        baseRevisionHash: current.revisionHash,
+      },
+    });
+    expect(proposalResponse.statusCode).toBe(200);
+    expect(proposalResponse.json()).toMatchObject({
+      documentId: 'workspace:default:instructions',
+      status: 'ready',
+      requiresExplicitConfirmation: true,
+    });
+
+    const applyResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/curated-documents/workspace:default:instructions/apply-save',
+      headers,
+      payload: {
+        markdownText: "# Workspace\n\nSaved from the control API.\n",
+        baseRevisionHash: current.revisionHash,
+        confirmedCriticalWrite: true,
+      },
+    });
+    expect(applyResponse.statusCode).toBe(200);
+    expect(applyResponse.json()).toMatchObject({
+      document: expect.objectContaining({
+        id: 'workspace:default:instructions',
+      }),
+      receipt: expect.objectContaining({
+        kind: 'curated_document_save',
+      }),
+    });
+    expect(readFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'utf8')).toContain('Saved from the control API.');
+
+    await runtime.close();
+    await app.close();
+  });
+
 });

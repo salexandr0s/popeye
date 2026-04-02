@@ -1,0 +1,11 @@
+{
+  "id": "todo-digest-1",
+  "account_id": "todo-acct-1",
+  "workspace_id": "default",
+  "date": "2026-04-02",
+  "pending_count": 14,
+  "overdue_count": 2,
+  "completed_today_count": 4,
+  "summary_markdown": "Focus on two overdue items before noon.",
+  "generated_at": "2026-04-02T08:00:00Z"
+}

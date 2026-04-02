@@ -25,9 +25,10 @@ struct MemoryView: View {
                     Text("Search").tag(MemoryStore.ViewMode.search)
                     Text("Browse").tag(MemoryStore.ViewMode.browse)
                     Text("Daily").tag(MemoryStore.ViewMode.daily)
+                    Text("Curated").tag(MemoryStore.ViewMode.curated)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 220)
+                .frame(width: 300)
             }
 
             if store.viewMode == .browse || store.viewMode == .daily {
@@ -46,13 +47,26 @@ struct MemoryView: View {
         .task(id: appModel.selectedWorkspaceID) {
             store.workspaceID = appModel.selectedWorkspaceID
             await store.loadList()
+            if store.viewMode == .curated {
+                await store.loadCuratedDocumentsIfNeeded()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.loadList() }
+            Task {
+                await store.loadList()
+                if store.viewMode == .curated {
+                    await store.curatedDocuments.load()
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
             if let signal = notification.object as? InvalidationSignal, [.memory, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.loadList() }
+                debouncer.schedule {
+                    await store.loadList()
+                    if store.viewMode == .curated {
+                        await store.curatedDocuments.load()
+                    }
+                }
             }
         }
         .onChange(of: store.selectedMemoryId) { _, newId in
@@ -69,6 +83,9 @@ struct MemoryView: View {
         }
         .onChange(of: store.viewMode) { _, _ in
             store.ensureSelectedDay()
+            if store.viewMode == .curated {
+                Task { await store.loadCuratedDocumentsIfNeeded() }
+            }
         }
         .sheet(isPresented: $store.showPromotionSheet) {
             if let proposal = store.promotionProposal {
@@ -78,11 +95,17 @@ struct MemoryView: View {
     }
 
     private var memoryContent: some View {
-        HSplitView {
-            listColumn
-                .frame(minWidth: 350)
-            inspectorColumn
-                .frame(minWidth: 300)
+        Group {
+            if store.viewMode == .curated {
+                listColumn
+            } else {
+                HSplitView {
+                    listColumn
+                        .frame(minWidth: 350)
+                    inspectorColumn
+                        .frame(minWidth: 300)
+                }
+            }
         }
     }
 
@@ -95,12 +118,20 @@ struct MemoryView: View {
             MemoryListView(store: store)
         case .daily:
             MemoryDailyView(store: store)
+        case .curated:
+            CuratedDocumentEditorView(
+                store: store.curatedDocuments,
+                emptyTitle: "Curated Memory",
+                emptyDescription: "Edit MEMORY.md and daily notes here with a governed save flow."
+            )
         }
     }
 
     @ViewBuilder
     private var inspectorColumn: some View {
-        if let memory = store.selectedMemory {
+        if store.viewMode == .curated {
+            EmptyView()
+        } else if let memory = store.selectedMemory {
             MemoryInspectorView(memory: memory, store: store)
         } else {
             Text("Select a memory to inspect")

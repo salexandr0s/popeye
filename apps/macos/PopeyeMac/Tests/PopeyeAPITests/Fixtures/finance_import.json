@@ -1,0 +1,9 @@
+{
+  "id": "finance-import-1",
+  "vault_id": "vault-1",
+  "import_type": "statement",
+  "file_name": "statement.pdf",
+  "status": "ready",
+  "record_count": 48,
+  "imported_at": "2026-04-01T07:00:00Z"
+}

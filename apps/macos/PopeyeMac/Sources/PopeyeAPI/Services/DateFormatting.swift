@@ -27,23 +27,23 @@ public enum DateFormatting {
 
     public static func formatRelativeTime(_ isoString: String) -> String {
         guard let date = parseISO8601(isoString) else { return "--" }
-        let seconds = max(0, Int(Date.now.timeIntervalSince(date)))
-
-        if seconds < 5 { return "just now" }
-        if seconds < 60 { return "\(seconds)s ago" }
-
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m ago" }
-
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h ago" }
-
-        let days = hours / 24
-        return "\(days)d ago"
+        return formatRelativeTime(date)
     }
 
     public static func formatAbsoluteTime(_ isoString: String) -> String {
         guard let date = parseISO8601(isoString) else { return "--" }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return formatAbsoluteTime(date)
+    }
+
+    public static func formatAbsoluteTime(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    public static func formatWeekday(_ date: Date) -> String {
+        date.formatted(.dateTime.weekday(.wide))
+    }
+
+    public static func formatDayMonth(_ date: Date) -> String {
+        date.formatted(.dateTime.day().month(.abbreviated))
     }
 }

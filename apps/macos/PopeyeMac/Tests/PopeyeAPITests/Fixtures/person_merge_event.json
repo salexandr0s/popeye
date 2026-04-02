@@ -1,0 +1,9 @@
+{
+  "id": "merge-event-1",
+  "event_type": "merge",
+  "source_person_id": "person-2",
+  "target_person_id": "person-1",
+  "identity_id": "identity-1",
+  "requested_by": "operator",
+  "created_at": "2026-04-02T08:00:00Z"
+}

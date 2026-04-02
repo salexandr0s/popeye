@@ -1,0 +1,12 @@
+{
+  "id": "txn-1",
+  "import_id": "finance-import-1",
+  "date": "2026-03-31",
+  "description": "Airline ticket",
+  "amount": -84.25,
+  "currency": "USD",
+  "category": "travel",
+  "merchant_name": "Acme Air",
+  "account_label": "Checking",
+  "redacted_summary": "Travel expense charged to checking."
+}

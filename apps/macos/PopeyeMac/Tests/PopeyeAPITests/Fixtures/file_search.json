@@ -1,0 +1,14 @@
+{
+  "query": "design",
+  "results": [
+    {
+      "document_id": "doc-1",
+      "file_root_id": "root-1",
+      "relative_path": "notes/design.md",
+      "memory_id": "mem-001",
+      "score": 0.94,
+      "snippet": "Mac-native control center design notes."
+    }
+  ],
+  "total_candidates": 12
+}

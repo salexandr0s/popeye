@@ -62,6 +62,11 @@ export const MutationReceiptKindSchema = z.enum([
   'telegram_config_update',
   'telegram_apply',
   'daemon_restart',
+  'automation_update',
+  'automation_run_now',
+  'automation_pause',
+  'automation_resume',
+  'curated_document_save',
 ]);
 export type MutationReceiptKind = z.infer<typeof MutationReceiptKindSchema>;
 

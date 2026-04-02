@@ -1,0 +1,9 @@
+{
+  "id": "appointment-1",
+  "import_id": "medical-import-1",
+  "date": "2026-04-10T14:30:00Z",
+  "provider": "Dr. Rivera",
+  "specialty": "Primary Care",
+  "location": "Vienna Clinic",
+  "redacted_summary": "Follow-up appointment."
+}

@@ -1,0 +1,12 @@
+{
+  "id": "email-acct-1",
+  "connection_id": "conn-gmail-1",
+  "email_address": "operator@example.com",
+  "display_name": "Personal Gmail",
+  "sync_cursor_page_token": null,
+  "sync_cursor_history_id": "12345",
+  "last_sync_at": "2026-04-02T07:55:00Z",
+  "message_count": 482,
+  "created_at": "2026-03-20T10:00:00Z",
+  "updated_at": "2026-04-02T07:55:00Z"
+}

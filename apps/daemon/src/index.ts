@@ -39,7 +39,7 @@ const cleanedTempDirs = cleanStalePiTempDirs();
 if (cleanedTempDirs > 0) {
   log.info(`Cleaned ${cleanedTempDirs} stale Pi temp directories`, { count: cleanedTempDirs });
 }
-const runtime = createRuntimeService(config);
+const runtime = createRuntimeService(config, undefined, undefined, { configPath });
 runtime.startScheduler();
 const telegramControl = new TelegramControlPlane(configPath, config, runtime);
 const generateCspNonce = () => randomBytes(16).toString('base64');

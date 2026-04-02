@@ -18,6 +18,55 @@ public struct ApprovalResolveInput: Encodable, Sendable {
     }
 }
 
+public struct ApprovalRequestInput: Encodable, Sendable {
+    public let scope: String
+    public let domain: String
+    public let riskClass: String
+    public let actionKind: String
+    public let resourceScope: String
+    public let resourceType: String
+    public let resourceId: String
+    public let requestedBy: String
+    public let runId: String?
+    public let standingApprovalEligible: Bool?
+    public let automationGrantEligible: Bool?
+    public let payloadPreview: String?
+    public let idempotencyKey: String?
+    public let expiresAt: String?
+
+    public init(
+        scope: String,
+        domain: String,
+        riskClass: String,
+        actionKind: String,
+        resourceScope: String,
+        resourceType: String,
+        resourceId: String,
+        requestedBy: String,
+        runId: String? = nil,
+        standingApprovalEligible: Bool? = nil,
+        automationGrantEligible: Bool? = nil,
+        payloadPreview: String? = nil,
+        idempotencyKey: String? = nil,
+        expiresAt: String? = nil
+    ) {
+        self.scope = scope
+        self.domain = domain
+        self.riskClass = riskClass
+        self.actionKind = actionKind
+        self.resourceScope = resourceScope
+        self.resourceType = resourceType
+        self.resourceId = resourceId
+        self.requestedBy = requestedBy
+        self.runId = runId
+        self.standingApprovalEligible = standingApprovalEligible
+        self.automationGrantEligible = automationGrantEligible
+        self.payloadPreview = payloadPreview
+        self.idempotencyKey = idempotencyKey
+        self.expiresAt = expiresAt
+    }
+}
+
 public struct TelegramConfigUpdateInput: Encodable, Sendable {
     public let enabled: Bool
     public let allowedUserId: String?
@@ -27,5 +76,13 @@ public struct TelegramConfigUpdateInput: Encodable, Sendable {
         self.enabled = enabled
         self.allowedUserId = allowedUserId
         self.secretRefId = secretRefId
+    }
+}
+
+public struct VaultOpenInput: Encodable, Sendable {
+    public let approvalId: String
+
+    public init(approvalId: String) {
+        self.approvalId = approvalId
     }
 }

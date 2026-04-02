@@ -33,6 +33,10 @@ public struct SystemService: Sendable {
         try await client.listWorkspaces()
     }
 
+    public func loadHomeSummary(workspaceId: String) async throws -> HomeSummaryDTO {
+        try await client.homeSummary(workspaceId: workspaceId)
+    }
+
     // MARK: - Agent Profiles
 
     public func loadAgentProfiles() async throws -> [AgentProfileDTO] {

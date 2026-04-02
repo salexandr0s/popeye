@@ -1,0 +1,10 @@
+{
+  "id": "calendar-digest-1",
+  "account_id": "calendar-acct-1",
+  "workspace_id": "default",
+  "date": "2026-04-02",
+  "today_event_count": 3,
+  "upcoming_count": 11,
+  "summary_markdown": "Three meetings today, one requires travel time.",
+  "generated_at": "2026-04-02T08:00:00Z"
+}

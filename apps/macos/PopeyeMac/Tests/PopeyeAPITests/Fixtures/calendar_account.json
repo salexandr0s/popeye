@@ -1,0 +1,12 @@
+{
+  "id": "calendar-acct-1",
+  "connection_id": "conn-calendar-1",
+  "calendar_email": "operator@example.com",
+  "display_name": "Google Calendar",
+  "time_zone": "Europe/Vienna",
+  "sync_cursor_sync_token": "sync-123",
+  "last_sync_at": "2026-04-02T07:40:00Z",
+  "event_count": 118,
+  "created_at": "2026-03-20T10:00:00Z",
+  "updated_at": "2026-04-02T07:40:00Z"
+}

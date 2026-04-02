@@ -34,12 +34,16 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | `OperationsService` | tasks, jobs, runs, run events, envelopes, receipts, interventions, instruction previews | v1 |
 | `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults, mutation receipts | approvals + mutation receipts in v1; rest later |
 | `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets, Telegram config/apply helpers | overview + provider setup in v1; deeper flows later |
+| `AutomationsService` | automation list/detail plus run-now, pause/resume, and cadence editing | automations hub in current native slice |
+| `CuratedDocumentsService` | curated markdown documents, propose/apply save flow, and revision-safe editor state | instructions + curated memory editing in current native slice |
 | `UsageSecurityService` | usage + security summary composition | v1 |
 | `InstructionsService` | instruction previews | later |
 | `MemoryService` | memory search/audit/list/detail/maintenance | later |
-| `PeopleService` | people search/detail/merge tooling | later |
-| `FilesService` | file roots/search/documents/write intents | later |
-| `DomainDigestService` | email/calendar/github/todos/finance/medical read-mostly digest/search surfaces | later |
+| `PeopleService` | people search/detail/activity/suggestions | people browser in current native slice |
+| `FilesService` | file roots/search/documents/write intents | files browser in current native slice |
+| `DomainDigestService` | email/calendar/github/todos read-mostly digest/search surfaces | email/calendar/todos in current native slice |
+| `FinanceService` | finance vaults/imports/digest/search/documents/transactions | finance in current native slice |
+| `MedicalService` | medical vaults/imports/digest/search/documents/appointments/medications | medical in current native slice |
 
 ---
 
@@ -84,7 +88,7 @@ These endpoints are enough to power a solid dashboard without any backend work.
 
 | Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/workspaces` | App-wide workspace picker; Brain / Memory / Instructions context | Read | `operator` | Poll on connect or explicit refresh | Workspace list items | Ready with wrapper | Now part of the native app shell so workspace-sensitive surfaces stay aligned | `SystemService` |
+| `GET /v1/workspaces` | App-wide workspace picker; Brain / Memory / Instructions / Automations context | Read | `operator` | Poll on connect or explicit refresh | Workspace list items | Ready with wrapper | Now part of the native app shell so workspace-sensitive surfaces stay aligned | `SystemService` |
 | `GET /v1/projects` | Later label enrichment / filters | Read | `operator` | On demand | Project list items | Ready with wrapper | Same note as above | `OperationsService` |
 | `GET /v1/profiles` | Later profile browser or label enrichment | Read | `operator` | On demand | Agent profile list items | Ready with wrapper | Useful later; not needed for first vertical slice | `OperationsService` |
 | `GET /v1/profiles/:id` | Run/receipt enrichment later | Read | `operator` | On demand | Agent profile details | Defer | Nice-to-have, not core v1 | `OperationsService` |
@@ -209,20 +213,33 @@ v1 should use Setup + Connections together:
 
 ## Domain vertical endpoints
 
-These surfaces exist and matter, but they are not where native should start.
+These surfaces now have an initial native foothold. The current native implementation keeps email/calendar/todos read-first, while People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
+
+### Home
+
+| Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /v1/home/summary` | Home landing page summary cards, agenda, automation attention, recent memory, and control changes | Read | `operator` | Poll + invalidation | Ready with wrapper | Dedicated workspace-aware summary payload for the native Home landing page | `SystemService` |
+
+### Automations
+
+| Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /v1/automations`, `GET /v1/automations/:id` | Automations hub list, week projection, detail, and “why won’t this run?” explanations | Read | `operator` | Poll + invalidation | Ready with wrapper | Powers the product-facing scheduler surface without replacing the raw Scheduler route | `SystemService` / `AutomationsService` |
+| `POST /v1/automations/:id/run-now`, `POST /v1/automations/:id/pause`, `POST /v1/automations/:id/resume`, `PATCH /v1/automations/:id` | Automations hub controls | Write | `operator` | Refetch after success | Ready with wrapper | `PATCH` supports enable/disable for surfaced editable automations plus cadence editing for both heartbeat automations and interval-backed scheduled automations with a persisted schedule row | `AutomationsService` |
 
 ### Email
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/providers` | Later email browser/digest screen | Read | `operator` | Poll on screen | Ready with wrapper | Read paths exist and are stable enough, but not core operator-console scope | `DomainDigestService` |
+| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/providers` | Native Mail split view with account picker, thread list, digest, and thread detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; compose/send stays out of scope | `DomainDigestService` |
 | `POST /v1/email/accounts`, `POST /v1/email/sync`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` | Later email account/draft tooling | Write | `operator` | Refetch after success | Defer | Web-first until native core is proven | `DomainDigestService` |
 
 ### Calendar
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability` | Later calendar digest/search | Read | `operator` | Poll on screen | Ready with wrapper | Strong later candidate, but not core v1 | `DomainDigestService` |
+| `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability` | Native Calendar split view with agenda, digest, and event detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; event editing stays out of scope | `DomainDigestService` |
 | `POST /v1/calendar/accounts`, `POST /v1/calendar/sync`, `POST /v1/calendar/events`, `PATCH /v1/calendar/events/:id` | Later calendar tooling | Write | `operator` | Refetch after success | Defer | Leave web-first initially | `DomainDigestService` |
 
 ### GitHub
@@ -236,37 +253,38 @@ These surfaces exist and matter, but they are not where native should start.
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `GET /v1/todos/projects` | Later todo dashboard | Read | `operator` | Poll on screen | Ready with wrapper | Could make a nice later native view, but not where to start | `DomainDigestService` |
+| `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `GET /v1/todos/projects` | Native Todos split view with account/project filters, digest, and item detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; complete/reprioritize/reschedule stay later | `DomainDigestService` |
 | `POST /v1/todos/accounts`, `POST /v1/todos/items`, `POST /v1/todos/sync`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/items/:id/reprioritize`, `POST /v1/todos/items/:id/reschedule`, `POST /v1/todos/items/:id/move`, `POST /v1/todos/reconcile` | Later todo actions | Write | `operator` | Refetch after success | Defer | Broad, task-oriented admin UI; not native v1 | `DomainDigestService` |
 
 ### People
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/people`, `GET /v1/people/:id`, `GET /v1/people/search`, `GET /v1/people/:id/merge-events`, `GET /v1/people/merge-suggestions`, `GET /v1/people/:id/activity` | Later people browser / suggestions / activity | Read | `operator` | Poll on screen | Ready with wrapper | Interesting later native read surface | `PeopleService` |
-| `PATCH /v1/people/:id`, `POST /v1/people/merge`, `POST /v1/people/:id/split`, `POST /v1/people/identities/attach`, `POST /v1/people/identities/:id/detach` | Later people repair tooling | Write | `operator` | Refetch after success | Defer | Too much record surgery for v1 | `PeopleService` |
+| `GET /v1/people`, `GET /v1/people/:id`, `GET /v1/people/search`, `GET /v1/people/:id/merge-events`, `GET /v1/people/merge-suggestions`, `GET /v1/people/:id/activity` | Native People browser / suggestions / activity | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a native relationship surface with browse, activity, and repair context | `PeopleService` |
+| `PATCH /v1/people/:id`, `POST /v1/people/merge`, `POST /v1/people/:id/split`, `POST /v1/people/identities/attach`, `POST /v1/people/identities/:id/detach` | Native People repair actions | Write | `operator` | Refetch after success | Ready with wrapper | The Mac app now surfaces merge, split, and identity attach/detach workflows as explicit operator actions | `PeopleService` |
 
 ### Finance and medical
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/finance/imports`, `GET /v1/finance/imports/:id`, `GET /v1/finance/transactions`, `GET /v1/finance/documents`, `GET /v1/finance/search`, `GET /v1/finance/digest` | Later finance digest/search | Read | `operator` | Poll on screen | Ready with wrapper | Read surfaces look viable later | `DomainDigestService` |
-| `POST /v1/finance/imports`, `POST /v1/finance/transactions`, `POST /v1/finance/transactions/batch`, `POST /v1/finance/imports/:id/status` | Finance admin/import flows | Write | `service` | Refetch after success | Defer | Not core operator-console UX | `DomainDigestService` |
-| `GET /v1/medical/imports`, `GET /v1/medical/imports/:id`, `GET /v1/medical/appointments`, `GET /v1/medical/medications`, `GET /v1/medical/documents`, `GET /v1/medical/search`, `GET /v1/medical/digest` | Later medical digest/search | Read | `operator` | Poll on screen | Ready with wrapper | Read surfaces viable later; sensitive | `DomainDigestService` |
-| `POST /v1/medical/imports`, `POST /v1/medical/appointments`, `POST /v1/medical/medications`, `POST /v1/medical/imports/:id/status` | Medical admin/import flows | Write | `service` | Refetch after success | Defer | Not native v1 | `DomainDigestService` |
+| `GET /v1/finance/imports`, `GET /v1/finance/imports/:id`, `GET /v1/finance/transactions`, `GET /v1/finance/documents`, `GET /v1/finance/search`, `GET /v1/finance/digest`, `GET /v1/vaults` | Native Finance digest/search | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a high-trust native surface with vault/import visibility | `FinanceService` |
+| `POST /v1/finance/imports`, `POST /v1/finance/transactions`, `POST /v1/finance/transactions/batch`, `POST /v1/finance/imports/:id/status`, `POST /v1/vaults/:id/open`, `POST /v1/vaults/:id/close` | Native Finance operator actions | Write | `operator` | Refetch after success | Ready with wrapper | The Mac app now surfaces digest regeneration, import creation, transaction entry, import-status updates, and vault open/close flows | `FinanceService` |
+| `GET /v1/medical/imports`, `GET /v1/medical/imports/:id`, `GET /v1/medical/appointments`, `GET /v1/medical/medications`, `GET /v1/medical/documents`, `GET /v1/medical/search`, `GET /v1/medical/digest`, `GET /v1/vaults` | Native Medical digest/search | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a high-trust native surface with vault/import visibility | `MedicalService` |
+| `POST /v1/medical/imports`, `POST /v1/medical/appointments`, `POST /v1/medical/medications`, `POST /v1/medical/documents`, `POST /v1/medical/imports/:id/status`, `POST /v1/vaults/:id/open`, `POST /v1/vaults/:id/close` | Native Medical operator actions | Write | `operator` | Refetch after success | Ready with wrapper | The Mac app now surfaces import creation, appointment/medication/document entry, import-status updates, and vault open/close flows | `MedicalService` |
 
 ### Files and memory
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/files/roots`, `GET /v1/files/roots/:id`, `GET /v1/files/search`, `GET /v1/files/documents/:id`, `GET /v1/files/write-intents`, `GET /v1/files/write-intents/:id` | Later files explorer / review queue | Read | `operator` | Poll on screen | Ready with wrapper | Good later native read surface, but broad | `FilesService` |
-| `POST /v1/files/roots`, `PATCH /v1/files/roots/:id`, `DELETE /v1/files/roots/:id`, `POST /v1/files/roots/:id/reindex`, `POST /v1/files/write-intents`, `POST /v1/files/write-intents/:id/review` | Files admin/review | Write | `operator` | Refetch after success | Defer | Do not start native here | `FilesService` |
+| `GET /v1/files/roots`, `GET /v1/files/roots/:id`, `GET /v1/files/search`, `GET /v1/files/documents/:id`, `GET /v1/files/write-intents`, `GET /v1/files/write-intents/:id` | Native Files explorer / write-intent visibility | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a workspace-aware native surface with document search and write-intent context | `FilesService` |
+| `POST /v1/files/roots`, `PATCH /v1/files/roots/:id`, `DELETE /v1/files/roots/:id`, `POST /v1/files/roots/:id/reindex`, `POST /v1/files/write-intents/:id/review` | Native Files admin/review actions | Write | `operator` | Refetch after success | Ready with wrapper | The Mac app now surfaces root create/edit/delete, reindex, and write-intent apply/reject flows | `FilesService` |
+| `GET /v1/curated-documents`, `GET /v1/curated-documents/:id`, `POST /v1/curated-documents/:id/propose-save`, `POST /v1/curated-documents/:id/apply-save` | Native curated markdown editor for instructions and curated memory docs | Read + Write | `operator` | Refetch after success | Ready with wrapper | Powers the AppKit-backed markdown editor, rendered preview, revision conflict handling, and receipt-backed save flow | `CuratedDocumentsService` |
 | `GET /v1/memory/search`, `GET /v1/memory`, `GET /v1/memory/:id`, `GET /v1/memory/audit` | Later memory explorer/search | Read | `operator` | Poll on screen or manual refresh | Ready with wrapper | Good later read-only native candidate | `MemoryService` |
 | `POST /v1/memory/maintenance`, `POST /v1/memory/import` | Memory administration | Write | `operator` | Refetch after success | Defer | Not v1 native | `MemoryService` |
 
 ### Native recommendation
 
-All of these domain surfaces are **possible later**, but they should not compete with the operator-console core during initial implementation.
+These domain surfaces now exist as native complements to the operator-console core. Email/calendar/todos remain read-first, while People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
 
 ---
 
@@ -274,7 +292,8 @@ All of these domain surfaces are **possible later**, but they should not compete
 
 | Web inspector view | Native equivalent | Native disposition | Why |
 | --- | --- | --- | --- |
-| Dashboard | Dashboard | **Mirror + adapt** | Strong home view for native |
+| Home | Home | **Shipped, native-first** | Calm daily landing page aggregating setup, automations, memory, and upcoming work |
+| Dashboard | Dashboard | **Mirror + adapt** | Still useful as a more operational summary surface |
 | Command Center | Command Center | **Adapt heavily for split-view Mac UX** | This is the highest-value native operational surface |
 | Runs | Runs | **Mirror + adapt** | Core runtime visibility |
 | Run Detail | Runs inspector / dedicated detail route later | **Mirror + adapt** | Envelope/events/reply fit native inspector well |
@@ -287,14 +306,16 @@ All of these domain surfaces are **possible later**, but they should not compete
 | Standing Approvals | Standing Approvals | **Defer** | Form-heavy admin flow |
 | Automation Grants | Automation Grants | **Defer** | Same |
 | Connections | Connections overview | **Adapt / narrow** | Use native for health summary, not full authoring first |
-| Email | Email | **Defer** | Useful later, not first-wave |
-| Calendar | Calendar | **Defer** | Same |
+| Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
+| Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
+| Calendar | Calendar | **Shipped, read-first** | Same |
 | GitHub | GitHub | **Defer** | Same |
-| People | People | **Defer** | Too broad for v1 |
-| Todos | Todos | **Defer** | Broad CRUD |
-| Finance | Finance | **Later read-only** | Candidate later, not initial |
-| Medical | Medical | **Later read-only** | Candidate later, not initial |
-| Files | Files | **Defer** | Admin-heavy |
+| People | People | **Shipped, targeted mutations** | Relationship browsing, suggestions, activity, merge, split, and identity repair now fit the native split view |
+| Todos | Todos | **Shipped, read-first** | Native planning view without broad CRUD |
+| Finance | Finance | **Shipped, targeted mutations** | High-trust digest/search plus vault/import/transaction actions work natively |
+| Medical | Medical | **Shipped, targeted mutations** | High-trust appointment/medication/document/import actions work natively |
+| Files | Files | **Shipped, targeted mutations** | Workspace-scoped document browsing, root management, and write-intent review fit native well |
+| Instructions / Curated Memory | Instructions + Memory | **Shipped, native-first** | AppKit-backed markdown editing with preview, propose/apply save, and receipts now exists in the Mac app |
 | Vaults | Vaults | **Defer / maybe later limited status** | Sensitive admin surface |
 | Security Policy | Usage & Security (summary only) | **Adapt / narrow** | Native should show risk posture before editing policy |
 | Memory | Memory search | **Later read-only** | Valuable later but not initial |
@@ -309,12 +330,12 @@ All of these domain surfaces are **possible later**, but they should not compete
 | Live daemon + scheduler supervision | Web inspector | Bring native first | Core native value |
 | Run/job/receipt investigation | Web inspector | Bring native first | Core native value |
 | Interventions + approvals | Web inspector | Bring native first | Core native value |
-| Deep connections/OAuth/remediation | Web inspector | Missing | Keep web-first initially |
+| Deep connections/OAuth/remediation | Web inspector + native Setup | Present for first-run provider setup | Native owns the quick-start path; web still handles deeper admin flows |
 | Daemon install/start/stop/status | CLI / installer | Missing | Keep CLI-first unless explicit API appears |
 | Upgrade verify/rollback | CLI | Missing | Keep CLI-first |
-| Files admin/write-intent review | Web inspector / CLI | Missing | Defer |
-| People merge/split/identity repair | Web inspector / CLI | Missing | Defer |
-| Finance/medical imports | CLI / web | Missing | Defer |
+| Files admin/write-intent review | Web inspector / CLI | Native support shipped | Keep deeper file-authoring and generic markdown editing out of Files |
+| People merge/split/identity repair | Web inspector / CLI | Native support shipped | Keep bulk repair/admin tooling web-first |
+| Finance/medical imports | CLI / web | Native support shipped | Keep broader admin/import forensics and batch tooling web-first |
 | Memory maintenance/import | Web inspector / CLI | Missing | Defer |
 
 ---
@@ -323,8 +344,19 @@ All of these domain surfaces are **possible later**, but they should not compete
 
 ### In native v1
 
+- Home
 - Dashboard
 - Command Center
+- Setup
+- Brain
+- Automations
+- Mail
+- Calendar
+- Todos
+- People
+- Files
+- Finance
+- Medical
 - Runs
 - Jobs
 - Receipts
@@ -335,21 +367,15 @@ All of these domain surfaces are **possible later**, but they should not compete
 
 ### In native later, likely read-only first
 
-- Instructions
-- Memory search
-- People browser
-- Finance digest/search
-- Medical digest/search
-- Email / Calendar / GitHub digests
+- GitHub digest/search
 
 ### Remain web-first or CLI-first initially
 
-- connection setup/remediation
 - policy authoring
-- files admin/write review
+- broad files authoring beyond roots + write-intent review
 - daemon lifecycle management
 - upgrades/migrations
-- broad domain CRUD
+- broad domain CRUD/editing outside the currently surfaced narrow actions
 
 ---
 
@@ -409,8 +435,61 @@ For the first native implementation, treat these as the **golden path**:
 - `GET /v1/interventions`
 - `GET /v1/approvals`
 - `GET /v1/connections`
+- `GET /v1/workspaces`
+- `GET /v1/config/telegram`
+- `GET /v1/governance/mutation-receipts`
+- `GET /v1/automations`
+- `GET /v1/automations/:id`
+- `PATCH /v1/automations/:id`
+- `GET /v1/email/accounts`
+- `GET /v1/email/threads`
+- `GET /v1/email/threads/:id`
+- `GET /v1/email/digest`
+- `GET /v1/calendar/accounts`
+- `GET /v1/calendar/events`
+- `GET /v1/calendar/events/:id`
+- `GET /v1/calendar/digest`
+- `GET /v1/todos/accounts`
+- `GET /v1/todos/items`
+- `GET /v1/todos/items/:id`
+- `GET /v1/todos/projects`
+- `GET /v1/todos/digest`
+- `GET /v1/people`
+- `GET /v1/people/:id`
+- `GET /v1/people/search`
+- `GET /v1/people/:id/activity`
+- `GET /v1/people/:id/merge-events`
+- `GET /v1/people/merge-suggestions`
+- `GET /v1/files/roots`
+- `GET /v1/files/roots/:id`
+- `GET /v1/files/search`
+- `GET /v1/files/documents/:id`
+- `GET /v1/files/write-intents`
+- `GET /v1/finance/imports`
+- `GET /v1/finance/imports/:id`
+- `GET /v1/finance/transactions`
+- `GET /v1/finance/documents`
+- `GET /v1/finance/search`
+- `GET /v1/finance/digest`
+- `GET /v1/medical/imports`
+- `GET /v1/medical/imports/:id`
+- `GET /v1/medical/appointments`
+- `GET /v1/medical/medications`
+- `GET /v1/medical/documents`
+- `GET /v1/medical/search`
+- `GET /v1/medical/digest`
+- `GET /v1/vaults`
 - `GET /v1/security/audit`
 - `GET /v1/security/csrf-token`
+- `POST /v1/connections/oauth/start`
+- `GET /v1/connections/oauth/sessions/:id`
+- `POST /v1/secrets`
+- `POST /v1/config/telegram`
+- `POST /v1/daemon/components/telegram/apply`
+- `POST /v1/daemon/restart`
+- `POST /v1/automations/:id/run-now`
+- `POST /v1/automations/:id/pause`
+- `POST /v1/automations/:id/resume`
 - `POST /v1/runs/:id/retry`
 - `POST /v1/runs/:id/cancel`
 - `POST /v1/jobs/:id/pause`

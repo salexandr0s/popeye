@@ -89,6 +89,17 @@ import {
   VaultCreateRequestSchema,
   VaultOpenRequestSchema,
   WorkspaceIdentityDefaultSchema,
+  AutomationListQueryParamsSchema,
+  AutomationListResponseSchema,
+  AutomationDetailSchema,
+  AutomationUpdateInputSchema,
+  CuratedDocumentApplyResultSchema,
+  CuratedDocumentApplySaveInputSchema,
+  CuratedDocumentRecordSchema,
+  CuratedDocumentProposeSaveInputSchema,
+  CuratedDocumentSaveProposalSchema,
+  CuratedDocumentSummarySchema,
+  HomeSummarySchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -97,6 +108,7 @@ import type {
   TelegramConfigSnapshot,
   TelegramConfigUpdateInput,
   TelegramManagementMode,
+  ConnectionRecord,
 } from '@popeye/contracts';
 import { z } from 'zod';
 import {
@@ -172,6 +184,56 @@ function readCookieHeader(value: string | string[] | undefined): string | undefi
     return value[0];
   }
   return value;
+}
+
+function classifyProviderHealth(connection: ConnectionRecord): 'connected' | 'attention' | 'missing' {
+  const authState = connection.health?.authState ?? 'not_required';
+  const healthStatus = connection.health?.status ?? 'unknown';
+  const policyStatus = connection.policy?.status ?? 'ready';
+  const secretStatus = connection.policy?.secretStatus ?? 'not_required';
+  const syncStatus = connection.sync?.status ?? 'idle';
+
+  if (
+    ['reauth_required', 'degraded', 'error'].includes(healthStatus)
+    || ['expired', 'revoked', 'invalid_scopes'].includes(authState)
+    || ['partial', 'failed'].includes(syncStatus)
+  ) {
+    return 'attention';
+  }
+
+  if (
+    connection.enabled === false
+    || policyStatus === 'incomplete'
+    || ['missing', 'stale'].includes(secretStatus)
+    || ['missing', 'stale'].includes(authState)
+  ) {
+    return 'missing';
+  }
+
+  return 'connected';
+}
+
+function classifyTelegramHealth(snapshot: TelegramConfigSnapshot | null): 'connected' | 'attention' | 'missing' {
+  if (!snapshot) return 'missing';
+  if (snapshot.persisted.enabled === false && snapshot.persisted.secretRefId === null) {
+    return 'missing';
+  }
+  if (snapshot.secretAvailability === 'missing' || snapshot.staleComparedToApplied) {
+    return 'attention';
+  }
+  return snapshot.applied.enabled ? 'connected' : 'attention';
+}
+
+function telegramStatusLabel(snapshot: TelegramConfigSnapshot | null): string {
+  switch (classifyTelegramHealth(snapshot)) {
+    case 'connected':
+      return 'Active';
+    case 'attention':
+      return snapshot?.staleComparedToApplied ? 'Needs apply' : 'Needs attention';
+    case 'missing':
+    default:
+      return 'Not configured';
+  }
 }
 
 const MemorySearchQueryParamsSchema = z.object({
@@ -773,6 +835,85 @@ export async function createControlApi(
   app.get('/v1/workspaces', async () =>
     z.array(WorkspaceRecordSchema).parse(dependencies.runtime.listWorkspaces()),
   );
+  app.get('/v1/home/summary', async (request) => {
+    const query = z.object({ workspaceId: z.string().optional() }).parse(request.query);
+    const workspaces = dependencies.runtime.listWorkspaces();
+    const workspace = query.workspaceId
+      ? dependencies.runtime.getWorkspace(query.workspaceId)
+      : workspaces[0] ?? null;
+    const workspaceId = workspace?.id ?? query.workspaceId ?? 'default';
+    const workspaceName = workspace?.name ?? null;
+
+    const status = dependencies.runtime.getStatus();
+    const scheduler = dependencies.runtime.getSchedulerStatus();
+    const capabilities = dependencies.runtime.getEngineCapabilities();
+    const connections = dependencies.runtime.listConnections();
+    const telegramSnapshot = dependencies.telegramConfigControl?.getSnapshot() ?? null;
+    const healthyProviderCount = connections.filter((connection) => classifyProviderHealth(connection) === 'connected').length
+      + (classifyTelegramHealth(telegramSnapshot) === 'connected' ? 1 : 0);
+    const attentionProviderCount = connections.filter((connection) => classifyProviderHealth(connection) === 'attention').length
+      + (classifyTelegramHealth(telegramSnapshot) === 'attention' ? 1 : 0);
+    const automations = dependencies.runtime.listAutomations({ workspaceId });
+    const automationAttention = automations.filter((automation) =>
+      automation.status === 'attention'
+      || automation.blockedReason !== null
+      || automation.attentionReason !== null
+      || automation.openInterventionCount > 0
+      || automation.pendingApprovalCount > 0,
+    ).slice(0, 5);
+    const automationDueSoon = [...automations]
+      .sort((left, right) => {
+        const leftAt = left.nextExpectedAt ?? left.lastRunAt ?? '9999-12-31T00:00:00.000Z';
+        const rightAt = right.nextExpectedAt ?? right.lastRunAt ?? '9999-12-31T00:00:00.000Z';
+        return leftAt.localeCompare(rightAt);
+      })
+      .slice(0, 5);
+
+    const calendarAccount = dependencies.runtime.listCalendarAccounts()[0] ?? null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start.getTime() + (7 * 24 * 60 * 60 * 1000));
+    const upcomingEvents = calendarAccount
+      ? dependencies.runtime.listCalendarEvents(calendarAccount.id, {
+          dateFrom: start.toISOString(),
+          dateTo: end.toISOString(),
+          limit: 8,
+        })
+      : [];
+    const calendarDigest = calendarAccount ? dependencies.runtime.getCalendarDigest(calendarAccount.id) : null;
+
+    const todoAccount = dependencies.runtime.listTodoAccounts()[0] ?? null;
+    const upcomingTodos = todoAccount
+      ? dependencies.runtime.listTodos(todoAccount.id, { limit: 8 })
+        .sort((left, right) => (left.dueDate ?? '9999-12-31').localeCompare(right.dueDate ?? '9999-12-31'))
+        .slice(0, 8)
+      : [];
+    const todoDigest = todoAccount ? dependencies.runtime.getTodoDigest(todoAccount.id) : null;
+
+    return HomeSummarySchema.parse({
+      workspaceId,
+      workspaceName,
+      status,
+      scheduler,
+      capabilities,
+      setup: {
+        supportedProviderCount: 4,
+        healthyProviderCount,
+        attentionProviderCount,
+        telegramStatusLabel: telegramStatusLabel(telegramSnapshot),
+        telegramEffectiveWorkspaceId: telegramSnapshot?.effectiveWorkspaceId ?? null,
+      },
+      automationAttention,
+      automationDueSoon,
+      upcomingEvents,
+      calendarDigest,
+      upcomingTodos,
+      todoDigest,
+      recentMemories: dependencies.runtime.listMemories({ workspaceId, limit: 12 }),
+      controlChanges: dependencies.runtime.listMutationReceipts(undefined, 6),
+      pendingApprovalCount: dependencies.runtime.listApprovals({ status: 'pending' }).length,
+    });
+  });
   app.get('/v1/workspaces/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const workspace = dependencies.runtime.getWorkspace(id);
@@ -820,6 +961,84 @@ export async function createControlApi(
   app.post('/v1/identities/default', async (request) => {
     const body = WorkspaceIdentityDefaultInputSchema.parse(request.body);
     return dependencies.runtime.setWorkspaceDefaultIdentity(body.workspaceId, body.identityId);
+  });
+
+  app.get('/v1/automations', async (request) => {
+    const query = AutomationListQueryParamsSchema.parse(request.query);
+    return AutomationListResponseSchema.parse(
+      dependencies.runtime.listAutomations({ workspaceId: query.workspaceId ?? null }),
+    );
+  });
+
+  app.get('/v1/automations/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const automation = dependencies.runtime.getAutomation(id);
+    if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+    return AutomationDetailSchema.parse(automation);
+  });
+
+  app.patch('/v1/automations/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    const body = AutomationUpdateInputSchema.parse(request.body);
+    try {
+      const automation = await dependencies.runtime.updateAutomation(id, body, actorRole);
+      if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+      return AutomationDetailSchema.parse(automation);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_automation', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/automations/:id/run-now', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    try {
+      const automation = await dependencies.runtime.runAutomationNow(id, actorRole);
+      if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+      return AutomationDetailSchema.parse(automation);
+    } catch (error) {
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'automation_conflict', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_automation', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/automations/:id/pause', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    try {
+      const automation = await dependencies.runtime.pauseAutomation(id, actorRole);
+      if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+      return AutomationDetailSchema.parse(automation);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_automation', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/automations/:id/resume', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    try {
+      const automation = await dependencies.runtime.resumeAutomation(id, actorRole);
+      if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+      return AutomationDetailSchema.parse(automation);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_automation', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get('/v1/tasks', async () => dependencies.runtime.listTasks());
@@ -957,6 +1176,69 @@ export async function createControlApi(
       if (error instanceof InstructionPreviewContextError) {
         const statusCode = error.errorCode === 'invalid_context' ? 400 : 404;
         return reply.code(statusCode).send({ error: error.errorCode });
+      }
+      throw error;
+    }
+  });
+  app.get('/v1/curated-documents', async (request) => {
+    const query = z.object({ workspaceId: z.string().min(1) }).parse(request.query);
+    return z.array(CuratedDocumentSummarySchema).parse(
+      dependencies.runtime.listCuratedDocuments(query.workspaceId),
+    );
+  });
+  app.get('/v1/curated-documents/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const document = dependencies.runtime.getCuratedDocument(id);
+    if (!document) return reply.code(404).send({ error: 'curated_document_not_found' });
+    return CuratedDocumentRecordSchema.parse(document);
+  });
+  app.post('/v1/curated-documents/:id/propose-save', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = CuratedDocumentProposeSaveInputSchema.parse(request.body);
+    const input = body.baseRevisionHash === undefined
+      ? { markdownText: body.markdownText }
+      : { markdownText: body.markdownText, baseRevisionHash: body.baseRevisionHash };
+    try {
+      return CuratedDocumentSaveProposalSchema.parse(
+        dependencies.runtime.proposeCuratedDocumentSave(id, input),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'curated_document_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_curated_document', details: error.message });
+      }
+      throw error;
+    }
+  });
+  app.post('/v1/curated-documents/:id/apply-save', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    const body = CuratedDocumentApplySaveInputSchema.parse(request.body);
+    const input = body.baseRevisionHash === undefined
+      ? {
+          markdownText: body.markdownText,
+          confirmedCriticalWrite: body.confirmedCriticalWrite,
+        }
+      : {
+          markdownText: body.markdownText,
+          baseRevisionHash: body.baseRevisionHash,
+          confirmedCriticalWrite: body.confirmedCriticalWrite,
+        };
+    try {
+      return CuratedDocumentApplyResultSchema.parse(
+        dependencies.runtime.applyCuratedDocumentSave(id, input, actorRole),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'curated_document_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'curated_document_conflict', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_curated_document', details: error.message });
       }
       throw error;
     }

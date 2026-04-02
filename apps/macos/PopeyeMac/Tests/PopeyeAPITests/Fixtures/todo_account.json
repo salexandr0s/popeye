@@ -1,0 +1,11 @@
+{
+  "id": "todo-acct-1",
+  "connection_id": "conn-todo-1",
+  "provider_kind": "todoist",
+  "display_name": "Todoist",
+  "sync_cursor_since": "2026-04-01T00:00:00Z",
+  "last_sync_at": "2026-04-02T07:45:00Z",
+  "todo_count": 61,
+  "created_at": "2026-03-20T10:00:00Z",
+  "updated_at": "2026-04-02T07:45:00Z"
+}

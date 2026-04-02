@@ -1,0 +1,8 @@
+{
+  "id": "finance-doc-1",
+  "import_id": "finance-import-1",
+  "file_name": "statement.pdf",
+  "mime_type": "application/pdf",
+  "size_bytes": 24576,
+  "redacted_summary": "Monthly statement for March."
+}

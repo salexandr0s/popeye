@@ -1,0 +1,8 @@
+{
+  "id": "medical-import-1",
+  "vault_id": "vault-2",
+  "import_type": "visit_summary",
+  "file_name": "visit-summary.pdf",
+  "status": "ready",
+  "imported_at": "2026-04-01T09:00:00Z"
+}

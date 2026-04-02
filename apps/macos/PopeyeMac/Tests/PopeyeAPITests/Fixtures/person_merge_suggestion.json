@@ -1,0 +1,8 @@
+{
+  "source_person_id": "person-1",
+  "target_person_id": "person-2",
+  "source_display_name": "Annie Case",
+  "target_display_name": "Anne Case",
+  "reason": "Shared email alias and matching calendar attendee history.",
+  "confidence": 0.91
+}

@@ -35,4 +35,7 @@ export * from './medical.js';
 export * from './plugins.js';
 export * from './analytics.js';
 export * from './recall.js';
+export * from './automations.js';
 export * from './control-plane.js';
+export * from './curated-documents.js';
+export * from './home.js';

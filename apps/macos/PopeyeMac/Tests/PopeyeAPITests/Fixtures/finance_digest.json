@@ -1,0 +1,18 @@
+{
+  "id": "finance-digest-1",
+  "period": "month",
+  "total_income": 5400.0,
+  "total_expenses": 3120.45,
+  "category_breakdown": {
+    "travel": 320.0,
+    "groceries": 540.5
+  },
+  "anomaly_flags": [
+    {
+      "description": "Travel spend is higher than usual.",
+      "severity": "attention",
+      "transaction_id": "txn-1"
+    }
+  ],
+  "generated_at": "2026-04-02T08:00:00Z"
+}

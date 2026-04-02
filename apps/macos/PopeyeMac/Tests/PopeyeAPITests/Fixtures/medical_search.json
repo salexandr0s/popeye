@@ -1,0 +1,12 @@
+{
+  "query": "prescription",
+  "results": [
+    {
+      "record_id": "medication-1",
+      "record_type": "medication",
+      "date": "2026-04-01",
+      "redacted_summary": "Current antibiotic course.",
+      "score": 0.95
+    }
+  ]
+}

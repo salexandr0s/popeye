@@ -1,0 +1,12 @@
+{
+  "query": "annie",
+  "results": [
+    {
+      "person_id": "person-1",
+      "display_name": "Annie Case",
+      "canonical_email": "annie@example.com",
+      "github_login": "anniecase",
+      "score": 0.98
+    }
+  ]
+}

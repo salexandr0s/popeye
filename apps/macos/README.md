@@ -4,7 +4,7 @@ Native Swift macOS operator console for the Popeye agent platform.
 
 ## Status
 
-**Active development** — Phase 1 foundation is in place, with the first Setup + Brain product slice now added and the follow-up actionable Setup flow now wired through the control API.
+**Active development** — the native shell now includes Home, Setup, Brain, Automations, a native curated-markdown editor, and the first full set of life-domain surfaces, all backed by the control API.
 
 ## Requirements
 
@@ -44,7 +44,8 @@ open Package.swift
 
 ## Scope (current foundation)
 
-- Dashboard home
+- Home landing page
+- Dashboard
 - Command Center (live operational cockpit)
 - Runs / Jobs / Receipts investigation
 - Interventions / Approvals
@@ -52,12 +53,19 @@ open Package.swift
 - In-app GitHub / Gmail / Google Calendar Start Setup / Reconnect / Reauthorize actions
 - Connections overview
 - Brain overview for active identity, soul, instruction composition, and playbook visibility
+- Native curated markdown editing for instruction and curated-memory documents, with rendered preview, diff/propose/apply save flow, revision conflict handling, and receipts
+- Automations hub with workspace-aware heartbeat/scheduled visibility, week projection, enable/disable + supported cadence editing, pause/resume/run-now controls, and inline “why won’t this run?” context
+- Mail / Calendar / Todos read surfaces built as native split views on top of the existing control API
+- People repair actions for merge, split, and identity attach/detach
+- Files root management and write-intent review actions
+- Finance and Medical high-trust surfaces with vault open/close, import, digest, and record-entry actions
 - Usage & Security summary
+- Recent control-plane change visibility in Usage & Security
 - Memory with Search / Browse / Daily timeline modes
 - Instructions / Agent Profiles / Telegram / Scheduler
-- App-wide workspace picker that retargets Brain / Memory / Instructions to the selected workspace
+- App-wide workspace picker that retargets Home / Brain / Memory / Instructions / Automations / workspace-scoped read surfaces to the selected workspace
 - Telegram control-plane visibility for persisted vs applied config, apply-now, restart, and recent mutation receipts
-- Narrow mutation set: retry/cancel run, pause/resume/enqueue job, resolve intervention, approve/deny
+- Narrow mutation set: retry/cancel run, pause/resume/enqueue job, resolve intervention, approve/deny, automation enable/disable, supported automation cadence editing, automation pause/resume/run-now
 
 ## Product direction
 
@@ -66,9 +74,15 @@ The current app is the foundation, not the end state.
 This slice keeps the existing operator-console routes intact while moving the app toward a more Mac-native personal control center shape:
 - **Setup** becomes the onboarding and readiness hub for the daemon session and connected providers
 - **Brain** becomes the overview surface for identity, soul, instruction composition, and related assistant context
+- **Home** becomes the calm daily landing page for setup health, pending operator attention, automations, upcoming work, memory, and recent control changes, now backed by a dedicated summary API
 - **Memory Daily** adds a calm day-grouped review mode instead of only raw operational browsing
-- **Workspace selection** is app-wide so Brain, Memory, and Instructions stay aligned to one current context
+- **Workspace selection** is app-wide so Brain, Memory, Instructions, and Automations stay aligned to one current context
 - **Telegram setup** is now honest and control-plane-driven: token storage + config save/apply can happen from the app, but bridge activity still determines whether setup is truly complete
+- **Automations** is now a product-facing scheduler overview rather than forcing users into raw jobs tables first
+- **Instructions + curated memory docs** now use a proper native markdown editor with preview, save review, and revision-safe apply flow
+- **Mail / Calendar / Todos** remain read-first daily-use surfaces
+- **People / Files / Finance / Medical** now include narrow operator-safe mutations on top of their native read surfaces
+- **Automation editing** remains intentionally narrow, but now includes heartbeat cadence editing in addition to interval-backed scheduled automations with a real persisted schedule row
 
 
 The next product direction is to evolve the macOS app from an operator console into the primary personal-assistant control center for setup, brain/memory management, automations, domain surfaces, and system health.

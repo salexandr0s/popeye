@@ -59,6 +59,24 @@ function makeConfig(dir: string): AppConfig {
 }
 
 describe('CLI command workflows (service-level)', () => {
+  it('daemon plist uses tsx for source-checkout launchd installs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-cli-daemon-plist-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const configPath = join(dir, 'config.json');
+    writeFileSync(configPath, JSON.stringify(config), 'utf8');
+
+    const result = await runPopWithEnv(
+      ['daemon', 'plist'],
+      { POPEYE_CONFIG_PATH: configPath },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(process.execPath);
+    expect(result.stdout).toContain(resolve('node_modules', 'tsx', 'dist', 'cli.mjs'));
+    expect(result.stdout).toContain(resolve('apps', 'daemon', 'src', 'index.ts'));
+  });
+
   it('help shows Google Tasks as the todo connect path', async () => {
     const result = await runPop('todo', 'connect', '--help');
 

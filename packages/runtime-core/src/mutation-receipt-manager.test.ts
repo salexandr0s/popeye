@@ -23,13 +23,14 @@ describe('mutation receipt manager', () => {
       engine: { kind: 'fake', command: 'node', args: [] },
       workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     });
+    const secretLike = 'sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234'; // secret-scan: allow
 
     const record = runtime.writeMutationReceipt({
       kind: 'telegram_config_update',
       component: 'telegram',
       status: 'succeeded',
-      summary: 'Saved Telegram config sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234',
-      details: 'secret value sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234 was redacted before receipt write',
+      summary: `Saved Telegram config ${secretLike}`,
+      details: `secret value ${secretLike} was redacted before receipt write`,
       actorRole: 'operator',
     });
 
@@ -45,12 +46,12 @@ describe('mutation receipt manager', () => {
       tokensOut: 0,
       estimatedCostUsd: 0,
     });
-    expect(record.summary).not.toContain('sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234');
-    expect(record.details).not.toContain('sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234');
+    expect(record.summary).not.toContain(secretLike);
+    expect(record.details).not.toContain(secretLike);
     expect(fetched?.id).toBe(record.id);
     expect(listed[0]?.id).toBe(record.id);
     expect(existsSync(artifactPath)).toBe(true);
-    expect(artifact).not.toContain('sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234');
+    expect(artifact).not.toContain(secretLike);
     expect(runtime.getSecurityAuditFindings().some((event) => event.code === 'redaction_applied')).toBe(true);
 
     await runtime.close();

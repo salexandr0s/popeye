@@ -42,6 +42,7 @@ export interface LaunchdInstallOptions {
   configPath: string;
   nodeExecutable?: string;
   daemonEntryPoint: string;
+  programArguments?: string[];
   workingDirectory: string;
 }
 
@@ -74,8 +75,10 @@ function xmlEscape(s: string): string {
 
 export function createLaunchdPlist(options: LaunchdInstallOptions): string {
   const label = xmlEscape(options.label ?? DEFAULT_LABEL);
-  const nodeExecutable = xmlEscape(options.nodeExecutable ?? process.execPath);
-  const entryPoint = xmlEscape(options.daemonEntryPoint);
+  const programArguments = (options.programArguments ?? [
+    options.nodeExecutable ?? process.execPath,
+    options.daemonEntryPoint,
+  ]).map((value) => xmlEscape(value));
   const workDir = xmlEscape(options.workingDirectory);
   const configPath = xmlEscape(options.configPath);
   const launchdLabel = label;
@@ -89,8 +92,7 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
   <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${nodeExecutable}</string>
-    <string>${entryPoint}</string>
+${programArguments.map((value) => `    <string>${value}</string>`).join('\n')}
   </array>
   <key>WorkingDirectory</key>
   <string>${workDir}</string>

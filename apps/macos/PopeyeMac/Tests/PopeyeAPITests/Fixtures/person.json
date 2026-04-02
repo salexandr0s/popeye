@@ -1,0 +1,55 @@
+{
+  "id": "person-1",
+  "display_name": "Annie Case",
+  "pronouns": "she/her",
+  "tags": ["family", "high-signal"],
+  "notes": "Prefers afternoon check-ins.",
+  "canonical_email": "annie@example.com",
+  "github_login": "anniecase",
+  "activity_summary": "Recent email and calendar activity.",
+  "identity_count": 1,
+  "contact_method_count": 2,
+  "policy": {
+    "person_id": "person-1",
+    "relationship_label": "Family",
+    "reminder_routing": "gentle",
+    "approval_notes": "High trust",
+    "updated_at": "2026-04-02T07:00:00Z"
+  },
+  "identities": [
+    {
+      "id": "identity-1",
+      "person_id": "person-1",
+      "provider": "gmail",
+      "external_id": "gmail:annie@example.com",
+      "display_name": "Annie Case",
+      "handle": null,
+      "created_at": "2026-04-01T09:00:00Z",
+      "updated_at": "2026-04-02T07:00:00Z"
+    }
+  ],
+  "contact_methods": [
+    {
+      "id": "contact-1",
+      "person_id": "person-1",
+      "type": "email",
+      "value": "annie@example.com",
+      "label": "Personal",
+      "source": "derived",
+      "created_at": "2026-04-01T09:00:00Z",
+      "updated_at": "2026-04-02T07:00:00Z"
+    },
+    {
+      "id": "contact-2",
+      "person_id": "person-1",
+      "type": "telegram",
+      "value": "@anniecase",
+      "label": "Direct",
+      "source": "manual",
+      "created_at": "2026-04-01T10:00:00Z",
+      "updated_at": "2026-04-02T07:00:00Z"
+    }
+  ],
+  "created_at": "2026-04-01T09:00:00Z",
+  "updated_at": "2026-04-02T07:00:00Z"
+}

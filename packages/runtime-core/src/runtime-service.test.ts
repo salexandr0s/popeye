@@ -3429,4 +3429,236 @@ describe('startup regex validation', () => {
     expect(runtime).toBeTruthy();
     runtime.close();
   });
+  it('lists heartbeat automations and receipts pause resume run-now mutations', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-automations-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const automations = runtime.listAutomations({ workspaceId: 'default' });
+    expect(automations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task:heartbeat:default',
+          source: 'heartbeat',
+          workspaceId: 'default',
+          enabled: true,
+        }),
+      ]),
+    );
+
+    const paused = await runtime.pauseAutomation('task:heartbeat:default');
+    expect(paused).toMatchObject({ taskStatus: 'paused', enabled: false });
+
+    const resumed = await runtime.resumeAutomation('task:heartbeat:default');
+    expect(resumed).toMatchObject({ taskStatus: 'active', enabled: true });
+
+    const queued = await runtime.runAutomationNow('task:heartbeat:default');
+    expect(queued?.id).toBe('task:heartbeat:default');
+    expect(runtime.listJobs().some((job) => job.taskId === 'task:heartbeat:default')).toBe(true);
+
+    const kinds = runtime.listMutationReceipts('automation').map((receipt) => receipt.kind);
+    expect(kinds).toEqual(expect.arrayContaining(['automation_pause', 'automation_resume', 'automation_run_now']));
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'automation_paused', severity: 'info' }),
+        expect.objectContaining({ code: 'automation_resumed', severity: 'info' }),
+        expect.objectContaining({ code: 'automation_run_now_scheduled', severity: 'info' }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('updates scheduled automation enabled state and cadence with receipts and audit', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-automation-update-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const created = runtime.createTask({
+      workspaceId: 'default',
+      projectId: null,
+      title: 'Scheduled sync',
+      prompt: 'Check in',
+      source: 'schedule',
+      autoEnqueue: false,
+    });
+    runtime.databases.app
+      .prepare('INSERT INTO schedules (id, task_id, interval_seconds, created_at) VALUES (?, ?, ?, ?)')
+      .run('schedule:test-sync', created.task.id, 1800, new Date().toISOString());
+
+    const updated = await runtime.updateAutomation(created.task.id, {
+      enabled: false,
+      intervalSeconds: 900,
+    });
+
+    expect(updated).toMatchObject({
+      id: created.task.id,
+      taskStatus: 'paused',
+      enabled: false,
+      intervalSeconds: 900,
+      controls: {
+        enabledEdit: true,
+        cadenceEdit: true,
+      },
+    });
+
+    expect(runtime.listMutationReceipts('automation')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'automation_update',
+          metadata: expect.objectContaining({
+            automationId: created.task.id,
+            intervalSeconds: '900',
+            enabled: 'false',
+          }),
+        }),
+      ]),
+    );
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'automation_updated', severity: 'info' }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('updates heartbeat automation cadence and enabled state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-automation-heartbeat-update-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const updated = await runtime.updateAutomation('task:heartbeat:default', {
+      enabled: false,
+      intervalSeconds: 900,
+    });
+
+    expect(updated).toMatchObject({
+      id: 'task:heartbeat:default',
+      source: 'heartbeat',
+      taskStatus: 'paused',
+      enabled: false,
+      intervalSeconds: 900,
+      controls: {
+        enabledEdit: true,
+        cadenceEdit: true,
+      },
+    });
+    expect(runtime.getAutomation('task:heartbeat:default')).toMatchObject({
+      enabled: false,
+      intervalSeconds: 900,
+    });
+    expect(runtime.listMutationReceipts('automation')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'automation_update',
+          metadata: expect.objectContaining({
+            automationId: 'task:heartbeat:default',
+            intervalSeconds: '900',
+            enabled: 'false',
+          }),
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('lists, previews, and saves curated documents with receipts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-curated-documents-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = join(dir, 'workspace');
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    writeFileSync(join(workspaceRoot, 'WORKSPACE.md'), "# Workspace\n\nHello.\n", { mode: 0o600 });
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const summaries = runtime.listCuratedDocuments('default');
+    expect(summaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'workspace:default:instructions',
+          kind: 'workspace_instructions',
+          exists: true,
+        }),
+      ]),
+    );
+
+    const current = runtime.getCuratedDocument('workspace:default:instructions');
+    expect(current).toBeTruthy();
+    const proposal = runtime.proposeCuratedDocumentSave('workspace:default:instructions', {
+      markdownText: "# Workspace\n\nUpdated text.\n",
+      baseRevisionHash: current!.revisionHash,
+    });
+    expect(proposal.status).toBe('ready');
+    expect(proposal.requiresExplicitConfirmation).toBe(true);
+
+    const applied = runtime.applyCuratedDocumentSave('workspace:default:instructions', {
+      markdownText: proposal.normalizedMarkdown,
+      baseRevisionHash: current!.revisionHash,
+      confirmedCriticalWrite: true,
+    });
+    expect(applied.document.markdownText).toContain('Updated text.');
+    expect(readFileSync(join(workspaceRoot, 'WORKSPACE.md'), 'utf8')).toContain('Updated text.');
+    expect(runtime.listMutationReceipts('curated_documents')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'curated_document_save',
+          metadata: expect.objectContaining({
+            documentId: 'workspace:default:instructions',
+          }),
+        }),
+      ]),
+    );
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'curated_document_saved',
+          severity: 'info',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('preserves paused heartbeat automation across restart and skips paused heartbeat enqueue', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-automation-pause-'));
+    chmodSync(dir, 0o700);
+    const config = makeConfig(dir);
+    const runtime = createRuntimeService(config);
+
+    await runtime.pauseAutomation('task:heartbeat:default');
+    runtime.databases.app
+      .prepare("UPDATE schedules SET created_at = ? WHERE id = 'schedule:heartbeat:default'")
+      .run(new Date(Date.now() - 5_000).toISOString());
+
+    await runtime.runSchedulerCycle();
+    expect(runtime.listJobs().filter((job) => job.taskId === 'task:heartbeat:default')).toHaveLength(0);
+    await runtime.close();
+
+    const restarted = createRuntimeService(config);
+    expect(restarted.getAutomation('task:heartbeat:default')).toMatchObject({
+      taskStatus: 'paused',
+      enabled: false,
+    });
+
+    restarted.databases.app
+      .prepare("UPDATE schedules SET created_at = ? WHERE id = 'schedule:heartbeat:default'")
+      .run(new Date(Date.now() - 5_000).toISOString());
+    await restarted.runSchedulerCycle();
+
+    expect(restarted.listJobs().filter((job) => job.taskId === 'task:heartbeat:default')).toHaveLength(0);
+    await restarted.close();
+  });
+
 });

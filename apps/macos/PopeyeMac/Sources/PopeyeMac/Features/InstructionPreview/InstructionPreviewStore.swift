@@ -8,11 +8,27 @@ final class InstructionPreviewStore {
     var preview: InstructionPreviewDTO?
     var isLoading = false
     var error: String?
+    let curatedDocuments: CuratedDocumentsStore
 
     private let systemService: SystemService
 
     init(client: ControlAPIClient) {
         self.systemService = SystemService(client: client)
+        self.curatedDocuments = CuratedDocumentsStore(
+            client: client,
+            allowedKinds: [
+                "workspace_instructions",
+                "project_instructions",
+                "workspace_soul",
+                "workspace_identity",
+            ],
+            preferredKinds: [
+                "workspace_instructions",
+                "project_instructions",
+                "workspace_soul",
+                "workspace_identity",
+            ]
+        )
     }
 
 
@@ -25,6 +41,7 @@ final class InstructionPreviewStore {
             }
         }
         followedWorkspaceScope = workspaceID
+        curatedDocuments.workspaceID = workspaceID
     }
 
     func loadDefaultPreviewIfNeeded() async {
@@ -49,5 +66,9 @@ final class InstructionPreviewStore {
             self.error = error.localizedDescription
         }
         isLoading = false
+    }
+
+    func loadCuratedDocumentsIfNeeded() async {
+        await curatedDocuments.loadIfNeeded()
     }
 }

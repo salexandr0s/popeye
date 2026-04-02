@@ -448,6 +448,26 @@ function readFlagValue(flag: string): string | undefined {
   return value;
 }
 
+function resolveLaunchdDaemonSpec(): { daemonEntryPoint: string; workingDirectory: string; programArguments: string[] } {
+  if (isBundledMode()) {
+    const selfPath = currentScriptPath();
+    const daemonEntryPoint = bundledDaemonPath(selfPath);
+    return {
+      daemonEntryPoint,
+      workingDirectory: resolve(dirname(selfPath), '..', '..', '..'),
+      programArguments: [process.execPath, daemonEntryPoint],
+    };
+  }
+
+  const daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
+  const tsxCliEntryPoint = resolve(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  return {
+    daemonEntryPoint,
+    workingDirectory: process.cwd(),
+    programArguments: [process.execPath, tsxCliEntryPoint, daemonEntryPoint],
+  };
+}
+
 async function main(): Promise<void> {
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile, readRoleFlag()), null, 2));
@@ -491,22 +511,14 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'install') {
-    let daemonEntryPoint: string;
-    let workingDirectory: string;
-    if (isBundledMode()) {
-      const selfPath = currentScriptPath();
-      daemonEntryPoint = bundledDaemonPath(selfPath);
-      workingDirectory = resolve(dirname(selfPath), '..', '..', '..');
-    } else {
-      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
-      workingDirectory = process.cwd();
-    }
+    const launchSpec = resolveLaunchdDaemonSpec();
     console.info(
       JSON.stringify(
         installLaunchAgent({
           configPath,
-          daemonEntryPoint,
-          workingDirectory,
+          daemonEntryPoint: launchSpec.daemonEntryPoint,
+          programArguments: launchSpec.programArguments,
+          workingDirectory: launchSpec.workingDirectory,
         }),
         null,
         2,
@@ -587,21 +599,13 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'plist') {
-    let daemonEntryPoint: string;
-    let workingDirectory: string;
-    if (isBundledMode()) {
-      const selfPath = currentScriptPath();
-      daemonEntryPoint = bundledDaemonPath(selfPath);
-      workingDirectory = resolve(dirname(selfPath), '..', '..', '..');
-    } else {
-      daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
-      workingDirectory = process.cwd();
-    }
+    const launchSpec = resolveLaunchdDaemonSpec();
     console.info(
       createLaunchdPlist({
         configPath,
-        daemonEntryPoint,
-        workingDirectory,
+        daemonEntryPoint: launchSpec.daemonEntryPoint,
+        programArguments: launchSpec.programArguments,
+        workingDirectory: launchSpec.workingDirectory,
       }),
     );
     return;

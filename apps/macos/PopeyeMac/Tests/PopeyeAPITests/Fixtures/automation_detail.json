@@ -1,0 +1,42 @@
+{
+  "id": "task:heartbeat:default",
+  "workspace_id": "default",
+  "task_id": "task:heartbeat:default",
+  "source": "heartbeat",
+  "title": "Heartbeat",
+  "task_status": "active",
+  "job_id": "job-heartbeat-1",
+  "job_status": "running",
+  "status": "scheduled",
+  "enabled": true,
+  "schedule_summary": "Heartbeat every hour",
+  "interval_seconds": 3600,
+  "last_run_at": "2026-04-02T08:00:00Z",
+  "last_success_at": "2026-04-02T08:00:00Z",
+  "last_failure_at": null,
+  "next_expected_at": "2026-04-02T09:00:00Z",
+  "blocked_reason": null,
+  "attention_reason": null,
+  "open_intervention_count": 0,
+  "pending_approval_count": 1,
+  "controls": {
+    "run_now": true,
+    "pause": true,
+    "resume": false,
+    "enabled_edit": true,
+    "cadence_edit": false
+  },
+  "recent_runs": [
+    {
+      "id": "run-heartbeat-1",
+      "job_id": "job-heartbeat-1",
+      "state": "succeeded",
+      "started_at": "2026-04-02T08:00:00Z",
+      "finished_at": "2026-04-02T08:01:00Z",
+      "error": null,
+      "receipt_id": "receipt-heartbeat-1",
+      "pending_approval_count": 1,
+      "open_intervention_count": 0
+    }
+  ]
+}
