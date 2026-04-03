@@ -1,7 +1,8 @@
 import Foundation
 import PopeyeAPI
 
-@Observable @MainActor
+@Observable
+@MainActor
 final class DashboardStore {
     enum LoadingState {
         case idle
@@ -10,18 +11,33 @@ final class DashboardStore {
         case failed(APIError)
     }
 
+    struct Dependencies: Sendable {
+        var loadSnapshot: @Sendable () async throws -> DashboardSnapshot
+
+        static func live(service: SystemService) -> Dependencies {
+            Dependencies(loadSnapshot: {
+                try await service.loadDashboardSnapshot()
+            })
+        }
+    }
+
     var snapshot: DashboardSnapshot?
     var loadingState: LoadingState = .idle
     var lastUpdated: Date?
 
-    private let service: SystemService
+    private let dependencies: Dependencies
     private var pollTask: Task<Void, Never>?
 
     private static let staleThresholdSeconds: TimeInterval = 20
     private let pollIntervalSeconds: UInt64
 
     init(service: SystemService, pollIntervalSeconds: Int = 15) {
-        self.service = service
+        self.dependencies = .live(service: service)
+        self.pollIntervalSeconds = UInt64(pollIntervalSeconds)
+    }
+
+    init(dependencies: Dependencies, pollIntervalSeconds: Int = 15) {
+        self.dependencies = dependencies
         self.pollIntervalSeconds = UInt64(pollIntervalSeconds)
     }
 
@@ -33,7 +49,7 @@ final class DashboardStore {
     func load() async {
         loadingState = .loading
         do {
-            snapshot = try await service.loadDashboardSnapshot()
+            snapshot = try await dependencies.loadSnapshot()
             lastUpdated = .now
             loadingState = .loaded
         } catch let error as APIError {
@@ -45,7 +61,7 @@ final class DashboardStore {
 
     func refresh() async {
         do {
-            let newSnapshot = try await service.loadDashboardSnapshot()
+            let newSnapshot = try await dependencies.loadSnapshot()
             snapshot = newSnapshot
             lastUpdated = .now
             if case .failed = loadingState {
