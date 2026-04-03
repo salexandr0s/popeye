@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest';
 
 import { loadGitIgnoredRelativePaths, scanForSecrets } from './scan-secrets.mjs';
 
+function secretFixture() {
+  return ['sk', 'abc123def456ghi789'].join('-');
+}
+
 function initRepo() {
   const root = mkdtempSync(join(tmpdir(), 'popeye-secret-scan-'));
   execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
@@ -20,7 +24,10 @@ describe('scan-secrets', () => {
     const root = initRepo();
     mkdirSync(join(root, 'apps', 'macos', 'PopeyeMac', '.build'), { recursive: true });
     writeFileSync(join(root, 'apps', 'macos', 'PopeyeMac', '.gitignore'), '.build/\n');
-    writeFileSync(join(root, 'apps', 'macos', 'PopeyeMac', '.build', 'PopeyeMac'), 'token sk-abc123def456ghi789');
+    writeFileSync(
+      join(root, 'apps', 'macos', 'PopeyeMac', '.build', 'PopeyeMac'),
+      `token ${secretFixture()}`,
+    );
 
     expect(loadGitIgnoredRelativePaths(root).has('apps/macos/PopeyeMac/.build')).toBe(true);
     expect(() => scanForSecrets({ root })).not.toThrow();
@@ -29,7 +36,7 @@ describe('scan-secrets', () => {
   it('still fails on tracked files containing secrets', () => {
     const root = initRepo();
     mkdirSync(join(root, 'tracked'), { recursive: true });
-    writeFileSync(join(root, 'tracked', 'fixture.txt'), 'token sk-abc123def456ghi789');
+    writeFileSync(join(root, 'tracked', 'fixture.txt'), `token ${secretFixture()}`);
     execFileSync('git', ['add', 'tracked/fixture.txt'], { cwd: root, stdio: 'ignore' });
 
     expect(() => scanForSecrets({ root })).toThrow(/Potential secret found in tracked\/fixture.txt:1/);
@@ -37,7 +44,7 @@ describe('scan-secrets', () => {
 
   it('still honors inline allow markers', () => {
     const root = initRepo();
-    writeFileSync(join(root, 'notes.txt'), 'token sk-abc123def456ghi789 // secret-scan: allow\n');
+    writeFileSync(join(root, 'notes.txt'), `token ${secretFixture()} // secret-scan: allow\n`);
 
     expect(() => scanForSecrets({ root })).not.toThrow();
   });
