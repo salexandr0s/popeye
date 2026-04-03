@@ -37,7 +37,8 @@ struct MedicalAppointmentSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Add Appointment") {
                     onSave(MedicalAppointmentCreateInput(
                         importId: importId,
@@ -49,6 +50,7 @@ struct MedicalAppointmentSheet: View {
                     ))
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(canSave == false)
             }

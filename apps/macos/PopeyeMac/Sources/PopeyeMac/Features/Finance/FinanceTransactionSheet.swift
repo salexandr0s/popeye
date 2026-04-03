@@ -54,7 +54,8 @@ struct FinanceTransactionSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Add Transaction") {
                     guard let parsedAmount else { return }
                     onSave(FinanceTransactionCreateInput(
@@ -70,6 +71,7 @@ struct FinanceTransactionSheet: View {
                     ))
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(canSave == false)
             }

@@ -26,6 +26,27 @@ cd apps/macos/PopeyeMac
 swift test
 ```
 
+## Package app bundle
+
+From the repo root:
+
+```bash
+bash scripts/build-macos-app.sh
+```
+
+That produces `dist/pkg/PopeyeMac.app` with the bundled companion CLI at `Contents/Resources/Bootstrap/pop`.
+The packaged bootstrap closure now includes only runtime dependency files, not test/docs/build-source extras.
+
+To sign/notarize the packaged macOS artifacts after building them:
+
+```bash
+bash scripts/sign-pkg.sh
+```
+
+This upgrades `dist/pkg/PopeyeMac.app`, `dist/pkg/popeye-<version>-darwin.tar.gz`, and `dist/pkg/popeye-<version>-darwin.pkg` to the final signed artifact set when Developer ID credentials are available.
+
+For local/dev packaging, missing signing identities leave the artifacts marked as local-only in `dist/pkg/SIGNING-STATUS.md`. The GitHub release workflow is stricter and now requires signing identities before it will publish release artifacts.
+
 ## Open in Xcode
 
 ```bash

@@ -12,7 +12,11 @@ let package = Package(
             name: "PopeyeMac",
             dependencies: ["PopeyeAPI"],
             path: "Sources/PopeyeMac",
-            exclude: ["Resources/Info.plist"]
+            exclude: ["Resources/Info.plist"],
+            resources: [
+                .process("Resources/Branding"),
+                .process("Resources/Bootstrap")
+            ]
         ),
         .target(
             name: "PopeyeAPI",

@@ -19,4 +19,6 @@ if pkgutil --pkg-info com.popeye.cli &>/dev/null; then
 fi
 # Remove installed lib directory
 [ -d /usr/local/lib/popeye ] && rm -rf /usr/local/lib/popeye && echo "  Removed /usr/local/lib/popeye"
+# Remove packaged app bundle if present
+[ -d /Applications/PopeyeMac.app ] && rm -rf /Applications/PopeyeMac.app && echo "  Removed /Applications/PopeyeMac.app"
 echo "==> Popeye uninstalled. Data preserved at ~/Library/Application Support/Popeye/"

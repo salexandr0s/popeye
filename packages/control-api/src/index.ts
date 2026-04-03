@@ -30,6 +30,9 @@ import {
   RecallSearchQueryParamsSchema,
   RecallSourceKindSchema,
   AuthExchangeRequestSchema,
+  BootstrapStatusResponseSchema,
+  NativeAppSessionCreateRequestSchema,
+  NativeAppSessionRevokeResponseSchema,
   AgentProfileRecordSchema,
   MemoryPromotionExecuteRequestSchema,
   MemoryPromotionProposalRequestSchema,
@@ -167,10 +170,13 @@ export interface ControlApiDependencies {
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CSRF_EXEMPT_PATHS = new Set(['/v1/auth/exchange']);
+const AUTH_EXEMPT_PATHS = new Set(['/v1/bootstrap/status']);
+const NATIVE_APP_SESSION_HEADER = 'x-popeye-native-session';
 
 type RequestAuthContext =
   | { kind: 'bearer'; role: AuthRole; csrfToken: string; record: AuthRotationRecord }
-  | { kind: 'browser_session'; role: 'operator'; sessionId: string; csrfToken: string };
+  | { kind: 'browser_session'; role: 'operator'; sessionId: string; csrfToken: string }
+  | { kind: 'native_session'; role: 'operator'; sessionId: string; csrfToken: string };
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -184,6 +190,24 @@ function readCookieHeader(value: string | string[] | undefined): string | undefi
     return value[0];
   }
   return value;
+}
+
+function readHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) {
+    return false;
+  }
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
+}
+
+function isLoopbackRequest(request: { ip: string | undefined }): boolean {
+  return isLoopbackAddress(request.ip);
 }
 
 function classifyProviderHealth(connection: ConnectionRecord): 'connected' | 'attention' | 'missing' {
@@ -617,6 +641,53 @@ function recordAuthFailureAudit(
   runtime.recordSecurityAuditEvent(eventByOutcome[outcome]);
 }
 
+function recordNativeAppSessionAudit(
+  runtime: PopeyeRuntimeService,
+  request: { headers: Record<string, unknown>; ip: string | undefined },
+  outcome: 'expired' | 'invalid' | 'issued' | 'revoked',
+  details: Record<string, string> = {},
+): void {
+  const event: SecurityAuditEvent = outcome === 'issued'
+    ? {
+        code: 'native_app_session_issued',
+        severity: 'info',
+        message: 'Native app session issued for local client',
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          remoteAddress: request.ip ?? '',
+          userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+          ...details,
+        },
+      }
+    : outcome === 'revoked'
+      ? {
+          code: 'native_app_session_revoked',
+          severity: 'info',
+          message: 'Native app session revoked by local client',
+          component: 'control-api',
+          timestamp: nowIso(),
+          details: {
+            remoteAddress: request.ip ?? '',
+            userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+            ...details,
+          },
+        }
+    : {
+        code: outcome === 'expired' ? 'native_app_session_expired' : 'native_app_session_invalid',
+        severity: 'warn',
+        message: outcome === 'expired' ? 'Native app session expired' : 'Native app session invalid',
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          remoteAddress: request.ip ?? '',
+          userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : '',
+          ...details,
+        },
+      };
+  runtime.recordSecurityAuditEvent(event);
+}
+
 function recordCsrfFailureAudit(
   runtime: PopeyeRuntimeService,
   request: { headers: Record<string, unknown>; ip: string | undefined },
@@ -704,6 +775,9 @@ export async function createControlApi(
     if (!path.startsWith('/v1/')) {
       return undefined;
     }
+    if (AUTH_EXEMPT_PATHS.has(path)) {
+      return undefined;
+    }
     // POP-AUD-003: OAuth callback bypasses auth by design — OAuth redirects carry
     // state in query params, not auth headers. Protected by: (1) OAuth state parameter
     // validation in the handler, (2) per-route rate limit (10 req/min), (3) loopback-only binding.
@@ -712,7 +786,8 @@ export async function createControlApi(
     }
 
     const cookieHeader = readCookieHeader(request.headers.cookie);
-    const authHeader = request.headers.authorization;
+    const authHeader = readHeaderValue(request.headers.authorization);
+    const nativeSessionId = readHeaderValue(request.headers[NATIVE_APP_SESSION_HEADER]);
     if (authHeader !== undefined) {
       const authStore = dependencies.runtime.loadRoleAuthStore();
       const principal = resolveBearerPrincipal(authHeader, authStore);
@@ -726,6 +801,19 @@ export async function createControlApi(
         role: principal.role,
         record: principal.record,
         csrfToken: issueCsrfToken(principal.record),
+      };
+    } else if (nativeSessionId) {
+      const sessionResult = dependencies.runtime.validateNativeAppSession(nativeSessionId);
+      if (sessionResult.status !== 'valid') {
+        log?.warn('native app session rejected', { path, status: sessionResult.status });
+        recordNativeAppSessionAudit(dependencies.runtime, request, sessionResult.status);
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      request.popeyeAuthContext = {
+        kind: 'native_session',
+        role: 'operator',
+        sessionId: sessionResult.session.id,
+        csrfToken: sessionResult.session.csrfToken,
       };
     } else {
       const sessionId = readCookieValue(cookieHeader, AUTH_COOKIE_NAME);
@@ -822,6 +910,74 @@ export async function createControlApi(
     const session = dependencies.runtime.createBrowserSession();
     reply.header('set-cookie', serializeAuthCookie(session.id, dependencies.useSecureCookies));
     return { ok: true as const };
+  });
+
+  app.get('/v1/bootstrap/status', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!isLoopbackRequest(request)) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    const authStoreReady = (() => {
+      try {
+        dependencies.runtime.loadRoleAuthStore();
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    return BootstrapStatusResponseSchema.parse({
+      mode: 'local',
+      daemonReady: true,
+      authStoreReady,
+      nativeAppSessionsSupported: true,
+      requiresLocalApproval: true,
+      startedAt: dependencies.runtime.startedAt,
+    });
+  });
+
+  app.post('/v1/bootstrap/native-app-session', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!isLoopbackRequest(request)) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    const authContext = request.popeyeAuthContext;
+    if (!authContext || authContext.kind !== 'bearer' || authContext.role !== 'operator') {
+      recordAuthFailureAudit(dependencies.runtime, request, 'role_forbidden', {
+        path: '/v1/bootstrap/native-app-session',
+        method: 'POST',
+        actualRole: authContext?.role ?? 'none',
+        requiredRole: 'operator_bearer',
+      });
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    const body = NativeAppSessionCreateRequestSchema.parse(request.body ?? {});
+    const session = dependencies.runtime.createNativeAppSession(body.clientName);
+    recordNativeAppSessionAudit(dependencies.runtime, request, 'issued', {
+      clientName: body.clientName,
+      expiresAt: session.expiresAt,
+    });
+    return {
+      sessionToken: session.id,
+      expiresAt: session.expiresAt,
+    };
+  });
+
+  app.delete('/v1/auth/native-app-session/current', async (request, reply) => {
+    const authContext = request.popeyeAuthContext;
+    if (!authContext || authContext.kind !== 'native_session' || authContext.role !== 'operator') {
+      recordAuthFailureAudit(dependencies.runtime, request, 'role_forbidden', {
+        path: '/v1/auth/native-app-session/current',
+        method: 'DELETE',
+        actualRole: authContext?.role ?? 'none',
+        requiredRole: 'operator_native_session',
+      });
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+
+    const revoked = dependencies.runtime.revokeNativeAppSession(authContext.sessionId);
+    recordNativeAppSessionAudit(dependencies.runtime, request, 'revoked', {
+      sessionId: authContext.sessionId,
+      revoked: revoked ? 'true' : 'false',
+    });
+    return NativeAppSessionRevokeResponseSchema.parse({ revoked: true });
   });
 
   app.get('/v1/health', async () => ({

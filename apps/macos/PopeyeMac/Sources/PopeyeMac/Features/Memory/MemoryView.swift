@@ -4,7 +4,6 @@ import PopeyeAPI
 struct MemoryView: View {
     @Bindable var store: MemoryStore
     @Environment(AppModel.self) private var appModel
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -15,7 +14,7 @@ struct MemoryView: View {
             }
         }
         .navigationTitle("Memory")
-        .searchable(text: $store.searchText, prompt: "Search memories...")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Search memories...")
         .onSubmit(of: .search) {
             Task { await store.search() }
         }
@@ -28,7 +27,7 @@ struct MemoryView: View {
                     Text("Curated").tag(MemoryStore.ViewMode.curated)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 300)
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
             }
 
             if store.viewMode == .browse || store.viewMode == .daily {
@@ -44,34 +43,17 @@ struct MemoryView: View {
                 }
             }
         }
+        .popeyeRefreshable(invalidationSignals: [.memory, .general]) {
+            await reload()
+        }
         .task(id: appModel.selectedWorkspaceID) {
             store.workspaceID = appModel.selectedWorkspaceID
-            await store.loadList()
-            if store.viewMode == .curated {
-                await store.loadCuratedDocumentsIfNeeded()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task {
-                await store.loadList()
-                if store.viewMode == .curated {
-                    await store.curatedDocuments.load()
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.memory, .general].contains(signal) {
-                debouncer.schedule {
-                    await store.loadList()
-                    if store.viewMode == .curated {
-                        await store.curatedDocuments.load()
-                    }
-                }
-            }
+            await reload()
         }
         .onChange(of: store.selectedMemoryId) { _, newId in
             if let id = newId {
                 store.selectDay(for: id)
+                store.memoryHistory = nil
                 Task { await store.loadDetail(id: id) }
             } else {
                 store.selectedDetail = nil
@@ -87,11 +69,7 @@ struct MemoryView: View {
                 Task { await store.loadCuratedDocumentsIfNeeded() }
             }
         }
-        .sheet(isPresented: $store.showPromotionSheet) {
-            if let proposal = store.promotionProposal {
-                MemoryPromotionSheet(proposal: proposal, store: store)
-            }
-        }
+        .sheet(item: $store.promotionProposal, content: promotionSheet)
     }
 
     private var memoryContent: some View {
@@ -101,9 +79,9 @@ struct MemoryView: View {
             } else {
                 HSplitView {
                     listColumn
-                        .frame(minWidth: 350)
+                        .frame(minWidth: 340, idealWidth: 400)
                     inspectorColumn
-                        .frame(minWidth: 300)
+                        .frame(minWidth: 320, idealWidth: 380)
                 }
             }
         }
@@ -133,10 +111,25 @@ struct MemoryView: View {
             EmptyView()
         } else if let memory = store.selectedMemory {
             MemoryInspectorView(memory: memory, store: store)
+        } else if store.selectedMemoryId != nil {
+            LoadingStateView(title: "Loading memory...")
         } else {
-            Text("Select a memory to inspect")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            EmptyStateView(
+                icon: "brain",
+                title: "Select a memory",
+                description: "Choose a memory to inspect its details."
+            )
         }
+    }
+
+    private func reload() async {
+        await store.loadList()
+        if store.viewMode == .curated {
+            await store.curatedDocuments.load()
+        }
+    }
+
+    private func promotionSheet(proposal: MemoryPromotionProposalDTO) -> some View {
+        MemoryPromotionSheet(proposal: proposal, store: store)
     }
 }

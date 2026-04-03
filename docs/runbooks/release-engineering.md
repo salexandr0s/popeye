@@ -10,7 +10,7 @@ full installed-instance, domain, policy, recovery, and soak validation gate.
 
 ## Build and package
 
-Use the `build-pkg.sh` script to create a distribution tarball:
+Use the `build-pkg.sh` script to create the packaged macOS distribution:
 
 ```bash
 bash scripts/build-pkg.sh
@@ -18,40 +18,65 @@ bash scripts/build-pkg.sh
 
 This will:
 1. Install dependencies with `pnpm install --frozen-lockfile`
-2. Build all packages with `pnpm build`
-3. Create a tarball at `dist/pkg/popeye-<version>-darwin.tar.gz`
-4. Generate a SHA-256 checksum file alongside the tarball
+2. Build the TypeScript workspace and bundle the companion CLI + daemon
+3. Build a release `dist/pkg/PopeyeMac.app` bundle
+4. Bundle the companion CLI at `PopeyeMac.app/Contents/Resources/Bootstrap/pop`
+5. Create a drag-and-drop tarball at `dist/pkg/popeye-<version>-darwin.tar.gz`
+6. Create a `.pkg` installer at `dist/pkg/popeye-<version>-darwin.pkg` that installs the app to `/Applications` and the CLI/daemon wrappers to `/usr/local/bin`
+7. Generate a SHA-256 checksum file alongside the release artifacts
+8. Write `dist/pkg/SIGNING-STATUS.md` describing the current artifact state (unsigned until the signing step runs)
+
+The bundled Node dependency closure is pruned to runtime-only files so packaged artifacts do not carry test/docs/build-source content from third-party packages.
+
+Node 22 remains an external prerequisite for this milestone; the packaged app bundle carries the Popeye companion CLI, not a private Node runtime.
 
 ## Signing (macOS)
 
 For distribution outside the development machine:
 
 1. Build the package -- `bash scripts/build-pkg.sh`
-2. Sign the tarball with a developer identity:
+2. Sign the packaged app first, then rebuild/sign the installer and final tarball:
    ```bash
-   codesign --sign "Developer ID Application: <identity>" dist/pkg/popeye-*.tar.gz
-   ```
-3. Notarize if distributing outside the App Store:
-   ```bash
-   xcrun notarytool submit dist/pkg/popeye-*.tar.gz \
-     --apple-id <apple-id> \
-     --team-id <team-id> \
-     --password <app-specific-password> \
-     --wait
+   bash scripts/sign-pkg.sh
    ```
 
-Note: For local-only use (single machine), signing and notarization are not required.
+`scripts/sign-pkg.sh` now:
+- signs `dist/pkg/PopeyeMac.app` with a Developer ID Application identity
+- rebuilds `dist/pkg/popeye-<version>-darwin.tar.gz` from that signed app
+- rebuilds `dist/pkg/popeye-<version>-darwin.pkg` from the signed app bundle
+- signs the installer with a Developer ID Installer identity
+- notarizes/staples the app archive and installer when Apple credentials are present
+- rewrites `CHECKSUMS.sha256` and `SIGNING-STATUS.md` for the final artifact set
+
+Note: For local-only use (single machine), signing and notarization are not required. Without signing identities, `scripts/sign-pkg.sh` exits cleanly and leaves the artifacts marked as local-only in `SIGNING-STATUS.md`. For release publishing, the workflow now sets `POPEYE_SIGNING_REQUIRED=true`, so missing Developer ID signing identities fail the release before artifacts are uploaded or drafted.
 
 ## Installation
 
-Use the install script:
+### Packaged macOS distribution
+
+After `bash scripts/build-pkg.sh`, you have two packaged install paths:
+
+1. **Drag-and-drop app bundle**
+   - unpack `dist/pkg/popeye-<version>-darwin.tar.gz`
+   - move `PopeyeMac.app` into `/Applications`
+   - launch the app and use the in-app bootstrap flow
+
+2. **Installer package**
+   - install `dist/pkg/popeye-<version>-darwin.pkg`
+   - this places `PopeyeMac.app` in `/Applications`
+   - it also installs `pop` / `popeyed` wrappers into `/usr/local/bin` and companion bundles into `/usr/local/lib/popeye`
+
+Both packaged paths still require Node 22 on the machine.
+
+### Source-checkout / dev install
+
+Use the install script when you want the local repo checkout wired into `/usr/local/bin`:
 
 ```bash
 bash scripts/install.sh [--prefix /custom/path] [--force]
 ```
 
-This builds, bundles the CLI and daemon, symlinks `pop` to `/usr/local/bin`,
-and creates a default config at `~/Library/Application Support/Popeye/`.
+This builds local CLI bundles, symlinks `pop` to `/usr/local/bin`, and creates a default config at `~/Library/Application Support/Popeye/`.
 
 ## Smoke test
 
@@ -88,7 +113,8 @@ This will:
 1. Unload the LaunchAgent if active
 2. Remove the LaunchAgent plist
 3. Remove `/usr/local/bin/pop` and `/usr/local/bin/popeyed` symlinks
-4. Preserve data at `~/Library/Application Support/Popeye/`
+4. Remove `/Applications/PopeyeMac.app` if it was installed by the package
+5. Preserve data at `~/Library/Application Support/Popeye/`
 
 To fully remove data after uninstalling:
 
@@ -159,7 +185,7 @@ The `.github/workflows/release.yml` workflow automates the full release pipeline
 2. **Verification:** lint, typecheck, tests, contract verification, secret scan
 3. **Build:** `pnpm build` + `build-pkg.sh` (includes tsup bundling)
 4. **Artifacts:** release notes, artifact inventory, checksums
-5. **Signing:** optional (runs `sign-pkg.sh`, skips gracefully without certs)
+5. **Signing:** required for release publishing (runs `sign-pkg.sh` with `POPEYE_SIGNING_REQUIRED=true`; the job fails if Developer ID Application or Developer ID Installer signing is unavailable)
 6. **Release:** creates a GitHub draft release with all artifacts attached
 
 To run: **Actions → release → Run workflow → enter version (e.g. `0.1.0`)**
@@ -170,12 +196,13 @@ To enable signing and notarization, add these repository secrets:
 
 | Secret | Purpose |
 |--------|---------|
+| `POPEYE_APP_SIGN_IDENTITY` | Developer ID Application certificate name |
 | `POPEYE_SIGN_IDENTITY` | Developer ID Installer certificate name |
 | `POPEYE_APPLE_ID` | Apple ID email for notarization |
 | `POPEYE_TEAM_ID` | Apple Developer Team ID |
 | `POPEYE_APP_PASSWORD` | App-specific password for notarization |
 
-Without these secrets, the workflow skips signing and produces an unsigned .pkg.
+Without the signing identities, the workflow now fails before publishing a release. Apple notarization credentials remain optional; without them, the signed artifacts are still produced but notarization/stapling is skipped and reflected in `dist/pkg/SIGNING-STATUS.md`.
 
 ## Candidate SHA gate
 

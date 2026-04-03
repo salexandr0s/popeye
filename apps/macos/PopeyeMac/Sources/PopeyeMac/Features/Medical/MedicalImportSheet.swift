@@ -48,11 +48,13 @@ struct MedicalImportSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Create Import") {
                     onSave(vaultID, importType, fileName.trimmingCharacters(in: .whitespacesAndNewlines))
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(canSave == false)
             }

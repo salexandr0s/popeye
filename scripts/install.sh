@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Popeye install script — builds, bundles, and symlinks `pop` to /usr/local/bin.
+# Popeye source-checkout install script — builds local CLI bundles and symlinks `pop` to /usr/local/bin.
 # Usage: bash scripts/install.sh [--prefix /custom/path] [--force]
 set -euo pipefail
 
@@ -96,5 +96,8 @@ echo "Next steps:"
 echo "  1. Add to ~/.zprofile:"
 echo "     export POPEYE_CONFIG_PATH=\"\$HOME/Library/Application Support/Popeye/config.json\""
 echo "  2. Edit config: $APP_SUPPORT_DIR/config.json"
-echo "  3. Initialize auth: pop auth init"
-echo "  4. Verify: pop --version"
+echo "  3. Bootstrap local runtime defaults: pop bootstrap ensure-local"
+echo "  4. Start the daemon: pop bootstrap start-daemon"
+echo "  5. Verify: pop --version"
+echo ""
+echo "For the packaged macOS app bundle, use: bash scripts/build-pkg.sh"

@@ -21,8 +21,11 @@ struct ConnectionIndicator: View {
                     .padding(.vertical, 1)
                     .background(.green.opacity(0.1))
                     .clipShape(.capsule)
-            }
+                }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Connection")
+        .accessibilityValue(accessibilityValue)
     }
 
     private var dotColor: Color {
@@ -41,6 +44,10 @@ struct ConnectionIndicator: View {
         case .disconnected: "Disconnected"
         case .failed: "Connection Failed"
         }
+    }
+
+    private var accessibilityValue: String {
+        sseConnected ? "\(label), live updates connected" : label
     }
 }
 

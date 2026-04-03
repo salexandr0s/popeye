@@ -50,7 +50,7 @@ struct SettingsView: View {
             }
 
             Section("Diagnostics") {
-                Button(isTesting ? "Testing..." : "Test Connection") {
+                Button(isTesting ? "Testing…" : "Test Connection") {
                     Task { await testConnection() }
                 }
                 .disabled(isTesting || !appModel.isConnected)
@@ -95,7 +95,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 450, height: 480)
+        .frame(minWidth: 450, idealWidth: 480, minHeight: 480)
     }
 
     private func disconnect() {
@@ -120,22 +120,6 @@ struct SettingsView: View {
             diagnosticsResult = DiagnosticsResult(healthy: false, latencyMs: 0, error: error.localizedDescription)
         }
         isTesting = false
-    }
-}
-
-private struct DiagnosticsResult {
-    let healthy: Bool
-    let latencyMs: Int
-    let error: String?
-}
-
-extension Bundle {
-    var shortVersion: String {
-        infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-    }
-
-    var buildNumber: String {
-        infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 }
 

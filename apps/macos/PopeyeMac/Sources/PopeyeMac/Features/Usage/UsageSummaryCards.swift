@@ -3,14 +3,16 @@ import PopeyeAPI
 
 struct UsageSummaryCards: View {
     let store: UsageStore
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 5)
+    private var columns: [GridItem] {
+        PopeyeUI.cardColumns(minimum: 180, maximum: 260)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Overview")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 16) {
+            LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                 DashboardCard(
                     label: "Total Cost",
                     value: CurrencyFormatting.formatCostUSD(store.totalCost),

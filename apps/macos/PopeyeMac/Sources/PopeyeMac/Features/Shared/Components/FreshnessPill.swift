@@ -8,7 +8,7 @@ struct FreshnessPill: View {
 
     var body: some View {
         Text(isStale ? "Stale" : "Fresh")
-            .font(.system(size: 11, weight: .medium))
+            .font(.caption.bold())
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(isStale ? Color.orange.opacity(0.1) : Color.green.opacity(0.1))

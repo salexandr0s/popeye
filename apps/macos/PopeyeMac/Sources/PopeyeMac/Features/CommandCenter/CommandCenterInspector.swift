@@ -82,15 +82,18 @@ struct CommandCenterInspector: View {
             Image(systemName: "sidebar.right")
                 .font(.system(size: 32))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
             Text("Select an item to inspect")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private var notFound: some View {
         Text("Item not found")
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
     }
 }

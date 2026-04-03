@@ -3,9 +3,9 @@ import PopeyeAPI
 
 struct DashboardView: View {
     var store: DashboardStore
-    @State private var debouncer = ReloadDebouncer()
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 4)
+    private var columns: [GridItem] {
+        PopeyeUI.cardColumns(minimum: 200, maximum: 280)
+    }
 
     var body: some View {
         Group {
@@ -19,21 +19,15 @@ struct DashboardView: View {
             }
         }
         .navigationTitle("Dashboard")
+        .popeyeRefreshable(invalidationSignals: [.runs, .jobs, .security, .general]) {
+            await store.refresh()
+        }
         .task {
             await store.load()
             store.startPolling()
         }
         .onDisappear {
             store.stopPolling()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.refresh() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal,
-               [.runs, .jobs, .security, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.refresh() }
-            }
         }
     }
 
@@ -48,7 +42,7 @@ struct DashboardView: View {
                     engineSection(snap)
                     memorySection(snap)
                 }
-                .padding(20)
+                .padding(PopeyeUI.contentPadding)
             }
         }
     }
@@ -72,7 +66,7 @@ struct DashboardView: View {
             Text("Daemon Health")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 16) {
+            LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                 HealthCard(status: snap.status)
                 UptimeCard(status: snap.status)
                 RunningJobsCard(status: snap.status)
@@ -86,7 +80,7 @@ struct DashboardView: View {
             Text("Scheduler & Cost")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 16) {
+            LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                 SchedulerCard(scheduler: snap.scheduler)
                 ActiveLeasesCard(scheduler: snap.scheduler)
                 TotalRunsCard(usage: snap.usage)
@@ -100,7 +94,7 @@ struct DashboardView: View {
             Text("Engine Capabilities")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 16) {
+            LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                 HostToolsCard(capabilities: snap.capabilities)
                 SessionsCard(capabilities: snap.capabilities)
                 CompactionCard(capabilities: snap.capabilities)
@@ -118,7 +112,7 @@ struct DashboardView: View {
                 Text("Memory")
                     .font(.headline)
                     .foregroundStyle(.secondary)
-                LazyVGrid(columns: columns, spacing: 16) {
+                LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                     MemoryAuditCard(audit: audit)
                 }
             }

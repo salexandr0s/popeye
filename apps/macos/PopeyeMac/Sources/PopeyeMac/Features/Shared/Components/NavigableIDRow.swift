@@ -14,23 +14,29 @@ struct NavigableIDRow: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 80, idealWidth: 120, alignment: .trailing)
                 .layoutPriority(-1)
+                .accessibilityHidden(true)
             Button(action: action) {
                 Text(IdentifierFormatting.formatShortID(id))
                     .underline()
             }
             .buttonStyle(.plain)
             .foregroundStyle(.link)
-            .accessibilityLabel("Navigate to \(label)")
+            .accessibilityLabel("Open \(label)")
+            .accessibilityValue(IdentifierFormatting.formatShortID(id))
+            .accessibilityHint("Opens the related details")
             Spacer()
-            Button("Copy", systemImage: "doc.on.doc") {
+            Button("Copy \(label)", systemImage: "doc.on.doc") {
                 Clipboard.copy(id)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .labelStyle(.iconOnly)
             .controlSize(.small)
+            .help("Copy \(label)")
             .accessibilityLabel("Copy \(label)")
+            .accessibilityHint("Copies this identifier to the clipboard")
         }
         .font(.callout)
+        .accessibilityElement(children: .contain)
     }
 }

@@ -270,6 +270,12 @@ import {
   validateBrowserSession as validateRuntimeBrowserSession,
 } from './browser-sessions.js';
 import {
+  createNativeAppSession as createRuntimeNativeAppSession,
+  revokeNativeAppSession as revokeRuntimeNativeAppSession,
+  type NativeAppSessionValidationResult,
+  validateNativeAppSession as validateRuntimeNativeAppSession,
+} from './native-app-sessions.js';
+import {
   computeEffectiveContextReleaseLevel,
   validateProfileTaskContext,
 } from './execution-envelopes.js';
@@ -2303,6 +2309,18 @@ export class PopeyeRuntimeService {
 
   validateBrowserSession(sessionId: string): BrowserSessionValidationResult {
     return validateRuntimeBrowserSession(this.databases.app, sessionId);
+  }
+
+  createNativeAppSession(clientName: string) {
+    return createRuntimeNativeAppSession(this.databases.app, clientName);
+  }
+
+  validateNativeAppSession(sessionId: string): NativeAppSessionValidationResult {
+    return validateRuntimeNativeAppSession(this.databases.app, sessionId);
+  }
+
+  revokeNativeAppSession(sessionId: string): boolean {
+    return revokeRuntimeNativeAppSession(this.databases.app, sessionId);
   }
 
   startOAuthConnectSession(input: OAuthConnectStartRequest): OAuthSessionRecord {

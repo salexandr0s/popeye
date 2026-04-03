@@ -41,17 +41,29 @@ struct MemorySearchResultsView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Search summary")
+            .accessibilityValue(searchSummary(response))
 
             List(response.results, selection: $store.selectedMemoryId) { hit in
-                MemorySearchHitRow(hit: hit)
+                MemorySearchHitRow(hit: hit, isSelected: store.selectedMemoryId == hit.id)
             }
             .listStyle(.inset)
         }
+    }
+
+    private func searchSummary(_ response: MemorySearchResponseDTO) -> String {
+        [
+            "\(response.totalCandidates) candidates",
+            "\(response.results.count) results",
+            "\(response.latencyMs.formatted(.number.precision(.fractionLength(0)))) milliseconds"
+        ].joined(separator: ", ")
     }
 }
 
 struct MemorySearchHitRow: View {
     let hit: MemorySearchHitDTO
+    var isSelected = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -74,6 +86,34 @@ struct MemorySearchHitRow: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hit.description)
+        .accessibilityValue(accessibilitySummary)
     }
 
+    private var accessibilitySummary: String {
+        var parts = [
+            hit.type.replacing("_", with: " ").capitalized,
+            "Confidence \(hit.effectiveConfidence.formatted(.percent.precision(.fractionLength(0))))",
+            "Created \(DateFormatting.formatRelativeTime(hit.createdAt))"
+        ]
+
+        if let layer = hit.layer {
+            parts.append(layer.replacing("_", with: " ").capitalized)
+        }
+
+        if let domain = hit.domain, !domain.isEmpty {
+            parts.append(domain.capitalized)
+        }
+
+        if let content = hit.content, !content.isEmpty {
+            parts.append(content)
+        }
+
+        if isSelected {
+            parts.append("Selected")
+        }
+
+        return parts.joined(separator: ", ")
+    }
 }

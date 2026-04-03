@@ -19,13 +19,7 @@ struct MemoryDailyView: View {
                 ContentUnavailableView("No daily memories yet", systemImage: "calendar")
             } else {
                 List(store.dayGroups, selection: $store.selectedDayID) { group in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(group.title)
-                            .font(.headline)
-                        Text(group.subtitle)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
+                    MemoryDayRowView(group: group, isSelected: store.selectedDayID == group.id)
                     .tag(group.id)
                 }
                 .listStyle(.sidebar)
@@ -51,7 +45,10 @@ struct MemoryDailyView: View {
                     Divider()
 
                     List(group.memories, selection: $store.selectedMemoryId) { memory in
-                        MemoryTimelineRowView(memory: memory)
+                        MemoryTimelineRowView(
+                            memory: memory,
+                            isSelected: store.selectedMemoryId == memory.id
+                        )
                     }
                     .listStyle(.inset)
                 }
@@ -64,6 +61,7 @@ struct MemoryDailyView: View {
 
 private struct MemoryTimelineRowView: View {
     let memory: MemoryRecordDTO
+    var isSelected = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -87,5 +85,49 @@ private struct MemoryTimelineRowView: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(memory.description)
+        .accessibilityValue(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        var parts = [
+            memory.memoryType.replacing("_", with: " ").capitalized,
+            memory.domain.capitalized,
+            "Confidence \(memory.confidence.formatted(.percent.precision(.fractionLength(0))))",
+            "Captured \(DateFormatting.formatAbsoluteTime(memory.sourceTimestamp ?? memory.createdAt))"
+        ]
+
+        if isSelected {
+            parts.append("Selected")
+        }
+
+        return parts.joined(separator: ", ")
+    }
+}
+
+private struct MemoryDayRowView: View {
+    let group: MemoryDayGroup
+    var isSelected = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(group.title)
+                .font(.headline)
+            Text(group.subtitle)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(group.title)
+        .accessibilityValue(dayAccessibilityValue)
+    }
+
+    private var dayAccessibilityValue: String {
+        if isSelected {
+            return "\(group.subtitle), Selected"
+        }
+
+        return group.subtitle
     }
 }

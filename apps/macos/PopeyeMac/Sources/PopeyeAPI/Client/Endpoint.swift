@@ -33,6 +33,7 @@ public extension Endpoint {
     static let engineCapabilities = Endpoint(path: "/v1/engine/capabilities")
     static let usageSummary = Endpoint(path: "/v1/usage/summary")
     static let csrfToken = Endpoint(path: "/v1/security/csrf-token")
+    static let currentNativeAppSession = Endpoint(path: "/v1/auth/native-app-session/current", method: .delete)
     static let securityAudit = Endpoint(path: "/v1/security/audit")
     static let daemonState = Endpoint(path: "/v1/daemon/state")
     static let workspaces = Endpoint(path: "/v1/workspaces")

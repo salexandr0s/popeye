@@ -15,6 +15,7 @@ struct ControlChangesSection: View {
                 HStack(spacing: 8) {
                     Image(systemName: "slider.horizontal.3")
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text("No recent control-plane changes")
                         .foregroundStyle(.secondary)
                 }
@@ -59,6 +60,10 @@ struct ControlChangesSection: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(receipt.summary)
+                        .accessibilityValue(receiptAccessibilityValue(receipt))
+                        .accessibilityHint("Opens control change details")
                     }
                 }
             }
@@ -97,5 +102,14 @@ struct ControlChangesSection: View {
             }
             .frame(minWidth: 480, minHeight: 420)
         }
+    }
+
+    private func receiptAccessibilityValue(_ receipt: MutationReceiptDTO) -> String {
+        [
+            receipt.component.capitalized,
+            receipt.status.replacingOccurrences(of: "_", with: " ").capitalized,
+            receipt.kind.replacingOccurrences(of: "_", with: " ").capitalized,
+            DateFormatting.formatRelativeTime(receipt.createdAt)
+        ].joined(separator: ", ")
     }
 }

@@ -3,9 +3,11 @@ import Security
 
 public struct KeychainStore: Sendable {
     private let service = "com.popeye.mac"
-    private let account = "bearer-token"
+    private let account: String
 
-    public init() {}
+    public init(account: String = "bearer-token") {
+        self.account = account
+    }
 
     public func save(_ value: String) throws {
         let data = Data(value.utf8)

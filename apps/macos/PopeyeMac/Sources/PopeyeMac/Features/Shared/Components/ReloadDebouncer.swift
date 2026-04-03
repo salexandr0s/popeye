@@ -1,6 +1,6 @@
 import Foundation
 
-@Observable @MainActor
+@MainActor
 final class ReloadDebouncer {
     private var pendingTask: Task<Void, Never>?
     private let delay: Duration

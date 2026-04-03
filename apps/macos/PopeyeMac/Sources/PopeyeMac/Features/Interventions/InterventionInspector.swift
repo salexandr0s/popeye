@@ -105,6 +105,8 @@ struct InterventionInspector: View {
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(.separator, lineWidth: 0.5)
                 )
+                .accessibilityLabel("Resolution note")
+                .accessibilityValue(note)
         }
     }
 }

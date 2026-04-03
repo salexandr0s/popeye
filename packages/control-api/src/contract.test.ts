@@ -10,6 +10,9 @@ import {
   AuthExchangeResponseSchema,
   ConnectionRecordSchema,
   CsrfTokenResponseSchema,
+  BootstrapStatusResponseSchema,
+  NativeAppSessionCreateResponseSchema,
+  NativeAppSessionRevokeResponseSchema,
   DaemonStatusResponseSchema,
   EngineCapabilitiesResponseSchema,
   ExecutionEnvelopeResponseSchema,
@@ -494,6 +497,88 @@ describe('API contract tests', () => {
 
     expect(response.statusCode).toBe(200);
     UsageSummarySchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('GET /v1/bootstrap/status conforms to BootstrapStatusResponseSchema', async () => {
+    const { runtime } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/bootstrap/status',
+    });
+
+    expect(response.statusCode).toBe(200);
+    BootstrapStatusResponseSchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('POST /v1/bootstrap/native-app-session conforms to NativeAppSessionCreateResponseSchema', async () => {
+    const { runtime, store, authFile } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(initAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/bootstrap/native-app-session',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { clientName: 'PopeyeMac' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    NativeAppSessionCreateResponseSchema.parse(response.json());
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('DELETE /v1/auth/native-app-session/current conforms to NativeAppSessionRevokeResponseSchema', async () => {
+    const { runtime, store, authFile } = createTestEnv();
+    const app = await createControlApi({ runtime });
+    const bearerCsrf = issueCsrfToken(initAuthStore(authFile));
+
+    const issued = await app.inject({
+      method: 'POST',
+      url: '/v1/bootstrap/native-app-session',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': bearerCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { clientName: 'PopeyeMac' },
+    });
+    expect(issued.statusCode).toBe(200);
+
+    const { sessionToken } = NativeAppSessionCreateResponseSchema.parse(issued.json());
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { 'x-popeye-native-session': sessionToken },
+    });
+    expect(csrfResponse.statusCode).toBe(200);
+    const nativeCsrf = CsrfTokenResponseSchema.parse(csrfResponse.json()).token;
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/auth/native-app-session/current',
+      headers: {
+        'x-popeye-native-session': sessionToken,
+        'x-popeye-csrf': nativeCsrf,
+        'sec-fetch-site': 'none',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    NativeAppSessionRevokeResponseSchema.parse(response.json());
 
     await runtime.close();
     await app.close();

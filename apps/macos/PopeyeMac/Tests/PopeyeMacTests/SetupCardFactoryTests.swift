@@ -180,4 +180,109 @@ struct SetupCardFactoryTests {
         #expect(telegram.followUpRows.contains(SetupCardDetail(label: "telegram.secretRefId", value: "secret-telegram-bot")))
         #expect(telegram.detailRows.contains(where: { $0.label == "Latest Change" && $0.value.contains("Saved Telegram config") }))
     }
+
+    @Test("Disabled providers stay missing and do not offer reconnect actions")
+    func disabledProviderDoesNotOfferReconnect() throws {
+        let connection = Self.makeConnection(
+            id: "conn-gh-disabled",
+            domain: "github",
+            providerKind: "github",
+            enabled: false
+        )
+
+        let cards = SetupCardFactory.makeCards(
+            session: SetupSessionSnapshot(connectionState: .connected, baseURL: "http://127.0.0.1:3210", sseConnected: true),
+            connections: [connection],
+            relayCheckpoint: nil,
+            uncertainDeliveries: [],
+            telegramConfig: nil,
+            mutationReceipts: []
+        )
+
+        let github = try #require(cards.first(where: { $0.id == .github }))
+        #expect(github.state == .missing)
+        #expect(github.primaryAction == nil)
+        #expect(github.summary == "GitHub is present but disabled.")
+        #expect(github.destination == .connections(id: "conn-gh-disabled"))
+    }
+
+    @Test("Telegram manual restart footnote is shown for enabled manual setups")
+    func telegramManualFootnote() throws {
+        let telegramConfig = Self.makeTelegramSnapshot(
+            persistedEnabled: true,
+            appliedEnabled: false,
+            allowedUserId: "5315323298",
+            secretRefId: "secret-telegram-bot",
+            secretAvailability: "available",
+            staleComparedToApplied: false,
+            managementMode: "manual",
+            restartSupported: false
+        )
+
+        let cards = SetupCardFactory.makeCards(
+            session: SetupSessionSnapshot(connectionState: .connected, baseURL: "http://127.0.0.1:3210", sseConnected: true),
+            connections: [],
+            relayCheckpoint: nil,
+            uncertainDeliveries: [],
+            telegramConfig: telegramConfig,
+            mutationReceipts: []
+        )
+
+        let telegram = try #require(cards.first(where: { $0.id == .telegram }))
+        #expect(telegram.followUpFootnote == "This daemon is not launchd-managed. If Apply does not activate Telegram, restart the daemon manually.")
+        #expect(telegram.supplementaryActions.isEmpty)
+    }
+
+    private static func makeConnection(
+        id: String,
+        domain: String,
+        providerKind: String,
+        enabled: Bool
+    ) -> ConnectionDTO {
+        ConnectionDTO(
+            id: id,
+            domain: domain,
+            providerKind: providerKind,
+            label: providerKind.capitalized,
+            mode: "read_only",
+            enabled: enabled,
+            lastSyncAt: nil,
+            lastSyncStatus: nil,
+            policy: ConnectionPolicyDTO(status: "ready", secretStatus: "configured", mutatingRequiresApproval: false),
+            health: ConnectionHealthDTO(status: "healthy", authState: "configured", checkedAt: nil, lastError: nil, remediation: nil),
+            sync: ConnectionSyncDTO(lastAttemptAt: nil, lastSuccessAt: nil, status: "success", lagSummary: ""),
+            createdAt: "2026-03-20T08:00:00Z",
+            updatedAt: "2026-03-25T08:00:00Z"
+        )
+    }
+
+    private static func makeTelegramSnapshot(
+        persistedEnabled: Bool,
+        appliedEnabled: Bool,
+        allowedUserId: String?,
+        secretRefId: String?,
+        secretAvailability: String,
+        staleComparedToApplied: Bool,
+        managementMode: String,
+        restartSupported: Bool
+    ) -> TelegramConfigSnapshotDTO {
+        TelegramConfigSnapshotDTO(
+            persisted: TelegramConfigRecordDTO(
+                enabled: persistedEnabled,
+                allowedUserId: allowedUserId,
+                secretRefId: secretRefId
+            ),
+            applied: TelegramConfigRecordDTO(
+                enabled: appliedEnabled,
+                allowedUserId: appliedEnabled ? allowedUserId : nil,
+                secretRefId: appliedEnabled ? secretRefId : nil
+            ),
+            effectiveWorkspaceId: "default",
+            secretAvailability: secretAvailability,
+            staleComparedToApplied: staleComparedToApplied,
+            warnings: [],
+            managementMode: managementMode,
+            restartSupported: restartSupported
+        )
+    }
 }

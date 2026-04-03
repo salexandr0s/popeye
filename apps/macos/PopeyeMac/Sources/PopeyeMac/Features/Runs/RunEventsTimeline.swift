@@ -34,10 +34,17 @@ struct RunEventsTimeline: View {
                 .truncationMode(.tail)
                 .textSelection(.enabled)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Event \(formattedEventType(event.type))")
+        .accessibilityValue("\(DateFormatting.formatRelativeTime(event.createdAt)), \(truncatedPayload(event.payload))")
     }
 
     private func truncatedPayload(_ payload: String) -> String {
         if payload.count <= 120 { return payload }
         return String(payload.prefix(120)) + "..."
+    }
+
+    private func formattedEventType(_ type: String) -> String {
+        type.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }

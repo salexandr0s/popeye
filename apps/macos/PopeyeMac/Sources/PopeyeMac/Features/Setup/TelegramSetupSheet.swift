@@ -50,12 +50,12 @@ struct TelegramSetupSheet: View {
 
             HStack {
                 Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.escape)
+                    .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
                 Button(isSaving ? "Saving…" : submitTitle, action: onSubmit)
-                    .keyboardShortcut(.return)
+                    .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(isSaving || draft.canSubmit == false)
             }

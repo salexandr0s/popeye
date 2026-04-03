@@ -9,9 +9,11 @@ struct AppSidebar: View {
             ForEach(RouteGroup.allCases) { group in
                 Section(group.title) {
                     ForEach(group.routes) { route in
-                        Label(route.title, systemImage: route.systemImage)
+                        NavigationLink(value: route) {
+                            Label(route.title, systemImage: route.systemImage)
+                        }
+                        .badge(badgeCount(for: route))
                             .tag(route)
-                            .badge(badgeCount(for: route))
                     }
                 }
             }

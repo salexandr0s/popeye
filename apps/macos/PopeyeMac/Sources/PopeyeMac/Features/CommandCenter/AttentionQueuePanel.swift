@@ -18,6 +18,8 @@ struct AttentionQueuePanel: View {
                         .padding(.vertical, 2)
                         .background(.orange)
                         .clipShape(.capsule)
+                        .accessibilityLabel("Items needing attention")
+                        .accessibilityValue("\(store.attentionItems.count)")
                 }
             }
 
@@ -62,12 +64,16 @@ struct AttentionQueuePanel: View {
             }
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.title)
+        .accessibilityValue("\(kindDescription(for: item.kind)), \(item.detail)")
     }
 
     private var emptyState: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle")
                 .foregroundStyle(.green)
+                .accessibilityHidden(true)
             Text("All clear")
                 .foregroundStyle(.secondary)
         }
@@ -93,6 +99,16 @@ struct AttentionQueuePanel: View {
         case .blocked: .orange
         case .intervention: .orange
         case .failure: .red
+        }
+    }
+
+    private func kindDescription(for kind: CommandCenterStore.AttentionItem.Kind) -> String {
+        switch kind {
+        case .idle: "Idle"
+        case .stuckRisk: "Stuck risk"
+        case .blocked: "Blocked"
+        case .intervention: "Needs intervention"
+        case .failure: "Failure"
         }
     }
 }

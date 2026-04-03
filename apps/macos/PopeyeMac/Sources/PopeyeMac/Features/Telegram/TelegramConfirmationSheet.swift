@@ -14,10 +14,11 @@ struct TelegramConfirmationSheet: View {
             Image(systemName: action.isDestructive ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 36))
                 .foregroundStyle(action.isDestructive ? .red : .blue)
-                .accessibilityLabel(action.isDestructive ? "Warning" : "Confirmation")
+                .accessibilityHidden(true)
 
             Text("Resolve Delivery")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
 
             Text(action.confirmationMessage)
                 .font(.callout)
@@ -39,7 +40,7 @@ struct TelegramConfirmationSheet: View {
                     operatorNote = ""
                     sentMessageId = ""
                 }
-                .keyboardShortcut(.escape)
+                .keyboardShortcut(.cancelAction)
 
                 Button(action.confirmLabel, role: action.isDestructive ? .destructive : nil) {
                     let note = operatorNote.isEmpty ? nil : operatorNote
@@ -56,12 +57,13 @@ struct TelegramConfirmationSheet: View {
                     operatorNote = ""
                     sentMessageId = ""
                 }
-                .keyboardShortcut(.return)
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .tint(action.isDestructive ? .red : .blue)
             }
         }
         .padding(24)
         .frame(width: 360)
+        .accessibilityElement(children: .contain)
     }
 }

@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct CommandCenterView: View {
     var store: CommandCenterStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -14,21 +13,15 @@ struct CommandCenterView: View {
             }
         }
         .navigationTitle("Command Center")
+        .popeyeRefreshable(invalidationSignals: [.runs, .jobs, .interventions, .general]) {
+            await store.load()
+        }
         .task {
             await store.load()
             store.startPolling()
         }
         .onDisappear {
             store.stopPolling()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            guard let signal = notification.object as? InvalidationSignal else { return }
-            if [.runs, .jobs, .interventions, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
         }
     }
 
@@ -50,7 +43,7 @@ struct CommandCenterView: View {
             }
             SummaryStrip(store: store)
         }
-        .padding(16)
+        .padding(PopeyeUI.contentPadding)
     }
 
     private var panelArea: some View {
@@ -64,12 +57,12 @@ struct CommandCenterView: View {
 
     private var leftPanels: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: PopeyeUI.sectionSpacing) {
                 AttentionQueuePanel(store: store)
                 ActiveRunsPanel(store: store)
                 JobsInMotionPanel(store: store)
             }
-            .padding(16)
+            .padding(PopeyeUI.contentPadding)
         }
     }
 }

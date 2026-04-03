@@ -385,6 +385,7 @@ describe('openRuntimeDatabases', () => {
           'schema_migrations',
           'daemon_state',
           'browser_sessions',
+          'native_app_sessions',
           'workspaces',
           'projects',
           'agent_profiles',
@@ -546,6 +547,7 @@ describe('openRuntimeDatabases', () => {
 
         const expectedIndexes = [
           'idx_browser_sessions_expires',
+          'idx_native_app_sessions_expires',
           'idx_jobs_status_created',
           'idx_jobs_workspace_status',
           'idx_jobs_task_status',
@@ -907,6 +909,7 @@ describe('openRuntimeDatabases', () => {
           '027-app-playbook-drafting-and-evidence',
           '028-app-workspace-identities',
           '029-app-mutation-receipts',
+          '030-native-app-sessions',
         ]);
 
         const memMigrations = databases.memory
@@ -936,6 +939,25 @@ describe('openRuntimeDatabases', () => {
           '020-operator-actions',
           '021-drop-legacy-tables',
         ]);
+      } finally {
+        databases.app.close();
+        databases.memory.close();
+      }
+    });
+
+    it('applies app migrations in source order on a fresh database', () => {
+      const { databases } = openFresh();
+      try {
+        const appMigrations = databases.app
+          .prepare('SELECT id FROM schema_migrations ORDER BY rowid')
+          .all() as { id: string }[];
+        const appIds = appMigrations.map((row) => row.id);
+        expect(appIds.indexOf('028-app-workspace-identities')).toBeLessThan(
+          appIds.indexOf('029-app-mutation-receipts'),
+        );
+        expect(appIds.indexOf('029-app-mutation-receipts')).toBeLessThan(
+          appIds.indexOf('030-native-app-sessions'),
+        );
       } finally {
         databases.app.close();
         databases.memory.close();

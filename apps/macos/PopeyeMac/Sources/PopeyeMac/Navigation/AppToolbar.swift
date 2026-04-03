@@ -6,7 +6,7 @@ struct AppToolbar: ToolbarContent {
     var body: some ToolbarContent {
         @Bindable var model = appModel
 
-        ToolbarItem(placement: .navigation) {
+        ToolbarItem(placement: .automatic) {
             if appModel.isConnected {
                 Picker("Workspace", selection: $model.selectedWorkspaceID) {
                     if appModel.workspaces.isEmpty {
@@ -24,8 +24,7 @@ struct AppToolbar: ToolbarContent {
         }
 
         ToolbarItem(placement: .primaryAction) {
-            Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-                .keyboardShortcut("r", modifiers: .command)
+            Button("Refresh Current View", systemImage: "arrow.clockwise", action: refresh)
                 .help("Refresh current view")
         }
 

@@ -9,22 +9,26 @@ struct MutationToast: View {
         HStack(spacing: 8) {
             Image(systemName: isError ? "xmark.circle.fill" : "checkmark.circle.fill")
                 .foregroundStyle(isError ? .red : .green)
+                .accessibilityHidden(true)
             Text(message)
                 .font(.callout)
             Spacer()
-            Button("Dismiss", systemImage: "xmark", action: onDismiss)
+            Button("Dismiss Notification", systemImage: "xmark", action: onDismiss)
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .labelStyle(.iconOnly)
+                .help("Dismiss notification")
                 .accessibilityLabel("Dismiss notification")
+                .accessibilityHint("Closes this message")
         }
         .padding(12)
         .background(isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
         .clipShape(.rect(cornerRadius: 8))
-        .overlay(
+        .overlay {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(isError ? .red.opacity(0.3) : .green.opacity(0.3), lineWidth: 0.5)
-        )
+        }
+        .accessibilityElement(children: .contain)
         .task(id: message) {
             try? await Task.sleep(for: .seconds(4))
             onDismiss()

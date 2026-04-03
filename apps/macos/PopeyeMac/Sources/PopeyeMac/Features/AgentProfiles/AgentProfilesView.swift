@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct AgentProfilesView: View {
     @Bindable var store: AgentProfilesStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -20,17 +19,12 @@ struct AgentProfilesView: View {
             }
         }
         .navigationTitle("Agent Profiles")
-        .searchable(text: $store.searchText, prompt: "Filter profiles...")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Filter profiles…")
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.general]) {
+            await store.load()
         }
     }
 

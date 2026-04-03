@@ -9,8 +9,10 @@ struct InspectorSection<Content: View>: View {
             Text(title)
                 .font(.headline)
                 .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
             content
         }
+        .accessibilityElement(children: .contain)
     }
 }
 

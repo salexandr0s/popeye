@@ -49,5 +49,22 @@ struct TelegramSendAttemptsSection: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(.separator, lineWidth: 0.5)
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Attempt \(attempt.attemptNumber)")
+        .accessibilityValue(attemptSummary(attempt))
+    }
+
+    private func attemptSummary(_ attempt: TelegramSendAttemptDTO) -> String {
+        var parts = [
+            "Outcome \(attempt.outcome)",
+            "Started \(DateFormatting.formatRelativeTime(attempt.startedAt))"
+        ]
+        if let finished = attempt.finishedAt {
+            parts.append("Finished \(DateFormatting.formatRelativeTime(finished))")
+        }
+        if let error = attempt.errorSummary, !error.isEmpty {
+            parts.append("Error \(error)")
+        }
+        return parts.joined(separator: ", ")
     }
 }

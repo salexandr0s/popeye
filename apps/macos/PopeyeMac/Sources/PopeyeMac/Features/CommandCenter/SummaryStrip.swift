@@ -4,10 +4,12 @@ import PopeyeAPI
 struct SummaryStrip: View {
     let store: CommandCenterStore
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 6)
+    private var columns: [GridItem] {
+        PopeyeUI.cardColumns(minimum: 180, maximum: 260)
+    }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
+        LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
             DashboardCard(
                 label: "Active Runs",
                 value: "\(store.activeRuns.count)",

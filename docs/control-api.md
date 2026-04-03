@@ -4,14 +4,20 @@ The Popeye control API is a Fastify HTTP server bound to `127.0.0.1` only. All e
 
 ## Authentication
 
-Popeye supports two authenticated client modes:
+Popeye supports three authenticated client modes:
 
 1. **Bearer auth** for CLI/API clients. The token is validated against the auth
    store file specified by `config.authFile`. The store is role-scoped:
    `operator`, `service`, and `readonly`. Token rotation is supported per role:
    during the overlap window, both the current and next tokens are accepted.
    Legacy single-token auth files still load as `operator`.
-2. **Browser session auth** for the web inspector. A one-time bootstrap nonce
+2. **Native app session auth** for first-party local clients such as the macOS
+   app. A native session is issued through the bootstrap flow and then sent via
+   the `x-popeye-native-session` header. This session is loopback-only in use,
+   carries `operator` authority, uses its own CSRF token, and is distinct from
+   the long-lived bearer token in the auth store. Disconnect in the macOS app
+   now revokes only the current native app session server-side.
+3. **Browser session auth** for the web inspector. A one-time bootstrap nonce
    is exchanged at `POST /v1/auth/exchange` for an HttpOnly `popeye_auth`
    browser-session cookie, but the exchange itself now requires a valid
    `Authorization: Bearer <operator-token>` header. This cookie is **not** the
@@ -50,9 +56,20 @@ All mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) require two additional c
 Invalid CSRF tokens return `403 { error: "csrf_invalid" }`.
 
 `POST /v1/auth/exchange` is the single mutation exempt from CSRF because it
-requires operator bearer auth and a valid daemon-issued nonce.
+requires operator bearer auth and a valid daemon-issued nonce. Native app
+sessions use the same `x-popeye-csrf` header as browser sessions and bearer
+clients, but they send their auth credential via `x-popeye-native-session`
+instead of `Authorization`.
 
 ## Endpoints
+
+### Bootstrap
+
+| Method | Path | Description | Response shape |
+|--------|------|-------------|----------------|
+| GET | `/v1/bootstrap/status` | Loopback-only unauthenticated readiness probe for first-party local onboarding. | `BootstrapStatusResponse` |
+| POST | `/v1/bootstrap/native-app-session` | Loopback-only native app session issuance. Requires operator bearer auth + CSRF. | `NativeAppSessionCreateResponse` |
+| DELETE | `/v1/auth/native-app-session/current` | Revoke the currently authenticated native app session. Requires native-session auth + CSRF. | `NativeAppSessionRevokeResponse` |
 
 ### Health and status
 

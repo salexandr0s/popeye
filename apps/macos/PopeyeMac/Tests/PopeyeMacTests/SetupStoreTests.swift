@@ -176,6 +176,49 @@ struct SetupStoreTests {
         }())
     }
 
+    @Test("OAuth timeout surfaces the waiting-for-browser error without invalidating connections")
+    func oauthTimeoutFlow() async {
+        var invalidations: [InvalidationSignal] = []
+
+        let store = SetupStore(
+            connectionsService: StubConnectionsService(
+                startOAuthConnectionHandler: { providerKind, connectionId, mode, syncIntervalSeconds in
+                    #expect(providerKind == "gmail")
+                    #expect(connectionId == nil)
+                    #expect(mode == "read_only")
+                    #expect(syncIntervalSeconds == 900)
+                    return OAuthSessionDTO(
+                        id: "oauth-session-timeout",
+                        providerKind: "gmail",
+                        domain: "email",
+                        status: "pending",
+                        authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=test",
+                        redirectUri: "http://127.0.0.1:3210/v1/connections/oauth/callback",
+                        connectionId: nil,
+                        accountId: nil,
+                        error: nil,
+                        createdAt: "2026-03-31T08:00:00Z",
+                        expiresAt: "2026-03-31T08:10:00Z",
+                        completedAt: nil
+                    )
+                }
+            ),
+            telegramService: StubTelegramService(),
+            secretsService: StubSecretsService(),
+            governanceService: StubGovernanceService(),
+            openURL: { _ in true },
+            sleep: { _ in },
+            emitInvalidation: { invalidations.append($0) },
+            oauthTimeout: .zero
+        )
+
+        store.beginPrimaryAction(.oauth(kind: .startSetup, providerKind: "gmail", connectionId: nil), for: .gmail)
+        await waitUntil { store.activity == nil && store.errorMessage(for: .gmail) != nil }
+
+        #expect(store.errorMessage(for: .gmail) == "Still waiting for browser completion. Finish the provider auth in your browser, then try Refresh if needed.")
+        #expect(invalidations.isEmpty)
+    }
+
     private func waitUntil(
         _ predicate: @escaping @MainActor () -> Bool,
         attempts: Int = 20

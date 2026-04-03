@@ -39,7 +39,8 @@ struct MedicalDocumentSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Add Document") {
                     guard let parsedSizeBytes else { return }
                     onSave(MedicalDocumentCreateInput(
@@ -51,6 +52,7 @@ struct MedicalDocumentSheet: View {
                     ))
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(canSave == false)
             }

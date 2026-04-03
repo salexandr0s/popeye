@@ -16,10 +16,11 @@ struct ConfirmationSheet: View {
             Image(systemName: isDestructive ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 36))
                 .foregroundStyle(isDestructive ? .red : .blue)
-                .accessibilityLabel(isDestructive ? "Warning" : "Confirmation")
+                .accessibilityHidden(true)
 
             Text(title)
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
 
             Text(message)
                 .font(.callout)
@@ -34,14 +35,15 @@ struct ConfirmationSheet: View {
 
             HStack(spacing: 12) {
                 Button("Cancel", role: .cancel, action: onCancel)
-                    .keyboardShortcut(.escape)
+                    .keyboardShortcut(.cancelAction)
                 Button(confirmLabel, role: isDestructive ? .destructive : nil, action: onConfirm)
-                    .keyboardShortcut(.return)
+                    .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .tint(isDestructive ? .red : .blue)
             }
         }
         .padding(24)
         .frame(width: 360)
+        .accessibilityElement(children: .contain)
     }
 }

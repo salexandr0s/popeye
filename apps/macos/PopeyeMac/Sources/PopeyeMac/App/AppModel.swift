@@ -5,6 +5,9 @@ import PopeyeAPI
 final class AppModel {
     var connectionState: ConnectionState = .disconnected
     var selectedRoute: AppRoute?
+    var bootstrapStatus: LocalBootstrapStatus?
+    var bootstrapErrorMessage: String?
+    var isBootstrapBusy = false
     var baseURL: String {
         get { UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:3210" }
         set { UserDefaults.standard.set(newValue, forKey: "baseURL") }
@@ -36,6 +39,8 @@ final class AppModel {
 
     private(set) var client: ControlAPIClient?
     private let credentialStore = CredentialStore()
+    private let localBootstrapService = LocalBootstrapService()
+    private var activeCredentialKind: StoredCredentialKind?
 
     init() {
         if let raw = UserDefaults.standard.string(forKey: "selectedRoute"),
@@ -86,6 +91,41 @@ final class AppModel {
     var isConnected: Bool {
         if case .connected = connectionState { return true }
         return false
+    }
+
+    var connectErrorMessage: String? {
+        if let bootstrapErrorMessage {
+            return bootstrapErrorMessage
+        }
+        if case .failed(let error) = connectionState {
+            return error.userMessage
+        }
+        return nil
+    }
+
+    var bootstrapStep: BootstrapOnboardingStep {
+        if case .connecting = connectionState {
+            return .checking
+        }
+        if isBootstrapBusy {
+            return .checking
+        }
+        guard let bootstrapStatus else {
+            return bootstrapErrorMessage == nil ? .checking : .manualFallback
+        }
+        if bootstrapStatus.configValid == false {
+            return .manualFallback
+        }
+        if bootstrapStatus.needsLocalSetup {
+            return .createLocalSetup
+        }
+        if bootstrapStatus.needsDaemonStart {
+            return .startDaemon
+        }
+        if bootstrapStatus.canGrantNativeSession {
+            return .grantLocalAccess
+        }
+        return .manualFallback
     }
 
     // MARK: - Store Accessors
@@ -369,39 +409,179 @@ final class AppModel {
     // MARK: - Connection
 
     func connect(baseURL: String, token: String) async {
-        self.baseURL = baseURL
-        connectionState = .connecting
+        bootstrapErrorMessage = nil
+        _ = await connect(
+            baseURL: baseURL,
+            credential: .bearerToken(token),
+            persistedCredential: .bearerToken
+        )
+    }
 
-        let newClient = ControlAPIClient(baseURL: baseURL, token: token)
+    func createLocalSetup() async {
+        await performBootstrapOperation {
+            let status = try await self.localBootstrapService.ensureLocalSetup()
+            self.applyBootstrapStatus(status)
+        }
+    }
 
-        do {
-            _ = try await newClient.health()
-            _ = try await newClient.status()
-            try credentialStore.saveToken(token)
-            client = newClient
-            await refreshWorkspaces(using: newClient)
-            connectionState = .connected
-            if sseEnabled { startSSE() }
-        } catch let error as APIError {
-            connectionState = .failed(error)
-        } catch {
-            connectionState = .failed(.transportUnavailable)
+    func startLocalDaemon() async {
+        await performBootstrapOperation {
+            let status = try await self.localBootstrapService.startDaemon()
+            self.applyBootstrapStatus(status)
+        }
+    }
+
+    func grantLocalAccess() async {
+        await performBootstrapOperation {
+            let session = try await self.localBootstrapService.issueNativeSession()
+            let connected = await self.connect(
+                baseURL: session.baseURL,
+                credential: .nativeSession(session.sessionToken),
+                persistedCredential: .nativeSession
+            )
+            if connected == false {
+                await self.refreshBootstrapStatus()
+            }
         }
     }
 
     func disconnect() {
+        let revokeClient = client
+        let shouldRevokeNativeSession = activeCredentialKind == .nativeSession
+
         stopSSE()
         client = nil
         clearStores()
         workspaces = []
         connectionState = .disconnected
         badgeCounts = BadgeCounts()
-        try? credentialStore.deleteToken()
+        activeCredentialKind = nil
+        try? credentialStore.deleteAllCredentials()
+        Task { [weak self] in
+            if shouldRevokeNativeSession {
+                _ = try? await revokeClient?.revokeCurrentNativeAppSession()
+            }
+            await self?.refreshBootstrapStatus()
+        }
     }
 
     func restoreSession() async {
-        guard let token = try? credentialStore.retrieveToken() else { return }
-        await connect(baseURL: baseURL, token: token)
+        if let nativeSession = try? credentialStore.retrieveNativeSession(),
+           nativeSession.isEmpty == false {
+            let restored = await connect(
+                baseURL: baseURL,
+                credential: .nativeSession(nativeSession),
+                persistedCredential: .nativeSession,
+                persistOnSuccess: false,
+                suppressFailureState: true
+            )
+            if restored {
+                return
+            }
+            try? credentialStore.deleteNativeSession()
+        }
+
+        if let bearerToken = try? credentialStore.retrieveBearerToken(),
+           bearerToken.isEmpty == false {
+            let restored = await connect(
+                baseURL: baseURL,
+                credential: .bearerToken(bearerToken),
+                persistedCredential: .bearerToken,
+                persistOnSuccess: false,
+                suppressFailureState: true
+            )
+            if restored {
+                return
+            }
+            try? credentialStore.deleteBearerToken()
+        }
+
+        connectionState = .disconnected
+        await refreshBootstrapStatus()
+    }
+
+    func refreshBootstrapStatus() async {
+        guard isConnected == false else { return }
+        do {
+            let status = try await localBootstrapService.status()
+            applyBootstrapStatus(status)
+        } catch {
+            bootstrapStatus = nil
+            bootstrapErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    private func connect(
+        baseURL: String,
+        credential: ControlAPICredential,
+        persistedCredential: StoredCredentialKind,
+        persistOnSuccess: Bool = true,
+        suppressFailureState: Bool = false
+    ) async -> Bool {
+        self.baseURL = baseURL
+        bootstrapErrorMessage = nil
+        connectionState = .connecting
+        stopSSE()
+
+        let newClient = ControlAPIClient(baseURL: baseURL, credential: credential)
+
+        do {
+            _ = try await newClient.health()
+            _ = try await newClient.status()
+            if persistOnSuccess {
+                try persistCredential(credential, as: persistedCredential)
+            }
+            activeCredentialKind = persistedCredential
+            client = newClient
+            await refreshWorkspaces(using: newClient)
+            connectionState = .connected
+            bootstrapStatus = nil
+            if sseEnabled { startSSE() }
+            return true
+        } catch let error as APIError {
+            client = nil
+            activeCredentialKind = nil
+            connectionState = suppressFailureState ? .disconnected : .failed(error)
+            return false
+        } catch {
+            client = nil
+            activeCredentialKind = nil
+            connectionState = suppressFailureState ? .disconnected : .failed(.transportUnavailable)
+            return false
+        }
+    }
+
+    private func persistCredential(_ credential: ControlAPICredential, as kind: StoredCredentialKind) throws {
+        switch (credential, kind) {
+        case (.bearerToken(let token), .bearerToken):
+            try credentialStore.saveBearerToken(token)
+            try? credentialStore.deleteNativeSession()
+        case (.nativeSession(let sessionToken), .nativeSession):
+            try credentialStore.saveNativeSession(sessionToken)
+            try? credentialStore.deleteBearerToken()
+        default:
+            break
+        }
+    }
+
+    private func performBootstrapOperation(_ operation: @escaping () async throws -> Void) async {
+        guard isBootstrapBusy == false else { return }
+        isBootstrapBusy = true
+        bootstrapErrorMessage = nil
+        defer { isBootstrapBusy = false }
+
+        do {
+            try await operation()
+        } catch {
+            bootstrapErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func applyBootstrapStatus(_ status: LocalBootstrapStatus) {
+        bootstrapStatus = status
+        bootstrapErrorMessage = status.error
+        baseURL = status.baseURL
     }
 
     private func refreshWorkspaces(using client: ControlAPIClient) async {

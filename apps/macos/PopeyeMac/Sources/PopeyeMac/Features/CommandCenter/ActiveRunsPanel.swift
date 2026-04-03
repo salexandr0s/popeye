@@ -27,6 +27,18 @@ struct ActiveRunsPanel: View {
                     runRow(run)
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Run for \(store.taskTitle(for: run.taskId))")
+                .accessibilityValue(runAccessibilityValue(for: run))
+                .accessibilityHint("Opens run details")
+                .contextMenu {
+                    Button("Inspect Run") {
+                        selectRun(run)
+                    }
+                    Button("Copy Run ID") {
+                        Clipboard.copy(run.id)
+                    }
+                }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(rowBackground(for: run))
@@ -38,7 +50,10 @@ struct ActiveRunsPanel: View {
         }
         .background(.background)
         .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        }
     }
 
     private func runRow(_ run: RunRecordDTO) -> some View {
@@ -58,7 +73,7 @@ struct ActiveRunsPanel: View {
 
     private func rowBackground(for run: RunRecordDTO) -> some View {
         Group {
-            if case .run(run.id) = store.selectedItem {
+            if isSelected(run) {
                 Color.accentColor.opacity(0.1)
             } else {
                 Color.clear
@@ -76,5 +91,24 @@ struct ActiveRunsPanel: View {
 
     private func selectRun(_ run: RunRecordDTO) {
         store.selectedItem = .run(run.id)
+    }
+
+    private func isSelected(_ run: RunRecordDTO) -> Bool {
+        if case .run(run.id) = store.selectedItem {
+            true
+        } else {
+            false
+        }
+    }
+
+    private func runAccessibilityValue(for run: RunRecordDTO) -> String {
+        var parts = [
+            "State \(run.state)",
+            "Started \(DateFormatting.formatRelativeTime(run.startedAt))"
+        ]
+        if isSelected(run) {
+            parts.append("Selected")
+        }
+        return parts.joined(separator: ", ")
     }
 }

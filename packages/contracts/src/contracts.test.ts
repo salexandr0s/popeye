@@ -78,6 +78,10 @@ import {
   DaemonStatusResponseSchema,
   HealthResponseSchema,
   CsrfTokenResponseSchema,
+  BootstrapStatusResponseSchema,
+  NativeAppSessionCreateRequestSchema,
+  NativeAppSessionCreateResponseSchema,
+  NativeAppSessionRevokeResponseSchema,
   UsageSummarySchema,
   ErrorResponseSchema,
   SseEventEnvelopeSchema,
@@ -182,6 +186,13 @@ describe('Schema parse tests', () => {
         const result = RunRecordSchema.parse({ ...validRun, state });
         expect(result.state).toBe(state);
       }
+    });
+  });
+
+  describe('Native app session schemas', () => {
+    it('parses revoke responses', () => {
+      const result = NativeAppSessionRevokeResponseSchema.parse({ revoked: true });
+      expect(result.revoked).toBe(true);
     });
   });
 
@@ -1504,6 +1515,31 @@ describe('Additional schema smoke tests', () => {
   it('CsrfTokenResponseSchema parses valid data', () => {
     const result = CsrfTokenResponseSchema.parse({ token: 'csrf-token-123' });
     expect(result.token).toBe('csrf-token-123');
+  });
+
+  it('BootstrapStatusResponseSchema parses valid data', () => {
+    const result = BootstrapStatusResponseSchema.parse({
+      mode: 'local',
+      daemonReady: true,
+      authStoreReady: true,
+      nativeAppSessionsSupported: true,
+      requiresLocalApproval: true,
+      startedAt: '2026-04-02T00:00:00Z',
+    });
+    expect(result.mode).toBe('local');
+  });
+
+  it('NativeAppSessionCreateRequestSchema applies defaults', () => {
+    const result = NativeAppSessionCreateRequestSchema.parse({});
+    expect(result.clientName).toBe('PopeyeMac');
+  });
+
+  it('NativeAppSessionCreateResponseSchema parses valid data', () => {
+    const result = NativeAppSessionCreateResponseSchema.parse({
+      sessionToken: 'native-session-token',
+      expiresAt: '2026-05-02T00:00:00Z',
+    });
+    expect(result.sessionToken).toBe('native-session-token');
   });
 
   it('UsageSummarySchema rejects negative values', () => {

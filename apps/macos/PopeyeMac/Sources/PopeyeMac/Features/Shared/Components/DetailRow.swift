@@ -14,6 +14,9 @@ struct DetailRow: View {
                 .textSelection(.enabled)
         }
         .font(.callout)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(value.isEmpty ? "None" : value)
     }
 }
 

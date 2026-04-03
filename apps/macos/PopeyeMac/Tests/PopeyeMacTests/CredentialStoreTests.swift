@@ -4,22 +4,35 @@ import Foundation
 
 @Suite("PopeyeMac")
 struct PopeyeMacTests {
-    @Test("CredentialStore round-trip")
+    @Test("CredentialStore bearer round-trip")
     func credentialStoreRoundTrip() throws {
         let store = CredentialStore()
         let testToken = "test-token-\(UUID().uuidString)"
 
-        // Clean up first
-        try? store.deleteToken()
+        try? store.deleteAllCredentials()
 
-        // Save and retrieve
-        try store.saveToken(testToken)
-        let retrieved = try store.retrieveToken()
+        try store.saveBearerToken(testToken)
+        let retrieved = try store.retrieveBearerToken()
         #expect(retrieved == testToken)
 
-        // Clean up
-        try store.deleteToken()
-        let afterDelete = try store.retrieveToken()
+        try store.deleteBearerToken()
+        let afterDelete = try store.retrieveBearerToken()
+        #expect(afterDelete == nil)
+    }
+
+    @Test("CredentialStore native session round-trip")
+    func nativeSessionRoundTrip() throws {
+        let store = CredentialStore()
+        let sessionToken = "native-session-\(UUID().uuidString)"
+
+        try? store.deleteAllCredentials()
+
+        try store.saveNativeSession(sessionToken)
+        let retrieved = try store.retrieveNativeSession()
+        #expect(retrieved == sessionToken)
+
+        try store.deleteNativeSession()
+        let afterDelete = try store.retrieveNativeSession()
         #expect(afterDelete == nil)
     }
 

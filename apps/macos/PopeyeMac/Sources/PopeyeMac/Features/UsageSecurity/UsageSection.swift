@@ -4,7 +4,9 @@ import PopeyeAPI
 struct UsageSection: View {
     let usage: UsageSummaryDTO?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+    private var columns: [GridItem] {
+        PopeyeUI.cardColumns(minimum: 180, maximum: 260)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -12,7 +14,7 @@ struct UsageSection: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
             if let usage {
-                LazyVGrid(columns: columns, spacing: 12) {
+                LazyVGrid(columns: columns, spacing: PopeyeUI.cardSpacing) {
                     DashboardCard(
                         label: "Total Runs",
                         value: "\(usage.runs)"

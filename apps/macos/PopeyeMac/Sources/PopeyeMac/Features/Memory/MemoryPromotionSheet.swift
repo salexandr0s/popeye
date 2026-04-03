@@ -29,7 +29,6 @@ struct MemoryPromotionSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") {
-                    store.showPromotionSheet = false
                     store.promotionProposal = nil
                 }
                 .keyboardShortcut(.cancelAction)
@@ -42,6 +41,6 @@ struct MemoryPromotionSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 600, height: 450)
+        .frame(minWidth: 560, idealWidth: 600, minHeight: 420)
     }
 }

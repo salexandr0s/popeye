@@ -16,10 +16,17 @@ struct StatusBadge: View {
         .padding(.vertical, 3)
         .background(color.opacity(0.1))
         .clipShape(.capsule)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Status")
+        .accessibilityValue(formattedState)
     }
 
     private var color: Color {
         Self.colorForState(state)
+    }
+
+    private var formattedState: String {
+        state.replacing("_", with: " ").capitalized
     }
 
     static func colorForState(_ state: String) -> Color {

@@ -33,7 +33,6 @@ final class MemoryStore {
 
     // Promotion
     var promotionProposal: MemoryPromotionProposalDTO?
-    var showPromotionSheet = false
 
     private let memoryService: MemoryService
     private let client: ControlAPIClient
@@ -71,7 +70,20 @@ final class MemoryStore {
     var selectedMemory: MemoryRecordDTO? {
         guard let id = selectedMemoryId else { return nil }
         if let detail = selectedDetail, detail.id == id { return detail }
-        return nil
+        return memories.first(where: { $0.id == id })
+    }
+
+    var selectedHistory: MemoryHistoryDTO? {
+        guard let id = selectedMemoryId,
+              let history = memoryHistory,
+              history.memoryId == id
+        else { return nil }
+
+        return history
+    }
+
+    var isMutating: Bool {
+        mutationState == .executing
     }
 
     var filteredMemories: [MemoryRecordDTO] {
@@ -170,7 +182,6 @@ final class MemoryStore {
     func proposePromotion(id: String, targetPath: String) async {
         do {
             promotionProposal = try await memoryService.proposePromotion(id: id, targetPath: targetPath)
-            showPromotionSheet = true
         } catch let error as APIError {
             errorMessage = error.userMessage
         } catch {
@@ -191,7 +202,6 @@ final class MemoryStore {
             successMessage: "Memory promoted to curated file",
             fallbackError: "Promotion failed",
             reload: { [weak self] in
-                self?.showPromotionSheet = false
                 self?.promotionProposal = nil
                 await self?.loadList()
             }

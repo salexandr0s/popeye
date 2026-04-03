@@ -45,7 +45,8 @@ struct MedicalMedicationSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Button("Add Medication") {
                     onSave(MedicalMedicationCreateInput(
                         importId: importId,
@@ -59,6 +60,7 @@ struct MedicalMedicationSheet: View {
                     ))
                     dismiss()
                 }
+                .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(canSave == false)
             }

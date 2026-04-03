@@ -4,7 +4,6 @@ import PopeyeAPI
 
 struct UsageView: View {
     var store: UsageStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -21,13 +20,8 @@ struct UsageView: View {
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.refresh() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.receipts, .runs, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.refresh() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.receipts, .runs, .general]) {
+            await store.refresh()
         }
     }
 
@@ -43,7 +37,7 @@ struct UsageView: View {
                 }
                 UsageTopRunsTable(runs: store.topExpensiveRuns)
             }
-            .padding(20)
+            .padding(PopeyeUI.contentPadding)
         }
     }
 

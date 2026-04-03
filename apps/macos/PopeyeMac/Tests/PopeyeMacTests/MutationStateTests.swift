@@ -58,7 +58,7 @@ struct APIErrorUserMessageTests {
 
     @Test("Unauthorized message")
     func unauthorizedMessage() {
-        #expect(APIError.unauthorized.userMessage.contains("token"))
+        #expect(APIError.unauthorized.userMessage.contains("credential"))
     }
 
     @Test("Forbidden message")

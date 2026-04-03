@@ -14,7 +14,7 @@ public enum APIError: Error, Sendable {
         case .transportUnavailable:
             "Cannot reach the Popeye daemon. Is it running?"
         case .unauthorized:
-            "Invalid or expired bearer token."
+            "Invalid or expired authentication credentials."
         case .forbidden:
             "Your token does not have permission for this action."
         case .csrfInvalid:

@@ -2,6 +2,37 @@
 
 Step-by-step setup from a fresh macOS installation.
 
+## Recommended macOS app-first bootstrap
+
+If you are onboarding with the Popeye macOS app, you no longer need to copy a
+bearer token out of `auth.json`. The preferred first-run path is:
+
+1. Launch the Popeye macOS app
+2. Click **Create Local Setup**
+3. Click **Start Popeye**
+4. Click **Grant Local Access**
+
+That flow creates local config/runtime defaults if missing, starts the daemon,
+and stores a native app session in macOS Keychain.
+
+Manual bearer-token entry remains available only as an advanced fallback for
+remote/debug setups.
+
+For local bootstrap commands, the macOS app resolves the Popeye CLI in this
+order:
+
+1. bundled companion CLI at `Resources/Bootstrap/pop`
+2. `POPEYE_MAC_BOOTSTRAP_CLI`
+3. `/usr/local/bin/pop`
+4. `/opt/homebrew/bin/pop`
+5. ``which pop``
+
+The packaged macOS distribution now makes that bundled companion path real at:
+
+- `dist/pkg/PopeyeMac.app/Contents/Resources/Bootstrap/pop`
+
+Use `bash scripts/build-macos-app.sh` for a raw app bundle or `bash scripts/build-pkg.sh` for the full release artifacts.
+
 ## Prerequisites
 
 - macOS (Apple Silicon or Intel)
@@ -105,11 +136,15 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
 pnpm verify:pi-checkout -- --pi-path ../pi
 ```
 
-### 9. Initialize auth
+### 9. Initialize auth (CLI / advanced fallback only)
 
 ```bash
 pop auth init
 ```
+
+The macOS app-first bootstrap path now performs local auth/session setup for
+you. Manual `pop auth init` is only required for CLI-first or advanced/manual
+connection flows.
 
 ### 10. Test foreground start
 
@@ -233,7 +268,7 @@ export POPEYE_CONFIG_PATH="$HOME/Library/Application Support/Popeye/config.json"
 
 # 2. Edit config (set engine.kind, piPath, and any non-default runtime paths)
 
-# 3. Initialize auth
+# 3. (Optional) initialize auth for CLI-first or advanced/manual flows
 pop auth init
 
 # 4. Start once to scaffold the default assistant workspace

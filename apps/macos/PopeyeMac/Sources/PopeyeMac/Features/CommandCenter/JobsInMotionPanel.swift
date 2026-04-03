@@ -27,6 +27,18 @@ struct JobsInMotionPanel: View {
                     jobRow(job)
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Job for \(store.taskTitle(for: job.taskId))")
+                .accessibilityValue(jobAccessibilityValue(for: job))
+                .accessibilityHint("Opens job details")
+                .contextMenu {
+                    Button("Inspect Job") {
+                        selectJob(job)
+                    }
+                    Button("Copy Job ID") {
+                        Clipboard.copy(job.id)
+                    }
+                }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(rowBackground(for: job))
@@ -38,7 +50,10 @@ struct JobsInMotionPanel: View {
         }
         .background(.background)
         .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        }
     }
 
     private func jobRow(_ job: JobRecordDTO) -> some View {
@@ -64,7 +79,7 @@ struct JobsInMotionPanel: View {
 
     private func rowBackground(for job: JobRecordDTO) -> some View {
         Group {
-            if case .job(job.id) = store.selectedItem {
+            if isSelected(job) {
                 Color.accentColor.opacity(0.1)
             } else {
                 Color.clear
@@ -82,5 +97,24 @@ struct JobsInMotionPanel: View {
 
     private func selectJob(_ job: JobRecordDTO) {
         store.selectedItem = .job(job.id)
+    }
+
+    private func isSelected(_ job: JobRecordDTO) -> Bool {
+        if case .job(job.id) = store.selectedItem {
+            true
+        } else {
+            false
+        }
+    }
+
+    private func jobAccessibilityValue(for job: JobRecordDTO) -> String {
+        var parts = ["Status \(job.status)"]
+        if job.retryCount > 0 {
+            parts.append("Retry \(job.retryCount)")
+        }
+        if isSelected(job) {
+            parts.append("Selected")
+        }
+        return parts.joined(separator: ", ")
     }
 }

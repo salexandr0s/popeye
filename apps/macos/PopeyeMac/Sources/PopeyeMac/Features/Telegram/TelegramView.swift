@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct TelegramView: View {
     @Bindable var store: TelegramStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -20,7 +19,7 @@ struct TelegramView: View {
             }
         }
         .navigationTitle("Telegram")
-        .searchable(text: $store.searchText, prompt: "Filter deliveries...")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Filter deliveries…")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Picker("Status", selection: $store.statusFilter) {
@@ -41,13 +40,8 @@ struct TelegramView: View {
                 Task { await store.loadDetail(id: id) }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.telegram, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.telegram, .general]) {
+            await store.load()
         }
     }
 

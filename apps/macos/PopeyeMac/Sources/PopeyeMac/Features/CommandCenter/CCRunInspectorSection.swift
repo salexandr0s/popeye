@@ -29,6 +29,8 @@ struct CCRunInspectorSection: View {
                             .font(.callout)
                             .foregroundStyle(.red)
                             .textSelection(.enabled)
+                            .accessibilityLabel("Error")
+                            .accessibilityValue(error)
                     }
                 }
                 InspectorSection(title: "CLI") {
@@ -89,5 +91,7 @@ struct CCRunInspectorSection: View {
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .padding(.vertical, 2)
+            .accessibilityLabel("Command")
+            .accessibilityValue(command)
     }
 }

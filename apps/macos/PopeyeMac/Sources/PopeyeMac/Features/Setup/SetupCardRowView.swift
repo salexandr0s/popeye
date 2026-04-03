@@ -17,5 +17,8 @@ struct SetupCardRowView: View {
                 .lineLimit(2)
         }
         .padding(.vertical, 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(card.id.title)
+        .accessibilityValue("\(card.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized), \(card.summary)")
     }
 }

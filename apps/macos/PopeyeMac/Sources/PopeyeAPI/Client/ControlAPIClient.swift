@@ -2,15 +2,23 @@ import Foundation
 
 public actor ControlAPIClient {
     private let baseURL: String
-    private let token: String
+    private let credential: ControlAPICredential
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     private var csrfToken: String?
 
+    public init(baseURL: String, credential: ControlAPICredential, session: URLSession = .shared) {
+        self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+        self.credential = credential
+        self.session = session
+        self.decoder = ResponseDecoder.makeDecoder()
+        self.encoder = JSONEncoder()
+    }
+
     public init(baseURL: String, token: String, session: URLSession = .shared) {
         self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-        self.token = token
+        self.credential = .bearerToken(token)
         self.session = session
         self.decoder = ResponseDecoder.makeDecoder()
         self.encoder = JSONEncoder()
@@ -108,6 +116,10 @@ public actor ControlAPIClient {
 
     public func securityAudit() async throws -> SecurityAuditDTO {
         try await get(.securityAudit)
+    }
+
+    public func revokeCurrentNativeAppSession() async throws -> NativeAppSessionRevokeDTO {
+        try await delete(.currentNativeAppSession)
     }
 
     public func listWorkspaces() async throws -> [WorkspaceRecordDTO] {
@@ -662,7 +674,12 @@ public actor ControlAPIClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = endpoint.method.rawValue
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        switch credential {
+        case .bearerToken(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        case .nativeSession(let sessionToken):
+            request.setValue(sessionToken, forHTTPHeaderField: "x-popeye-native-session")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 30
 

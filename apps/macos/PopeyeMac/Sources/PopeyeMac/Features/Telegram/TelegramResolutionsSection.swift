@@ -52,5 +52,19 @@ struct TelegramResolutionsSection: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(.separator, lineWidth: 0.5)
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(resolution.action.replacing("_", with: " ").capitalized)
+        .accessibilityValue(resolutionSummary(resolution))
+    }
+
+    private func resolutionSummary(_ resolution: TelegramResolutionDTO) -> String {
+        var parts = [
+            "Status changed from \(resolution.previousStatus) to \(resolution.newStatus)",
+            DateFormatting.formatRelativeTime(resolution.createdAt)
+        ]
+        if let note = resolution.operatorNote, !note.isEmpty {
+            parts.append("Note \(note)")
+        }
+        return parts.joined(separator: ", ")
     }
 }

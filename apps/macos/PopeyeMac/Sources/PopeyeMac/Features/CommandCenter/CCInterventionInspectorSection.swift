@@ -30,6 +30,8 @@ struct CCInterventionInspectorSection: View {
                         Text(note)
                             .font(.callout)
                             .textSelection(.enabled)
+                            .accessibilityLabel("Resolution note")
+                            .accessibilityValue(note)
                     }
                 }
             }

@@ -791,6 +791,13 @@ const APP_MIGRATIONS: Migration[] = [
       'CREATE INDEX IF NOT EXISTS idx_mutation_receipts_kind_created ON mutation_receipts(kind, created_at DESC);',
     ],
   },
+  {
+    id: '030-native-app-sessions',
+    statements: [
+      'CREATE TABLE IF NOT EXISTS native_app_sessions (id TEXT PRIMARY KEY, client_name TEXT NOT NULL, csrf_token TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL, expires_at TEXT NOT NULL);',
+      'CREATE INDEX IF NOT EXISTS idx_native_app_sessions_expires ON native_app_sessions(expires_at);',
+    ],
+  },
 ];
 
 const MEMORY_MIGRATIONS: Migration[] = [

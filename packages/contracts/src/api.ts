@@ -73,6 +73,32 @@ export const AuthExchangeResponseSchema = z.object({
   ok: z.literal(true),
 });
 
+export const BootstrapStatusResponseSchema = z.object({
+  mode: z.literal('local'),
+  daemonReady: z.literal(true),
+  authStoreReady: z.boolean(),
+  nativeAppSessionsSupported: z.literal(true),
+  requiresLocalApproval: z.literal(true),
+  startedAt: z.string(),
+});
+export type BootstrapStatusResponse = z.infer<typeof BootstrapStatusResponseSchema>;
+
+export const NativeAppSessionCreateRequestSchema = z.object({
+  clientName: z.string().min(1).max(100).default('PopeyeMac'),
+});
+export type NativeAppSessionCreateRequest = z.infer<typeof NativeAppSessionCreateRequestSchema>;
+
+export const NativeAppSessionCreateResponseSchema = z.object({
+  sessionToken: z.string(),
+  expiresAt: z.string(),
+});
+export type NativeAppSessionCreateResponse = z.infer<typeof NativeAppSessionCreateResponseSchema>;
+
+export const NativeAppSessionRevokeResponseSchema = z.object({
+  revoked: z.literal(true),
+});
+export type NativeAppSessionRevokeResponse = z.infer<typeof NativeAppSessionRevokeResponseSchema>;
+
 export const UsageSummarySchema = z.object({
   runs: z.number().int().nonnegative(),
   tokensIn: z.number().int().nonnegative(),

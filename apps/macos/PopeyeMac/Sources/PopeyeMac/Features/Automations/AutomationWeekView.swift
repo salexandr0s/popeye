@@ -41,6 +41,8 @@ struct AutomationWeekView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(entry.title)
+                            .accessibilityValue(accessibilityValue(for: entry))
                         }
 
                         if entries(for: day).isEmpty {
@@ -85,6 +87,15 @@ struct AutomationWeekView: View {
             }
         }
         return entries
+    }
+
+    private func accessibilityValue(for entry: WeekEntry) -> String {
+        [
+            entry.timeLabel,
+            entry.id == selectedAutomationID ? "Selected" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
     }
 }
 

@@ -1,0 +1,39 @@
+import SwiftUI
+import PopeyeAPI
+
+struct InstructionCompiledPreviewPane: View {
+    let preview: InstructionPreviewDTO
+
+    var body: some View {
+        ScrollView {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: PopeyeUI.splitColumnSpacing) {
+                    summaryColumn
+                        .frame(width: 320)
+                    InstructionPreviewCompiledTextSection(text: preview.compiledText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
+                    summaryColumn
+                    InstructionPreviewCompiledTextSection(text: preview.compiledText)
+                }
+            }
+            .padding(PopeyeUI.contentPadding)
+        }
+    }
+
+    private var summaryColumn: some View {
+        VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
+            InstructionPreviewMetadataSection(preview: preview)
+            if preview.warnings.isEmpty == false {
+                InstructionPreviewWarningsSection(warnings: preview.warnings)
+            }
+            if preview.playbooks.isEmpty == false {
+                InstructionPreviewPlaybooksSection(playbooks: preview.playbooks)
+            }
+            InstructionPreviewSourcesSection(sources: preview.sources)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

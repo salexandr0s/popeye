@@ -7,33 +7,40 @@ struct DashboardCard: View {
     var valueColor: Color = .primary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.caption)
-                .fontWeight(.medium)
-                .textCase(.uppercase)
-                .tracking(0.5)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             Text(value)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.title3.bold())
                 .foregroundStyle(valueColor)
 
             if let description {
                 Text(description)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(.background)
-        .clipShape(.rect(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
+        .clipShape(.rect(cornerRadius: PopeyeUI.cardCornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: PopeyeUI.cardCornerRadius)
                 .strokeBorder(.separator, lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        if let description, description.isEmpty == false {
+            return "\(value). \(description)"
+        }
+
+        return value
     }
 }
 

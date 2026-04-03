@@ -70,14 +70,19 @@ struct ApprovalInspector: View {
             DetailRow(label: "Resource Type", value: approval.resourceType)
             DetailRow(label: "Resource ID", value: approval.resourceId)
             if !approval.payloadPreview.isEmpty {
-                Text("Payload Preview")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Text(approval.payloadPreview)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Payload Preview")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Text(approval.payloadPreview)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Payload preview")
+                .accessibilityValue(approval.payloadPreview)
             }
         }
     }
@@ -104,6 +109,9 @@ struct ApprovalInspector: View {
             flagPill("Automation Eligible", active: approval.automationGrantEligible)
         }
         .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Eligibility")
+        .accessibilityValue(eligibilitySummary)
     }
 
     private func flagPill(_ label: String, active: Bool) -> some View {
@@ -126,5 +134,12 @@ struct ApprovalInspector: View {
                 DetailRow(label: "Expires", value: DateFormatting.formatAbsoluteTime(expires))
             }
         }
+    }
+
+    private var eligibilitySummary: String {
+        [
+            "Standing approval \(approval.standingApprovalEligible ? "eligible" : "not eligible")",
+            "Automation \(approval.automationGrantEligible ? "eligible" : "not eligible")"
+        ].joined(separator: ", ")
     }
 }

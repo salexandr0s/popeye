@@ -3,9 +3,6 @@ import PopeyeAPI
 
 struct ConnectionsOverviewView: View {
     @Bindable var store: ConnectionsStore
-    @State private var debouncer = ReloadDebouncer()
-
-    private let summaryColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
 
     var body: some View {
         Group {
@@ -25,13 +22,8 @@ struct ConnectionsOverviewView: View {
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.connections, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.connections, .general]) {
+            await store.load()
         }
     }
 
@@ -50,7 +42,7 @@ struct ConnectionsOverviewView: View {
     }
 
     private var summaryCards: some View {
-        LazyVGrid(columns: summaryColumns, spacing: 12) {
+        LazyVGrid(columns: PopeyeUI.cardColumns(minimum: 140, maximum: 220), spacing: PopeyeUI.cardSpacing) {
             DashboardCard(
                 label: "Healthy",
                 value: "\(store.healthyCount)",

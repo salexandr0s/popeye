@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct UsageSecurityView: View {
     var store: UsageSecurityStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -17,14 +16,8 @@ struct UsageSecurityView: View {
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal,
-               [.security, .telegram, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.security, .telegram, .general]) {
+            await store.load()
         }
     }
 
@@ -35,7 +28,7 @@ struct UsageSecurityView: View {
                 SecuritySection(audit: store.securityAudit)
                 ControlChangesSection(receipts: store.controlChanges)
             }
-            .padding(20)
+            .padding(PopeyeUI.contentPadding)
         }
     }
 }

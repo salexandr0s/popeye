@@ -107,6 +107,254 @@ describe('control api', () => {
     await app.close();
   });
 
+  it('exposes bootstrap status without auth for local onboarding', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-bootstrap-status-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({ method: 'GET', url: '/v1/bootstrap/status' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      mode: 'local',
+      daemonReady: true,
+      authStoreReady: true,
+      nativeAppSessionsSupported: true,
+      requiresLocalApproval: true,
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('issues native app sessions and accepts them for authenticated requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-native-session-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    const issued = await app.inject({
+      method: 'POST',
+      url: '/v1/bootstrap/native-app-session',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { clientName: 'PopeyeMac' },
+    });
+    expect(issued.statusCode).toBe(200);
+    const nativeSession = issued.json() as { sessionToken: string; expiresAt: string };
+    expect(nativeSession.sessionToken).toBeTruthy();
+    expect(nativeSession.sessionToken).not.toBe(store.current.token);
+    expect(nativeSession.expiresAt).toBeTruthy();
+
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { 'x-popeye-native-session': nativeSession.sessionToken },
+    });
+    expect(csrfResponse.statusCode).toBe(200);
+    const nativeCsrf = (csrfResponse.json() as { token: string }).token;
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/tasks',
+      headers: {
+        'x-popeye-native-session': nativeSession.sessionToken,
+        'x-popeye-csrf': nativeCsrf,
+        'sec-fetch-site': 'none',
+      },
+      payload: { workspaceId: 'default', projectId: null, title: 'native', prompt: 'hello', source: 'manual', autoEnqueue: false },
+    });
+    expect(created.statusCode).toBe(200);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'native_app_session_issued', severity: 'info' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('revokes the current native app session and rejects it afterward', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-native-session-revoke-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const bearerCsrf = issueCsrfToken(readAuthStore(authFile));
+    const issued = await app.inject({
+      method: 'POST',
+      url: '/v1/bootstrap/native-app-session',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': bearerCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { clientName: 'PopeyeMac' },
+    });
+    expect(issued.statusCode).toBe(200);
+    const nativeSession = issued.json() as { sessionToken: string };
+
+    const csrfResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { 'x-popeye-native-session': nativeSession.sessionToken },
+    });
+    expect(csrfResponse.statusCode).toBe(200);
+    const nativeCsrf = (csrfResponse.json() as { token: string }).token;
+
+    const revoked = await app.inject({
+      method: 'DELETE',
+      url: '/v1/auth/native-app-session/current',
+      headers: {
+        'x-popeye-native-session': nativeSession.sessionToken,
+        'x-popeye-csrf': nativeCsrf,
+        'sec-fetch-site': 'none',
+      },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json()).toEqual({ revoked: true });
+
+    const followup = await app.inject({
+      method: 'GET',
+      url: '/v1/security/csrf-token',
+      headers: { 'x-popeye-native-session': nativeSession.sessionToken },
+    });
+    expect(followup.statusCode).toBe(401);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'native_app_session_revoked', severity: 'info' }),
+        expect.objectContaining({ code: 'native_app_session_invalid', severity: 'warn' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('rejects bearer-authenticated native session revoke requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-native-session-revoke-bearer-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/auth/native-app-session/current',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'auth_role_forbidden', severity: 'warn' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('requires csrf for native session revoke requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-native-session-revoke-csrf-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+
+    const bearerCsrf = issueCsrfToken(readAuthStore(authFile));
+    const issued = await app.inject({
+      method: 'POST',
+      url: '/v1/bootstrap/native-app-session',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': bearerCsrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: { clientName: 'PopeyeMac' },
+    });
+    expect(issued.statusCode).toBe(200);
+    const nativeSession = issued.json() as { sessionToken: string };
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/auth/native-app-session/current',
+      headers: {
+        'x-popeye-native-session': nativeSession.sessionToken,
+        'sec-fetch-site': 'none',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: 'csrf_invalid' });
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('requires an operator bearer token to exchange a bootstrap nonce for a browser auth cookie', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-exchange-'));
     chmodSync(dir, 0o700);

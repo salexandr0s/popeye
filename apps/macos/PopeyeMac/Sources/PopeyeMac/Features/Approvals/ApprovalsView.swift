@@ -3,9 +3,6 @@ import PopeyeAPI
 
 struct ApprovalsView: View {
     @Bindable var store: ApprovalsStore
-    @State private var debouncer = ReloadDebouncer()
-
-    private let summaryColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
 
     var body: some View {
         Group {
@@ -22,7 +19,7 @@ struct ApprovalsView: View {
             }
         }
         .navigationTitle("Approvals")
-        .searchable(text: $store.searchText, prompt: "Filter approvals…")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Filter approvals…")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Picker("Status", selection: $store.statusFilter) {
@@ -38,13 +35,8 @@ struct ApprovalsView: View {
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.approvals, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.approvals, .general]) {
+            await store.load()
         }
     }
 
@@ -63,7 +55,7 @@ struct ApprovalsView: View {
     }
 
     private var summaryCards: some View {
-        LazyVGrid(columns: summaryColumns, spacing: 12) {
+        LazyVGrid(columns: PopeyeUI.cardColumns(minimum: 140, maximum: 220), spacing: PopeyeUI.cardSpacing) {
             DashboardCard(
                 label: "Pending",
                 value: "\(store.pendingCount)",

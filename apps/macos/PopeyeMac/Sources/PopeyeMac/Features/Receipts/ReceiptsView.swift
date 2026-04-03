@@ -3,7 +3,6 @@ import PopeyeAPI
 
 struct ReceiptsView: View {
     @Bindable var store: ReceiptsStore
-    @State private var debouncer = ReloadDebouncer()
 
     var body: some View {
         Group {
@@ -20,7 +19,7 @@ struct ReceiptsView: View {
             }
         }
         .navigationTitle("Receipts")
-        .searchable(text: $store.searchText, prompt: "Filter receipts…")
+        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Filter receipts…")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Picker("Status", selection: $store.statusFilter) {
@@ -37,13 +36,8 @@ struct ReceiptsView: View {
         .task {
             await store.load()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeRefresh)) { _ in
-            Task { await store.load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .popeyeInvalidation)) { notification in
-            if let signal = notification.object as? InvalidationSignal, [.receipts, .general].contains(signal) {
-                debouncer.schedule { [store] in await store.load() }
-            }
+        .popeyeRefreshable(invalidationSignals: [.receipts, .general]) {
+            await store.load()
         }
     }
 

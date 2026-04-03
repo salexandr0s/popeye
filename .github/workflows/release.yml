@@ -58,19 +58,21 @@ jobs:
       - name: Build .pkg and tarball
         run: bash scripts/build-pkg.sh
 
+      - name: Sign and notarize macOS artifacts
+        run: bash scripts/sign-pkg.sh
+        env:
+          POPEYE_SIGNING_REQUIRED: 'true'
+          POPEYE_APP_SIGN_IDENTITY: ${{ secrets.POPEYE_APP_SIGN_IDENTITY }}
+          POPEYE_SIGN_IDENTITY: ${{ secrets.POPEYE_SIGN_IDENTITY }}
+          POPEYE_APPLE_ID: ${{ secrets.POPEYE_APPLE_ID }}
+          POPEYE_TEAM_ID: ${{ secrets.POPEYE_TEAM_ID }}
+          POPEYE_APP_PASSWORD: ${{ secrets.POPEYE_APP_PASSWORD }}
+
       - name: Generate release notes
         run: bash scripts/generate-release-notes.sh
 
       - name: Generate artifact inventory
         run: bash scripts/artifact-inventory.sh
-
-      - name: Sign and notarize (optional)
-        run: bash scripts/sign-pkg.sh
-        env:
-          POPEYE_SIGN_IDENTITY: ${{ secrets.POPEYE_SIGN_IDENTITY }}
-          POPEYE_APPLE_ID: ${{ secrets.POPEYE_APPLE_ID }}
-          POPEYE_TEAM_ID: ${{ secrets.POPEYE_TEAM_ID }}
-          POPEYE_APP_PASSWORD: ${{ secrets.POPEYE_APP_PASSWORD }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -80,6 +82,7 @@ jobs:
             dist/pkg/popeye-${{ inputs.version }}-darwin.pkg
             dist/pkg/popeye-${{ inputs.version }}-darwin.tar.gz
             dist/pkg/CHECKSUMS.sha256
+            dist/pkg/SIGNING-STATUS.md
             dist/pkg/RELEASE-NOTES.md
             dist/pkg/INVENTORY.md
 
@@ -94,4 +97,5 @@ jobs:
             "dist/pkg/popeye-${RELEASE_VERSION}-darwin.pkg" \
             "dist/pkg/popeye-${RELEASE_VERSION}-darwin.tar.gz" \
             dist/pkg/CHECKSUMS.sha256 \
+            dist/pkg/SIGNING-STATUS.md \
             dist/pkg/INVENTORY.md

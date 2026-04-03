@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-04-02
+// Generated: 2026-04-03
 
 export {
   ApprovalRecord,

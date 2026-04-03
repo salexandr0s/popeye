@@ -42,6 +42,8 @@ import { handleFinance } from './commands/finance.js';
 import { handleMedical } from './commands/medical.js';
 import { handleFiles } from './commands/files.js';
 import { handlePlaybook } from './commands/playbooks.js';
+import { handleBootstrapCommand } from './bootstrap.js';
+import { resolveBundledRuntimeLayout } from './bundled-layout.js';
 
 const VERSION = process.env['POPEYE_VERSION'] ?? '0.1.0-dev';
 const GIT_SHA = process.env['POPEYE_GIT_SHA'] ?? '';
@@ -67,6 +69,12 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
   auth: {
     init: { desc: 'Initialize auth store', usage: 'pop auth init [--role <operator|service|readonly>]' },
     rotate: { desc: 'Rotate auth token', usage: 'pop auth rotate [--role <operator|service|readonly>]' },
+  },
+  bootstrap: {
+    status: { desc: 'Show local bootstrap readiness for the mac app', usage: 'pop bootstrap status' },
+    'ensure-local': { desc: 'Create local config/runtime/auth defaults if missing', usage: 'pop bootstrap ensure-local' },
+    'start-daemon': { desc: 'Install/load or restart the local Popeye daemon', usage: 'pop bootstrap start-daemon' },
+    'issue-native-session': { desc: 'Issue a native app session for PopeyeMac', usage: 'pop bootstrap issue-native-session [--client-name <name>]' },
   },
   security: {
     audit: { desc: 'Run local security audit', usage: 'pop security audit' },
@@ -371,10 +379,6 @@ async function requireDaemonClient(config: AppConfig): Promise<PopeyeApiClient> 
   return client;
 }
 
-function isBundledMode(): boolean {
-  return currentScriptPath().includes(`${join('dist', 'index')}`);
-}
-
 function currentScriptPath(): string {
   if (typeof process.argv[1] === 'string' && process.argv[1].length > 0) {
     return realpathSync(process.argv[1]);
@@ -383,10 +387,6 @@ function currentScriptPath(): string {
     return realpathSync(__filename);
   }
   throw new Error('Unable to resolve current CLI script path');
-}
-
-function bundledDaemonPath(selfPath: string): string {
-  return resolve(dirname(selfPath), '..', '..', 'daemon', 'dist', 'index.cjs');
 }
 
 // Early exits that don't require configuration
@@ -423,15 +423,6 @@ if (subcommand && !COMMANDS[command][subcommand]) {
   process.exit(1);
 }
 
-const configPath = ((): string => {
-  const p = process.env.POPEYE_CONFIG_PATH;
-  if (!p) throw new Error('POPEYE_CONFIG_PATH is required');
-  return p;
-})();
-
-const config = loadAppConfig(configPath);
-mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
-const paths = deriveRuntimePaths(config.runtimeDataDir);
 
 function readRoleFlag(): 'operator' | 'service' | 'readonly' {
   const roleIdx = process.argv.indexOf('--role');
@@ -448,14 +439,13 @@ function readFlagValue(flag: string): string | undefined {
   return value;
 }
 
-function resolveLaunchdDaemonSpec(): { daemonEntryPoint: string; workingDirectory: string; programArguments: string[] } {
-  if (isBundledMode()) {
-    const selfPath = currentScriptPath();
-    const daemonEntryPoint = bundledDaemonPath(selfPath);
+function resolveLaunchdDaemonSpec(configFilePath: string): { daemonEntryPoint: string; workingDirectory: string; programArguments: string[] } {
+  const bundledLayout = resolveBundledRuntimeLayout(currentScriptPath(), configFilePath);
+  if (bundledLayout) {
     return {
-      daemonEntryPoint,
-      workingDirectory: resolve(dirname(selfPath), '..', '..', '..'),
-      programArguments: [process.execPath, daemonEntryPoint],
+      daemonEntryPoint: bundledLayout.daemonEntryPoint,
+      workingDirectory: bundledLayout.workingDirectory,
+      programArguments: [process.execPath, bundledLayout.daemonEntryPoint],
     };
   }
 
@@ -469,6 +459,23 @@ function resolveLaunchdDaemonSpec(): { daemonEntryPoint: string; workingDirector
 }
 
 async function main(): Promise<void> {
+  if (command === 'bootstrap') {
+    const code = await handleBootstrapCommand(subcommand, {
+      resolveLaunchdDaemonSpec,
+    });
+    process.exit(code);
+  }
+
+  const configPath = (() => {
+    const p = process.env.POPEYE_CONFIG_PATH;
+    if (!p) throw new Error('POPEYE_CONFIG_PATH is required');
+    return p;
+  })();
+
+  const config = loadAppConfig(configPath);
+  mkdirSync(dirname(config.authFile), { recursive: true, mode: 0o700 });
+  const paths = deriveRuntimePaths(config.runtimeDataDir);
+
   if (command === 'auth' && subcommand === 'init') {
     console.info(JSON.stringify(initAuthStore(config.authFile, readRoleFlag()), null, 2));
     return;
@@ -511,7 +518,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'install') {
-    const launchSpec = resolveLaunchdDaemonSpec();
+    const launchSpec = resolveLaunchdDaemonSpec(configPath);
     console.info(
       JSON.stringify(
         installLaunchAgent({
@@ -528,14 +535,13 @@ async function main(): Promise<void> {
   }
   if (command === 'daemon' && subcommand === 'start') {
     let execArgs: [string, string[]];
-    if (isBundledMode()) {
-      const selfPath = currentScriptPath();
-      const bundledDaemon = bundledDaemonPath(selfPath);
-      if (!existsSync(bundledDaemon)) {
-        console.error(`Bundled daemon not found at ${bundledDaemon}. Run 'pnpm pack:daemon' first.`);
+    const bundledLayout = resolveBundledRuntimeLayout(currentScriptPath(), configPath);
+    if (bundledLayout) {
+      if (!existsSync(bundledLayout.daemonEntryPoint)) {
+        console.error(`Bundled daemon not found at ${bundledLayout.daemonEntryPoint}. Rebuild the packaged Popeye distribution first.`);
         process.exit(1);
       }
-      execArgs = [process.execPath, [bundledDaemon]];
+      execArgs = [process.execPath, [bundledLayout.daemonEntryPoint]];
     } else {
       const tsxBinary = resolve(process.cwd(), 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
       const daemonEntryPoint = resolve(process.cwd(), 'apps/daemon/src/index.ts');
@@ -599,7 +605,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'daemon' && subcommand === 'plist') {
-    const launchSpec = resolveLaunchdDaemonSpec();
+    const launchSpec = resolveLaunchdDaemonSpec(configPath);
     console.info(
       createLaunchdPlist({
         configPath,
