@@ -4,6 +4,7 @@ import PopeyeAPI
 struct FinanceSearchSection: View {
     @Binding var searchText: String
     let searchResults: [FinanceSearchResultDTO]
+    let phase: ScreenOperationPhase
     let search: () -> Void
 
     var body: some View {
@@ -20,7 +21,20 @@ struct FinanceSearchSection: View {
                 }
             }
 
-            if searchResults.isEmpty == false {
+            OperationStatusView(
+                phase: phase,
+                loadingTitle: "Searching finance records…",
+                failureTitle: "Couldn’t search finance records",
+                retryAction: search
+            )
+
+            if trimmedSearchText.isEmpty {
+                Text("Search imported finance records in the current workspace.")
+                    .foregroundStyle(.secondary)
+            } else if searchResults.isEmpty, phase.error == nil, phase.isLoading == false {
+                Text("No finance matches found.")
+                    .foregroundStyle(.secondary)
+            } else {
                 ForEach(searchResults) { result in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(result.description)
@@ -41,6 +55,10 @@ struct FinanceSearchSection: View {
             .textFieldStyle(.roundedBorder)
             .help("Search imported finance records in the current workspace")
             .onSubmit(search)
+    }
+
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var searchButton: some View {

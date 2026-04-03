@@ -10,7 +10,6 @@ struct CCJobInspectorSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                mutationToast
                 jobActions
                 InspectorSection(title: "Job") {
                     DetailRow(label: "Status", value: job.status)
@@ -27,18 +26,6 @@ struct CCJobInspectorSection: View {
                 }
             }
             .padding()
-        }
-    }
-
-    @ViewBuilder
-    private var mutationToast: some View {
-        switch store.mutationState {
-        case .succeeded(let msg):
-            MutationToast(message: msg, isError: false, onDismiss: { store.dismissMutation() })
-        case .failed(let msg):
-            MutationToast(message: msg, isError: true, onDismiss: { store.dismissMutation() })
-        default:
-            EmptyView()
         }
     }
 

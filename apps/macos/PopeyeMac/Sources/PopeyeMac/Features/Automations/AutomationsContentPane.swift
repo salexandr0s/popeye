@@ -40,16 +40,34 @@ struct AutomationsContentPane: View {
     @ViewBuilder
     private var selectedDetailView: some View {
         if let selectedDetail {
-            AutomationDetailView(
-                detail: selectedDetail,
-                mutationReceipt: store.selectedMutationReceipt,
-                viewMode: store.viewMode,
-                update: update,
-                runNow: runNow,
-                pause: pause,
-                resume: resume,
-                openRun: openRun
-            )
+            VStack(alignment: .leading, spacing: 0) {
+                if store.detailPhase != .idle {
+                    OperationStatusView(
+                        phase: store.detailPhase,
+                        loadingTitle: "Refreshing automation details…",
+                        failureTitle: "Automation details unavailable",
+                        retryAction: {
+                            guard let selectedAutomationID = store.selectedAutomationID else { return }
+                            Task { await store.loadDetail(id: selectedAutomationID) }
+                        }
+                    )
+                    .padding(PopeyeUI.contentPadding)
+                }
+
+                AutomationDetailView(
+                    detail: selectedDetail,
+                    mutationReceipt: store.selectedMutationReceipt,
+                    receiptsPhase: store.receiptsPhase,
+                    viewMode: store.viewMode,
+                    isMutating: store.isMutating,
+                    update: update,
+                    runNow: runNow,
+                    pause: pause,
+                    resume: resume,
+                    retryReceiptLoad: { Task { await store.loadMutationReceipts() } },
+                    openRun: openRun
+                )
+            }
             .id(selectedDetail.id + "-" + String(selectedDetail.enabled) + "-" + String(selectedDetail.intervalSeconds ?? -1))
         } else {
             ContentUnavailableView("Select an automation", systemImage: "bolt.badge.clock")

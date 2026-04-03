@@ -5,25 +5,38 @@ struct MemorySearchResultsView: View {
     @Bindable var store: MemoryStore
 
     var body: some View {
-        Group {
-            if store.isSearching {
-                LoadingStateView(title: "Searching...")
-            } else if let results = store.searchResults {
-                if results.results.isEmpty {
-                    EmptyStateView(
-                        icon: "magnifyingglass",
-                        title: "No results",
-                        description: "No memories matched \"\(results.query)\"."
-                    )
-                } else {
-                    resultsList(results)
-                }
-            } else {
-                EmptyStateView(
-                    icon: "brain",
-                    title: "Search memories",
-                    description: "Enter a query to search the memory system."
+        VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
+            if store.searchPhase != .idle {
+                OperationStatusView(
+                    phase: store.searchPhase,
+                    loadingTitle: "Searching memories…",
+                    failureTitle: "Search failed",
+                    retryAction: { Task { await store.search() } }
                 )
+                .padding(.horizontal, PopeyeUI.contentPadding)
+                .padding(.top, PopeyeUI.contentPadding)
+            }
+
+            Group {
+                if let results = store.searchResults {
+                    if results.results.isEmpty {
+                        EmptyStateView(
+                            icon: "magnifyingglass",
+                            title: "No results",
+                            description: "No memories matched \"\(results.query)\"."
+                        )
+                    } else {
+                        resultsList(results)
+                    }
+                } else if store.searchPhase == .loading {
+                    Spacer(minLength: 0)
+                } else {
+                    EmptyStateView(
+                        icon: "brain",
+                        title: "Search memories",
+                        description: "Enter a query to search the memory system."
+                    )
+                }
             }
         }
     }

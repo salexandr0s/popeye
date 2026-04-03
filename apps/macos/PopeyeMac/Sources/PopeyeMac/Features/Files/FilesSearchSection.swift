@@ -4,6 +4,7 @@ import PopeyeAPI
 struct FilesSearchSection: View {
     @Binding var searchText: String
     let searchResults: [FileSearchResultDTO]
+    let phase: ScreenOperationPhase
     let search: () -> Void
     let selectDocument: (FileSearchResultDTO) -> Void
 
@@ -21,10 +22,17 @@ struct FilesSearchSection: View {
                 }
             }
 
+            OperationStatusView(
+                phase: phase,
+                loadingTitle: "Searching indexed documents…",
+                failureTitle: "Couldn’t search this file root",
+                retryAction: search
+            )
+
             if trimmedSearchText.isEmpty {
                 Text("Search within the selected file root to inspect indexed documents.")
                     .foregroundStyle(.secondary)
-            } else if searchResults.isEmpty {
+            } else if searchResults.isEmpty, phase.error == nil, phase.isLoading == false {
                 Text("No matching documents found.")
                     .foregroundStyle(.secondary)
             } else {

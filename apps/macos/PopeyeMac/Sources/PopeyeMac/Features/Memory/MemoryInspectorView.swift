@@ -25,11 +25,30 @@ struct MemoryInspectorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
+                if store.detailPhase != .idle {
+                    OperationStatusView(
+                        phase: store.detailPhase,
+                        loadingTitle: "Refreshing memory details…",
+                        failureTitle: "Memory details unavailable",
+                        retryAction: { Task { await store.loadDetail(id: memory.id) } }
+                    )
+                }
+
+                if store.promotionProposalPhase != .idle {
+                    OperationStatusView(
+                        phase: store.promotionProposalPhase,
+                        loadingTitle: "Preparing promotion proposal…",
+                        failureTitle: "Promotion proposal failed",
+                        retryAction: { Task { await store.proposePromotion(id: memory.id, targetPath: "MEMORY.md") } }
+                    )
+                }
+
                 MemoryInspectorSummarySection(memory: memory)
                 MemoryInspectorProvenanceSection(memory: memory)
                 MemoryInspectorContentSection(memory: memory, showContent: $showContent)
                 MemoryInspectorHistorySection(
                     history: store.selectedHistory,
+                    phase: store.historyPhase,
                     showHistory: $showHistory,
                     loadHistory: loadHistory
                 )
@@ -41,25 +60,12 @@ struct MemoryInspectorView: View {
             }
             .padding(PopeyeUI.contentPadding)
         }
-        .overlay(alignment: .top) {
-            mutationToast
-                .padding(.top, 12)
-                .padding(.horizontal, PopeyeUI.contentPadding)
+        .overlay(alignment: .bottomTrailing) {
+            MutationStateOverlay(state: store.mutationState, dismiss: store.dismissMutation)
+                .padding(PopeyeUI.contentPadding)
         }
         .sheet(item: $pendingAction) { action in
             confirmationSheet(for: action)
-        }
-    }
-
-    @ViewBuilder
-    private var mutationToast: some View {
-        switch store.mutationState {
-        case .succeeded(let msg):
-            MutationToast(message: msg, isError: false, onDismiss: { store.dismissMutation() })
-        case .failed(let msg):
-            MutationToast(message: msg, isError: true, onDismiss: { store.dismissMutation() })
-        default:
-            EmptyView()
         }
     }
 

@@ -1,7 +1,9 @@
 import Foundation
+import Observation
 import PopeyeAPI
 
-@Observable @MainActor
+@Observable
+@MainActor
 final class MemoryStore {
     enum ViewMode: String, CaseIterable {
         case search
@@ -10,7 +12,45 @@ final class MemoryStore {
         case curated
     }
 
-    // MARK: - State
+    struct Dependencies: Sendable {
+        var listMemories: @Sendable (_ workspaceID: String, _ limit: Int) async throws -> [MemoryRecordDTO]
+        var searchMemories: @Sendable (_ workspaceID: String, _ query: String, _ limit: Int) async throws -> MemorySearchResponseDTO
+        var loadMemoryDetail: @Sendable (_ id: String) async throws -> MemoryRecordDTO
+        var loadMemoryHistory: @Sendable (_ id: String) async throws -> MemoryHistoryDTO
+        var pinMemory: @Sendable (_ id: String, _ targetKind: String, _ reason: String?) async throws -> Void
+        var forgetMemory: @Sendable (_ id: String, _ reason: String?) async throws -> Void
+        var proposePromotion: @Sendable (_ id: String, _ targetPath: String) async throws -> MemoryPromotionProposalDTO
+        var executePromotion: @Sendable (_ id: String, _ input: MemoryPromotionExecuteInput) async throws -> Void
+
+        static func live(client: ControlAPIClient) -> Dependencies {
+            Dependencies(
+                listMemories: { workspaceID, limit in
+                    try await client.listMemories(workspaceId: workspaceID, limit: limit)
+                },
+                searchMemories: { workspaceID, query, limit in
+                    try await client.searchMemories(query: query, limit: limit, workspaceId: workspaceID)
+                },
+                loadMemoryDetail: { id in
+                    try await client.getMemory(id: id)
+                },
+                loadMemoryHistory: { id in
+                    try await client.getMemoryHistory(id: id)
+                },
+                pinMemory: { id, targetKind, reason in
+                    _ = try await client.pinMemory(id: id, targetKind: targetKind, reason: reason)
+                },
+                forgetMemory: { id, reason in
+                    _ = try await client.forgetMemory(id: id, reason: reason)
+                },
+                proposePromotion: { id, targetPath in
+                    try await client.proposePromotion(id: id, targetPath: targetPath)
+                },
+                executePromotion: { id, input in
+                    _ = try await client.executePromotion(id: id, input: input)
+                }
+            )
+        }
+    }
 
     var viewMode: ViewMode = .search
     var searchText = ""
@@ -20,23 +60,19 @@ final class MemoryStore {
     var selectedDayID: String?
     var selectedDetail: MemoryRecordDTO?
     var memoryHistory: MemoryHistoryDTO?
-    var isLoading = false
-    var isSearching = false
-    var errorMessage: String?
-
-    // Filters (browse mode)
     var typeFilter: String?
-
-    // Mutations
-    let mutations = MutationExecutor()
-    var mutationState: MutationState { mutations.state }
-
-    // Promotion
     var promotionProposal: MemoryPromotionProposalDTO?
 
-    private let memoryService: MemoryService
-    private let client: ControlAPIClient
+    var loadPhase: ScreenLoadPhase = .idle
+    var searchPhase: ScreenOperationPhase = .idle
+    var detailPhase: ScreenOperationPhase = .idle
+    var historyPhase: ScreenOperationPhase = .idle
+    var promotionProposalPhase: ScreenOperationPhase = .idle
+
+    let mutations = MutationExecutor()
+    var mutationState: MutationState { mutations.state }
     let curatedDocuments: CuratedDocumentsStore
+
     var workspaceID = "default" {
         didSet {
             guard oldValue != workspaceID else { return }
@@ -45,27 +81,37 @@ final class MemoryStore {
             selectedDetail = nil
             memoryHistory = nil
             selectedDayID = nil
+            promotionProposal = nil
+            loadPhase = .idle
+            searchPhase = .idle
+            detailPhase = .idle
+            historyPhase = .idle
+            promotionProposalPhase = .idle
             curatedDocuments.workspaceID = workspaceID
+            mutations.dismiss()
         }
     }
 
+    private let dependencies: Dependencies
+
     init(client: ControlAPIClient) {
-        self.client = client
-        self.memoryService = MemoryService(client: client)
-        self.curatedDocuments = CuratedDocumentsStore(
-            client: client,
-            allowedKinds: [
-                "curated_memory",
-                "daily_memory_note",
-            ],
-            preferredKinds: [
-                "daily_memory_note",
-                "curated_memory",
-            ]
-        )
+        self.dependencies = .live(client: client)
+        self.curatedDocuments = Self.makeCuratedDocumentsStore(client: client)
     }
 
-    // MARK: - Computed
+    init(
+        dependencies: Dependencies,
+        curatedDocuments: CuratedDocumentsStore? = nil
+    ) {
+        self.dependencies = dependencies
+        self.curatedDocuments = curatedDocuments ?? Self.makeCuratedDocumentsStore(client: Self.previewClient)
+    }
+
+    var error: APIError? { loadPhase.error }
+    var searchError: APIError? { searchPhase.error }
+    var detailError: APIError? { detailPhase.error }
+    var historyError: APIError? { historyPhase.error }
+    var promotionProposalError: APIError? { promotionProposalPhase.error }
 
     var selectedMemory: MemoryRecordDTO? {
         guard let id = selectedMemoryId else { return nil }
@@ -77,7 +123,9 @@ final class MemoryStore {
         guard let id = selectedMemoryId,
               let history = memoryHistory,
               history.memoryId == id
-        else { return nil }
+        else {
+            return nil
+        }
 
         return history
     }
@@ -109,106 +157,141 @@ final class MemoryStore {
         return dayGroups.first
     }
 
-    // MARK: - Actions
-
     func search() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
-        isSearching = true
-        errorMessage = nil
-        do {
-            searchResults = try await memoryService.search(query: query, workspaceId: workspaceID)
-        } catch let error as APIError {
-            errorMessage = error.userMessage
-        } catch {
-            PopeyeLogger.refresh.error("Memory search failed: \(error)")
+        guard !query.isEmpty else {
+            searchResults = nil
+            searchPhase = .idle
+            return
         }
-        isSearching = false
+
+        searchPhase = .loading
+        do {
+            searchResults = try await dependencies.searchMemories(workspaceID, query, 20)
+            searchPhase = .idle
+        } catch {
+            searchPhase = .failed(APIError.from(error))
+        }
     }
 
     func loadList() async {
-        isLoading = true
+        loadPhase = .loading
         do {
-            memories = try await memoryService.listMemories(workspaceId: workspaceID, limit: 200)
+            memories = try await dependencies.listMemories(workspaceID, 200)
             ensureSelectedDay()
+            if let selectedMemoryId, !memories.contains(where: { $0.id == selectedMemoryId }) {
+                self.selectedMemoryId = nil
+                selectedDetail = nil
+                memoryHistory = nil
+                detailPhase = .idle
+                historyPhase = .idle
+            }
+            loadPhase = memories.isEmpty ? .empty : .loaded
         } catch {
-            PopeyeLogger.refresh.error("Memory list load failed: \(error)")
+            loadPhase = .failed(APIError.from(error))
         }
-        isLoading = false
     }
 
     func loadDetail(id: String) async {
+        detailPhase = .loading
         do {
-            selectedDetail = try await memoryService.getMemory(id: id)
+            selectedDetail = try await dependencies.loadMemoryDetail(id)
+            detailPhase = .idle
         } catch {
-            PopeyeLogger.refresh.error("Memory detail load failed: \(error)")
+            detailPhase = .failed(APIError.from(error))
         }
     }
 
     func loadHistory(id: String) async {
+        historyPhase = .loading
         do {
-            memoryHistory = try await memoryService.getHistory(id: id)
+            memoryHistory = try await dependencies.loadMemoryHistory(id)
+            historyPhase = .idle
         } catch {
-            PopeyeLogger.refresh.error("Memory history load failed: \(error)")
+            historyPhase = .failed(APIError.from(error))
         }
     }
 
-    // MARK: - Mutations
-
     func pinMemory(id: String, targetKind: String, reason: String? = nil) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.pinMemory(id: id, targetKind: targetKind, reason: reason) },
+            action: { [dependencies] in
+                try await dependencies.pinMemory(id, targetKind, reason)
+            },
             successMessage: "Memory pinned",
             fallbackError: "Pin failed",
-            reload: { [weak self] in await self?.loadList() }
+            reload: { [weak self] in
+                guard let self else { return }
+                await self.loadList()
+                if self.selectedMemoryId == id {
+                    await self.loadDetail(id: id)
+                    await self.loadHistory(id: id)
+                }
+            }
         )
     }
 
     func forgetMemory(id: String, reason: String? = nil) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.forgetMemory(id: id, reason: reason) },
+            action: { [dependencies] in
+                try await dependencies.forgetMemory(id, reason)
+            },
             successMessage: "Memory forgotten",
             fallbackError: "Forget failed",
             reload: { [weak self] in
-                await self?.loadList()
-                if self?.selectedMemoryId == id {
-                    self?.selectedMemoryId = nil
-                    self?.selectedDetail = nil
+                guard let self else { return }
+                await self.loadList()
+                if self.selectedMemoryId == id {
+                    self.selectedMemoryId = nil
+                    self.selectedDetail = nil
+                    self.memoryHistory = nil
+                    self.detailPhase = .idle
+                    self.historyPhase = .idle
                 }
             }
         )
     }
 
     func proposePromotion(id: String, targetPath: String) async {
+        promotionProposalPhase = .loading
         do {
-            promotionProposal = try await memoryService.proposePromotion(id: id, targetPath: targetPath)
-        } catch let error as APIError {
-            errorMessage = error.userMessage
+            promotionProposal = try await dependencies.proposePromotion(id, targetPath)
+            promotionProposalPhase = .idle
         } catch {
-            PopeyeLogger.refresh.error("Promotion proposal failed: \(error)")
+            promotionProposalPhase = .failed(APIError.from(error))
         }
     }
 
     func executePromotion() async {
         guard let proposal = promotionProposal else { return }
+        let input = MemoryPromotionExecuteInput(
+            targetPath: proposal.targetPath,
+            diff: proposal.diff,
+            approved: true,
+            promoted: true
+        )
+
         await mutations.execute(
-            action: { [client] in
-                let input = MemoryPromotionExecuteInput(
-                    targetPath: proposal.targetPath,
-                    diff: proposal.diff
-                )
-                _ = try await client.executePromotion(id: proposal.memoryId, input: input)
+            action: { [dependencies] in
+                try await dependencies.executePromotion(proposal.memoryId, input)
             },
             successMessage: "Memory promoted to curated file",
             fallbackError: "Promotion failed",
             reload: { [weak self] in
-                self?.promotionProposal = nil
-                await self?.loadList()
+                guard let self else { return }
+                self.promotionProposal = nil
+                self.promotionProposalPhase = .idle
+                await self.loadList()
+                if let selectedMemoryId = self.selectedMemoryId {
+                    await self.loadDetail(id: selectedMemoryId)
+                    await self.loadHistory(id: selectedMemoryId)
+                }
             }
         )
     }
 
-    func dismissMutation() { mutations.dismiss() }
+    func dismissMutation() {
+        mutations.dismiss()
+    }
 
     func ensureSelectedDay() {
         guard let firstDayID = dayGroups.first?.id else {
@@ -223,11 +306,34 @@ final class MemoryStore {
 
     func selectDay(for memoryID: String?) {
         guard let memoryID else { return }
-        guard let group = dayGroups.first(where: { group in group.memories.contains(where: { $0.id == memoryID }) }) else { return }
+        guard let group = dayGroups.first(where: { group in
+            group.memories.contains(where: { $0.id == memoryID })
+        }) else {
+            return
+        }
         selectedDayID = group.id
     }
 
     func loadCuratedDocumentsIfNeeded() async {
         await curatedDocuments.loadIfNeeded()
+    }
+
+    private static let previewClient = ControlAPIClient(
+        baseURL: "http://127.0.0.1:1",
+        token: "preview"
+    )
+
+    private static func makeCuratedDocumentsStore(client: ControlAPIClient) -> CuratedDocumentsStore {
+        CuratedDocumentsStore(
+            client: client,
+            allowedKinds: [
+                "curated_memory",
+                "daily_memory_note",
+            ],
+            preferredKinds: [
+                "daily_memory_note",
+                "curated_memory",
+            ]
+        )
     }
 }

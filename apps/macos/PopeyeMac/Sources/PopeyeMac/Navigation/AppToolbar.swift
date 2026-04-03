@@ -4,11 +4,11 @@ struct AppToolbar: ToolbarContent {
     @Environment(AppModel.self) private var appModel
 
     var body: some ToolbarContent {
-        @Bindable var model = appModel
+        @Bindable var workspace = appModel.workspace
 
         ToolbarItem(placement: .automatic) {
             if appModel.isConnected {
-                Picker("Workspace", selection: $model.selectedWorkspaceID) {
+                Picker("Workspace", selection: $workspace.selectedWorkspaceID) {
                     if appModel.workspaces.isEmpty {
                         Text("Default").tag("default")
                     } else {

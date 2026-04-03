@@ -40,7 +40,7 @@ struct AutomationsView: View {
 
     var body: some View {
         Group {
-            if store.isLoading && store.automations.isEmpty {
+            if store.loadPhase == .loading && store.automations.isEmpty {
                 LoadingStateView(title: "Loading automations…")
             } else if let error = store.error, store.automations.isEmpty {
                 ErrorStateView(error: error, retryAction: reload)
@@ -68,11 +68,8 @@ struct AutomationsView: View {
                     .frame(minWidth: 560)
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    AutomationMutationOverlay(
-                        state: store.mutationState,
-                        dismiss: { store.dismissMutation() }
-                    )
-                    .padding(20)
+                    MutationStateOverlay(state: store.mutationState, dismiss: store.dismissMutation)
+                        .padding(20)
                 }
             }
         }
@@ -84,7 +81,7 @@ struct AutomationsView: View {
         }
         .onChange(of: store.selectedAutomationID) { _, newValue in
             guard let newValue else { return }
-            Task { try? await store.loadDetail(id: newValue) }
+            Task { await store.loadDetail(id: newValue) }
         }
         .onChange(of: store.filter) { _, _ in
             store.ensureSelection()

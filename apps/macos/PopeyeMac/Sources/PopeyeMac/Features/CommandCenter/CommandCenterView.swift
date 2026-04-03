@@ -6,13 +6,21 @@ struct CommandCenterView: View {
 
     var body: some View {
         Group {
-            if store.isLoading && store.lastUpdated == nil {
+            if store.loadPhase == .loading && store.lastUpdated == nil {
                 LoadingStateView(title: "Loading command center...")
+            } else if let error = store.error, store.lastUpdated == nil {
+                ErrorStateView(error: error) {
+                    Task { await store.load() }
+                }
             } else {
                 commandCenterContent
             }
         }
         .navigationTitle("Command Center")
+        .overlay(alignment: .bottomTrailing) {
+            MutationStateOverlay(state: store.mutationState, dismiss: store.dismissMutation)
+                .padding(PopeyeUI.contentPadding)
+        }
         .popeyeRefreshable(invalidationSignals: [.runs, .jobs, .interventions, .general]) {
             await store.load()
         }
@@ -41,6 +49,16 @@ struct CommandCenterView: View {
                 Spacer()
                 FreshnessPill(lastUpdated: store.lastUpdated)
             }
+
+            if store.refreshPhase != .idle {
+                OperationStatusView(
+                    phase: store.refreshPhase,
+                    loadingTitle: "Refreshing command center…",
+                    failureTitle: "Command center is showing stale data",
+                    retryAction: { Task { await store.load() } }
+                )
+            }
+
             SummaryStrip(store: store)
         }
         .padding(PopeyeUI.contentPadding)

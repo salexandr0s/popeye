@@ -1,91 +1,97 @@
 import SwiftUI
+import Observation
 import PopeyeAPI
 
 @Observable @MainActor
 final class AppModel {
+    let navigation: AppNavigationModel
+    let workspace: WorkspaceContext
+
     var connectionState: ConnectionState = .disconnected
-    var selectedRoute: AppRoute?
     var bootstrapStatus: LocalBootstrapStatus?
     var bootstrapErrorMessage: String?
     var isBootstrapBusy = false
     var baseURL: String {
-        get { UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:3210" }
-        set { UserDefaults.standard.set(newValue, forKey: "baseURL") }
+        get { UserDefaults.standard.string(forKey: StorageKey.baseURL) ?? "http://127.0.0.1:3210" }
+        set { UserDefaults.standard.set(newValue, forKey: StorageKey.baseURL) }
     }
 
-    var badgeCounts: BadgeCounts = BadgeCounts()
+    var badgeCounts = BadgeCounts()
     var sseConnected = false
-    var workspaces: [WorkspaceRecordDTO] = []
-    var selectedWorkspaceID: String = UserDefaults.standard.string(forKey: "selectedWorkspaceID") ?? "default" {
-        didSet {
-            UserDefaults.standard.set(selectedWorkspaceID, forKey: "selectedWorkspaceID")
-            propagateWorkspaceSelection()
-        }
+    var selectedRoute: AppRoute? {
+        get { navigation.selectedRoute }
+        set { navigation.selectedRoute = newValue }
     }
-
-    var selectedWorkspace: WorkspaceRecordDTO? {
-        workspaces.first { $0.id == selectedWorkspaceID }
+    var workspaces: [WorkspaceRecordDTO] { workspace.workspaces }
+    var selectedWorkspaceID: String {
+        get { workspace.selectedWorkspaceID }
+        set { workspace.selectedWorkspaceID = newValue }
     }
+    var selectedWorkspace: WorkspaceRecordDTO? { workspace.selectedWorkspace }
 
     // MARK: - Settings (backed by UserDefaults)
 
-    var sseEnabled: Bool = UserDefaults.standard.object(forKey: "sseEnabled") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(sseEnabled, forKey: "sseEnabled") }
+    var sseEnabled: Bool = UserDefaults.standard.object(forKey: StorageKey.sseEnabled) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(sseEnabled, forKey: StorageKey.sseEnabled)
+            guard isConnected else { return }
+            if sseEnabled {
+                startSSE()
+            } else {
+                stopSSE()
+            }
+        }
     }
 
-    var pollIntervalSeconds: Int = UserDefaults.standard.object(forKey: "pollIntervalSeconds") as? Int ?? 15 {
-        didSet { UserDefaults.standard.set(pollIntervalSeconds, forKey: "pollIntervalSeconds") }
+    var pollIntervalSeconds: Int = UserDefaults.standard.object(forKey: StorageKey.pollIntervalSeconds) as? Int ?? 15 {
+        didSet {
+            UserDefaults.standard.set(pollIntervalSeconds, forKey: StorageKey.pollIntervalSeconds)
+            stores.reconfigurePollingStores()
+        }
     }
 
     private(set) var client: ControlAPIClient?
-    private let credentialStore = CredentialStore()
-    private let localBootstrapService = LocalBootstrapService()
+    @ObservationIgnored
+    private let credentialStore: CredentialStore
+    @ObservationIgnored
+    private let localBootstrapService: LocalBootstrapService
+    @ObservationIgnored
     private var activeCredentialKind: StoredCredentialKind?
-
-    init() {
-        if let raw = UserDefaults.standard.string(forKey: "selectedRoute"),
-           let route = AppRoute(rawValue: raw) {
-            selectedRoute = route
-        } else {
-            selectedRoute = .home
-        }
-    }
+    @ObservationIgnored
+    private var stores: AppStoreRegistry! = nil
+    @ObservationIgnored
     private var eventStream: EventStreamService?
+    @ObservationIgnored
     private var invalidationBus: InvalidationBus?
+    @ObservationIgnored
     private var sseTask: Task<Void, Never>?
+    @ObservationIgnored
     private var sseBridgeTask: Task<Void, Never>?
 
-    // MARK: - Cached Stores (survive navigation)
+    init(
+        navigation: AppNavigationModel = AppNavigationModel(),
+        workspace: WorkspaceContext = WorkspaceContext(),
+        credentialStore: CredentialStore = CredentialStore(),
+        localBootstrapService: LocalBootstrapService = LocalBootstrapService()
+    ) {
+        self.navigation = navigation
+        self.workspace = workspace
+        self.credentialStore = credentialStore
+        self.localBootstrapService = localBootstrapService
+        self.stores = AppStoreRegistry(
+            clientProvider: { [weak self] in self?.client },
+            workspaceIDProvider: { [weak self] in self?.selectedWorkspaceID ?? "default" },
+            pollIntervalProvider: { [weak self] in self?.pollIntervalSeconds ?? 15 }
+        )
 
-    private var _dashboardStore: DashboardStore?
-    private var _commandCenterStore: CommandCenterStore?
-    private var _runsStore: RunsStore?
-    private var _jobsStore: JobsStore?
-    private var _receiptsStore: ReceiptsStore?
-    private var _interventionsStore: InterventionsStore?
-    private var _approvalsStore: ApprovalsStore?
-    private var _connectionsStore: ConnectionsStore?
-    private var _usageSecurityStore: UsageSecurityStore?
-    private var _usageStore: UsageStore?
-    private var _setupStore: SetupStore?
-    private var _brainStore: BrainStore?
-    private var _memoryStore: MemoryStore?
-    private var _agentProfilesStore: AgentProfilesStore?
-    private var _instructionPreviewStore: InstructionPreviewStore?
-    private var _automationStore: AutomationStore?
-    private var _homeStore: HomeStore?
-    private var _emailStore: EmailStore?
-    private var _calendarStore: CalendarStore?
-    private var _todosStore: TodosStore?
-    private var _peopleStore: PeopleStore?
-    private var _filesStore: FilesStore?
-    private var _financeStore: FinanceStore?
-    private var _medicalStore: MedicalStore?
-    private var _telegramStore: TelegramStore?
+        self.workspace.onSelectionChanged = { [weak self] selectedWorkspaceID in
+            self?.stores.propagateWorkspaceSelection(selectedWorkspaceID)
+        }
+    }
 
     struct BadgeCounts {
-        var openInterventions: Int = 0
-        var pendingApprovals: Int = 0
+        var openInterventions = 0
+        var pendingApprovals = 0
     }
 
     var isConnected: Bool {
@@ -130,262 +136,64 @@ final class AppModel {
 
     // MARK: - Store Accessors
 
-    /// Asserts a connected client exists. All store accessors are gated behind
-    /// `AppShellView`'s `if appModel.client != nil` check, so this should never
-    /// fail in practice.
-    private var connectedClient: ControlAPIClient {
-        guard let client else {
-            fatalError("Store accessor called before connection established")
-        }
-        return client
-    }
-
-    func dashboardStore() -> DashboardStore {
-        if let s = _dashboardStore { return s }
-        let s = DashboardStore(service: SystemService(client: connectedClient), pollIntervalSeconds: pollIntervalSeconds)
-        _dashboardStore = s
-        return s
-    }
-
-    func commandCenterStore() -> CommandCenterStore {
-        if let s = _commandCenterStore { return s }
-        let s = CommandCenterStore(client: connectedClient, pollIntervalSeconds: pollIntervalSeconds)
-        _commandCenterStore = s
-        return s
-    }
-
-    func runsStore() -> RunsStore {
-        if let s = _runsStore { return s }
-        let s = RunsStore(client: connectedClient)
-        _runsStore = s
-        return s
-    }
-
-    func jobsStore() -> JobsStore {
-        if let s = _jobsStore { return s }
-        let s = JobsStore(client: connectedClient)
-        _jobsStore = s
-        return s
-    }
-
-    func receiptsStore() -> ReceiptsStore {
-        if let s = _receiptsStore { return s }
-        let s = ReceiptsStore(client: connectedClient)
-        _receiptsStore = s
-        return s
-    }
-
-    func interventionsStore() -> InterventionsStore {
-        if let s = _interventionsStore { return s }
-        let s = InterventionsStore(client: connectedClient)
-        _interventionsStore = s
-        return s
-    }
-
-    func approvalsStore() -> ApprovalsStore {
-        if let s = _approvalsStore { return s }
-        let s = ApprovalsStore(client: connectedClient)
-        _approvalsStore = s
-        return s
-    }
-
-    func connectionsStore() -> ConnectionsStore {
-        if let s = _connectionsStore { return s }
-        let s = ConnectionsStore(client: connectedClient)
-        _connectionsStore = s
-        return s
-    }
-
-    func usageSecurityStore() -> UsageSecurityStore {
-        if let s = _usageSecurityStore { return s }
-        let s = UsageSecurityStore(client: connectedClient)
-        _usageSecurityStore = s
-        return s
-    }
-
-    func usageStore() -> UsageStore {
-        if let s = _usageStore { return s }
-        let s = UsageStore(client: connectedClient)
-        _usageStore = s
-        return s
-    }
-
-    func setupStore() -> SetupStore {
-        if let s = _setupStore { return s }
-        let s = SetupStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _setupStore = s
-        return s
-    }
-
-    func brainStore() -> BrainStore {
-        if let s = _brainStore { return s }
-        let s = BrainStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _brainStore = s
-        return s
-    }
-
-    func memoryStore() -> MemoryStore {
-        if let s = _memoryStore { return s }
-        let s = MemoryStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _memoryStore = s
-        return s
-    }
-
-    func agentProfilesStore() -> AgentProfilesStore {
-        if let s = _agentProfilesStore { return s }
-        let s = AgentProfilesStore(client: connectedClient)
-        _agentProfilesStore = s
-        return s
-    }
-
-    func instructionPreviewStore() -> InstructionPreviewStore {
-        if let s = _instructionPreviewStore { return s }
-        let s = InstructionPreviewStore(client: connectedClient)
-        s.adoptWorkspaceScope(selectedWorkspaceID)
-        _instructionPreviewStore = s
-        return s
-    }
-
-    func automationStore() -> AutomationStore {
-        if let s = _automationStore { return s }
-        let s = AutomationStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _automationStore = s
-        return s
-    }
-
-    func homeStore() -> HomeStore {
-        if let s = _homeStore { return s }
-        let s = HomeStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _homeStore = s
-        return s
-    }
-
-    func emailStore() -> EmailStore {
-        if let s = _emailStore { return s }
-        let s = EmailStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _emailStore = s
-        return s
-    }
-
-    func calendarStore() -> CalendarStore {
-        if let s = _calendarStore { return s }
-        let s = CalendarStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _calendarStore = s
-        return s
-    }
-
-    func todosStore() -> TodosStore {
-        if let s = _todosStore { return s }
-        let s = TodosStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _todosStore = s
-        return s
-    }
-
-    func peopleStore() -> PeopleStore {
-        if let s = _peopleStore { return s }
-        let s = PeopleStore(client: connectedClient)
-        _peopleStore = s
-        return s
-    }
-
-    func filesStore() -> FilesStore {
-        if let s = _filesStore { return s }
-        let s = FilesStore(client: connectedClient)
-        s.workspaceID = selectedWorkspaceID
-        _filesStore = s
-        return s
-    }
-
-    func financeStore() -> FinanceStore {
-        if let s = _financeStore { return s }
-        let s = FinanceStore(client: connectedClient)
-        _financeStore = s
-        return s
-    }
-
-    func medicalStore() -> MedicalStore {
-        if let s = _medicalStore { return s }
-        let s = MedicalStore(client: connectedClient)
-        _medicalStore = s
-        return s
-    }
-
-    func telegramStore() -> TelegramStore {
-        if let s = _telegramStore { return s }
-        let s = TelegramStore(client: connectedClient)
-        _telegramStore = s
-        return s
-    }
+    func dashboardStore() -> DashboardStore { stores.dashboard() }
+    func commandCenterStore() -> CommandCenterStore { stores.commandCenter() }
+    func runsStore() -> RunsStore { stores.runs() }
+    func jobsStore() -> JobsStore { stores.jobs() }
+    func receiptsStore() -> ReceiptsStore { stores.receipts() }
+    func interventionsStore() -> InterventionsStore { stores.interventions() }
+    func approvalsStore() -> ApprovalsStore { stores.approvals() }
+    func connectionsStore() -> ConnectionsStore { stores.connections() }
+    func usageSecurityStore() -> UsageSecurityStore { stores.usageSecurity() }
+    func usageStore() -> UsageStore { stores.usage() }
+    func setupStore() -> SetupStore { stores.setup() }
+    func brainStore() -> BrainStore { stores.brain() }
+    func memoryStore() -> MemoryStore { stores.memory() }
+    func agentProfilesStore() -> AgentProfilesStore { stores.agentProfiles() }
+    func instructionPreviewStore() -> InstructionPreviewStore { stores.instructionPreview() }
+    func automationStore() -> AutomationStore { stores.automations() }
+    func homeStore() -> HomeStore { stores.home() }
+    func emailStore() -> EmailStore { stores.email() }
+    func calendarStore() -> CalendarStore { stores.calendar() }
+    func todosStore() -> TodosStore { stores.todos() }
+    func peopleStore() -> PeopleStore { stores.people() }
+    func filesStore() -> FilesStore { stores.files() }
+    func financeStore() -> FinanceStore { stores.finance() }
+    func medicalStore() -> MedicalStore { stores.medical() }
+    func telegramStore() -> TelegramStore { stores.telegram() }
 
     // MARK: - Cross-Navigation
 
+    func navigate(to route: AppRoute) {
+        navigation.navigate(to: route)
+    }
+
     func navigateToRun(id: String) {
         runsStore().selectedRunId = id
-        selectedRoute = .runs
+        navigate(to: .runs)
     }
 
     func navigateToConnection(id: String?) {
         if let id {
             connectionsStore().selectedId = id
         }
-        selectedRoute = .connections
+        navigate(to: .connections)
     }
 
-    func navigateToHome() {
-        selectedRoute = .home
-    }
-
-    func navigateToSetup() {
-        selectedRoute = .setup
-    }
-
-    func navigateToBrain() {
-        selectedRoute = .brain
-    }
-
-    func navigateToAutomations() {
-        selectedRoute = .automations
-    }
-
-    func navigateToMail() {
-        selectedRoute = .email
-    }
-
-    func navigateToCalendar() {
-        selectedRoute = .calendar
-    }
-
-    func navigateToTodos() {
-        selectedRoute = .todos
-    }
-
-    func navigateToPeople() {
-        selectedRoute = .people
-    }
-
-    func navigateToFiles() {
-        selectedRoute = .files
-    }
-
-    func navigateToFinance() {
-        selectedRoute = .finance
-    }
-
-    func navigateToMedical() {
-        selectedRoute = .medical
-    }
-
-    func navigateToInstructions() {
-        selectedRoute = .instructionPreview
-    }
+    func navigateToHome() { navigate(to: .home) }
+    func navigateToSetup() { navigate(to: .setup) }
+    func navigateToBrain() { navigate(to: .brain) }
+    func navigateToAutomations() { navigate(to: .automations) }
+    func navigateToMail() { navigate(to: .email) }
+    func navigateToCalendar() { navigate(to: .calendar) }
+    func navigateToTodos() { navigate(to: .todos) }
+    func navigateToPeople() { navigate(to: .people) }
+    func navigateToFiles() { navigate(to: .files) }
+    func navigateToFinance() { navigate(to: .finance) }
+    func navigateToMedical() { navigate(to: .medical) }
+    func navigateToInstructions() { navigate(to: .instructionPreview) }
+    func navigateToAgentProfiles() { navigate(to: .agentProfiles) }
+    func navigateToTelegram() { navigate(to: .telegram) }
 
     func navigateToMemory(id: String? = nil, preferredMode: MemoryStore.ViewMode? = nil) {
         let store = memoryStore()
@@ -395,15 +203,7 @@ final class AppModel {
         if let id {
             store.selectedMemoryId = id
         }
-        selectedRoute = .memory
-    }
-
-    func navigateToAgentProfiles() {
-        selectedRoute = .agentProfiles
-    }
-
-    func navigateToTelegram() {
-        selectedRoute = .telegram
+        navigate(to: .memory)
     }
 
     // MARK: - Connection
@@ -451,8 +251,8 @@ final class AppModel {
 
         stopSSE()
         client = nil
-        clearStores()
-        workspaces = []
+        stores.reset()
+        workspace.clear()
         connectionState = .disconnected
         badgeCounts = BadgeCounts()
         activeCredentialKind = nil
@@ -588,65 +388,18 @@ final class AppModel {
         let service = SystemService(client: client)
         do {
             let loadedWorkspaces = try await service.loadWorkspaces()
-            workspaces = loadedWorkspaces
-            if loadedWorkspaces.contains(where: { $0.id == selectedWorkspaceID }) == false {
-                selectedWorkspaceID = loadedWorkspaces.first?.id ?? "default"
-            } else {
-                propagateWorkspaceSelection()
-            }
+            workspace.replaceWorkspaces(loadedWorkspaces)
         } catch {
-            workspaces = []
-            selectedWorkspaceID = "default"
+            workspace.clear()
         }
-    }
-
-    private func propagateWorkspaceSelection() {
-        _setupStore?.workspaceID = selectedWorkspaceID
-        _brainStore?.workspaceID = selectedWorkspaceID
-        _memoryStore?.workspaceID = selectedWorkspaceID
-        _instructionPreviewStore?.adoptWorkspaceScope(selectedWorkspaceID)
-        _automationStore?.workspaceID = selectedWorkspaceID
-        _homeStore?.workspaceID = selectedWorkspaceID
-        _emailStore?.workspaceID = selectedWorkspaceID
-        _calendarStore?.workspaceID = selectedWorkspaceID
-        _todosStore?.workspaceID = selectedWorkspaceID
-        _filesStore?.workspaceID = selectedWorkspaceID
-    }
-
-    private func clearStores() {
-        _dashboardStore?.stopPolling()
-        _commandCenterStore?.stopPolling()
-        _dashboardStore = nil
-        _commandCenterStore = nil
-        _runsStore = nil
-        _jobsStore = nil
-        _receiptsStore = nil
-        _interventionsStore = nil
-        _approvalsStore = nil
-        _connectionsStore = nil
-        _usageSecurityStore = nil
-        _usageStore = nil
-        _setupStore = nil
-        _brainStore = nil
-        _memoryStore = nil
-        _agentProfilesStore = nil
-        _instructionPreviewStore = nil
-        _automationStore = nil
-        _homeStore = nil
-        _emailStore = nil
-        _calendarStore = nil
-        _todosStore = nil
-        _peopleStore = nil
-        _filesStore = nil
-        _financeStore = nil
-        _medicalStore = nil
-        _telegramStore = nil
     }
 
     // MARK: - SSE
 
     private func startSSE() {
         guard let client else { return }
+        stopSSE()
+
         let stream = EventStreamService(client: client)
         let bus = InvalidationBus()
         eventStream = stream
@@ -710,4 +463,10 @@ final class AppModel {
             break
         }
     }
+}
+
+private enum StorageKey {
+    static let baseURL = "baseURL"
+    static let sseEnabled = "sseEnabled"
+    static let pollIntervalSeconds = "pollIntervalSeconds"
 }

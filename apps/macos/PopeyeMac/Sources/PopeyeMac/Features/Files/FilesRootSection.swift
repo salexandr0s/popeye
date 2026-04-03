@@ -5,12 +5,21 @@ struct FilesRootSection: View {
     let root: FileRootDTO
     let lastIndexResult: FileIndexResultDTO?
     let isMutating: Bool
+    let phase: ScreenOperationPhase
     let editRoot: () -> Void
     let reindexRoot: () -> Void
     let deleteRoot: () -> Void
+    let retryLoad: (() -> Void)?
 
     var body: some View {
         InspectorSection(title: "Root") {
+            OperationStatusView(
+                phase: phase,
+                loadingTitle: "Refreshing file root details…",
+                failureTitle: "Couldn’t refresh this file root",
+                retryAction: retryLoad
+            )
+
             DetailRow(label: "Path", value: root.rootPath)
             DetailRow(label: "Permission", value: root.permission.capitalized)
             DetailRow(label: "Patterns", value: root.filePatterns.isEmpty ? "All files" : root.filePatterns.joined(separator: ", "))

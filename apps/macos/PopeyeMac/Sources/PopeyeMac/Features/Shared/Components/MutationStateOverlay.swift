@@ -1,7 +1,7 @@
 import SwiftUI
 import PopeyeAPI
 
-struct AutomationMutationOverlay: View {
+struct MutationStateOverlay: View {
     let state: MutationState
     let dismiss: () -> Void
 
