@@ -1,6 +1,6 @@
 import Foundation
 
-public enum APIError: Error, Sendable {
+public enum APIError: Error, Equatable, Sendable {
     case transportUnavailable
     case unauthorized
     case forbidden
@@ -9,6 +9,19 @@ public enum APIError: Error, Sendable {
     case decodeFailure(message: String)
     case apiFailure(statusCode: Int, message: String)
 
+
+
+    public static func from(_ error: any Error) -> APIError {
+        if let apiError = error as? APIError {
+            return apiError
+        }
+
+        if let decodingError = error as? DecodingError {
+            return .decodeFailure(message: decodingError.localizedDescription)
+        }
+
+        return .apiFailure(statusCode: -1, message: error.localizedDescription)
+    }
     public var userMessage: String {
         switch self {
         case .transportUnavailable:

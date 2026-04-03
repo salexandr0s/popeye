@@ -6,20 +6,16 @@ struct ErrorStateView: View {
     let retryAction: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 40))
+        ContentUnavailableView {
+            Label("Something went wrong", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
-            Text("Something went wrong")
-                .font(.title3.bold())
+        } description: {
             Text(error.userMessage)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        } actions: {
             Button("Retry", action: retryAction)
                 .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 }
 

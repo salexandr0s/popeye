@@ -1,7 +1,9 @@
 import Foundation
+import Observation
 import PopeyeAPI
 
-@Observable @MainActor
+@Observable
+@MainActor
 final class CommandCenterStore {
     static let idleHintMs: Double = 600_000
     static let stuckRiskMs: Double = 1_800_000
@@ -14,6 +16,39 @@ final class CommandCenterStore {
         case intervention(String)
     }
 
+    struct Dependencies: Sendable {
+        var loadRuns: @Sendable () async throws -> [RunRecordDTO]
+        var loadJobs: @Sendable () async throws -> [JobRecordDTO]
+        var loadTasks: @Sendable () async throws -> [TaskRecordDTO]
+        var loadInterventions: @Sendable () async throws -> [InterventionDTO]
+        var loadDashboardSnapshot: @Sendable () async throws -> DashboardSnapshot
+        var retryRun: @Sendable (_ id: String) async throws -> Void
+        var cancelRun: @Sendable (_ id: String) async throws -> Void
+        var pauseJob: @Sendable (_ id: String) async throws -> Void
+        var resumeJob: @Sendable (_ id: String) async throws -> Void
+        var enqueueJob: @Sendable (_ id: String) async throws -> Void
+        var resolveIntervention: @Sendable (_ id: String, _ note: String?) async throws -> Void
+
+        static func live(client: ControlAPIClient) -> Dependencies {
+            let operationsService = OperationsService(client: client)
+            let governanceService = GovernanceService(client: client)
+            let systemService = SystemService(client: client)
+            return Dependencies(
+                loadRuns: { try await operationsService.loadRuns() },
+                loadJobs: { try await operationsService.loadJobs() },
+                loadTasks: { try await operationsService.loadTasks() },
+                loadInterventions: { try await governanceService.loadInterventions() },
+                loadDashboardSnapshot: { try await systemService.loadDashboardSnapshot() },
+                retryRun: { id in _ = try await client.retryRun(id: id) },
+                cancelRun: { id in _ = try await client.cancelRun(id: id) },
+                pauseJob: { id in _ = try await client.pauseJob(id: id) },
+                resumeJob: { id in _ = try await client.resumeJob(id: id) },
+                enqueueJob: { id in _ = try await client.enqueueJob(id: id) },
+                resolveIntervention: { id, note in _ = try await client.resolveIntervention(id: id, note: note) }
+            )
+        }
+    }
+
     var runs: [RunRecordDTO] = []
     var jobs: [JobRecordDTO] = []
     var tasks: [TaskRecordDTO] = []
@@ -22,25 +57,32 @@ final class CommandCenterStore {
     var scheduler: SchedulerStatusDTO?
     var selectedItem: SelectedItem = .none
     var lastUpdated: Date?
-    var isLoading = false
+    var loadPhase: ScreenLoadPhase = .idle
+    var refreshPhase: ScreenOperationPhase = .idle
 
     let mutations = MutationExecutor()
     var mutationState: MutationState { mutations.state }
 
-    private let operationsService: OperationsService
-    private let governanceService: GovernanceService
-    private let systemService: SystemService
-    private let client: ControlAPIClient
+    private let dependencies: Dependencies
     private let pollIntervalSeconds: UInt64
+    private let pollingEnabled: Bool
     private var pollTask: Task<Void, Never>?
 
-    init(client: ControlAPIClient, pollIntervalSeconds: Int = 10) {
-        self.client = client
+    init(client: ControlAPIClient, pollIntervalSeconds: Int = 10, pollingEnabled: Bool = true) {
+        self.dependencies = .live(client: client)
         self.pollIntervalSeconds = UInt64(pollIntervalSeconds)
-        self.operationsService = OperationsService(client: client)
-        self.governanceService = GovernanceService(client: client)
-        self.systemService = SystemService(client: client)
+        self.pollingEnabled = pollingEnabled
     }
+
+    init(dependencies: Dependencies, pollIntervalSeconds: Int = 10, pollingEnabled: Bool = true) {
+        self.dependencies = dependencies
+        self.pollIntervalSeconds = UInt64(pollIntervalSeconds)
+        self.pollingEnabled = pollingEnabled
+    }
+
+    var error: APIError? { loadPhase.error }
+    var refreshError: APIError? { refreshPhase.error }
+    var isMutating: Bool { mutationState == .executing }
 
     var activeRuns: [RunRecordDTO] {
         runs.filter { ["starting", "running"].contains($0.state) }
@@ -114,29 +156,42 @@ final class CommandCenterStore {
     }
 
     func load() async {
-        isLoading = true
-        do {
-            async let r = operationsService.loadRuns()
-            async let j = operationsService.loadJobs()
-            async let t = operationsService.loadTasks()
-            async let i = governanceService.loadInterventions()
-            async let u = systemService.loadDashboardSnapshot()
-
-            runs = try await r
-            jobs = try await j
-            tasks = try await t
-            interventions = try await i
-            let snap = try await u
-            usage = snap.usage
-            scheduler = snap.scheduler
-            lastUpdated = .now
-        } catch {
-            PopeyeLogger.refresh.error("Command center load failed: \(error)")
+        let isRefreshingExistingData = lastUpdated != nil
+        if isRefreshingExistingData {
+            refreshPhase = .loading
+        } else {
+            loadPhase = .loading
         }
-        isLoading = false
+
+        do {
+            async let runsTask = dependencies.loadRuns()
+            async let jobsTask = dependencies.loadJobs()
+            async let tasksTask = dependencies.loadTasks()
+            async let interventionsTask = dependencies.loadInterventions()
+            async let snapshotTask = dependencies.loadDashboardSnapshot()
+
+            runs = try await runsTask
+            jobs = try await jobsTask
+            tasks = try await tasksTask
+            interventions = try await interventionsTask
+            let snapshot = try await snapshotTask
+            usage = snapshot.usage
+            scheduler = snapshot.scheduler
+            lastUpdated = .now
+            loadPhase = .loaded
+            refreshPhase = .idle
+        } catch {
+            let apiError = APIError.from(error)
+            if isRefreshingExistingData {
+                refreshPhase = .failed(apiError)
+            } else {
+                loadPhase = .failed(apiError)
+            }
+        }
     }
 
     func startPolling() {
+        guard pollingEnabled else { return }
         stopPolling()
         let interval = pollIntervalSeconds
         pollTask = Task { [weak self] in
@@ -153,55 +208,61 @@ final class CommandCenterStore {
         pollTask = nil
     }
 
-    // MARK: - Mutations
-
     func retryRun(id: String) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.retryRun(id: id) },
-            successMessage: "Run retry initiated", fallbackError: "Retry failed",
+            action: { [dependencies] in try await dependencies.retryRun(id) },
+            successMessage: "Run retry initiated",
+            fallbackError: "Retry failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
     func cancelRun(id: String) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.cancelRun(id: id) },
-            successMessage: "Run cancelled", fallbackError: "Cancel failed",
+            action: { [dependencies] in try await dependencies.cancelRun(id) },
+            successMessage: "Run cancelled",
+            fallbackError: "Cancel failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
     func pauseJob(id: String) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.pauseJob(id: id) },
-            successMessage: "Job paused", fallbackError: "Pause failed",
+            action: { [dependencies] in try await dependencies.pauseJob(id) },
+            successMessage: "Job paused",
+            fallbackError: "Pause failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
     func resumeJob(id: String) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.resumeJob(id: id) },
-            successMessage: "Job resumed", fallbackError: "Resume failed",
+            action: { [dependencies] in try await dependencies.resumeJob(id) },
+            successMessage: "Job resumed",
+            fallbackError: "Resume failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
     func enqueueJob(id: String) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.enqueueJob(id: id) },
-            successMessage: "Job enqueued", fallbackError: "Enqueue failed",
+            action: { [dependencies] in try await dependencies.enqueueJob(id) },
+            successMessage: "Job enqueued",
+            fallbackError: "Enqueue failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
     func resolveIntervention(id: String, note: String? = nil) async {
         await mutations.execute(
-            action: { [client] in _ = try await client.resolveIntervention(id: id, note: note) },
-            successMessage: "Intervention resolved", fallbackError: "Resolve failed",
+            action: { [dependencies] in try await dependencies.resolveIntervention(id, note) },
+            successMessage: "Intervention resolved",
+            fallbackError: "Resolve failed",
             reload: { [weak self] in await self?.load() }
         )
     }
 
-    func dismissMutation() { mutations.dismiss() }
+    func dismissMutation() {
+        mutations.dismiss()
+    }
 }

@@ -18,11 +18,8 @@ struct ConnectView: View {
         .frame(minWidth: 440, idealWidth: 500, maxWidth: 560)
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
+        .task(id: appModel.baseURL) {
             baseURL = appModel.baseURL
-        }
-        .onChange(of: appModel.baseURL) { _, newValue in
-            baseURL = newValue
         }
     }
 

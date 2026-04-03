@@ -7,7 +7,7 @@ struct HomeView: View {
 
     var body: some View {
         Group {
-            if store.isLoading && store.summary == nil {
+            if store.loadPhase == .loading && store.summary == nil {
                 LoadingStateView(title: "Loading home…")
             } else if let error = store.error, store.summary == nil {
                 ErrorStateView(error: error, retryAction: reload)
@@ -21,6 +21,16 @@ struct HomeView: View {
                             openAutomations: appModel.navigateToAutomations,
                             openMemory: openMemoryDaily
                         )
+
+                        if store.refreshPhase != .idle {
+                            OperationStatusView(
+                                phase: store.refreshPhase,
+                                loadingTitle: "Refreshing home summary…",
+                                failureTitle: "Home summary is stale",
+                                retryAction: reload
+                            )
+                        }
+
                         HomeStatusSummarySection(
                             summary: store.summary,
                             pendingApprovalCount: store.summary?.pendingApprovalCount ?? appModel.badgeCounts.pendingApprovals

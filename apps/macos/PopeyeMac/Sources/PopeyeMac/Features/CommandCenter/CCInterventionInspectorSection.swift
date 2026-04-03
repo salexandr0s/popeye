@@ -9,7 +9,6 @@ struct CCInterventionInspectorSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                mutationToast
                 interventionActions
                 InspectorSection(title: "Intervention") {
                     DetailRow(label: "Code", value: intervention.code)
@@ -36,18 +35,6 @@ struct CCInterventionInspectorSection: View {
                 }
             }
             .padding()
-        }
-    }
-
-    @ViewBuilder
-    private var mutationToast: some View {
-        switch store.mutationState {
-        case .succeeded(let msg):
-            MutationToast(message: msg, isError: false, onDismiss: { store.dismissMutation() })
-        case .failed(let msg):
-            MutationToast(message: msg, isError: true, onDismiss: { store.dismissMutation() })
-        default:
-            EmptyView()
         }
     }
 

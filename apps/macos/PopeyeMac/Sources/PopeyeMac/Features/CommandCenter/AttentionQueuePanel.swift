@@ -45,7 +45,10 @@ struct AttentionQueuePanel: View {
         }
         .background(.background)
         .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        }
     }
 
     private func attentionRow(_ item: CommandCenterStore.AttentionItem) -> some View {

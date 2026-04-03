@@ -1,25 +1,48 @@
 import Foundation
+import Observation
 import PopeyeAPI
 
-@Observable @MainActor
+@Observable
+@MainActor
 final class HomeStore {
+    struct Dependencies: Sendable {
+        var loadSummary: @Sendable (_ workspaceID: String) async throws -> HomeSummaryDTO
+
+        static func live(client: ControlAPIClient) -> Dependencies {
+            let systemService = SystemService(client: client)
+            return Dependencies(
+                loadSummary: { workspaceID in
+                    try await systemService.loadHomeSummary(workspaceId: workspaceID)
+                }
+            )
+        }
+    }
+
     var workspaceID = "default" {
         didSet {
             guard oldValue != workspaceID else { return }
             summary = nil
-            error = nil
+            loadPhase = .idle
+            refreshPhase = .idle
         }
     }
 
     var summary: HomeSummaryDTO?
-    var isLoading = false
-    var error: APIError?
+    var loadPhase: ScreenLoadPhase = .idle
+    var refreshPhase: ScreenOperationPhase = .idle
 
-    private let systemService: SystemService
+    private let dependencies: Dependencies
 
     init(client: ControlAPIClient) {
-        self.systemService = SystemService(client: client)
+        self.dependencies = .live(client: client)
     }
+
+    init(dependencies: Dependencies) {
+        self.dependencies = dependencies
+    }
+
+    var error: APIError? { loadPhase.error }
+    var refreshError: APIError? { refreshPhase.error }
 
     var healthyProviderCount: Int {
         summary?.setup.healthyProviderCount ?? 0
@@ -44,17 +67,25 @@ final class HomeStore {
     }
 
     func load() async {
-        isLoading = true
-        error = nil
-
-        do {
-            summary = try await systemService.loadHomeSummary(workspaceId: workspaceID)
-        } catch let apiError as APIError {
-            error = apiError
-        } catch {
-            self.error = .transportUnavailable
+        if summary == nil {
+            loadPhase = .loading
+            do {
+                summary = try await dependencies.loadSummary(workspaceID)
+                loadPhase = .loaded
+                refreshPhase = .idle
+            } catch {
+                loadPhase = .failed(APIError.from(error))
+            }
+            return
         }
 
-        isLoading = false
+        refreshPhase = .loading
+        do {
+            summary = try await dependencies.loadSummary(workspaceID)
+            loadPhase = .loaded
+            refreshPhase = .idle
+        } catch {
+            refreshPhase = .failed(APIError.from(error))
+        }
     }
 }

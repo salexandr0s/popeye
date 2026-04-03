@@ -43,7 +43,7 @@ struct PopeyeMacApp: App {
                 Section("Primary") {
                     ForEach(primaryRouteCommands, id: \.route) { command in
                         Button(command.route.title) {
-                            appModel.selectedRoute = command.route
+                            appModel.navigate(to: command.route)
                         }
                         .keyboardShortcut(command.shortcut, modifiers: .command)
                     }
@@ -57,7 +57,7 @@ struct PopeyeMacApp: App {
                             primaryRouteCommands.contains(where: { $0.route == route }) == false
                         }) { route in
                             Button(route.title) {
-                                appModel.selectedRoute = route
+                                appModel.navigate(to: route)
                             }
                         }
                     }

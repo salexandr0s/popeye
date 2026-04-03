@@ -27,6 +27,13 @@ struct MedicalView: View {
                     )
                     .frame(minWidth: 620)
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    MutationStateOverlay(
+                        state: store.mutationState,
+                        dismiss: { store.dismissMutation() }
+                    )
+                    .padding(20)
+                }
             }
         }
         .navigationTitle("Medical")

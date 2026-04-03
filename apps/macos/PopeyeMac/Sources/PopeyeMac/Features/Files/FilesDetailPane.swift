@@ -11,23 +11,30 @@ struct FilesDetailPane: View {
         if let root = store.selectedRoot {
             ScrollView {
                 VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
-                    mutationBanner
                     FilesRootSection(
                         root: root,
                         lastIndexResult: store.lastIndexResult,
                         isMutating: store.isMutating,
+                        phase: store.rootPhase,
                         editRoot: { editRoot(root) },
                         reindexRoot: { Task { await store.reindexSelectedRoot() } },
-                        deleteRoot: requestDeleteRoot
+                        deleteRoot: requestDeleteRoot,
+                        retryLoad: { Task { await store.loadRoot(id: root.id) } }
                     )
                     FilesSearchSection(
                         searchText: $store.searchText,
                         searchResults: store.searchResults,
+                        phase: store.searchPhase,
                         search: { Task { await store.search() } },
                         selectDocument: { store.selectedDocumentID = $0.documentId }
                     )
                     FilesSelectedDocumentSection(
                         document: store.selectedDocument,
+                        phase: store.documentPhase,
+                        reloadDocument: {
+                            guard let selectedDocumentID = store.selectedDocumentID else { return }
+                            Task { await store.loadDocument(id: selectedDocumentID) }
+                        },
                         openMemory: openMemory
                     )
                     FilesWriteIntentsSection(
@@ -43,19 +50,6 @@ struct FilesDetailPane: View {
         } else {
             ContentUnavailableView("Select a file root", systemImage: "folder.badge.questionmark")
                 .frame(maxWidth: .infinity, minHeight: 320)
-        }
-    }
-
-    @ViewBuilder
-    private var mutationBanner: some View {
-        if let message = store.mutationMessage {
-            Label(message, systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.green)
-        } else if let message = store.mutationErrorMessage {
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.callout)
-                .foregroundStyle(.orange)
         }
     }
 }

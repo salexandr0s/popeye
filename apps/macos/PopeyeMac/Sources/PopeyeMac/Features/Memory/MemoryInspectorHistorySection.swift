@@ -3,21 +3,32 @@ import PopeyeAPI
 
 struct MemoryInspectorHistorySection: View {
     let history: MemoryHistoryDTO?
+    let phase: ScreenOperationPhase
     @Binding var showHistory: Bool
     let loadHistory: () -> Void
 
     var body: some View {
         InspectorSection(title: "History") {
             DisclosureGroup(isExpanded: $showHistory) {
-                if let history {
-                    historyContent(history)
-                        .padding(.top, 8)
-                } else {
-                    Button("Load History", action: loadHistory)
-                        .buttonStyle(.bordered)
-                        .help("Load versions, evidence, and operator actions for this memory")
-                        .padding(.top, 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    if phase != .idle {
+                        OperationStatusView(
+                            phase: phase,
+                            loadingTitle: "Loading history…",
+                            failureTitle: "History unavailable",
+                            retryAction: loadHistory
+                        )
+                    }
+
+                    if let history {
+                        historyContent(history)
+                    } else if phase != .loading {
+                        Button("Load History", action: loadHistory)
+                            .buttonStyle(.bordered)
+                            .help("Load versions, evidence, and operator actions for this memory")
+                    }
                 }
+                .padding(.top, 8)
             } label: {
                 Text("Show history")
             }
@@ -134,6 +145,6 @@ struct MemoryInspectorHistorySection: View {
     }
 
     private func formatted(_ value: String) -> String {
-        value.replacingOccurrences(of: "_", with: " ").capitalized
+        value.replacing("_", with: " ").capitalized
     }
 }

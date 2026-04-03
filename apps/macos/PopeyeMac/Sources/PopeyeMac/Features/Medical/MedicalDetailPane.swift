@@ -11,7 +11,12 @@ struct MedicalDetailPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
-                mutationBanner
+                OperationStatusView(
+                    phase: store.selectionPhase,
+                    loadingTitle: "Refreshing import details…",
+                    failureTitle: "Couldn’t refresh the selected import",
+                    retryAction: { Task { await store.reloadSelection() } }
+                )
                 VaultStatusSection(
                     vaults: store.vaults,
                     primaryVaultAvailable: store.primaryVault != nil,
@@ -23,6 +28,7 @@ struct MedicalDetailPane: View {
                 MedicalSearchSection(
                     searchText: $store.searchText,
                     searchResults: store.searchResults,
+                    phase: store.searchPhase,
                     search: { Task { await store.search() } }
                 )
                 MedicalQuickActionsSection(
@@ -47,19 +53,6 @@ struct MedicalDetailPane: View {
                 MedicalDocumentsSection(documents: store.documents)
             }
             .padding(PopeyeUI.contentPadding)
-        }
-    }
-
-    @ViewBuilder
-    private var mutationBanner: some View {
-        if let message = store.mutationMessage {
-            Label(message, systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.green)
-        } else if let message = store.mutationErrorMessage {
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.callout)
-                .foregroundStyle(.orange)
         }
     }
 }

@@ -7,8 +7,12 @@ struct MemoryView: View {
 
     var body: some View {
         Group {
-            if store.isLoading && store.memories.isEmpty && store.searchResults == nil {
+            if store.loadPhase == .loading && store.memories.isEmpty && store.searchResults == nil {
                 LoadingStateView(title: "Loading memories...")
+            } else if let error = store.error, store.memories.isEmpty {
+                ErrorStateView(error: error) {
+                    Task { await reload() }
+                }
             } else {
                 memoryContent
             }
@@ -53,19 +57,23 @@ struct MemoryView: View {
         .onChange(of: store.selectedMemoryId) { _, newId in
             if let id = newId {
                 store.selectDay(for: id)
-                store.memoryHistory = nil
-                Task { await store.loadDetail(id: id) }
+                Task {
+                    await store.loadDetail(id: id)
+                    await store.loadHistory(id: id)
+                }
             } else {
                 store.selectedDetail = nil
                 store.memoryHistory = nil
+                store.detailPhase = .idle
+                store.historyPhase = .idle
             }
         }
         .onChange(of: store.typeFilter) { _, _ in
             store.ensureSelectedDay()
         }
-        .onChange(of: store.viewMode) { _, _ in
+        .onChange(of: store.viewMode) { _, mode in
             store.ensureSelectedDay()
-            if store.viewMode == .curated {
+            if mode == .curated {
                 Task { await store.loadCuratedDocumentsIfNeeded() }
             }
         }
@@ -124,6 +132,10 @@ struct MemoryView: View {
 
     private func reload() async {
         await store.loadList()
+        if let selectedMemoryId = store.selectedMemoryId {
+            await store.loadDetail(id: selectedMemoryId)
+            await store.loadHistory(id: selectedMemoryId)
+        }
         if store.viewMode == .curated {
             await store.curatedDocuments.load()
         }
