@@ -3,6 +3,7 @@ import { z } from 'zod';
 // --- File Root Permission ---
 
 export const FileRootPermissionSchema = z.enum(['read', 'index', 'index_and_derive']);
+export const FileRootKindSchema = z.enum(['general', 'knowledge_base']);
 
 // --- File Root Record ---
 
@@ -11,6 +12,7 @@ export const FileRootRecordSchema = z.object({
   workspaceId: z.string(),
   label: z.string(),
   rootPath: z.string(),
+  kind: FileRootKindSchema.default('general'),
   permission: FileRootPermissionSchema,
   filePatterns: z.array(z.string()).default(['**/*.md', '**/*.txt']),
   excludePatterns: z.array(z.string()).default([]),
@@ -43,6 +45,7 @@ export const FileRootRegistrationInputSchema = z.object({
   workspaceId: z.string().min(1).default('default'),
   label: z.string().min(1),
   rootPath: z.string().min(1),
+  kind: FileRootKindSchema.default('general'),
   permission: FileRootPermissionSchema.default('index'),
   filePatterns: z.array(z.string()).default(['**/*.md', '**/*.txt']),
   excludePatterns: z.array(z.string()).default([]),
@@ -54,6 +57,7 @@ export type FileRootRegistrationInput = z.infer<typeof FileRootRegistrationInput
 
 export const FileRootUpdateInputSchema = z.object({
   label: z.string().min(1).optional(),
+  kind: FileRootKindSchema.optional(),
   permission: FileRootPermissionSchema.optional(),
   filePatterns: z.array(z.string()).optional(),
   excludePatterns: z.array(z.string()).optional(),

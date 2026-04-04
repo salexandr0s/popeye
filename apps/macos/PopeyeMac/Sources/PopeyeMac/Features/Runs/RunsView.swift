@@ -44,9 +44,9 @@ struct RunsView: View {
     private var runsContent: some View {
         HSplitView {
             RunsTableView(store: store)
-                .frame(minWidth: 400)
+                .popeyeSplitPane(minWidth: 400)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -59,7 +59,7 @@ struct RunsView: View {
         } else {
             Text("Select a run to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

@@ -67,9 +67,9 @@ struct CommandCenterView: View {
     private var panelArea: some View {
         HSplitView {
             leftPanels
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
             CommandCenterInspector(store: store)
-                .frame(minWidth: 260)
+                .popeyeSplitPane(minWidth: 260)
         }
     }
 

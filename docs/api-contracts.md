@@ -71,9 +71,12 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/policies/automation-grants/:id/revoke` | `AutomationGrantRecordSchema` (req: `PolicyGrantRevokeRequestSchema`) |
 | GET | `/v1/security/policy` | `SecurityPolicyResponseSchema` |
 | GET | `/v1/connections` | `ConnectionListResponseSchema` |
+| GET | `/v1/connections/oauth/providers` | `OAuthProviderAvailabilityResponseSchema` |
 | POST | `/v1/connections/oauth/start` | `OAuthSessionResponseSchema` (req: `OAuthConnectStartRequestSchema`) |
 | GET | `/v1/connections/oauth/sessions/:id` | `OAuthSessionResponseSchema` |
 | GET | `/v1/connections/oauth/callback` | HTML success/failure page |
+| GET | `/v1/config/provider-auth` | `ProviderAuthConfigListResponseSchema` |
+| POST | `/v1/config/provider-auth/:provider` | `ProviderAuthConfigListResponseSchema` (req: `ProviderAuthConfigUpdateInputSchema`) |
 | POST | `/v1/connections` | `ConnectionRecordSchema` (req: `ConnectionCreateInputSchema`) |
 | PATCH | `/v1/connections/:id` | `ConnectionRecordSchema` (req: `ConnectionUpdateInputSchema`) |
 | DELETE | `/v1/connections/:id` | `ConnectionRecordSchema` |
@@ -158,6 +161,30 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/files/write-intents` | `FileWriteIntentRecordSchema[]` |
 | GET | `/v1/files/write-intents/:id` | `FileWriteIntentRecordSchema` |
 | POST | `/v1/files/write-intents/:id/review` | `FileWriteIntentRecordSchema` (req: `FileWriteIntentReviewInputSchema`) |
+| GET | `/v1/knowledge/sources` | `KnowledgeSourceListResponseSchema` |
+| GET | `/v1/knowledge/sources/:id` | `KnowledgeSourceResponseSchema` |
+| POST | `/v1/knowledge/import` | `KnowledgeImportResponseSchema` (req: `KnowledgeImportInputSchema`) |
+| POST | `/v1/knowledge/sources/:id/reingest` | `KnowledgeImportResponseSchema` |
+| GET | `/v1/knowledge/sources/:id/snapshots` | `KnowledgeSourceSnapshotListResponseApiSchema` |
+| GET | `/v1/knowledge/converters` | `KnowledgeConverterListResponseApiSchema` |
+| GET | `/v1/knowledge/beta-runs` | `KnowledgeBetaRunListResponseApiSchema` |
+| GET | `/v1/knowledge/beta-runs/:id` | `KnowledgeBetaRunResponseSchema` |
+| POST | `/v1/knowledge/beta-runs` | `KnowledgeBetaRunResponseSchema` (req: `KnowledgeBetaRunCreateRequestSchema`) |
+| GET | `/v1/knowledge/documents` | `KnowledgeDocumentListResponseSchema` |
+| GET | `/v1/knowledge/documents/:id` | `KnowledgeDocumentDetailResponseSchema` |
+| GET | `/v1/knowledge/documents/:id/revisions` | `KnowledgeDocumentRevisionListResponseSchema` |
+| POST | `/v1/knowledge/documents/:id/revisions` | `KnowledgeDocumentRevisionResponseSchema` (req: `KnowledgeDocumentRevisionProposalInputSchema`) |
+| POST | `/v1/knowledge/revisions/:id/apply` | `KnowledgeRevisionApplyResponseSchema` (req: `KnowledgeDocumentRevisionApplyInputSchema`) |
+| POST | `/v1/knowledge/revisions/:id/reject` | `KnowledgeRevisionRejectResponseSchema` |
+| GET | `/v1/knowledge/documents/:id/neighborhood` | `KnowledgeNeighborhoodResponseSchema` |
+| POST | `/v1/knowledge/links` | `KnowledgeLinkResponseSchema` (req: `KnowledgeLinkCreateInputSchema`) |
+| GET | `/v1/knowledge/compile-jobs` | `KnowledgeCompileJobListResponseSchema` |
+| GET | `/v1/knowledge/audit` | `KnowledgeAuditResponseSchema` |
+
+`KnowledgeConverterAvailabilitySchema` includes converter `status`,
+`provenance`, `details`, `version`, `lastCheckedAt`, `installHint`, `usedFor`,
+and `fallbackRank`. `provenance` is one of `bundled`, `system`, `remote`, or
+`missing`.
 | GET | `/v1/finance/imports` | `FinanceImportRecordSchema[]` |
 | GET | `/v1/finance/imports/:id` | `FinanceImportRecordSchema` |
 | GET | `/v1/finance/transactions` | `FinanceTransactionRecordSchema[]` |
@@ -283,6 +310,10 @@ Behavior notes:
 - `POST /v1/connections/oauth/start`, `GET /v1/connections/oauth/sessions/:id`,
   and `GET /v1/connections/oauth/callback` are the blessed browser-OAuth
   surfaces for Gmail, Google Calendar, Google Tasks, and GitHub.
+- `GET /v1/config/provider-auth` and `POST /v1/config/provider-auth/:provider`
+  are the operator-facing provider-auth configuration surfaces. Responses are
+  non-secret; writes accept a write-only `clientSecret` and return refreshed
+  readiness records.
 - The callback route returns HTML rather than JSON because it is intended for
   the browser popup/tab flow.
 - `POST /v1/connections/oauth/start` also accepts an existing `connectionId` for

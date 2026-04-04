@@ -149,8 +149,8 @@ See \`docs/runbooks/upgrade.md\` for detailed upgrade procedures.
 
 | Artifact | Checksum (SHA-256) |
 |----------|--------------------|
-| \`popeye-${VERSION}-darwin.pkg\` | _{fill in after build}_ |
-| \`popeye-${VERSION}-darwin.tar.gz\` | _{fill in after build}_ |
+| \`popeye-${VERSION}-darwin-arm64.pkg\` | _{fill in after build}_ |
+| \`popeye-${VERSION}-darwin-arm64.tar.gz\` | _{fill in after build}_ |
 EOF
 
 echo "==> Release notes generated: ${OUTPUT_FILE}"

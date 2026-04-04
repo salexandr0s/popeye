@@ -2,22 +2,28 @@ import Foundation
 import PopeyeAPI
 
 enum SetupProviderCardBuilder {
-    static func makeCard(id: SetupCardID, connections: [ConnectionDTO]) -> SetupCard {
+    static func makeCard(
+        id: SetupCardID,
+        connections: [ConnectionDTO],
+        oauthProviders: [OAuthProviderAvailabilityDTO] = []
+    ) -> SetupCard {
+        let availability = matchingOAuthProvider(for: id, in: oauthProviders)
+
         guard let connection = matchingConnection(for: id, in: connections) else {
-            return missingCard(id: id)
+            return missingCard(id: id, availability: availability)
         }
 
         let state = providerState(for: connection)
-        let summary = providerSummary(for: id, connection: connection, state: state)
-        let guidance = providerGuidance(for: id, connection: connection, state: state)
-        let primaryAction = providerPrimaryAction(for: id, connection: connection, state: state)
+        let summary = providerSummary(for: id, connection: connection, state: state, availability: availability)
+        let guidance = providerGuidance(for: id, connection: connection, state: state, availability: availability)
+        let primaryAction = providerPrimaryAction(for: id, connection: connection, state: state, availability: availability)
 
         return SetupCard(
             id: id,
             state: state,
             summary: summary,
             guidance: guidance,
-            detailRows: detailRows(for: connection),
+            detailRows: detailRows(for: connection, availability: availability),
             followUpRows: [],
             followUpFootnote: nil,
             primaryAction: primaryAction,
@@ -26,25 +32,32 @@ enum SetupProviderCardBuilder {
         )
     }
 
-    private static func missingCard(id: SetupCardID) -> SetupCard {
-        SetupCard(
+    private static func missingCard(id: SetupCardID, availability: OAuthProviderAvailabilityDTO?) -> SetupCard {
+        let isReady = availability?.isReady ?? true
+
+        return SetupCard(
             id: id,
             state: .missing,
-            summary: "\(id.title) is not connected yet.",
-            guidance: missingGuidance(for: id),
+            summary: isReady ? "\(id.title) is not connected yet." : "\(id.title) cannot start setup yet.",
+            guidance: isReady ? missingGuidance(for: id) : availability?.details ?? missingGuidance(for: id),
             detailRows: [
                 SetupCardDetail(label: "Expected Surface", value: "Connections"),
                 SetupCardDetail(label: "Provider", value: id.title),
-            ],
+            ] + readinessDetailRows(for: availability),
             followUpRows: [],
             followUpFootnote: nil,
-            primaryAction: .oauth(kind: .startSetup, providerKind: id.rawValue, connectionId: nil),
+            primaryAction: isReady
+                ? .oauth(kind: .startSetup, providerKind: id.rawValue, connectionId: nil)
+                : configureOAuthAction(for: id),
             supplementaryActions: [],
             destination: .connections(id: nil)
         )
     }
 
-    private static func detailRows(for connection: ConnectionDTO) -> [SetupCardDetail] {
+    private static func detailRows(
+        for connection: ConnectionDTO,
+        availability: OAuthProviderAvailabilityDTO?
+    ) -> [SetupCardDetail] {
         var rows = [
             SetupCardDetail(label: "Connection", value: connection.label),
             SetupCardDetail(label: "Mode", value: connection.mode.replacingOccurrences(of: "_", with: " ").capitalized),
@@ -70,6 +83,8 @@ enum SetupProviderCardBuilder {
             }
         }
 
+        rows.append(contentsOf: readinessDetailRows(for: availability))
+
         return rows
     }
 
@@ -82,6 +97,24 @@ enum SetupProviderCardBuilder {
                 connection.providerKind == "gmail" || connection.domain == "email"
             case .googleCalendar:
                 connection.providerKind == "google_calendar" || connection.domain == "calendar"
+            case .daemon, .telegram:
+                false
+            }
+        }
+    }
+
+    private static func matchingOAuthProvider(
+        for id: SetupCardID,
+        in providers: [OAuthProviderAvailabilityDTO]
+    ) -> OAuthProviderAvailabilityDTO? {
+        providers.first { provider in
+            switch id {
+            case .github:
+                provider.providerKind == "github"
+            case .gmail:
+                provider.providerKind == "gmail"
+            case .googleCalendar:
+                provider.providerKind == "google_calendar"
             case .daemon, .telegram:
                 false
             }
@@ -110,7 +143,16 @@ enum SetupProviderCardBuilder {
         return .connected
     }
 
-    private static func providerSummary(for id: SetupCardID, connection: ConnectionDTO, state: SetupCardState) -> String {
+    private static func providerSummary(
+        for id: SetupCardID,
+        connection: ConnectionDTO,
+        state: SetupCardState,
+        availability: OAuthProviderAvailabilityDTO?
+    ) -> String {
+        if availability?.isReady == false, state != .connected {
+            return "\(id.title) cannot continue OAuth setup yet."
+        }
+
         switch state {
         case .connected:
             if let sync = connection.sync, sync.status == "success" {
@@ -129,7 +171,16 @@ enum SetupProviderCardBuilder {
         }
     }
 
-    private static func providerGuidance(for id: SetupCardID, connection: ConnectionDTO, state: SetupCardState) -> String {
+    private static func providerGuidance(
+        for id: SetupCardID,
+        connection: ConnectionDTO,
+        state: SetupCardState,
+        availability: OAuthProviderAvailabilityDTO?
+    ) -> String {
+        if availability?.isReady == false, state != .connected {
+            return availability?.details ?? missingGuidance(for: id)
+        }
+
         if let remediation = connection.health?.remediation {
             return remediation.message
         }
@@ -149,7 +200,16 @@ enum SetupProviderCardBuilder {
         }
     }
 
-    private static func providerPrimaryAction(for id: SetupCardID, connection: ConnectionDTO, state: SetupCardState) -> SetupCardAction? {
+    private static func providerPrimaryAction(
+        for id: SetupCardID,
+        connection: ConnectionDTO,
+        state: SetupCardState,
+        availability: OAuthProviderAvailabilityDTO?
+    ) -> SetupCardAction? {
+        if availability?.isReady == false {
+            return configureOAuthAction(for: id)
+        }
+
         guard connection.enabled else { return nil }
 
         let remediation = connection.health?.remediation?.action
@@ -165,6 +225,17 @@ enum SetupProviderCardBuilder {
         return nil
     }
 
+    private static func configureOAuthAction(for id: SetupCardID) -> SetupCardAction? {
+        switch id {
+        case .github:
+            .configureOAuth(provider: .github)
+        case .gmail, .googleCalendar:
+            .configureOAuth(provider: .google)
+        case .daemon, .telegram:
+            nil
+        }
+    }
+
     private static func missingGuidance(for id: SetupCardID) -> String {
         switch id {
         case .github:
@@ -178,5 +249,16 @@ enum SetupProviderCardBuilder {
         case .telegram:
             "Open Telegram operations after the bridge is configured to confirm relay health."
         }
+    }
+
+    private static func readinessDetailRows(for availability: OAuthProviderAvailabilityDTO?) -> [SetupCardDetail] {
+        guard let availability else { return [] }
+        return [
+            SetupCardDetail(
+                label: "OAuth Readiness",
+                value: availability.status.replacingOccurrences(of: "_", with: " ").capitalized
+            ),
+            SetupCardDetail(label: "OAuth Config", value: availability.details),
+        ]
     }
 }

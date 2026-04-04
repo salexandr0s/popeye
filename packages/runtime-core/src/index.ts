@@ -9,6 +9,7 @@ export * from './native-app-sessions.js';
 export * from './keychain.js';
 export * from './launchd.js';
 export * from './telegram-config-manager.js';
+export * from './provider-auth-config-manager.js';
 export * from './mutation-receipt-manager.js';
 export * from './instruction-query.js';
 export * from './runtime-service.js';

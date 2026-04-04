@@ -17,6 +17,7 @@ function mapRootRow(row: FileRootRow): FileRootRecord {
     workspaceId: row.workspace_id,
     label: row.label,
     rootPath: row.root_path,
+    kind: row.kind as FileRootRecord['kind'],
     permission: row.permission as FileRootRecord['permission'],
     filePatterns: JSON.parse(row.file_patterns) as string[],
     excludePatterns: JSON.parse(row.exclude_patterns) as string[],
@@ -46,7 +47,18 @@ export class FileRootService {
   constructor(private readonly db: FilesCapabilityDb) {}
 
   registerRoot(input: FileRootRegistrationInput): FileRootRecord {
-    const validation = validateRootPath(input.rootPath);
+    const normalizedInput: FileRootRegistrationInput = {
+      workspaceId: input.workspaceId ?? 'default',
+      label: input.label,
+      rootPath: input.rootPath,
+      kind: input.kind ?? 'general',
+      permission: input.permission ?? 'index',
+      filePatterns: input.filePatterns ?? ['**/*.md', '**/*.txt'],
+      excludePatterns: input.excludePatterns ?? [],
+      maxFileSizeBytes: input.maxFileSizeBytes ?? 1_048_576,
+    };
+
+    const validation = validateRootPath(normalizedInput.rootPath);
     if (!validation.valid) {
       throw new Error(`Invalid root path: ${validation.reason}`);
     }
@@ -55,16 +67,17 @@ export class FileRootService {
     const now = nowIso();
 
     (this.db.prepare as (sql: string) => { run: (...args: unknown[]) => void })(
-      `INSERT INTO file_roots (id, workspace_id, label, root_path, permission, file_patterns, exclude_patterns, max_file_size_bytes, enabled, last_indexed_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      `INSERT INTO file_roots (id, workspace_id, label, root_path, kind, permission, file_patterns, exclude_patterns, max_file_size_bytes, enabled, last_indexed_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     ).run(
       id,
-      input.workspaceId,
-      input.label,
-      input.rootPath,
-      input.permission,
-      JSON.stringify(input.filePatterns),
-      JSON.stringify(input.excludePatterns),
-      input.maxFileSizeBytes,
+      normalizedInput.workspaceId,
+      normalizedInput.label,
+      normalizedInput.rootPath,
+      normalizedInput.kind,
+      normalizedInput.permission,
+      JSON.stringify(normalizedInput.filePatterns),
+      JSON.stringify(normalizedInput.excludePatterns),
+      normalizedInput.maxFileSizeBytes,
       now,
       now,
     );
@@ -80,6 +93,7 @@ export class FileRootService {
     const params: unknown[] = [];
 
     if (input.label !== undefined) { sets.push('label = ?'); params.push(input.label); }
+    if (input.kind !== undefined) { sets.push('kind = ?'); params.push(input.kind); }
     if (input.permission !== undefined) { sets.push('permission = ?'); params.push(input.permission); }
     if (input.filePatterns !== undefined) { sets.push('file_patterns = ?'); params.push(JSON.stringify(input.filePatterns)); }
     if (input.excludePatterns !== undefined) { sets.push('exclude_patterns = ?'); params.push(JSON.stringify(input.excludePatterns)); }

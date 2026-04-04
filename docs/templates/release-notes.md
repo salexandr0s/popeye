@@ -58,5 +58,5 @@ See `docs/runbooks/upgrade.md` for detailed upgrade procedures.
 
 | Artifact | Checksum (SHA-256) |
 |----------|--------------------|
-| `popeye-{VERSION}-darwin.pkg` | `{hash}` |
-| `popeye-{VERSION}-darwin.tar.gz` | `{hash}` |
+| `popeye-{VERSION}-darwin-arm64.pkg` | `{hash}` |
+| `popeye-{VERSION}-darwin-arm64.tar.gz` | `{hash}` |

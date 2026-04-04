@@ -30,6 +30,19 @@ describe('launchd pure functions', () => {
     expect(plist).toContain('dev.popeye.popeyed');
   });
 
+  it('createLaunchdPlist includes custom environment variables', () => {
+    const plist = createLaunchdPlist({
+      configPath: '/tmp/config.json',
+      daemonEntryPoint: '/app/daemon.js',
+      workingDirectory: '/app',
+      environmentVariables: {
+        POPEYE_KNOWLEDGE_PYTHON: '/app/knowledge-python-shims/python3',
+      },
+    });
+    expect(plist).toContain('POPEYE_KNOWLEDGE_PYTHON');
+    expect(plist).toContain('/app/knowledge-python-shims/python3');
+  });
+
   it('createLaunchdPlist uses custom label', () => {
     const plist = createLaunchdPlist({
       label: 'com.custom.agent',

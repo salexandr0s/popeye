@@ -157,7 +157,13 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     forget: { desc: 'Forget a memory', usage: 'pop memory forget <id>' },
   },
   knowledge: {
-    search: { desc: 'Search knowledge memories', usage: 'pop knowledge search <query> [--full]' },
+    search: { desc: 'Search knowledge documents', usage: 'pop knowledge search <query> [--workspace <id>] [--kind <source_normalized|wiki_article|output_note>]' },
+    list: { desc: 'List knowledge documents', usage: 'pop knowledge list [--workspace <id>] [--kind <source_normalized|wiki_article|output_note>] [--query <text>]' },
+    show: { desc: 'Show a knowledge document or source', usage: 'pop knowledge show <id>' },
+    import: { desc: 'Import a knowledge source', usage: 'pop knowledge import <title> [--workspace <id>] [--type <sourceType>] [--uri <url> | --path <path> | --text <text>]' },
+    reingest: { desc: 'Reingest a knowledge source', usage: 'pop knowledge reingest <sourceId>' },
+    audit: { desc: 'Show knowledge audit stats', usage: 'pop knowledge audit [--workspace <id>]' },
+    converters: { desc: 'Show knowledge converter readiness', usage: 'pop knowledge converters' },
   },
   jobs: {
     list: { desc: 'List jobs', usage: 'pop jobs list' },
@@ -439,13 +445,19 @@ function readFlagValue(flag: string): string | undefined {
   return value;
 }
 
-function resolveLaunchdDaemonSpec(configFilePath: string): { daemonEntryPoint: string; workingDirectory: string; programArguments: string[] } {
+function resolveLaunchdDaemonSpec(configFilePath: string): {
+  daemonEntryPoint: string;
+  workingDirectory: string;
+  programArguments: string[];
+  environmentVariables?: Record<string, string>;
+} {
   const bundledLayout = resolveBundledRuntimeLayout(currentScriptPath(), configFilePath);
   if (bundledLayout) {
     return {
       daemonEntryPoint: bundledLayout.daemonEntryPoint,
       workingDirectory: bundledLayout.workingDirectory,
       programArguments: [process.execPath, bundledLayout.daemonEntryPoint],
+      ...(bundledLayout.environmentVariables ? { environmentVariables: bundledLayout.environmentVariables } : {}),
     };
   }
 
@@ -526,6 +538,7 @@ async function main(): Promise<void> {
           daemonEntryPoint: launchSpec.daemonEntryPoint,
           programArguments: launchSpec.programArguments,
           workingDirectory: launchSpec.workingDirectory,
+          ...(launchSpec.environmentVariables ? { environmentVariables: launchSpec.environmentVariables } : {}),
         }),
         null,
         2,
@@ -550,7 +563,11 @@ async function main(): Promise<void> {
     await new Promise<void>((resolveStart, rejectStart) => {
       const child = spawn(execArgs[0], execArgs[1], {
         stdio: 'inherit',
-        env: { ...process.env, POPEYE_CONFIG_PATH: configPath },
+        env: {
+          ...process.env,
+          ...(bundledLayout?.environmentVariables ?? {}),
+          POPEYE_CONFIG_PATH: configPath,
+        },
       });
       child.on('error', rejectStart);
       child.on('exit', (code) => {
@@ -612,6 +629,7 @@ async function main(): Promise<void> {
         daemonEntryPoint: launchSpec.daemonEntryPoint,
         programArguments: launchSpec.programArguments,
         workingDirectory: launchSpec.workingDirectory,
+        ...(launchSpec.environmentVariables ? { environmentVariables: launchSpec.environmentVariables } : {}),
       }),
     );
     return;

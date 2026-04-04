@@ -13,7 +13,23 @@ export interface ApiClient {
   patch: <T>(path: string, body?: unknown) => Promise<T>;
 }
 
+interface ApiErrorBody {
+  error?: string;
+  details?: string;
+}
+
 const ApiContext = createContext<ApiClient | null>(null);
+
+export async function readApiErrorMessage(response: Response): Promise<string> {
+  const fallback = `${response.status} ${response.statusText}`;
+
+  try {
+    const body = await response.clone().json() as ApiErrorBody;
+    return body.details ?? body.error ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function ApiProvider({ children }: { children: ReactNode }) {
   const [unlockState, setUnlockState] = useState(getBrowserUnlockState());
@@ -32,7 +48,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
           headers: baseHeaders(),
           credentials: 'same-origin',
         });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        if (!res.ok) throw new Error(await readApiErrorMessage(res));
         return res.json() as Promise<T>;
       },
       post: async <T,>(path: string, body?: unknown): Promise<T> => {
@@ -47,7 +63,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
           },
           body: body ? JSON.stringify(body) : undefined,
         });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        if (!res.ok) throw new Error(await readApiErrorMessage(res));
         return res.json() as Promise<T>;
       },
       patch: async <T,>(path: string, body?: unknown): Promise<T> => {
@@ -62,7 +78,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
           },
           body: body ? JSON.stringify(body) : undefined,
         });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        if (!res.ok) throw new Error(await readApiErrorMessage(res));
         return res.json() as Promise<T>;
       },
     };

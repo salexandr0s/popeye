@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { EngineKindSchema } from './engine.js';
 import { ApprovalPolicyConfigSchema } from './approval.js';
 import { VaultConfigSchema } from './vault.js';
-import { FileRootPermissionSchema } from './file-roots.js';
+import { FileRootKindSchema, FileRootPermissionSchema } from './file-roots.js';
 
 export const DataClassificationSchema = z.enum(['secret', 'sensitive', 'internal', 'embeddable']);
 export type DataClassification = z.infer<typeof DataClassificationSchema>;
@@ -75,7 +75,7 @@ export const EngineConfigSchema = z.object({
 
 export const OAuthClientConfigSchema = z.object({
   clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  clientSecretRefId: z.string().min(1),
 });
 export type OAuthClientConfig = z.infer<typeof OAuthClientConfigSchema>;
 
@@ -112,6 +112,7 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 export const FileRootConfigSchema = z.object({
   label: z.string().min(1),
   rootPath: z.string().min(1),
+  kind: FileRootKindSchema.default('general'),
   permission: FileRootPermissionSchema.default('index'),
   filePatterns: z.array(z.string()).default(['**/*.md', '**/*.txt']),
   excludePatterns: z.array(z.string()).default([]),

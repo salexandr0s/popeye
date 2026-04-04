@@ -24,8 +24,8 @@ function makeConfig(dir: string): AppConfig {
     memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
     engine: { kind: 'fake', command: 'node', args: [] },
     providerAuth: {
-      google: { clientId: 'google-client', clientSecret: 'google-secret' },
-      github: { clientId: 'github-client', clientSecret: 'github-secret' },
+      google: {},
+      github: {},
     },
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
   } as AppConfig;
@@ -112,6 +112,16 @@ describe('PopeyeApiClient', () => {
     chmodSync(dir, 0o700);
     const config = makeConfig(dir);
     const runtime = createRuntimeService(config);
+    runtime.setSecret({
+      id: 'secret-google-client',
+      key: 'oauth-client-secret-google',
+      value: 'google-client-secret',
+      provider: 'file',
+    });
+    runtime.applyProviderAuthConfig('google', {
+      clientId: 'google-client-id',
+      clientSecretRefId: 'secret-google-client',
+    });
     await (runtime as any).capabilityInitPromise;
     const app = await createControlApi({ runtime });
     await app.listen({ host: '127.0.0.1', port: 0 });

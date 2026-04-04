@@ -20,6 +20,7 @@ final class AppStoreRegistry {
     private var setupStore: SetupStore?
     private var brainStore: BrainStore?
     private var memoryStore: MemoryStore?
+    private var knowledgeStore: KnowledgeStore?
     private var agentProfilesStore: AgentProfilesStore?
     private var instructionPreviewStore: InstructionPreviewStore?
     private var automationStore: AutomationStore?
@@ -143,6 +144,14 @@ final class AppStoreRegistry {
         return store
     }
 
+    func knowledge() -> KnowledgeStore {
+        if let knowledgeStore { return knowledgeStore }
+        let store = KnowledgeStore(client: connectedClient())
+        store.workspaceID = workspaceIDProvider()
+        knowledgeStore = store
+        return store
+    }
+
     func agentProfiles() -> AgentProfilesStore {
         if let agentProfilesStore { return agentProfilesStore }
         let store = AgentProfilesStore(client: connectedClient())
@@ -238,6 +247,7 @@ final class AppStoreRegistry {
         setupStore?.workspaceID = selectedWorkspaceID
         brainStore?.workspaceID = selectedWorkspaceID
         memoryStore?.workspaceID = selectedWorkspaceID
+        knowledgeStore?.workspaceID = selectedWorkspaceID
         instructionPreviewStore?.adoptWorkspaceScope(selectedWorkspaceID)
         automationStore?.workspaceID = selectedWorkspaceID
         homeStore?.workspaceID = selectedWorkspaceID
@@ -271,6 +281,7 @@ final class AppStoreRegistry {
         setupStore = nil
         brainStore = nil
         memoryStore = nil
+        knowledgeStore = nil
         agentProfilesStore = nil
         instructionPreviewStore = nil
         automationStore = nil

@@ -33,7 +33,7 @@ import type { PopeyeLogger } from '@popeye/observability';
 
 import type { SecretStore } from './secret-store.js';
 import type { ActionPolicyEvaluator } from './action-policy-evaluator.js';
-import type { OAuthTokenPayload } from './provider-oauth.js';
+import { resolveProviderClientCredentials, type OAuthTokenPayload } from './provider-oauth.js';
 import {
   canRefreshStoredOAuthSecret,
   isExpiredIso,
@@ -442,11 +442,16 @@ export class ConnectionService {
       if (connection.providerKind === 'gmail') {
         const secret = this.getConnectionOAuthSecret(connection);
         if (!secret) return null;
+        const { clientId, clientSecret } = resolveProviderClientCredentials(
+          this.config,
+          'google',
+          (id) => this.secretStore.getSecretValue(id),
+        );
         adapter = new GmailAdapter({
           accessToken: secret.accessToken,
           refreshToken: secret.refreshToken,
-          clientId: this.config.providerAuth.google.clientId,
-          clientSecret: this.config.providerAuth.google.clientSecret,
+          clientId,
+          clientSecret,
         });
       } else {
         if (this.requireConnectionForOperation({
@@ -495,11 +500,16 @@ export class ConnectionService {
       if (!connection) return null;
       const secret = this.getConnectionOAuthSecret(connection);
       if (!secret) return null;
+      const { clientId, clientSecret } = resolveProviderClientCredentials(
+        this.config,
+        'google',
+        (id) => this.secretStore.getSecretValue(id),
+      );
       const adapter = new GoogleCalendarAdapter({
         accessToken: secret.accessToken,
         refreshToken: secret.refreshToken,
-        clientId: this.config.providerAuth.google.clientId,
-        clientSecret: this.config.providerAuth.google.clientSecret,
+        clientId,
+        clientSecret,
       });
       return { adapter, account: { id: account.id, connectionId, calendarEmail: account.calendarEmail } };
     } finally {
@@ -867,7 +877,11 @@ export class ConnectionService {
         authState = 'stale';
       } else {
         const secret = parseStoredOAuthSecret(this.secretStore.getSecretValue(connection.secretRefId));
-        if (secret?.expiresAt && isExpiredIso(secret.expiresAt) && !canRefreshStoredOAuthSecret(connection.providerKind, secret, this.config)) {
+        if (
+          secret?.expiresAt
+          && isExpiredIso(secret.expiresAt)
+          && !canRefreshStoredOAuthSecret(connection.providerKind, secret, this.config, (id) => this.secretStore.getSecretValue(id))
+        ) {
           authState = 'expired';
         } else if (storedHealth.authState === 'revoked') {
           authState = 'revoked';

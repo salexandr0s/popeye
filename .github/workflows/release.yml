@@ -77,10 +77,10 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: popeye-${{ inputs.version }}-darwin
+          name: popeye-${{ inputs.version }}-darwin-arm64
           path: |
-            dist/pkg/popeye-${{ inputs.version }}-darwin.pkg
-            dist/pkg/popeye-${{ inputs.version }}-darwin.tar.gz
+            dist/pkg/popeye-${{ inputs.version }}-darwin-arm64.pkg
+            dist/pkg/popeye-${{ inputs.version }}-darwin-arm64.tar.gz
             dist/pkg/CHECKSUMS.sha256
             dist/pkg/SIGNING-STATUS.md
             dist/pkg/RELEASE-NOTES.md
@@ -94,8 +94,8 @@ jobs:
             --draft \
             --title "Popeye v$RELEASE_VERSION" \
             --notes-file dist/pkg/RELEASE-NOTES.md \
-            "dist/pkg/popeye-${RELEASE_VERSION}-darwin.pkg" \
-            "dist/pkg/popeye-${RELEASE_VERSION}-darwin.tar.gz" \
+            "dist/pkg/popeye-${RELEASE_VERSION}-darwin-arm64.pkg" \
+            "dist/pkg/popeye-${RELEASE_VERSION}-darwin-arm64.tar.gz" \
             dist/pkg/CHECKSUMS.sha256 \
             dist/pkg/SIGNING-STATUS.md \
             dist/pkg/INVENTORY.md

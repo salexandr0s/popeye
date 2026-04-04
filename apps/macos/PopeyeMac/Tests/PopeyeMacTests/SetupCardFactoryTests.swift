@@ -206,6 +206,62 @@ struct SetupCardFactoryTests {
         #expect(github.destination == .connections(id: "conn-gh-disabled"))
     }
 
+    @Test("Missing OAuth config suppresses setup and reauth actions")
+    func missingOAuthConfigSuppressesActions() throws {
+        let calendarConnection = Self.makeConnection(
+            id: "conn-cal-reauth",
+            domain: "calendar",
+            providerKind: "google_calendar",
+            enabled: true
+        ).withHealth(
+            ConnectionHealthDTO(
+                status: "reauth_required",
+                authState: "revoked",
+                checkedAt: nil,
+                lastError: "Refresh token revoked",
+                remediation: ConnectionRemediationDTO(
+                    action: "reauthorize",
+                    message: "Reconnect Google Calendar",
+                    updatedAt: "2026-03-25T08:00:00Z"
+                )
+            )
+        )
+
+        let cards = SetupCardFactory.makeCards(
+            session: SetupSessionSnapshot(connectionState: .connected, baseURL: "http://127.0.0.1:3210", sseConnected: true),
+            connections: [calendarConnection],
+            oauthProviders: [
+                OAuthProviderAvailabilityDTO(
+                    providerKind: "gmail",
+                    domain: "email",
+                    status: "missing_client_credentials",
+                    details: "Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret."
+                ),
+                OAuthProviderAvailabilityDTO(
+                    providerKind: "google_calendar",
+                    domain: "calendar",
+                    status: "missing_client_credentials",
+                    details: "Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret."
+                ),
+            ],
+            relayCheckpoint: nil,
+            uncertainDeliveries: [],
+            telegramConfig: nil,
+            mutationReceipts: []
+        )
+
+        let gmail = try #require(cards.first(where: { $0.id == .gmail }))
+        #expect(gmail.primaryAction == .configureOAuth(provider: .google))
+        #expect(gmail.destination == .connections(id: nil))
+        #expect(gmail.guidance.contains("providerAuth.google.clientId"))
+
+        let calendar = try #require(cards.first(where: { $0.id == .googleCalendar }))
+        #expect(calendar.state == .reauthRequired)
+        #expect(calendar.primaryAction == .configureOAuth(provider: .google))
+        #expect(calendar.guidance.contains("providerAuth.google.clientSecretRefId"))
+        #expect(calendar.detailRows.contains(where: { $0.label == "OAuth Readiness" && $0.value == "Missing Client Credentials" }))
+    }
+
     @Test("Telegram manual restart footnote is shown for enabled manual setups")
     func telegramManualFootnote() throws {
         let telegramConfig = Self.makeTelegramSnapshot(
@@ -283,6 +339,26 @@ struct SetupCardFactoryTests {
             warnings: [],
             managementMode: managementMode,
             restartSupported: restartSupported
+        )
+    }
+}
+
+private extension ConnectionDTO {
+    func withHealth(_ health: ConnectionHealthDTO) -> ConnectionDTO {
+        ConnectionDTO(
+            id: id,
+            domain: domain,
+            providerKind: providerKind,
+            label: label,
+            mode: mode,
+            enabled: enabled,
+            lastSyncAt: lastSyncAt,
+            lastSyncStatus: lastSyncStatus,
+            policy: policy,
+            health: health,
+            sync: sync,
+            createdAt: createdAt,
+            updatedAt: updatedAt
         )
     }
 }

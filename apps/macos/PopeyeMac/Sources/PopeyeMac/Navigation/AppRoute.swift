@@ -9,6 +9,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case telegram
     case brain
     case memory
+    case knowledge
     case instructionPreview
     case agentProfiles
     case automations
@@ -40,6 +41,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .telegram: "Telegram"
         case .brain: "Overview"
         case .memory: "Memory"
+        case .knowledge: "Knowledge"
         case .instructionPreview: "Instructions"
         case .agentProfiles: "Agent Profiles"
         case .automations: "Automations"
@@ -71,6 +73,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .telegram: "paperplane"
         case .brain: "brain.head.profile"
         case .memory: "brain"
+        case .knowledge: "point.3.connected.trianglepath.dotted"
         case .instructionPreview: "doc.plaintext"
         case .agentProfiles: "person.2"
         case .automations: "bolt.badge.clock"
@@ -96,7 +99,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home, .dashboard, .commandCenter: .overview
         case .setup, .connections, .telegram: .setup
-        case .brain, .memory, .instructionPreview, .agentProfiles: .brain
+        case .brain, .memory, .knowledge, .instructionPreview, .agentProfiles: .brain
         case .automations: .automations
         case .email, .calendar, .todos, .people, .files: .life
         case .finance, .medical: .privateDomains

@@ -44,9 +44,9 @@ struct JobsView: View {
     private var jobsContent: some View {
         HSplitView {
             JobsTableView(store: store)
-                .frame(minWidth: 400)
+                .popeyeSplitPane(minWidth: 400)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -59,7 +59,7 @@ struct JobsView: View {
         } else {
             Text("Select a job to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

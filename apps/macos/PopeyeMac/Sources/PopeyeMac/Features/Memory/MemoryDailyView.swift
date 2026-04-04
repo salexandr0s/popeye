@@ -7,9 +7,9 @@ struct MemoryDailyView: View {
     var body: some View {
         HSplitView {
             dayList
-                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
+                .popeyeSplitPane(minWidth: 220, idealWidth: 240, maxWidth: 280)
             timelineList
-                .frame(minWidth: 320)
+                .popeyeSplitPane(minWidth: 320)
         }
     }
 

@@ -10,6 +10,7 @@ describe('resolveBundledRuntimeLayout', () => {
       kind: 'repo-dist',
       daemonEntryPoint: '/repo/apps/daemon/dist/index.cjs',
       workingDirectory: '/repo',
+      environmentVariables: undefined,
     });
   });
 
@@ -20,6 +21,11 @@ describe('resolveBundledRuntimeLayout', () => {
       kind: 'legacy-install',
       daemonEntryPoint: '/usr/local/lib/popeye/daemon/popeyed.cjs',
       workingDirectory: '/Users/test/Library/Application Support/Popeye',
+      environmentVariables: {
+        POPEYE_KNOWLEDGE_SHIMS: '/usr/local/lib/popeye/knowledge-python-shims',
+        POPEYE_KNOWLEDGE_PYTHON: '/usr/local/lib/popeye/knowledge-python-shims/python3',
+        POPEYE_KNOWLEDGE_MARKITDOWN: '/usr/local/lib/popeye/knowledge-python-shims/markitdown',
+      },
     });
   });
 
@@ -33,6 +39,11 @@ describe('resolveBundledRuntimeLayout', () => {
       kind: 'mac-app-bootstrap',
       daemonEntryPoint: '/Applications/PopeyeMac.app/Contents/Resources/Bootstrap/popeyed.cjs',
       workingDirectory: '/Users/test/Library/Application Support/Popeye',
+      environmentVariables: {
+        POPEYE_KNOWLEDGE_SHIMS: '/Applications/PopeyeMac.app/Contents/Resources/Bootstrap/knowledge-python-shims',
+        POPEYE_KNOWLEDGE_PYTHON: '/Applications/PopeyeMac.app/Contents/Resources/Bootstrap/knowledge-python-shims/python3',
+        POPEYE_KNOWLEDGE_MARKITDOWN: '/Applications/PopeyeMac.app/Contents/Resources/Bootstrap/knowledge-python-shims/markitdown',
+      },
     });
   });
 

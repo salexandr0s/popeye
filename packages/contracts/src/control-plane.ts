@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { UsageMetricsSchema } from './engine.js';
+import { OAuthProviderAvailabilityStatusSchema } from './oauth.js';
 import { AuthRoleSchema } from './security.js';
 
 export const TelegramConfigRecordSchema = z.object({
@@ -58,8 +59,35 @@ export const DaemonRestartResponseSchema = z.object({
 });
 export type DaemonRestartResponse = z.infer<typeof DaemonRestartResponseSchema>;
 
+export const ProviderAuthProviderSchema = z.enum(['google', 'github']);
+export type ProviderAuthProvider = z.infer<typeof ProviderAuthProviderSchema>;
+
+export const ProviderAuthSecretAvailabilitySchema = z.enum(['not_configured', 'available', 'missing']);
+export type ProviderAuthSecretAvailability = z.infer<typeof ProviderAuthSecretAvailabilitySchema>;
+
+export const ProviderAuthConfigRecordSchema = z.object({
+  provider: ProviderAuthProviderSchema,
+  clientId: z.string().nullable().default(null),
+  clientSecretRefId: z.string().nullable().default(null),
+  secretAvailability: ProviderAuthSecretAvailabilitySchema,
+  status: OAuthProviderAvailabilityStatusSchema,
+  details: z.string(),
+});
+export type ProviderAuthConfigRecord = z.infer<typeof ProviderAuthConfigRecordSchema>;
+
+export const ProviderAuthConfigListResponseSchema = z.array(ProviderAuthConfigRecordSchema);
+export type ProviderAuthConfigListResponse = z.infer<typeof ProviderAuthConfigListResponseSchema>;
+
+export const ProviderAuthConfigUpdateInputSchema = z.object({
+  clientId: z.string().nullable().optional(),
+  clientSecret: z.string().nullable().optional(),
+  clearStoredSecret: z.boolean().default(false),
+});
+export type ProviderAuthConfigUpdateInput = z.infer<typeof ProviderAuthConfigUpdateInputSchema>;
+
 export const MutationReceiptKindSchema = z.enum([
   'telegram_config_update',
+  'provider_auth_update',
   'telegram_apply',
   'daemon_restart',
   'automation_update',
@@ -67,6 +95,9 @@ export const MutationReceiptKindSchema = z.enum([
   'automation_pause',
   'automation_resume',
   'curated_document_save',
+  'knowledge_import',
+  'knowledge_revision_apply',
+  'knowledge_revision_reject',
 ]);
 export type MutationReceiptKind = z.infer<typeof MutationReceiptKindSchema>;
 

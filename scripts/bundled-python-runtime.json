@@ -1,0 +1,13 @@
+{
+  "version": "3.12.8",
+  "releaseTrain": "20241206",
+  "platforms": {
+    "darwin-arm64": {
+      "archiveFile": "cpython-3.12.8+20241206-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "d6e607f109db29f2e4a00137fde91f29f359709e1815887334305e4f560b19ac",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20241206/cpython-3.12.8%2B20241206-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "extractedDirectory": "python",
+      "binaryRelativePath": "bin/python3"
+    }
+  }
+}

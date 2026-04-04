@@ -212,6 +212,18 @@ public actor ControlAPIClient {
         try await get(.connections)
     }
 
+    public func providerAuthConfig() async throws -> [ProviderAuthConfigDTO] {
+        try await get(.providerAuthConfig)
+    }
+
+    public func saveProviderAuthConfig(provider: String, input: ProviderAuthConfigUpdateInput) async throws -> [ProviderAuthConfigDTO] {
+        try await post(.updateProviderAuthConfig(provider: provider), body: input)
+    }
+
+    public func listOAuthProviders() async throws -> [OAuthProviderAvailabilityDTO] {
+        try await get(.oauthConnectionProviders)
+    }
+
     public func startOAuthConnection(input: OAuthConnectStartInput) async throws -> OAuthSessionDTO {
         try await post(.startOAuthConnection, body: input)
     }
@@ -390,6 +402,80 @@ public actor ControlAPIClient {
 
     public func applyCuratedDocumentSave(id: String, input: CuratedDocumentApplySaveInput) async throws -> CuratedDocumentApplyResultDTO {
         try await post(.applyCuratedDocumentSave(id: id), body: input)
+    }
+
+    // MARK: - Knowledge
+
+    public func listKnowledgeSources(workspaceId: String) async throws -> [KnowledgeSourceDTO] {
+        try await get(.knowledgeSources(workspaceId: workspaceId))
+    }
+
+    public func getKnowledgeSource(id: String) async throws -> KnowledgeSourceDTO {
+        try await get(.knowledgeSource(id: id))
+    }
+
+    public func listKnowledgeSourceSnapshots(id: String) async throws -> [KnowledgeSourceSnapshotDTO] {
+        try await get(.knowledgeSourceSnapshots(id: id))
+    }
+
+    public func reingestKnowledgeSource(id: String) async throws -> KnowledgeImportResultDTO {
+        try await post(.reingestKnowledgeSource(id: id))
+    }
+
+    public func importKnowledgeSource(input: KnowledgeImportInput) async throws -> KnowledgeImportResultDTO {
+        try await post(.importKnowledgeSource, body: input)
+    }
+
+    public func listKnowledgeConverters() async throws -> [KnowledgeConverterAvailabilityDTO] {
+        try await get(.knowledgeConverters)
+    }
+
+    public func listKnowledgeBetaRuns(workspaceId: String, limit: Int = 1) async throws -> [KnowledgeBetaRunRecordDTO] {
+        try await get(.knowledgeBetaRuns(workspaceId: workspaceId, limit: limit))
+    }
+
+    public func getKnowledgeBetaRun(id: String) async throws -> KnowledgeBetaRunDetailDTO {
+        try await get(.knowledgeBetaRun(id: id))
+    }
+
+    public func listKnowledgeDocuments(workspaceId: String, kind: String? = nil, query: String? = nil) async throws -> [KnowledgeDocumentDTO] {
+        try await get(.knowledgeDocuments(workspaceId: workspaceId, kind: kind, query: query))
+    }
+
+    public func getKnowledgeDocument(id: String) async throws -> KnowledgeDocumentDetailDTO {
+        try await get(.knowledgeDocument(id: id))
+    }
+
+    public func listKnowledgeDocumentRevisions(id: String) async throws -> [KnowledgeDocumentRevisionDTO] {
+        try await get(.knowledgeDocumentRevisions(id: id))
+    }
+
+    public func proposeKnowledgeDocumentRevision(id: String, input: KnowledgeRevisionProposalInput) async throws -> KnowledgeDocumentRevisionDTO {
+        try await post(.proposeKnowledgeDocumentRevision(id: id), body: input)
+    }
+
+    public func applyKnowledgeRevision(id: String, input: KnowledgeRevisionApplyInput = KnowledgeRevisionApplyInput()) async throws -> KnowledgeRevisionApplyResultDTO {
+        try await post(.applyKnowledgeRevision(id: id), body: input)
+    }
+
+    public func rejectKnowledgeRevision(id: String) async throws -> KnowledgeRevisionRejectResultDTO {
+        try await post(.rejectKnowledgeRevision(id: id))
+    }
+
+    public func getKnowledgeNeighborhood(id: String) async throws -> KnowledgeNeighborhoodDTO {
+        try await get(.knowledgeNeighborhood(id: id))
+    }
+
+    public func createKnowledgeLink(input: KnowledgeLinkCreateInput) async throws -> KnowledgeLinkDTO {
+        try await post(.createKnowledgeLink, body: input)
+    }
+
+    public func listKnowledgeCompileJobs(workspaceId: String) async throws -> [KnowledgeCompileJobDTO] {
+        try await get(.knowledgeCompileJobs(workspaceId: workspaceId))
+    }
+
+    public func getKnowledgeAudit(workspaceId: String) async throws -> KnowledgeAuditDTO {
+        try await get(.knowledgeAudit(workspaceId: workspaceId))
     }
 
     public func listEmailAccounts() async throws -> [EmailAccountDTO] {
@@ -712,7 +798,7 @@ public actor ControlAPIClient {
         case 403:
             // Check if CSRF-related
             if let body = try? decoder.decode(ErrorResponseDTO.self, from: data),
-               body.error.lowercased().contains("csrf") {
+               [body.error, body.details].compactMap({ $0?.lowercased() }).contains(where: { $0.contains("csrf") }) {
                 csrfToken = nil
                 throw APIError.csrfInvalid
             }
@@ -720,7 +806,7 @@ public actor ControlAPIClient {
         case 404:
             throw APIError.notFound
         default:
-            let message = (try? decoder.decode(ErrorResponseDTO.self, from: data))?.error
+            let message = (try? decoder.decode(ErrorResponseDTO.self, from: data))?.preferredMessage
                 ?? "Unknown error"
             throw APIError.apiFailure(statusCode: httpResponse.statusCode, message: message)
         }
@@ -735,6 +821,11 @@ public actor ControlAPIClient {
 
 struct ErrorResponseDTO: Decodable, Sendable {
     let error: String
+    let details: String?
+
+    var preferredMessage: String {
+        details ?? error
+    }
 }
 
 public struct EmptyResponseDTO: Decodable, Sendable {}

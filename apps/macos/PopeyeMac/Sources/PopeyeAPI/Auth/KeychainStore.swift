@@ -2,11 +2,14 @@ import Foundation
 import Security
 
 public struct KeychainStore: Sendable {
-    private let service = "com.popeye.mac"
+    public static let defaultService = "com.popeye.mac"
+
+    private let service: String
     private let account: String
 
-    public init(account: String = "bearer-token") {
+    public init(account: String = "bearer-token", service: String = defaultService) {
         self.account = account
+        self.service = service
     }
 
     public func save(_ value: String) throws {
@@ -18,15 +21,26 @@ public struct KeychainStore: Sendable {
             kSecAttrAccount as String: account,
         ]
 
-        // Delete existing item first
-        SecItemDelete(query as CFDictionary)
-
         var addQuery = query
         addQuery[kSecValueData as String] = data
 
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.saveFailed(status)
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        if addStatus == errSecSuccess {
+            return
+        }
+
+        if addStatus == errSecDuplicateItem {
+            let updateStatus = SecItemUpdate(query as CFDictionary, [
+                kSecValueData as String: data,
+            ] as CFDictionary)
+            guard updateStatus == errSecSuccess else {
+                throw KeychainError.saveFailed(updateStatus)
+            }
+            return
+        }
+
+        guard addStatus == errSecSuccess else {
+            throw KeychainError.saveFailed(addStatus)
         }
     }
 

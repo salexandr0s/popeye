@@ -6,20 +6,27 @@ import PopeyeAPI
 final class SetupStore {
     var workspaceID = "default"
     var connections: [ConnectionDTO] = []
+    var oauthProviders: [OAuthProviderAvailabilityDTO] = []
+    var providerAuthConfigs: [ProviderAuthConfigDTO] = []
     var relayCheckpoint: TelegramRelayCheckpointDTO?
     var uncertainDeliveries: [TelegramDeliveryDTO] = []
     var telegramConfig: TelegramConfigSnapshotDTO?
     var telegramMutationReceipts: [MutationReceiptDTO] = []
     var telegramSetupDraft = TelegramSetupDraft()
+    var providerAuthDraft = OAuthProviderConfigDraft()
     var isPresentingTelegramSetup = false
+    var isPresentingProviderAuthConfig = false
+    var presentedProviderAuthProvider: OAuthProviderConfigKind?
     var selectedCardID: SetupCardID? = .daemon
     var isLoading = false
     var error: APIError?
     var activity: SetupActivity?
     var actionErrorMessage: String?
     var actionErrorCardID: SetupCardID?
+    var providerAuthSheetErrorMessage: String?
 
     let connectionsService: any SetupConnectionsServing
+    let providerAuthService: any SetupProviderAuthServing
     let telegramService: any SetupTelegramServing
     let secretsService: any SetupSecretsServing
     let governanceService: any SetupGovernanceServing
@@ -31,6 +38,7 @@ final class SetupStore {
 
     init(client: ControlAPIClient) {
         self.connectionsService = ConnectionsService(client: client)
+        self.providerAuthService = ProviderAuthService(client: client)
         self.telegramService = TelegramService(client: client)
         self.secretsService = SecretsService(client: client)
         self.governanceService = GovernanceService(client: client)
@@ -45,6 +53,7 @@ final class SetupStore {
 
     init(
         connectionsService: any SetupConnectionsServing,
+        providerAuthService: any SetupProviderAuthServing,
         telegramService: any SetupTelegramServing,
         secretsService: any SetupSecretsServing,
         governanceService: any SetupGovernanceServing,
@@ -55,6 +64,7 @@ final class SetupStore {
         oauthTimeout: Duration = .seconds(120)
     ) {
         self.connectionsService = connectionsService
+        self.providerAuthService = providerAuthService
         self.telegramService = telegramService
         self.secretsService = secretsService
         self.governanceService = governanceService
@@ -79,6 +89,9 @@ final class SetupStore {
                     cardID: cardID
                 )
             }
+
+        case .configureOAuth(let provider):
+            presentProviderAuthSheet(for: provider)
 
         case .telegramConfigure:
             presentTelegramSetup()

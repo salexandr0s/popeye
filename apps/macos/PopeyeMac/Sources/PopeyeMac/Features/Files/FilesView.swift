@@ -80,7 +80,7 @@ struct FilesView: View {
                     showDeleteConfirmation = true
                 }
             )
-            .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+            .popeyeSplitPane(minWidth: 280, idealWidth: 320, maxWidth: 360)
 
             FilesDetailPane(
                 store: store,
@@ -92,7 +92,7 @@ struct FilesView: View {
                     showDeleteConfirmation = true
                 }
             )
-            .frame(minWidth: 560)
+            .popeyeSplitPane(minWidth: 560)
         }
         .overlay(alignment: .bottomTrailing) {
             MutationStateOverlay(

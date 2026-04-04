@@ -5,6 +5,11 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var appModel
     @State private var diagnosticsResult: DiagnosticsResult?
     @State private var isTesting = false
+    @State private var providerAuthConfigs: [ProviderAuthConfigDTO] = []
+    @State private var presentedProviderAuthProvider: OAuthProviderConfigKind?
+    @State private var providerAuthDraft = OAuthProviderConfigDraft()
+    @State private var providerAuthSaveErrorMessage: String?
+    @State private var isSavingProviderAuth = false
 
     init(
         diagnosticsResult: DiagnosticsResult? = nil,
@@ -35,6 +40,10 @@ struct SettingsView: View {
                 sseEnabled: $model.sseEnabled,
                 pollIntervalSeconds: $model.pollIntervalSeconds
             )
+            SettingsProviderAuthSection(
+                records: providerAuthConfigs,
+                configureProvider: presentProviderAuthEditor
+            )
             SettingsAboutSection(
                 shortVersion: Bundle.main.shortVersion,
                 buildNumber: Bundle.main.buildNumber
@@ -42,6 +51,25 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 450, idealWidth: 480, minHeight: 480)
+        .task {
+            await loadProviderAuthConfigs()
+        }
+        .onChange(of: appModel.isConnected) { _, _ in
+            Task { await loadProviderAuthConfigs() }
+        }
+        .sheet(item: $presentedProviderAuthProvider) { provider in
+            OAuthProviderConfigSheet(
+                provider: provider,
+                currentRecord: providerAuthConfigs.first(where: { $0.provider == provider.rawValue }),
+                draft: $providerAuthDraft,
+                isSaving: isSavingProviderAuth,
+                errorMessage: providerAuthSaveErrorMessage,
+                onCancel: dismissProviderAuthEditor,
+                onSubmit: {
+                    Task { await saveProviderAuthConfig() }
+                }
+            )
+        }
     }
 
     private func disconnect() {
@@ -77,6 +105,57 @@ struct SettingsView: View {
         }
 
         isTesting = false
+    }
+
+    private func loadProviderAuthConfigs() async {
+        guard let client = appModel.client else {
+            providerAuthConfigs = []
+            return
+        }
+
+        do {
+            providerAuthConfigs = try await ProviderAuthService(client: client).loadConfig()
+        } catch {
+            providerAuthConfigs = []
+        }
+    }
+
+    private func presentProviderAuthEditor(_ provider: OAuthProviderConfigKind) {
+        providerAuthDraft.apply(record: providerAuthConfigs.first(where: { $0.provider == provider.rawValue }))
+        providerAuthSaveErrorMessage = nil
+        presentedProviderAuthProvider = provider
+    }
+
+    private func dismissProviderAuthEditor() {
+        presentedProviderAuthProvider = nil
+        providerAuthSaveErrorMessage = nil
+        providerAuthDraft.clearSensitiveFields()
+    }
+
+    private func saveProviderAuthConfig() async {
+        guard let client = appModel.client, let provider = presentedProviderAuthProvider else { return }
+
+        isSavingProviderAuth = true
+        providerAuthSaveErrorMessage = nil
+        defer { isSavingProviderAuth = false }
+
+        do {
+            providerAuthConfigs = try await ProviderAuthService(client: client).saveConfig(
+                provider: provider.rawValue,
+                input: ProviderAuthConfigUpdateInput(
+                    clientId: providerAuthDraft.normalizedClientId,
+                    clientSecret: providerAuthDraft.normalizedClientSecret,
+                    clearStoredSecret: providerAuthDraft.clearStoredSecret
+                )
+            )
+            providerAuthDraft.clearSensitiveFields()
+            presentedProviderAuthProvider = nil
+            NotificationCenter.default.post(name: .popeyeInvalidation, object: InvalidationSignal.connections)
+        } catch let error as APIError {
+            providerAuthSaveErrorMessage = error.userMessage
+        } catch {
+            providerAuthSaveErrorMessage = error.localizedDescription
+        }
     }
 
     private func latencyMilliseconds(since start: ContinuousClock.Instant) -> Int {

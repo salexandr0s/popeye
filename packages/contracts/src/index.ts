@@ -39,3 +39,4 @@ export * from './automations.js';
 export * from './control-plane.js';
 export * from './curated-documents.js';
 export * from './home.js';
+export * from './knowledge.js';

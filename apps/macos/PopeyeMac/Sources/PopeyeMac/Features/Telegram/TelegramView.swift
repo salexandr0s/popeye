@@ -48,9 +48,9 @@ struct TelegramView: View {
     private var deliveriesContent: some View {
         HSplitView {
             deliveriesList
-                .frame(minWidth: 350)
+                .popeyeSplitPane(minWidth: 350)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -72,7 +72,7 @@ struct TelegramView: View {
         } else {
             Text("Select a delivery to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { OAuthSessionResponse } from '@popeye/contracts';
 import { useApi } from '../api/provider';
-import { useConnections, useTodoAccounts, useTodoProjects } from '../api/hooks';
+import { useConnections, useOAuthProviders, useTodoAccounts, useTodoProjects } from '../api/hooks';
 import { PageHeader } from '../components/page-header';
 import { Loading } from '../components/loading';
 import { ErrorDisplay } from '../components/error-display';
@@ -53,6 +53,7 @@ export function Todos() {
   const api = useApi();
   const accounts = useTodoAccounts();
   const connections = useConnections('todos');
+  const oauthProviders = useOAuthProviders();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -76,13 +77,21 @@ export function Todos() {
   );
   const projects = useTodoProjects(account?.id ?? '');
   const supportsReprioritize = account?.providerKind !== 'google_tasks';
+  const googleTasksAvailability = useMemo(
+    () => oauthProviders.data?.find((provider) => provider.providerKind === 'google_tasks') ?? null,
+    [oauthProviders.data],
+  );
+  const googleTasksReady = googleTasksAvailability?.status === 'ready' || googleTasksAvailability == null;
 
-  if (accounts.loading || connections.loading) return <Loading />;
-  if (accounts.error || connections.error) return <ErrorDisplay message={accounts.error ?? connections.error ?? 'Unknown error'} />;
+  if (accounts.loading || connections.loading || oauthProviders.loading) return <Loading />;
+  if (accounts.error || connections.error || oauthProviders.error) {
+    return <ErrorDisplay message={accounts.error ?? connections.error ?? oauthProviders.error ?? 'Unknown error'} />;
+  }
 
   const refetchAll = () => {
     accounts.refetch();
     connections.refetch();
+    oauthProviders.refetch();
   };
 
   const handleSearch = async () => {
@@ -246,6 +255,11 @@ export function Todos() {
   };
 
   const handleGoogleTasksConnect = async () => {
+    if (!googleTasksReady) {
+      setActionError(googleTasksAvailability?.details ?? 'Google Tasks OAuth is not configured.');
+      return;
+    }
+
     try {
       setBusyAction('connect');
       setActionError(null);
@@ -280,9 +294,19 @@ export function Todos() {
               <ErrorDisplay message={actionError} />
             </div>
           ) : null}
+          {googleTasksReady ? null : (
+            <p className="mt-[12px] text-[13px] text-[var(--color-fg-muted)]">
+              {googleTasksAvailability?.details}
+            </p>
+          )}
           <div className="mt-[16px] flex gap-[12px]">
             <button
-              className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
+              className={`rounded-[var(--radius-sm)] px-[14px] py-[8px] text-[13px] font-medium ${
+                googleTasksReady
+                  ? 'bg-[var(--color-accent)] text-white'
+                  : 'bg-[var(--color-fg)]/[0.06] text-[var(--color-fg-muted)]'
+              }`}
+              disabled={!googleTasksReady}
               onClick={() => void handleGoogleTasksConnect()}
               type="button"
             >

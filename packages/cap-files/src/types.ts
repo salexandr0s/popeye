@@ -5,6 +5,7 @@ export interface FileRootRow {
   workspace_id: string;
   label: string;
   root_path: string;
+  kind: string;
   permission: string;
   file_patterns: string;
   exclude_patterns: string;

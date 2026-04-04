@@ -25,6 +25,14 @@ export function getFilesMigrations(): CapabilityMigration[] {
       ],
     },
     {
+      id: '003-file-root-kind',
+      db: 'app',
+      statements: [
+        "ALTER TABLE file_roots ADD COLUMN kind TEXT NOT NULL DEFAULT 'general';",
+        'CREATE INDEX IF NOT EXISTS idx_file_roots_workspace_kind ON file_roots(workspace_id, kind, enabled);',
+      ],
+    },
+    {
       id: '002-file-documents',
       db: 'app',
       statements: [

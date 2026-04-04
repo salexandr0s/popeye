@@ -35,7 +35,7 @@ export interface TodoFacadeDeps {
   capabilityRegistry: CapabilityRegistry;
   capabilityStoresDir: string;
   log: PopeyeLogger;
-  googleOAuthClient: {
+  resolveGoogleOAuthClientCredentials: () => {
     clientId?: string | undefined;
     clientSecret?: string | undefined;
   };
@@ -77,7 +77,7 @@ export class TodoFacade {
   private readonly capabilityRegistry: CapabilityRegistry;
   private readonly capabilityStoresDir: string;
   private readonly log: PopeyeLogger;
-  private readonly googleOAuthClient: TodoFacadeDeps['googleOAuthClient'];
+  private readonly resolveGoogleOAuthClientCredentials: TodoFacadeDeps['resolveGoogleOAuthClientCredentials'];
   private readonly buildCapabilityContext: () => CapabilityContext;
   private readonly requireConnectionForOperation: TodoFacadeDeps['requireConnectionForOperation'];
   private readonly requireTodoAccountForOperation: TodoFacadeDeps['requireTodoAccountForOperation'];
@@ -91,7 +91,7 @@ export class TodoFacade {
     this.capabilityRegistry = deps.capabilityRegistry;
     this.capabilityStoresDir = deps.capabilityStoresDir;
     this.log = deps.log;
-    this.googleOAuthClient = deps.googleOAuthClient;
+    this.resolveGoogleOAuthClientCredentials = deps.resolveGoogleOAuthClientCredentials;
     this.buildCapabilityContext = deps.buildCapabilityContext;
     this.requireConnectionForOperation = deps.requireConnectionForOperation;
     this.requireTodoAccountForOperation = deps.requireTodoAccountForOperation;
@@ -148,11 +148,12 @@ export class TodoFacade {
       if (!oauthSecret) {
         throw new RuntimeValidationError('Failed to retrieve Google Tasks OAuth credentials from SecretStore');
       }
+      const credentials = this.resolveGoogleOAuthClientCredentials();
       return new GoogleTasksAdapter({
         accessToken: oauthSecret.accessToken,
         refreshToken: oauthSecret.refreshToken,
-        clientId: this.googleOAuthClient.clientId,
-        clientSecret: this.googleOAuthClient.clientSecret,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
       });
     }
     throw new Error(`Unsupported todo provider: ${account.providerKind}`);

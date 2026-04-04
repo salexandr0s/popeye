@@ -12,6 +12,7 @@ import {
   ConnectionCreateInputSchema,
   ConnectionUpdateInputSchema,
   OAuthConnectStartRequestSchema,
+  OAuthProviderAvailabilityResponseSchema,
   ContextReleasePreviewRequestSchema,
   EmailAccountRegistrationInputSchema,
   EmailDraftCreateInputSchema,
@@ -83,6 +84,9 @@ import {
   TelegramSendAttemptRecordSchema,
   TelegramConfigUpdateInputSchema,
   TelegramConfigSnapshotSchema,
+  ProviderAuthConfigListResponseSchema,
+  ProviderAuthConfigUpdateInputSchema,
+  ProviderAuthProviderSchema,
   TelegramApplyResponseSchema,
   DaemonRestartResponseSchema,
   MutationReceiptListResponseSchema,
@@ -103,6 +107,28 @@ import {
   CuratedDocumentSaveProposalSchema,
   CuratedDocumentSummarySchema,
   HomeSummarySchema,
+  KnowledgeAuditResponseSchema,
+  KnowledgeBetaRunCreateRequestSchema,
+  KnowledgeBetaRunListQueryParamsSchema,
+  KnowledgeBetaRunListResponseApiSchema,
+  KnowledgeBetaRunResponseSchema,
+  KnowledgeCompileJobListResponseSchema,
+  KnowledgeConverterListResponseSchema,
+  KnowledgeDocumentDetailResponseSchema,
+  KnowledgeDocumentListResponseSchema,
+  KnowledgeDocumentQuerySchema,
+  KnowledgeDocumentRevisionApplyInputSchema,
+  KnowledgeRevisionApplyResponseSchema,
+  KnowledgeRevisionRejectResponseSchema,
+  KnowledgeDocumentRevisionListResponseSchema,
+  KnowledgeDocumentRevisionProposalInputSchema,
+  KnowledgeImportInputSchema,
+  KnowledgeImportResponseSchema,
+  KnowledgeLinkCreateInputSchema,
+  KnowledgeNeighborhoodResponseSchema,
+  KnowledgeSourceSnapshotListResponseSchema,
+  KnowledgeSourceListResponseSchema,
+  KnowledgeSourceResponseSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -111,6 +137,9 @@ import type {
   TelegramConfigSnapshot,
   TelegramConfigUpdateInput,
   TelegramManagementMode,
+  ProviderAuthConfigListResponse,
+  ProviderAuthConfigUpdateInput,
+  ProviderAuthProvider,
   ConnectionRecord,
 } from '@popeye/contracts';
 import { z } from 'zod';
@@ -119,6 +148,7 @@ import {
   InstructionPreviewContextError,
   MessageIngressError,
   RuntimeConflictError,
+  RuntimeConfigurationError,
   RuntimeNotFoundError,
   RuntimeValidationError,
   constantTimeEquals,
@@ -149,6 +179,15 @@ export interface DaemonControl {
   restartDaemonNow(): { ok: boolean; output: string };
 }
 
+export interface ProviderAuthConfigControl {
+  getSnapshot(): ProviderAuthConfigListResponse;
+  updateConfig(provider: ProviderAuthProvider, input: ProviderAuthConfigUpdateInput): {
+    snapshot: ProviderAuthConfigListResponse;
+    record: ProviderAuthConfigListResponse[number];
+    changedFields: Array<'clientId' | 'clientSecretRefId'>;
+  };
+}
+
 export interface ControlApiDependencies {
   runtime: PopeyeRuntimeService;
   /** @deprecated Use generateCspNonce instead. Static nonce reused for all responses. */
@@ -165,6 +204,7 @@ export interface ControlApiDependencies {
   /** Optional structured logger for security and operational events. */
   logger?: PopeyeLogger;
   telegramConfigControl?: TelegramConfigControl;
+  providerAuthConfigControl?: ProviderAuthConfigControl;
   daemonControl?: DaemonControl;
 }
 
@@ -732,6 +772,10 @@ function summarizeBooleanChange(label: string, before: boolean, after: boolean):
 
 function summarizePresenceChange(label: string, before: string | null, after: string | null): string {
   return `${label} present ${before ? 'true' : 'false'} -> ${after ? 'true' : 'false'}`;
+}
+
+function summarizeValueChange(label: string, before: string | null, after: string | null): string {
+  return `${label} ${before ?? '<empty>'} -> ${after ?? '<empty>'}`;
 }
 
 export async function createControlApi(
@@ -1399,6 +1443,226 @@ export async function createControlApi(
       throw error;
     }
   });
+
+  app.get('/v1/knowledge/sources', async (request) => {
+    const query = z.object({ workspaceId: z.string().min(1) }).parse(request.query);
+    return KnowledgeSourceListResponseSchema.parse(
+      dependencies.runtime.listKnowledgeSources(query.workspaceId),
+    );
+  });
+
+  app.get('/v1/knowledge/sources/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const source = dependencies.runtime.getKnowledgeSource(id);
+    if (!source) return reply.code(404).send({ error: 'knowledge_source_not_found' });
+    return KnowledgeSourceResponseSchema.parse(source);
+  });
+
+  app.get('/v1/knowledge/sources/:id/snapshots', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    try {
+      return KnowledgeSourceSnapshotListResponseSchema.parse(
+        dependencies.runtime.listKnowledgeSourceSnapshots(id),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_source_not_found', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/knowledge/sources/:id/reingest', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    try {
+      return KnowledgeImportResponseSchema.parse(
+        await dependencies.runtime.reingestKnowledgeSource(id, actorRole),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_source_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_reingest', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'knowledge_reingest_conflict', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/knowledge/import', async (request, reply) => {
+    const actorRole = readActorRole(request);
+    const body = KnowledgeImportInputSchema.parse(request.body);
+    try {
+      return KnowledgeImportResponseSchema.parse(
+        await dependencies.runtime.importKnowledgeSource(body, actorRole),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_import', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'knowledge_import_conflict', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/knowledge/converters', async () => {
+    return KnowledgeConverterListResponseSchema.parse(
+      await dependencies.runtime.listKnowledgeConverters(),
+    );
+  });
+
+  app.get('/v1/knowledge/beta-runs', async (request) => {
+    const query = KnowledgeBetaRunListQueryParamsSchema.parse(request.query);
+    return KnowledgeBetaRunListResponseApiSchema.parse(
+      dependencies.runtime.listKnowledgeBetaRuns(query),
+    );
+  });
+
+  app.get('/v1/knowledge/beta-runs/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const run = dependencies.runtime.getKnowledgeBetaRun(id);
+    if (!run) return reply.code(404).send({ error: 'knowledge_beta_run_not_found' });
+    return KnowledgeBetaRunResponseSchema.parse(run);
+  });
+
+  app.post('/v1/knowledge/beta-runs', async (request, reply) => {
+    const body = KnowledgeBetaRunCreateRequestSchema.parse(request.body);
+    try {
+      return KnowledgeBetaRunResponseSchema.parse(
+        dependencies.runtime.recordKnowledgeBetaRun(body),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_beta_run', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/knowledge/documents', async (request) => {
+    const query = KnowledgeDocumentQuerySchema.parse(request.query);
+    return KnowledgeDocumentListResponseSchema.parse(
+      dependencies.runtime.listKnowledgeDocuments(query),
+    );
+  });
+
+  app.get('/v1/knowledge/documents/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const document = dependencies.runtime.getKnowledgeDocument(id);
+    if (!document) return reply.code(404).send({ error: 'knowledge_document_not_found' });
+    return KnowledgeDocumentDetailResponseSchema.parse(document);
+  });
+
+  app.get('/v1/knowledge/documents/:id/revisions', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const document = dependencies.runtime.getKnowledgeDocument(id);
+    if (!document) return reply.code(404).send({ error: 'knowledge_document_not_found' });
+    return KnowledgeDocumentRevisionListResponseSchema.parse(
+      dependencies.runtime.listKnowledgeDocumentRevisions(id),
+    );
+  });
+
+  app.post('/v1/knowledge/documents/:id/revisions', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const body = KnowledgeDocumentRevisionProposalInputSchema.parse(request.body);
+    try {
+      return await dependencies.runtime.proposeKnowledgeDocumentRevision(id, body);
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_document_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'knowledge_document_conflict', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_revision', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/knowledge/revisions/:id/apply', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    const body = KnowledgeDocumentRevisionApplyInputSchema.parse(request.body);
+    try {
+      return KnowledgeRevisionApplyResponseSchema.parse(
+        await dependencies.runtime.applyKnowledgeDocumentRevision(id, body, actorRole),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_revision_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'knowledge_revision_conflict', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_revision_apply', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/knowledge/revisions/:id/reject', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const actorRole = readActorRole(request);
+    try {
+      return KnowledgeRevisionRejectResponseSchema.parse(
+        await dependencies.runtime.rejectKnowledgeDocumentRevision(id, actorRole),
+      );
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_revision_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeConflictError) {
+        return reply.code(409).send({ error: 'knowledge_revision_conflict', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/knowledge/documents/:id/neighborhood', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const neighborhood = dependencies.runtime.getKnowledgeNeighborhood(id);
+    if (!neighborhood) return reply.code(404).send({ error: 'knowledge_document_not_found' });
+    return KnowledgeNeighborhoodResponseSchema.parse(neighborhood);
+  });
+
+  app.post('/v1/knowledge/links', async (request, reply) => {
+    const body = KnowledgeLinkCreateInputSchema.parse(request.body);
+    try {
+      return dependencies.runtime.createKnowledgeLink(body);
+    } catch (error) {
+      if (error instanceof RuntimeNotFoundError) {
+        return reply.code(404).send({ error: 'knowledge_document_not_found', details: error.message });
+      }
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_knowledge_link', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/knowledge/compile-jobs', async (request) => {
+    const query = z.object({ workspaceId: z.string().min(1) }).parse(request.query);
+    return KnowledgeCompileJobListResponseSchema.parse(
+      dependencies.runtime.listKnowledgeCompileJobs(query.workspaceId),
+    );
+  });
+
+  app.get('/v1/knowledge/audit', async (request) => {
+    const query = z.object({ workspaceId: z.string().min(1) }).parse(request.query);
+    return KnowledgeAuditResponseSchema.parse(
+      dependencies.runtime.getKnowledgeAudit(query.workspaceId),
+    );
+  });
+
   app.get('/v1/interventions', async () => dependencies.runtime.listInterventions());
   app.post('/v1/interventions/:id/resolve', async (request) => {
     const body = z.object({ resolutionNote: z.string().max(2000).optional() }).parse(request.body ?? {});
@@ -2279,11 +2543,20 @@ export async function createControlApi(
     return dependencies.runtime.listConnections(query.domain);
   });
 
+  app.get('/v1/connections/oauth/providers', async () => {
+    return OAuthProviderAvailabilityResponseSchema.parse(
+      dependencies.runtime.listOAuthProviderAvailability(),
+    );
+  });
+
   app.post('/v1/connections/oauth/start', async (request, reply) => {
     const body = OAuthConnectStartRequestSchema.parse(request.body);
     try {
       return dependencies.runtime.startOAuthConnectSession(body);
     } catch (error) {
+      if (error instanceof RuntimeConfigurationError) {
+        return reply.code(409).send({ error: 'oauth_provider_not_configured', details: error.message });
+      }
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_oauth_connect_start', details: error.message });
       }
@@ -2532,6 +2805,103 @@ export async function createControlApi(
     }
   });
 
+  app.get('/v1/config/provider-auth', async (_request, reply) => {
+    if (!dependencies.providerAuthConfigControl) {
+      return reply.code(503).send({ error: 'provider_auth_config_unavailable' });
+    }
+    return ProviderAuthConfigListResponseSchema.parse(dependencies.providerAuthConfigControl.getSnapshot());
+  });
+
+  app.post('/v1/config/provider-auth/:provider', async (request, reply) => {
+    if (!dependencies.providerAuthConfigControl) {
+      return reply.code(503).send({ error: 'provider_auth_config_unavailable' });
+    }
+
+    const actorRole = readActorRole(request);
+    const provider = z.object({ provider: ProviderAuthProviderSchema }).parse(request.params).provider;
+    const beforeSnapshot = dependencies.providerAuthConfigControl.getSnapshot();
+    const before = beforeSnapshot.find((entry) => entry.provider === provider);
+    const body = ProviderAuthConfigUpdateInputSchema.parse(request.body);
+
+    try {
+      const result = dependencies.providerAuthConfigControl.updateConfig(provider, body);
+      const after = result.record;
+      const summary = result.changedFields.length > 0
+        ? `Saved ${provider} OAuth config: ${result.changedFields.join(', ')}`
+        : `Saved ${provider} OAuth config with no field changes.`;
+      const details = [
+        summarizeValueChange('clientId', before?.clientId ?? null, after.clientId),
+        summarizePresenceChange('clientSecretRefId', before?.clientSecretRefId ?? null, after.clientSecretRefId),
+        `status ${after.status}`,
+      ].join('; ');
+      dependencies.runtime.writeMutationReceipt({
+        kind: 'provider_auth_update',
+        component: 'connections',
+        status: 'succeeded',
+        summary,
+        details,
+        actorRole,
+        metadata: {
+          provider,
+          changedFields: result.changedFields.join(','),
+          clientIdPresentBefore: String(Boolean(before?.clientId)),
+          clientIdPresentAfter: String(Boolean(after.clientId)),
+          clientSecretRefPresentBefore: String(Boolean(before?.clientSecretRefId)),
+          clientSecretRefPresentAfter: String(Boolean(after.clientSecretRefId)),
+          status: after.status,
+        },
+      });
+      dependencies.runtime.recordSecurityAuditEvent({
+        code: 'provider_auth_updated',
+        severity: 'info',
+        message: summary,
+        component: 'control-api',
+        timestamp: nowIso(),
+        details: {
+          provider,
+          status: after.status,
+        },
+      });
+      return ProviderAuthConfigListResponseSchema.parse(result.snapshot);
+    } catch (error) {
+      if (error instanceof RuntimeConflictError || error instanceof RuntimeValidationError) {
+        const statusCode = error instanceof RuntimeConflictError ? 409 : 400;
+        const errorCode = error instanceof RuntimeConflictError ? 'provider_auth_config_conflict' : 'invalid_provider_auth_config';
+        const summary = error instanceof RuntimeConflictError
+          ? `Saving ${provider} OAuth config was blocked by an overlapping update.`
+          : `Saving ${provider} OAuth config was rejected by validation.`;
+        dependencies.runtime.writeMutationReceipt({
+          kind: 'provider_auth_update',
+          component: 'connections',
+          status: 'failed',
+          summary,
+          details: error.message,
+          actorRole,
+          metadata: {
+            provider,
+            failureCode: errorCode,
+            clientIdPresentRequested: String(Boolean(body.clientId?.trim())),
+            clearStoredSecretRequested: String(body.clearStoredSecret),
+            clientSecretProvided: String(Boolean(body.clientSecret?.trim())),
+          },
+        });
+        dependencies.runtime.recordSecurityAuditEvent({
+          code: 'provider_auth_update_failed',
+          severity: 'warn',
+          message: summary,
+          component: 'control-api',
+          timestamp: nowIso(),
+          details: {
+            provider,
+            failureCode: errorCode,
+          },
+        });
+        return reply.code(statusCode).send({ error: errorCode, details: error.message });
+      }
+      throw error;
+    }
+  });
+
   app.post('/v1/daemon/components/telegram/apply', async (request, reply) => {
     if (!dependencies.telegramConfigControl) {
       return reply.code(503).send({ error: 'telegram_config_unavailable' });
@@ -2732,9 +3102,16 @@ export async function createControlApi(
   app.patch('/v1/files/roots/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const body = FileRootUpdateInputSchema.parse(request.body);
-    const result = dependencies.runtime.updateFileRoot(id, body);
-    if (!result) return reply.code(404).send({ error: 'file root not found' });
-    return result;
+    try {
+      const result = dependencies.runtime.updateFileRoot(id, body);
+      if (!result) return reply.code(404).send({ error: 'file root not found' });
+      return result;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_file_root', details: error.message });
+      }
+      throw error;
+    }
   });
 
   app.delete('/v1/files/roots/:id', async (request, reply) => {

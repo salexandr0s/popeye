@@ -15,13 +15,13 @@ struct FinanceView: View {
             } else {
                 HSplitView {
                     FinanceSidebar(store: store)
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+                        .popeyeSplitPane(minWidth: 280, idealWidth: 320, maxWidth: 360)
                     FinanceDetailPane(
                         store: store,
                         showImportSheet: { isPresentingImportSheet = true },
                         showTransactionSheet: { isPresentingTransactionSheet = true }
                     )
-                    .frame(minWidth: 620)
+                    .popeyeSplitPane(minWidth: 620)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     MutationStateOverlay(

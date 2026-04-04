@@ -11,6 +11,7 @@ import type {
   ConnectionUpdateInput,
   DomainKind,
   OAuthConnectStartRequest,
+  OAuthProviderAvailabilityRecord,
   OAuthSessionRecord,
   SecretRefRecord,
 } from '@popeye/contracts';
@@ -29,7 +30,9 @@ import {
   buildProviderAuthorizationUrl,
   exchangeProviderAuthorizationCode,
   getProviderScopes,
+  listOAuthProviderAvailability,
   mapProviderToDomain,
+  resolveProviderClientCredentials,
   type OAuthTokenPayload,
 } from './provider-oauth.js';
 import { connectionCursorKindForProvider } from './row-mappers.js';
@@ -43,6 +46,7 @@ export interface OAuthConnectDeps {
   oauthSessionService: OAuthSessionService;
   connectionService: OAuthConnectConnectionOps;
   config: AppConfig;
+  getSecretValue: (secretRefId: string) => string | null;
   capabilityStoresDir: string;
   log: PopeyeLogger;
 }
@@ -73,6 +77,10 @@ export interface OAuthConnectConnectionOps {
 export class OAuthConnectService {
   constructor(private readonly deps: OAuthConnectDeps) {}
 
+  listOAuthProviderAvailability(): OAuthProviderAvailabilityRecord[] {
+    return listOAuthProviderAvailability(this.deps.config, this.deps.getSecretValue);
+  }
+
   startOAuthConnectSession(input: OAuthConnectStartRequest): OAuthSessionRecord {
     this.deps.oauthSessionService.expirePendingSessions();
 
@@ -94,6 +102,7 @@ export class OAuthConnectService {
     const authorizationUrl = buildProviderAuthorizationUrl({
       providerKind: input.providerKind,
       config: this.deps.config,
+      getSecretValue: this.deps.getSecretValue,
       redirectUri,
       state: stateToken,
       codeChallenge: buildPkceChallenge(pkceVerifier),
@@ -150,6 +159,7 @@ export class OAuthConnectService {
       const tokenPayload = await exchangeProviderAuthorizationCode({
         providerKind: session.providerKind,
         config: this.deps.config,
+        getSecretValue: this.deps.getSecretValue,
         code: input.code,
         redirectUri: session.redirectUri,
         codeVerifier: session.pkceVerifier,
@@ -231,11 +241,16 @@ export class OAuthConnectService {
     session: OAuthSessionInternalRecord,
     tokenPayload: OAuthTokenPayload,
   ): Promise<OAuthSessionRecord> {
+    const { clientId, clientSecret } = resolveProviderClientCredentials(
+      this.deps.config,
+      'google',
+      this.deps.getSecretValue,
+    );
     const adapter = new GmailAdapter({
       accessToken: tokenPayload.accessToken,
       refreshToken: tokenPayload.refreshToken,
-      clientId: this.deps.config.providerAuth.google.clientId,
-      clientSecret: this.deps.config.providerAuth.google.clientSecret,
+      clientId,
+      clientSecret,
     });
     const profile = await adapter.getProfile();
     const connection = this.createOrUpdateConnectedConnection({
@@ -297,11 +312,16 @@ export class OAuthConnectService {
     session: OAuthSessionInternalRecord,
     tokenPayload: OAuthTokenPayload,
   ): Promise<OAuthSessionRecord> {
+    const { clientId, clientSecret } = resolveProviderClientCredentials(
+      this.deps.config,
+      'google',
+      this.deps.getSecretValue,
+    );
     const adapter = new GoogleCalendarAdapter({
       accessToken: tokenPayload.accessToken,
       refreshToken: tokenPayload.refreshToken,
-      clientId: this.deps.config.providerAuth.google.clientId,
-      clientSecret: this.deps.config.providerAuth.google.clientSecret,
+      clientId,
+      clientSecret,
     });
     const profile = await adapter.getProfile();
     const connection = this.createOrUpdateConnectedConnection({
@@ -364,11 +384,16 @@ export class OAuthConnectService {
     session: OAuthSessionInternalRecord,
     tokenPayload: OAuthTokenPayload,
   ): Promise<OAuthSessionRecord> {
+    const { clientId, clientSecret } = resolveProviderClientCredentials(
+      this.deps.config,
+      'google',
+      this.deps.getSecretValue,
+    );
     const adapter = new GoogleTasksAdapter({
       accessToken: tokenPayload.accessToken,
       refreshToken: tokenPayload.refreshToken,
-      clientId: this.deps.config.providerAuth.google.clientId,
-      clientSecret: this.deps.config.providerAuth.google.clientSecret,
+      clientId,
+      clientSecret,
     });
     const projects = await adapter.getProjects();
     const defaultProject = projects[0] ?? await adapter.getDefaultProject();

@@ -28,6 +28,7 @@ const navItems: NavItem[] = [
   { label: 'Finance', to: '/finance' },
   { label: 'Medical', to: '/medical' },
   { label: 'Files', to: '/files' },
+  { label: 'Knowledge', to: '/knowledge' },
   { label: 'Vaults', to: '/vaults' },
   { label: 'Security Policy', to: '/security-policy' },
   { label: 'Memory', to: '/memory' },

@@ -87,9 +87,9 @@ struct MemoryView: View {
             } else {
                 HSplitView {
                     listColumn
-                        .frame(minWidth: 340, idealWidth: 400)
+                        .popeyeSplitPane(minWidth: 340, idealWidth: 400)
                     inspectorColumn
-                        .frame(minWidth: 320, idealWidth: 380)
+                        .popeyeSplitPane(minWidth: 320, idealWidth: 380)
                 }
             }
         }

@@ -149,6 +149,7 @@ final class AppModel {
     func setupStore() -> SetupStore { stores.setup() }
     func brainStore() -> BrainStore { stores.brain() }
     func memoryStore() -> MemoryStore { stores.memory() }
+    func knowledgeStore() -> KnowledgeStore { stores.knowledge() }
     func agentProfilesStore() -> AgentProfilesStore { stores.agentProfiles() }
     func instructionPreviewStore() -> InstructionPreviewStore { stores.instructionPreview() }
     func automationStore() -> AutomationStore { stores.automations() }
@@ -183,6 +184,7 @@ final class AppModel {
     func navigateToHome() { navigate(to: .home) }
     func navigateToSetup() { navigate(to: .setup) }
     func navigateToBrain() { navigate(to: .brain) }
+    func navigateToKnowledge() { navigate(to: .knowledge) }
     func navigateToAutomations() { navigate(to: .automations) }
     func navigateToMail() { navigate(to: .email) }
     func navigateToCalendar() { navigate(to: .calendar) }

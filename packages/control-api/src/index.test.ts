@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AUTH_COOKIE_NAME, initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '../../runtime-core/src/index.ts';
 
@@ -794,6 +794,421 @@ describe('control api', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('rejects patching a second enabled file root into knowledge_base', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-file-root-patch-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-file-root-patch-workspace-'));
+    chmodSync(workspaceRoot, 0o700);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+    mkdirSync(join(workspaceRoot, 'knowledge'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(workspaceRoot, 'notes'), { recursive: true, mode: 0o700 });
+
+    runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'Knowledge Base',
+      rootPath: join(workspaceRoot, 'knowledge'),
+      kind: 'knowledge_base',
+      permission: 'index_and_derive',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+    const secondRoot = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'Notes',
+      rootPath: join(workspaceRoot, 'notes'),
+      permission: 'index',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/files/roots/${encodeURIComponent(secondRoot.id)}`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        kind: 'knowledge_base',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_file_root' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns the applied knowledge revision, document, and receipt wrapper', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-apply-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'manual_text',
+      title: 'Compiler Notes',
+      sourceText: 'Compilers balance optimization and correctness.',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/knowledge/revisions/${encodeURIComponent(imported.draftRevision!.id)}/apply`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        approved: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      revision: expect.objectContaining({
+        id: imported.draftRevision!.id,
+        status: 'applied',
+      }),
+      document: expect.objectContaining({
+        id: imported.draftRevision!.documentId,
+        title: 'Compiler Notes',
+      }),
+      receipt: expect.objectContaining({
+        kind: 'knowledge_revision_apply',
+        component: 'knowledge',
+      }),
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('reingests knowledge sources through the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-reingest-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-reingest-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const sourcePath = join(workspaceRoot, 'notes.md');
+    writeFileSync(sourcePath, '# Compiler Notes\n\nVersion one.\n', { encoding: 'utf8', mode: 0o600 });
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'local_file',
+      title: 'Compiler Notes',
+      sourcePath,
+    });
+    writeFileSync(sourcePath, '# Compiler Notes\n\nVersion two.\n', { encoding: 'utf8', mode: 0o600 });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/knowledge/sources/${encodeURIComponent(imported.source.id)}/reingest`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      outcome: 'updated',
+      source: expect.objectContaining({
+        id: imported.source.id,
+        latestOutcome: 'updated',
+      }),
+      draftRevision: expect.objectContaining({
+        status: 'draft',
+      }),
+    });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('lists knowledge source snapshots and rejects draft revisions through the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-history-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-history-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'manual_text',
+      title: 'Compiler Notes',
+      sourceText: 'SSA form improves optimization passes in modern compilers.',
+    });
+
+    const snapshotsResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/knowledge/sources/${encodeURIComponent(imported.source.id)}/snapshots`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(snapshotsResponse.statusCode).toBe(200);
+    expect(snapshotsResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: imported.source.id,
+          outcome: 'created',
+        }),
+      ]),
+    );
+
+    const rejectResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/knowledge/revisions/${encodeURIComponent(imported.draftRevision!.id)}/reject`,
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+    });
+    expect(rejectResponse.statusCode).toBe(200);
+    expect(rejectResponse.json()).toMatchObject({
+      revision: expect.objectContaining({
+        id: imported.draftRevision!.id,
+        status: 'rejected',
+      }),
+      receipt: expect.objectContaining({
+        kind: 'knowledge_revision_reject',
+      }),
+    });
+
+    const searchResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/knowledge/documents?workspaceId=default&kind=source_normalized&q=optimization',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(searchResponse.statusCode).toBe(200);
+    expect(searchResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Compiler Notes',
+        }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns knowledge converter readiness through the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-converters-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const knowledgeService = (runtime as unknown as { knowledgeService: { fetchImpl: typeof fetch; runCommand: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }> } }).knowledgeService;
+    knowledgeService.fetchImpl = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
+    knowledgeService.runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === 'markitdown') {
+        return { stdout: 'markitdown 0.1.0', stderr: '' };
+      }
+      if (command === 'python3' && args.join(' ').includes('trafilatura')) {
+        return { stdout: '1.0.0', stderr: '' };
+      }
+      throw new Error('missing');
+    });
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/knowledge/converters',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'jina_reader', status: 'ready', provenance: 'remote', installHint: expect.any(String), lastCheckedAt: expect.any(String) }),
+        expect.objectContaining({ id: 'markitdown', status: 'ready', provenance: 'system', installHint: null, lastCheckedAt: expect.any(String) }),
+        expect.objectContaining({ id: 'docling', status: 'missing', provenance: 'missing', installHint: expect.any(String), lastCheckedAt: expect.any(String) }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('stores and lists knowledge beta runs through the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-beta-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/knowledge/beta-runs',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        manifestPath: '/tmp/knowledge-beta-manifest.json',
+        reportMarkdown: '# Knowledge beta corpus report\n',
+        imports: [
+          {
+            label: 'article-1',
+            title: 'Compiler Article',
+            sourceType: 'website',
+            outcome: 'created',
+            sourceId: 'source-1',
+            adapter: 'jina_reader',
+            status: 'compiled',
+            assetStatus: 'localized',
+          },
+        ],
+        reingests: [],
+        converters: [],
+        audit: {
+          totalSources: 1,
+          totalDocuments: 1,
+          totalDraftRevisions: 1,
+          unresolvedLinks: 0,
+          brokenLinks: 0,
+          failedConversions: 0,
+          degradedSources: 0,
+          warningSources: 0,
+          assetLocalizationFailures: 0,
+          lastCompileAt: '2026-04-04T10:01:00Z',
+        },
+        gate: {
+          status: 'passed',
+          minImportSuccessRate: 0.9,
+          actualImportSuccessRate: 1,
+          maxHardFailures: 0,
+          actualHardFailures: 0,
+          expectedReingestChecks: 0,
+          failedExpectedReingestChecks: 0,
+          checks: [
+            {
+              id: 'import-success-rate',
+              label: 'Import success rate',
+              passed: true,
+              details: '100% actual vs 90% minimum',
+            },
+          ],
+        },
+      },
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json() as { id: string; gate: { status: string } };
+    expect(created.gate.status).toBe('passed');
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/knowledge/beta-runs?workspaceId=default&limit=5',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: created.id, gateStatus: 'passed', importCount: 1 }),
+      ]),
+    );
+
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/knowledge/beta-runs/${encodeURIComponent(created.id)}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      id: created.id,
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      imports: [expect.objectContaining({ label: 'article-1' })],
+    });
 
     await runtime.close();
     await app.close();
@@ -2118,6 +2533,128 @@ describe('control api', () => {
       expect.arrayContaining([
         expect.objectContaining({ code: 'telegram_config_updated', severity: 'info' }),
         expect.objectContaining({ code: 'telegram_apply_succeeded', severity: 'info' }),
+      ]),
+    );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('lists and saves provider auth config with receipts and audit records', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-provider-auth-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    let snapshot = [
+      {
+        provider: 'google',
+        clientId: null,
+        clientSecretRefId: null,
+        secretAvailability: 'not_configured',
+        status: 'missing_client_credentials',
+        details: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        provider: 'github',
+        clientId: null,
+        clientSecretRefId: null,
+        secretAvailability: 'not_configured',
+        status: 'missing_client_credentials',
+        details: 'GitHub OAuth is not configured. Add providerAuth.github.clientId and save the GitHub OAuth client secret in Popeye so providerAuth.github.clientSecretRefId points to an available secret.',
+      },
+    ] as const;
+
+    const app = await createControlApi({
+      runtime,
+      providerAuthConfigControl: {
+        getSnapshot: () => [...snapshot],
+        updateConfig: (provider, input) => {
+          snapshot = snapshot.map((record) => {
+            if (record.provider !== provider) return record;
+            return {
+              ...record,
+              clientId: input.clientId ?? record.clientId,
+              clientSecretRefId: input.clearStoredSecret ? null : (input.clientSecret ? `secret-${provider}-client` : record.clientSecretRefId),
+              secretAvailability: input.clearStoredSecret ? 'not_configured' : (input.clientSecret ? 'available' : record.secretAvailability),
+              status: input.clearStoredSecret ? 'missing_client_secret' : (input.clientId && input.clientSecret ? 'ready' : record.status),
+              details: input.clearStoredSecret
+                ? `${provider === 'google' ? 'Google' : 'GitHub'} OAuth is not configured. Save the ${provider === 'google' ? 'Google' : 'GitHub'} OAuth client secret in Popeye so providerAuth.${provider}.clientSecretRefId points to an available secret.`
+                : `${provider === 'google' ? 'Google' : 'GitHub'} OAuth is configured.`,
+            };
+          }) as typeof snapshot;
+          const record = snapshot.find((entry) => entry.provider === provider)!;
+          return {
+            snapshot: [...snapshot],
+            record,
+            changedFields: ['clientId', 'clientSecretRefId'],
+          };
+        },
+      },
+    });
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/config/provider-auth',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject([
+      expect.objectContaining({ provider: 'google', status: 'missing_client_credentials' }),
+      expect.objectContaining({ provider: 'github', status: 'missing_client_credentials' }),
+    ]);
+
+    const saveResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/config/provider-auth/google',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        clientId: 'google-client-id',
+        clientSecret: 'google-client-secret',
+        clearStoredSecret: false,
+      },
+    });
+    expect(saveResponse.statusCode).toBe(200);
+    expect(saveResponse.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'google',
+        clientId: 'google-client-id',
+        clientSecretRefId: 'secret-google-client',
+        status: 'ready',
+      }),
+    ]));
+
+    const receiptsResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/governance/mutation-receipts?component=connections&limit=10',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(receiptsResponse.statusCode).toBe(200);
+    const receipts = receiptsResponse.json() as Array<{ kind: string; status: string }>;
+    expect(receipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'provider_auth_update', status: 'succeeded' }),
+      ]),
+    );
+
+    expect(runtime.getSecurityAuditFindings()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'provider_auth_updated', severity: 'info' }),
       ]),
     );
 

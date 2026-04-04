@@ -5,6 +5,7 @@ extension SetupStore {
         SetupChecklistPresentation(
             session: session,
             connections: connections,
+            oauthProviders: oauthProviders,
             relayCheckpoint: relayCheckpoint,
             uncertainDeliveries: uncertainDeliveries,
             telegramConfig: telegramConfig,

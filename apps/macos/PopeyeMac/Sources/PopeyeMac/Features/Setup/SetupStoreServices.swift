@@ -2,6 +2,7 @@ import PopeyeAPI
 
 protocol SetupConnectionsServing: Sendable {
     func loadConnections() async throws -> [ConnectionDTO]
+    func loadOAuthProviders() async throws -> [OAuthProviderAvailabilityDTO]
     func startOAuthConnection(
         providerKind: String,
         connectionId: String?,
@@ -12,6 +13,13 @@ protocol SetupConnectionsServing: Sendable {
 }
 
 extension ConnectionsService: SetupConnectionsServing {}
+
+protocol SetupProviderAuthServing: Sendable {
+    func loadConfig() async throws -> [ProviderAuthConfigDTO]
+    func saveConfig(provider: String, input: ProviderAuthConfigUpdateInput) async throws -> [ProviderAuthConfigDTO]
+}
+
+extension ProviderAuthService: SetupProviderAuthServing {}
 
 protocol SetupTelegramServing: Sendable {
     func loadUncertainDeliveries(workspaceId: String) async throws -> [TelegramDeliveryDTO]

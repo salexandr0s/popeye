@@ -19,16 +19,16 @@ struct CuratedDocumentEditorView: View {
                         emptyTitle: emptyTitle,
                         emptyDescription: emptyDescription
                     )
-                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
+                    .popeyeSplitPane(minWidth: 240, idealWidth: 280, maxWidth: 320)
 
                     if let document = store.selectedDocument {
                         CuratedDocumentEditorPane(store: store, document: document)
-                            .frame(minWidth: 420)
+                            .popeyeSplitPane(minWidth: 420)
                         CuratedDocumentPreviewPane(store: store)
-                            .frame(minWidth: 340)
+                            .popeyeSplitPane(minWidth: 340)
                     } else {
                         ContentUnavailableView("Select a document", systemImage: "doc.text")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .popeyeSplitPane()
                     }
                 }
             }

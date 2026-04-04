@@ -29,7 +29,7 @@ import type { EngineFailureClassification } from '@popeye/engine-pi';
 import type { selectSessionRoot } from '@popeye/sessions';
 import { z } from 'zod';
 
-import type { OAuthTokenPayload } from './provider-oauth.js';
+import type { OAuthTokenPayload, ProviderSecretResolver } from './provider-oauth.js';
 
 // ---------------------------------------------------------------------------
 // Zod row-parsing schemas
@@ -617,13 +617,18 @@ export function canRefreshStoredOAuthSecret(
   providerKind: ConnectionRecord['providerKind'],
   secret: StoredOAuthSecret | null,
   config: AppConfig,
+  getSecretValue: ProviderSecretResolver,
 ): boolean {
   if (!secret?.refreshToken) return false;
   switch (providerKind) {
     case 'gmail':
     case 'google_calendar':
     case 'google_tasks':
-      return Boolean(config.providerAuth.google.clientId && config.providerAuth.google.clientSecret);
+      return Boolean(
+        config.providerAuth.google.clientId
+        && config.providerAuth.google.clientSecretRefId
+        && getSecretValue(config.providerAuth.google.clientSecretRefId),
+      );
     default:
       return false;
   }

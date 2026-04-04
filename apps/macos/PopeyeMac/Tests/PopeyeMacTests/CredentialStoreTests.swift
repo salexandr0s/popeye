@@ -6,7 +6,7 @@ import Foundation
 struct PopeyeMacTests {
     @Test("CredentialStore bearer round-trip")
     func credentialStoreRoundTrip() throws {
-        let store = CredentialStore()
+        let store = CredentialStore(service: testKeychainService())
         let testToken = "test-token-\(UUID().uuidString)"
 
         try? store.deleteAllCredentials()
@@ -22,7 +22,7 @@ struct PopeyeMacTests {
 
     @Test("CredentialStore native session round-trip")
     func nativeSessionRoundTrip() throws {
-        let store = CredentialStore()
+        let store = CredentialStore(service: testKeychainService())
         let sessionToken = "native-session-\(UUID().uuidString)"
 
         try? store.deleteAllCredentials()
@@ -50,5 +50,9 @@ struct PopeyeMacTests {
         for error in errors {
             #expect(error.userMessage.isEmpty == false)
         }
+    }
+
+    private func testKeychainService() -> String {
+        "com.popeye.mac.tests.\(UUID().uuidString)"
     }
 }

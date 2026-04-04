@@ -21,6 +21,7 @@ import {
   MessageIngressDecisionCodeSchema,
   MessageIngressResponseSchema,
   MessageRecordSchema,
+  MutationReceiptRecordSchema,
   RecallDetailSchema,
   RecallSearchResponseSchema,
   RecallSourceKindSchema,
@@ -38,6 +39,45 @@ import {
   UsageMetricsSchema,
   UsageSummarySchema,
   VaultRecordSchema,
+  KnowledgeSourceTypeSchema,
+  KnowledgeConversionAdapterSchema,
+  KnowledgeConverterStatusSchema,
+  KnowledgeConverterIdSchema,
+  KnowledgeAssetStatusSchema,
+  KnowledgeImportOutcomeSchema,
+  KnowledgeSourceStatusSchema,
+  KnowledgeDocumentKindSchema,
+  KnowledgeDocumentStatusSchema,
+  KnowledgeRevisionStatusSchema,
+  KnowledgeLinkKindSchema,
+  KnowledgeLinkStatusSchema,
+  KnowledgeCompileJobStatusSchema,
+  KnowledgeSourceRecordSchema,
+  KnowledgeConverterAvailabilitySchema,
+  KnowledgeDocumentRecordSchema,
+  KnowledgeDocumentDetailSchema,
+  KnowledgeSourceSnapshotRecordSchema,
+  KnowledgeBetaReportRowSchema,
+  KnowledgeBetaGateCheckSchema,
+  KnowledgeBetaGateStatusSchema,
+  KnowledgeBetaGateSchema,
+  KnowledgeBetaRunRecordSchema,
+  KnowledgeBetaRunDetailSchema,
+  KnowledgeBetaRunCreateInputSchema,
+  KnowledgeBetaRunListQuerySchema,
+  KnowledgeDocumentRevisionRecordSchema,
+  KnowledgeRevisionRejectResultSchema,
+  KnowledgeLinkRecordSchema,
+  KnowledgeCompileJobRecordSchema,
+  KnowledgeAuditReportSchema,
+  KnowledgeImportInputSchema,
+  KnowledgeImportResultSchema,
+  KnowledgeDocumentRevisionProposalInputSchema,
+  KnowledgeDocumentRevisionApplyInputSchema,
+  KnowledgeRevisionApplyResultSchema,
+  KnowledgeLinkCreateInputSchema,
+  KnowledgeDocumentQuerySchema,
+  KnowledgeNeighborhoodSchema,
 } from '@popeye/contracts';
 
 type ZodDef = z.ZodTypeDef;
@@ -131,6 +171,20 @@ const enums: Array<[string, z.ZodEnum<[string, ...string[]]>]> = [
   ['TaskSideEffectProfile', TaskSideEffectProfileSchema],
   ['MessageIngressDecisionCode', MessageIngressDecisionCodeSchema],
   ['RecallSourceKind', RecallSourceKindSchema],
+  ['KnowledgeSourceType', KnowledgeSourceTypeSchema],
+  ['KnowledgeConversionAdapter', KnowledgeConversionAdapterSchema],
+  ['KnowledgeConverterStatus', KnowledgeConverterStatusSchema],
+  ['KnowledgeConverterId', KnowledgeConverterIdSchema],
+  ['KnowledgeAssetStatus', KnowledgeAssetStatusSchema],
+  ['KnowledgeImportOutcome', KnowledgeImportOutcomeSchema],
+  ['KnowledgeSourceStatus', KnowledgeSourceStatusSchema],
+  ['KnowledgeDocumentKind', KnowledgeDocumentKindSchema],
+  ['KnowledgeDocumentStatus', KnowledgeDocumentStatusSchema],
+  ['KnowledgeRevisionStatus', KnowledgeRevisionStatusSchema],
+  ['KnowledgeLinkKind', KnowledgeLinkKindSchema],
+  ['KnowledgeLinkStatus', KnowledgeLinkStatusSchema],
+  ['KnowledgeCompileJobStatus', KnowledgeCompileJobStatusSchema],
+  ['KnowledgeBetaGateStatus', KnowledgeBetaGateStatusSchema],
 ];
 
 // Struct schemas
@@ -192,6 +246,110 @@ const structs: Array<[string, z.ZodObject<z.ZodRawShape>]> = [
   [
     'VaultRecord',
     VaultRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeConverterAvailability',
+    KnowledgeConverterAvailabilitySchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeSourceRecord',
+    KnowledgeSourceRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentRecord',
+    KnowledgeDocumentRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentDetail',
+    KnowledgeDocumentDetailSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeSourceSnapshotRecord',
+    KnowledgeSourceSnapshotRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaReportRow',
+    KnowledgeBetaReportRowSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaGateCheck',
+    KnowledgeBetaGateCheckSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaGate',
+    KnowledgeBetaGateSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaRunRecord',
+    KnowledgeBetaRunRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaRunDetail',
+    KnowledgeBetaRunDetailSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaRunCreateInput',
+    KnowledgeBetaRunCreateInputSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeBetaRunListQuery',
+    KnowledgeBetaRunListQuerySchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentRevisionRecord',
+    KnowledgeDocumentRevisionRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeRevisionRejectResult',
+    KnowledgeRevisionRejectResultSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeLinkRecord',
+    KnowledgeLinkRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeCompileJobRecord',
+    KnowledgeCompileJobRecordSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeAuditReport',
+    KnowledgeAuditReportSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeNeighborhood',
+    KnowledgeNeighborhoodSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeImportInput',
+    KnowledgeImportInputSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeImportResult',
+    KnowledgeImportResultSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentRevisionProposalInput',
+    KnowledgeDocumentRevisionProposalInputSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentRevisionApplyInput',
+    KnowledgeDocumentRevisionApplyInputSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeRevisionApplyResult',
+    KnowledgeRevisionApplyResultSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeLinkCreateInput',
+    KnowledgeLinkCreateInputSchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'KnowledgeDocumentQuery',
+    KnowledgeDocumentQuerySchema as z.ZodObject<z.ZodRawShape>,
+  ],
+  [
+    'MutationReceiptRecord',
+    MutationReceiptRecordSchema as z.ZodObject<z.ZodRawShape>,
   ],
 ];
 

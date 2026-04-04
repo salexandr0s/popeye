@@ -44,9 +44,9 @@ struct ReceiptsView: View {
     private var receiptsContent: some View {
         HSplitView {
             ReceiptsTableView(store: store)
-                .frame(minWidth: 400)
+                .popeyeSplitPane(minWidth: 400)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -59,7 +59,7 @@ struct ReceiptsView: View {
         } else {
             Text("Select a receipt to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

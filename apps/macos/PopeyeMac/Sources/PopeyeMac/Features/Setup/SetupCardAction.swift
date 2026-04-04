@@ -41,6 +41,7 @@ enum SetupOAuthActionKind: Equatable {
 
 enum SetupCardAction: Equatable {
     case oauth(kind: SetupOAuthActionKind, providerKind: String, connectionId: String?)
+    case configureOAuth(provider: OAuthProviderConfigKind)
     case telegramConfigure
     case telegramApply
     case daemonRestart
@@ -49,6 +50,8 @@ enum SetupCardAction: Equatable {
         switch self {
         case .oauth(let kind, _, _):
             kind.title
+        case .configureOAuth:
+            "Configure OAuth…"
         case .telegramConfigure:
             "Configure Telegram…"
         case .telegramApply:

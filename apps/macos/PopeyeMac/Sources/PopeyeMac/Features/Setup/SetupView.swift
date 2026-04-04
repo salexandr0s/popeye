@@ -48,7 +48,7 @@ struct SetupView: View {
                 completedCount: presentation.completedCount,
                 summary: presentation.summary
             )
-            .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+            .popeyeSplitPane(minWidth: 300, idealWidth: 340, maxWidth: 380)
 
             if let selectedCard = presentation.selectedCard {
                 SetupDetailView(
@@ -59,10 +59,10 @@ struct SetupView: View {
                     runPrimaryAction: runPrimaryAction,
                     openDestination: openDestination
                 )
-                    .frame(minWidth: 480)
+                    .popeyeSplitPane(minWidth: 480)
             } else {
                 ContentUnavailableView("Select a setup item", systemImage: "checklist")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .popeyeSplitPane()
             }
         }
         .sheet(isPresented: $store.isPresentingTelegramSetup) {
@@ -75,6 +75,21 @@ struct SetupView: View {
                     Task { await store.submitTelegramSetup() }
                 }
             )
+        }
+        .sheet(isPresented: $store.isPresentingProviderAuthConfig) {
+            if let provider = store.presentedProviderAuthProvider {
+                OAuthProviderConfigSheet(
+                    provider: provider,
+                    currentRecord: store.providerAuthRecord(for: provider),
+                    draft: $store.providerAuthDraft,
+                    isSaving: store.isPerformingAction(for: provider == .github ? .github : (store.selectedCardID == .googleCalendar ? .googleCalendar : .gmail)),
+                    errorMessage: store.providerAuthSheetErrorMessage,
+                    onCancel: store.dismissProviderAuthSheet,
+                    onSubmit: {
+                        Task { await store.submitProviderAuthConfig() }
+                    }
+                )
+            }
         }
     }
 

@@ -17,3 +17,19 @@ enum PopeyeUI {
         ]
     }
 }
+
+extension View {
+    func popeyeSplitPane(
+        minWidth: CGFloat? = nil,
+        idealWidth: CGFloat? = nil,
+        maxWidth: CGFloat? = nil
+    ) -> some View {
+        frame(
+            minWidth: minWidth,
+            idealWidth: idealWidth,
+            maxWidth: maxWidth,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+    }
+}

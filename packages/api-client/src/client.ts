@@ -147,6 +147,8 @@ import {
   type ConnectionCreateInput,
   type ConnectionUpdateInput,
   type OAuthConnectStartRequestApi,
+  type OAuthProviderAvailabilityResponse,
+  OAuthProviderAvailabilityResponseSchema,
   type OAuthSessionResponse,
   OAuthSessionResponseSchema,
   type ContextReleasePreview,
@@ -254,6 +256,43 @@ import {
   type FileWriteIntentCreateInput,
   type FileWriteIntentRecord,
   FileWriteIntentRecordSchema,
+  type KnowledgeAuditReport,
+  KnowledgeAuditReportSchema,
+  type KnowledgeBetaRunCreateInput,
+  type KnowledgeBetaRunDetail,
+  KnowledgeBetaRunResponseSchema,
+  type KnowledgeBetaRunRecord,
+  KnowledgeBetaRunListResponseSchema,
+  type KnowledgeCompileJobRecord,
+  KnowledgeCompileJobListResponseSchema,
+  type KnowledgeConverterAvailability,
+  KnowledgeConverterListResponseSchema,
+  type KnowledgeDocumentDetail,
+  type KnowledgeDocumentKind,
+  KnowledgeDocumentListResponseSchema,
+  type KnowledgeDocumentRecord,
+  type KnowledgeDocumentRevisionApplyInput,
+  type KnowledgeRevisionApplyResult,
+  KnowledgeRevisionApplyResponseSchema,
+  type KnowledgeRevisionRejectResult,
+  KnowledgeRevisionRejectResponseSchema,
+  KnowledgeDocumentRevisionListResponseSchema,
+  type KnowledgeDocumentRevisionProposalInput,
+  type KnowledgeDocumentRevisionRecord,
+  type KnowledgeImportInput,
+  type KnowledgeImportResult,
+  KnowledgeImportResultSchema,
+  type KnowledgeLinkCreateInput,
+  type KnowledgeLinkRecord,
+  KnowledgeLinkRecordSchema,
+  type KnowledgeNeighborhood,
+  KnowledgeNeighborhoodSchema,
+  KnowledgeDocumentDetailSchema,
+  type KnowledgeSourceSnapshotRecord,
+  KnowledgeSourceSnapshotListResponseSchema,
+  KnowledgeSourceListResponseSchema,
+  type KnowledgeSourceRecord,
+  KnowledgeSourceRecordSchema,
   type FinanceImportRecord,
   FinanceImportRecordSchema,
   type FinanceTransactionRecord,
@@ -308,6 +347,17 @@ export interface MemoryListOptions {
   workspaceId?: string | null;
   projectId?: string | null;
   includeGlobal?: boolean;
+  limit?: number;
+}
+
+export interface KnowledgeDocumentListOptions {
+  workspaceId: string;
+  kind?: KnowledgeDocumentKind;
+  q?: string;
+}
+
+export interface KnowledgeBetaRunListOptions {
+  workspaceId: string;
   limit?: number;
 }
 
@@ -381,7 +431,7 @@ export class PopeyeApiClient {
   private async get<T>(path: string, schema: { parse: (data: unknown) => T }): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, { headers: this.headers() });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
     const data: unknown = await response.json();
     return schema.parse(data);
@@ -390,7 +440,7 @@ export class PopeyeApiClient {
   private async getArray<T>(path: string, schema: { parse: (data: unknown) => T }): Promise<T[]> {
     const response = await fetch(`${this.baseUrl}${path}`, { headers: this.headers() });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
     const data: unknown = await response.json();
     if (!Array.isArray(data)) throw new Error('Expected array response');
@@ -405,7 +455,7 @@ export class PopeyeApiClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
     const data: unknown = await response.json();
     return schema.parse(data);
@@ -428,7 +478,7 @@ export class PopeyeApiClient {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
     const data: unknown = await response.json();
     return schema.parse(data);
@@ -441,8 +491,26 @@ export class PopeyeApiClient {
       headers: this.mutationHeaders(),
     });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
+  }
+
+  private async buildApiError(response: Response): Promise<ApiError> {
+    const rawBody = await response.text();
+    let message = rawBody;
+
+    try {
+      const parsed = JSON.parse(rawBody) as { details?: unknown; error?: unknown };
+      if (typeof parsed.details === 'string' && parsed.details.trim().length > 0) {
+        message = parsed.details;
+      } else if (typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+        message = parsed.error;
+      }
+    } catch {
+      // Keep the raw body when the response is not JSON.
+    }
+
+    return new ApiError(response.status, message);
   }
 
   private async ensureCsrfToken(): Promise<void> {
@@ -532,21 +600,21 @@ export class PopeyeApiClient {
 
   async pauseJob(jobId: string): Promise<JobRecord | null> {
     const response = await this.postRaw(`/v1/jobs/${encodeURIComponent(jobId)}/pause`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? JobRecordSchema.parse(data) : null;
   }
 
   async resumeJob(jobId: string): Promise<JobRecord | null> {
     const response = await this.postRaw(`/v1/jobs/${encodeURIComponent(jobId)}/resume`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? JobRecordSchema.parse(data) : null;
   }
 
   async enqueueJob(jobId: string): Promise<JobRecord | null> {
     const response = await this.postRaw(`/v1/jobs/${encodeURIComponent(jobId)}/enqueue`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? JobRecordSchema.parse(data) : null;
   }
@@ -581,14 +649,14 @@ export class PopeyeApiClient {
 
   async retryRun(runId: string): Promise<JobRecord | null> {
     const response = await this.postRaw(`/v1/runs/${encodeURIComponent(runId)}/retry`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? JobRecordSchema.parse(data) : null;
   }
 
   async cancelRun(runId: string): Promise<RunRecord | null> {
     const response = await this.postRaw(`/v1/runs/${encodeURIComponent(runId)}/cancel`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? RunRecordSchema.parse(data) : null;
   }
@@ -766,7 +834,7 @@ export class PopeyeApiClient {
 
   async getRunTrajectory(runId: string, options: { format?: string; types?: string } = {}): Promise<string> {
     const response = await fetch(`${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/trajectory${this.buildQuery(options)}`, { headers: this.headers() });
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     return response.text();
   }
 
@@ -938,7 +1006,7 @@ export class PopeyeApiClient {
 
   async resolveIntervention(id: string): Promise<InterventionRecord | null> {
     const response = await this.postRaw(`/v1/interventions/${encodeURIComponent(id)}/resolve`);
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return data ? InterventionRecordSchema.parse(data) : null;
   }
@@ -1120,6 +1188,10 @@ export class PopeyeApiClient {
     return this.post('/v1/connections/oauth/start', input, OAuthSessionResponseSchema);
   }
 
+  async listOAuthProviders(): Promise<OAuthProviderAvailabilityResponse> {
+    return this.get('/v1/connections/oauth/providers', OAuthProviderAvailabilityResponseSchema);
+  }
+
   async getOAuthConnectionSession(id: string): Promise<OAuthSessionResponse> {
     return this.get(`/v1/connections/oauth/sessions/${encodeURIComponent(id)}`, OAuthSessionResponseSchema);
   }
@@ -1201,6 +1273,130 @@ export class PopeyeApiClient {
     source?: string;
   }): Promise<TelegramSendAttemptRecord> {
     return this.post('/v1/telegram/send-attempts', input, TelegramSendAttemptRecordSchema);
+  }
+
+  // --- Knowledge ---
+
+  async listKnowledgeSources(workspaceId: string): Promise<KnowledgeSourceRecord[]> {
+    return this.get(`/v1/knowledge/sources${this.buildQuery({ workspaceId })}`, KnowledgeSourceListResponseSchema);
+  }
+
+  async getKnowledgeSource(id: string): Promise<KnowledgeSourceRecord> {
+    return this.get(`/v1/knowledge/sources/${encodeURIComponent(id)}`, KnowledgeSourceRecordSchema);
+  }
+
+  async listKnowledgeSourceSnapshots(id: string): Promise<KnowledgeSourceSnapshotRecord[]> {
+    return this.get(
+      `/v1/knowledge/sources/${encodeURIComponent(id)}/snapshots`,
+      KnowledgeSourceSnapshotListResponseSchema,
+    );
+  }
+
+  async reingestKnowledgeSource(id: string): Promise<KnowledgeImportResult> {
+    return this.post(
+      `/v1/knowledge/sources/${encodeURIComponent(id)}/reingest`,
+      {},
+      KnowledgeImportResultSchema,
+    );
+  }
+
+  async importKnowledgeSource(input: KnowledgeImportInput): Promise<KnowledgeImportResult> {
+    return this.post('/v1/knowledge/import', input, KnowledgeImportResultSchema);
+  }
+
+  async listKnowledgeConverters(): Promise<KnowledgeConverterAvailability[]> {
+    return this.get('/v1/knowledge/converters', KnowledgeConverterListResponseSchema);
+  }
+
+  async listKnowledgeBetaRuns(options: KnowledgeBetaRunListOptions): Promise<KnowledgeBetaRunRecord[]> {
+    return this.get(
+      `/v1/knowledge/beta-runs${this.buildQuery({
+        workspaceId: options.workspaceId,
+        limit: options.limit,
+      })}`,
+      KnowledgeBetaRunListResponseSchema,
+    );
+  }
+
+  async getKnowledgeBetaRun(id: string): Promise<KnowledgeBetaRunDetail> {
+    return this.get(`/v1/knowledge/beta-runs/${encodeURIComponent(id)}`, KnowledgeBetaRunResponseSchema);
+  }
+
+  async createKnowledgeBetaRun(input: KnowledgeBetaRunCreateInput): Promise<KnowledgeBetaRunDetail> {
+    return this.post('/v1/knowledge/beta-runs', input, KnowledgeBetaRunResponseSchema);
+  }
+
+  async listKnowledgeDocuments(options: KnowledgeDocumentListOptions): Promise<KnowledgeDocumentRecord[]> {
+    return this.get(
+      `/v1/knowledge/documents${this.buildQuery({
+        workspaceId: options.workspaceId,
+        kind: options.kind,
+        q: options.q?.trim() ? options.q.trim() : undefined,
+      })}`,
+      KnowledgeDocumentListResponseSchema,
+    );
+  }
+
+  async getKnowledgeDocument(id: string): Promise<KnowledgeDocumentDetail> {
+    return this.get(`/v1/knowledge/documents/${encodeURIComponent(id)}`, KnowledgeDocumentDetailSchema);
+  }
+
+  async listKnowledgeDocumentRevisions(documentId: string): Promise<KnowledgeDocumentRevisionRecord[]> {
+    return this.get(
+      `/v1/knowledge/documents/${encodeURIComponent(documentId)}/revisions`,
+      KnowledgeDocumentRevisionListResponseSchema,
+    );
+  }
+
+  async proposeKnowledgeDocumentRevision(
+    documentId: string,
+    input: KnowledgeDocumentRevisionProposalInput,
+  ): Promise<KnowledgeDocumentRevisionRecord> {
+    return this.post(
+      `/v1/knowledge/documents/${encodeURIComponent(documentId)}/revisions`,
+      input,
+      KnowledgeDocumentRevisionListResponseSchema.element,
+    );
+  }
+
+  async applyKnowledgeDocumentRevision(
+    revisionId: string,
+    input: KnowledgeDocumentRevisionApplyInput,
+  ): Promise<KnowledgeRevisionApplyResult> {
+    return this.post(
+      `/v1/knowledge/revisions/${encodeURIComponent(revisionId)}/apply`,
+      input,
+      KnowledgeRevisionApplyResponseSchema,
+    );
+  }
+
+  async rejectKnowledgeDocumentRevision(
+    revisionId: string,
+  ): Promise<KnowledgeRevisionRejectResult> {
+    return this.post(
+      `/v1/knowledge/revisions/${encodeURIComponent(revisionId)}/reject`,
+      {},
+      KnowledgeRevisionRejectResponseSchema,
+    );
+  }
+
+  async getKnowledgeNeighborhood(documentId: string): Promise<KnowledgeNeighborhood> {
+    return this.get(
+      `/v1/knowledge/documents/${encodeURIComponent(documentId)}/neighborhood`,
+      KnowledgeNeighborhoodSchema,
+    );
+  }
+
+  async createKnowledgeLink(input: KnowledgeLinkCreateInput): Promise<KnowledgeLinkRecord> {
+    return this.post('/v1/knowledge/links', input, KnowledgeLinkRecordSchema);
+  }
+
+  async listKnowledgeCompileJobs(workspaceId: string): Promise<KnowledgeCompileJobRecord[]> {
+    return this.get(`/v1/knowledge/compile-jobs${this.buildQuery({ workspaceId })}`, KnowledgeCompileJobListResponseSchema);
+  }
+
+  async getKnowledgeAudit(workspaceId: string): Promise<KnowledgeAuditReport> {
+    return this.get(`/v1/knowledge/audit${this.buildQuery({ workspaceId })}`, KnowledgeAuditReportSchema);
   }
 
   // --- File roots ---
@@ -1545,7 +1741,7 @@ export class PopeyeApiClient {
       headers: this.mutationHeaders(),
       body: JSON.stringify({ resourceType, resourceId }),
     });
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
     const data: unknown = await response.json();
     return ConnectionRecordSchema.parse(data);
   }
@@ -1686,7 +1882,7 @@ export class PopeyeApiClient {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      throw new ApiError(response.status, await response.text());
+      throw await this.buildApiError(response);
     }
     const result: unknown = await response.json();
     if (!Array.isArray(result)) throw new Error('Expected array response');
@@ -1695,7 +1891,7 @@ export class PopeyeApiClient {
 
   async updateFinanceImportStatus(id: string, status: string, recordCount?: number): Promise<void> {
     const response = await this.postRaw(`/v1/finance/imports/${encodeURIComponent(id)}/status`, { status, recordCount });
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
   }
 
   // --- Medical ---
@@ -1777,7 +1973,7 @@ export class PopeyeApiClient {
 
   async updateMedicalImportStatus(id: string, status: string): Promise<void> {
     const response = await this.postRaw(`/v1/medical/imports/${encodeURIComponent(id)}/status`, { status });
-    if (!response.ok) throw new ApiError(response.status, await response.text());
+    if (!response.ok) throw await this.buildApiError(response);
   }
 
   // --- File write-intents ---

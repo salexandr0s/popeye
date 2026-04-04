@@ -108,8 +108,13 @@ public extension Endpoint {
 public extension Endpoint {
     static let connections = Endpoint(path: "/v1/connections")
     static let storeSecret = Endpoint(path: "/v1/secrets", method: .post)
+    static let providerAuthConfig = Endpoint(path: "/v1/config/provider-auth")
 
+    static let oauthConnectionProviders = Endpoint(path: "/v1/connections/oauth/providers")
     static let startOAuthConnection = Endpoint(path: "/v1/connections/oauth/start", method: .post)
+    static func updateProviderAuthConfig(provider: String) -> Endpoint {
+        Endpoint(path: "/v1/config/provider-auth/\(provider)", method: .post)
+    }
 
     static func oauthConnectionSession(id: String) -> Endpoint {
         Endpoint(path: "/v1/connections/oauth/sessions/\(id)")
@@ -212,6 +217,87 @@ public extension Endpoint {
 
     static func applyCuratedDocumentSave(id: String) -> Endpoint {
         Endpoint(path: "/v1/curated-documents/\(id)/apply-save", method: .post)
+    }
+}
+
+// MARK: - Knowledge Endpoints
+
+public extension Endpoint {
+    static func knowledgeSources(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/sources", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
+
+    static func knowledgeSource(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/sources/\(id)")
+    }
+
+    static func knowledgeSourceSnapshots(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/sources/\(id)/snapshots")
+    }
+
+    static func reingestKnowledgeSource(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/sources/\(id)/reingest", method: .post)
+    }
+
+    static let importKnowledgeSource = Endpoint(path: "/v1/knowledge/import", method: .post)
+
+    static let knowledgeConverters = Endpoint(path: "/v1/knowledge/converters")
+
+    static func knowledgeBetaRuns(workspaceId: String, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = [URLQueryItem(name: "workspaceId", value: workspaceId)]
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/knowledge/beta-runs", queryItems: items)
+    }
+
+    static func knowledgeBetaRun(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/beta-runs/\(id)")
+    }
+
+    static func knowledgeDocuments(workspaceId: String, kind: String? = nil, query: String? = nil) -> Endpoint {
+        var items: [URLQueryItem] = [URLQueryItem(name: "workspaceId", value: workspaceId)]
+        if let kind { items.append(URLQueryItem(name: "kind", value: kind)) }
+        if let query, !query.isEmpty { items.append(URLQueryItem(name: "q", value: query)) }
+        return Endpoint(path: "/v1/knowledge/documents", queryItems: items)
+    }
+
+    static func knowledgeDocument(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/documents/\(id)")
+    }
+
+    static func knowledgeDocumentRevisions(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/documents/\(id)/revisions")
+    }
+
+    static func proposeKnowledgeDocumentRevision(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/documents/\(id)/revisions", method: .post)
+    }
+
+    static func applyKnowledgeRevision(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/revisions/\(id)/apply", method: .post)
+    }
+
+    static func rejectKnowledgeRevision(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/revisions/\(id)/reject", method: .post)
+    }
+
+    static func knowledgeNeighborhood(id: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/documents/\(id)/neighborhood")
+    }
+
+    static let createKnowledgeLink = Endpoint(path: "/v1/knowledge/links", method: .post)
+
+    static func knowledgeCompileJobs(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/compile-jobs", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
+    }
+
+    static func knowledgeAudit(workspaceId: String) -> Endpoint {
+        Endpoint(path: "/v1/knowledge/audit", queryItems: [
+            URLQueryItem(name: "workspaceId", value: workspaceId),
+        ])
     }
 }
 

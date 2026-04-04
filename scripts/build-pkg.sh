@@ -26,12 +26,12 @@ bash scripts/build-macos-app.sh "$APP_BUNDLE_DIR"
 
 echo "==> Version: $VERSION ($GIT_SHA) built $BUILD_DATE"
 
-TAR_NAME="popeye-${VERSION}-darwin.tar.gz"
+TAR_NAME="popeye-${VERSION}-darwin-arm64.tar.gz"
 TAR_PATH="$DIST_DIR/$TAR_NAME"
 echo "==> Creating app bundle tarball..."
 bash scripts/create-macos-tarball.sh "$APP_BUNDLE_DIR" "$TAR_PATH"
 
-PKG_NAME="popeye-${VERSION}-darwin.pkg"
+PKG_NAME="popeye-${VERSION}-darwin-arm64.pkg"
 PKG_PATH="$DIST_DIR/$PKG_NAME"
 echo "==> Creating macOS .pkg installer..."
 bash scripts/build-macos-installer-pkg.sh "$APP_BUNDLE_DIR" "$PKG_PATH"

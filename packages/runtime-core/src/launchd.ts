@@ -44,6 +44,7 @@ export interface LaunchdInstallOptions {
   daemonEntryPoint: string;
   programArguments?: string[];
   workingDirectory: string;
+  environmentVariables?: Record<string, string>;
 }
 
 export interface LaunchdInstallResult {
@@ -80,10 +81,13 @@ export function createLaunchdPlist(options: LaunchdInstallOptions): string {
     options.daemonEntryPoint,
   ]).map((value) => xmlEscape(value));
   const workDir = xmlEscape(options.workingDirectory);
-  const configPath = xmlEscape(options.configPath);
-  const launchdLabel = label;
   const outLog = xmlEscape(join(options.workingDirectory, 'launchd.out.log'));
   const errLog = xmlEscape(join(options.workingDirectory, 'launchd.err.log'));
+  const environmentVariables = {
+    POPEYE_CONFIG_PATH: options.configPath,
+    POPEYE_LAUNCHD_LABEL: options.label ?? DEFAULT_LABEL,
+    ...(options.environmentVariables ?? {}),
+  };
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -98,10 +102,10 @@ ${programArguments.map((value) => `    <string>${value}</string>`).join('\n')}
   <string>${workDir}</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>POPEYE_CONFIG_PATH</key>
-    <string>${configPath}</string>
-    <key>POPEYE_LAUNCHD_LABEL</key>
-    <string>${launchdLabel}</string>
+${Object.entries(environmentVariables)
+  .sort(([left], [right]) => left.localeCompare(right))
+  .map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(value)}</string>`)
+  .join('\n')}
   </dict>
   <key>KeepAlive</key>
   <true/>

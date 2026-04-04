@@ -6,6 +6,14 @@ import { DomainKindSchema } from './domain.js';
 export const OAuthProviderKindSchema = z.enum(['gmail', 'google_calendar', 'google_tasks', 'github']);
 export type OAuthProviderKind = z.infer<typeof OAuthProviderKindSchema>;
 
+export const OAuthProviderAvailabilityStatusSchema = z.enum([
+  'ready',
+  'missing_client_id',
+  'missing_client_secret',
+  'missing_client_credentials',
+]);
+export type OAuthProviderAvailabilityStatus = z.infer<typeof OAuthProviderAvailabilityStatusSchema>;
+
 const OAuthSessionStatusSchema = z.enum(['pending', 'completed', 'failed', 'expired']);
 
 export const OAuthConnectStartRequestSchema = z.object({
@@ -31,3 +39,11 @@ export const OAuthSessionRecordSchema = z.object({
   completedAt: z.string().nullable().default(null),
 });
 export type OAuthSessionRecord = z.infer<typeof OAuthSessionRecordSchema>;
+
+export const OAuthProviderAvailabilityRecordSchema = z.object({
+  providerKind: OAuthProviderKindSchema,
+  domain: DomainKindSchema,
+  status: OAuthProviderAvailabilityStatusSchema,
+  details: z.string(),
+});
+export type OAuthProviderAvailabilityRecord = z.infer<typeof OAuthProviderAvailabilityRecordSchema>;

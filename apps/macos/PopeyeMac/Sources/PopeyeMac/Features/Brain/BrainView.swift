@@ -28,7 +28,7 @@ struct BrainView: View {
     private var brainContent: some View {
         HSplitView {
             BrainSidebarView(selection: $store.selectedPane)
-                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
+                .popeyeSplitPane(minWidth: 220, idealWidth: 240, maxWidth: 280)
 
             ScrollView {
                 switch store.selectedPane ?? .overview {
@@ -48,7 +48,7 @@ struct BrainView: View {
                     )
                 }
             }
-            .frame(minWidth: 520)
+            .popeyeSplitPane(minWidth: 520)
         }
     }
 

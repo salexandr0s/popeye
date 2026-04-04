@@ -22,6 +22,8 @@ struct AppRouteDestinationView: View {
             BrainView(store: appModel.brainStore())
         case .memory:
             MemoryView(store: appModel.memoryStore())
+        case .knowledge:
+            KnowledgeView(store: appModel.knowledgeStore())
         case .instructionPreview:
             InstructionPreviewView(store: appModel.instructionPreviewStore())
         case .agentProfiles:

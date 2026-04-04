@@ -1,7 +1,11 @@
 import Foundation
 
 public struct CredentialStore: Sendable {
-    public init() {}
+    private let service: String
+
+    public init(service: String = KeychainStore.defaultService) {
+        self.service = service
+    }
 
     public func saveToken(_ token: String) throws {
         try saveBearerToken(token)
@@ -45,6 +49,6 @@ public struct CredentialStore: Sendable {
     }
 
     private func keychain(for kind: StoredCredentialKind) -> KeychainStore {
-        KeychainStore(account: kind.keychainAccount)
+        KeychainStore(account: kind.keychainAccount, service: service)
     }
 }

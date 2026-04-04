@@ -12,7 +12,7 @@ import type { EngineAdapter, EngineRunHandle, EngineRunRequest } from '../../eng
 import { FailingFakeEngineAdapter } from '../../engine-pi/src/index.ts';
 import { initAuthStore } from './auth.ts';
 import type { InstructionPreviewContextError } from './instruction-query.ts';
-import { RuntimeConflictError, RuntimeValidationError, classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
+import { RuntimeConfigurationError, RuntimeConflictError, RuntimeValidationError, classifyFailureFromMessage, createRuntimeService } from './runtime-service.ts';
 
 function makeConfig(dir: string): AppConfig {
   const authFile = join(dir, 'config', 'auth.json');
@@ -562,9 +562,10 @@ describe('PopeyeRuntimeService', () => {
     const runtime = createRuntimeService({
       ...makeConfig(dir),
       providerAuth: {
-        google: { clientId: 'google-client', clientSecret: 'google-secret' },
+        google: { clientId: 'google-client', clientSecretRefId: 'secret-google-client' },
       },
     });
+    runtime.setSecret({ id: 'secret-google-client', key: 'oauth-client-secret-google', value: 'google-secret' });
     await (runtime as any).capabilityInitPromise;
 
     fetchMock
@@ -631,6 +632,64 @@ describe('PopeyeRuntimeService', () => {
     );
 
     vi.unstubAllGlobals();
+    await runtime.close();
+  });
+
+  it('reports OAuth provider availability from current config', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-oauth-provider-availability-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService({
+      ...makeConfig(dir),
+      providerAuth: {
+        google: { clientId: 'google-client' },
+        github: { clientId: 'github-client', clientSecretRefId: 'secret-github-client' },
+      },
+    });
+    runtime.setSecret({ id: 'secret-github-client', key: 'oauth-client-secret-github', value: 'github-secret' });
+    await (runtime as any).capabilityInitPromise;
+
+    expect(runtime.listOAuthProviderAvailability()).toEqual([
+      {
+        providerKind: 'gmail',
+        domain: 'email',
+        status: 'missing_client_secret',
+        details: 'Google OAuth is not configured. Save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'google_calendar',
+        domain: 'calendar',
+        status: 'missing_client_secret',
+        details: 'Google OAuth is not configured. Save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'google_tasks',
+        domain: 'todos',
+        status: 'missing_client_secret',
+        details: 'Google OAuth is not configured. Save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'github',
+        domain: 'github',
+        status: 'ready',
+        details: 'GitHub OAuth is configured.',
+      },
+    ]);
+
+    await runtime.close();
+  });
+
+  it('rejects OAuth start when provider config is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-oauth-config-missing-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    expect(() => runtime.startOAuthConnectSession({
+      providerKind: 'gmail',
+      mode: 'read_only',
+      syncIntervalSeconds: 900,
+    })).toThrow(RuntimeConfigurationError);
+
     await runtime.close();
   });
 
@@ -3627,6 +3686,567 @@ describe('startup regex validation', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+  });
+
+  it('imports knowledge sources, drafts wiki revisions, and records receipts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'manual_text',
+      title: 'Compiler Notes',
+      sourceText: 'Compilers balance optimization and correctness.',
+    });
+
+    expect(imported.source.status).toBe('compiled');
+    expect(imported.normalizedDocument.kind).toBe('source_normalized');
+    expect(imported.draftRevision?.status).toBe('draft');
+    expect(runtime.listKnowledgeSourceSnapshots(imported.source.id)).toEqual([
+      expect.objectContaining({
+        sourceId: imported.source.id,
+        outcome: 'created',
+      }),
+    ]);
+
+    const wikiDocuments = runtime.listKnowledgeDocuments({
+      workspaceId: 'default',
+      kind: 'wiki_article',
+    });
+    expect(wikiDocuments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Compiler Notes',
+          status: 'draft_only',
+        }),
+      ]),
+    );
+
+    const wikiDocumentId = imported.draftRevision!.documentId;
+    const revisions = runtime.listKnowledgeDocumentRevisions(wikiDocumentId);
+    expect(revisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: imported.draftRevision!.id,
+          status: 'draft',
+        }),
+      ]),
+    );
+
+    const applied = await runtime.applyKnowledgeDocumentRevision(imported.draftRevision!.id, {
+      approved: true,
+    });
+    expect(applied.document.markdownText).toContain('Compiler Notes');
+    expect(runtime.listMutationReceipts('knowledge')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'knowledge_import' }),
+        expect.objectContaining({
+          kind: 'knowledge_revision_apply',
+          metadata: expect.objectContaining({
+            documentId: wikiDocumentId,
+          }),
+        }),
+      ]),
+    );
+
+    const audit = runtime.getKnowledgeAudit('default');
+    expect(audit.totalSources).toBe(1);
+    expect(audit.totalDocuments).toBeGreaterThanOrEqual(2);
+    expect(audit.degradedSources).toBe(0);
+    expect(audit.warningSources).toBeGreaterThanOrEqual(0);
+    expect(audit.assetLocalizationFailures).toBe(0);
+
+    await runtime.close();
+  });
+
+  it('rejects draft knowledge revisions without mutating the document', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-reject-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-reject-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'manual_text',
+      title: 'Compiler Notes',
+      sourceText: 'Compilers balance optimization and correctness.',
+    });
+
+    const rejected = await runtime.rejectKnowledgeDocumentRevision(imported.draftRevision!.id);
+    const wikiDocument = runtime.getKnowledgeDocument(imported.draftRevision!.documentId);
+
+    expect(rejected.revision.status).toBe('rejected');
+    expect(wikiDocument?.exists).toBe(false);
+    expect(runtime.listMutationReceipts('knowledge')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'knowledge_revision_reject' }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('localizes local markdown image assets into the knowledge asset store', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-assets-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-assets-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const sourceDir = join(workspaceRoot, 'imports');
+    mkdirSync(sourceDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(sourceDir, 'diagram.png'), Buffer.from('png-bytes'), { mode: 0o600 });
+    writeFileSync(
+      join(sourceDir, 'notes.md'),
+      '# Compiler Notes\n\n![Diagram](diagram.png)\n',
+      { encoding: 'utf8', mode: 0o600 },
+    );
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const imported = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'local_file',
+      title: 'Compiler Notes',
+      sourcePath: join(sourceDir, 'notes.md'),
+    });
+
+    const knowledgeRootPath = runtime.listFileRoots('default').find((root) => root.kind === 'knowledge_base')!.rootPath;
+    const normalizedPath = join(
+      knowledgeRootPath,
+      imported.normalizedDocument.relativePath,
+    );
+    const normalizedMarkdown = readFileSync(normalizedPath, 'utf8');
+    expect(imported.source.assetStatus).toBe('localized');
+    expect(normalizedMarkdown).toContain('../assets/');
+    const assetMatch = normalizedMarkdown.match(/\.\.\/assets\/([^)]+)/);
+    expect(assetMatch?.[1]).toBeTruthy();
+    expect(
+      existsSync(join(knowledgeRootPath, 'raw', imported.source.id, 'assets', assetMatch![1]!)),
+    ).toBe(true);
+    expect(
+      runtime.databases.app
+        .prepare('SELECT COUNT(*) AS c FROM knowledge_source_snapshots WHERE source_id = ?')
+        .get(imported.source.id),
+    ).toMatchObject({ c: 1 });
+
+    await runtime.close();
+  });
+
+  it('deduplicates unchanged knowledge imports and records an unchanged outcome', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-dedup-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-dedup-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const sourcePath = join(workspaceRoot, 'notes.md');
+    writeFileSync(sourcePath, '# Compiler Notes\n\nSame content.\n', { encoding: 'utf8', mode: 0o600 });
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const first = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'local_file',
+      title: 'Compiler Notes',
+      sourcePath,
+    });
+    const second = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'local_file',
+      title: 'Compiler Notes',
+      sourcePath,
+    });
+
+    expect(second.outcome).toBe('unchanged');
+    expect(second.source.id).toBe(first.source.id);
+    expect(second.draftRevision).toBeNull();
+    expect(runtime.listKnowledgeSources('default')).toHaveLength(1);
+    expect(
+      runtime.databases.app
+        .prepare('SELECT COUNT(*) AS c FROM knowledge_source_snapshots WHERE source_id = ?')
+        .get(first.source.id),
+    ).toMatchObject({ c: 1 });
+
+    await runtime.close();
+  });
+
+  it('reingests changed knowledge sources into a new snapshot and draft revision', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-reingest-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-reingest-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const sourcePath = join(workspaceRoot, 'notes.md');
+    writeFileSync(sourcePath, '# Compiler Notes\n\nVersion one.\n', { encoding: 'utf8', mode: 0o600 });
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    const first = await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'local_file',
+      title: 'Compiler Notes',
+      sourcePath,
+    });
+    writeFileSync(sourcePath, '# Compiler Notes\n\nVersion two with extra detail.\n', {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+
+    const reingested = await runtime.reingestKnowledgeSource(first.source.id);
+    const normalizedDetail = runtime.getKnowledgeDocument(reingested.normalizedDocument.id);
+
+    expect(reingested.outcome).toBe('updated');
+    expect(reingested.source.id).toBe(first.source.id);
+    expect(reingested.draftRevision?.status).toBe('draft');
+    expect(reingested.normalizedDocument.revisionHash).not.toBe(first.normalizedDocument.revisionHash);
+    expect(normalizedDetail?.markdownText).toContain('Version two with extra detail.');
+    expect(runtime.listKnowledgeSourceSnapshots(first.source.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ outcome: 'created' }),
+        expect.objectContaining({ outcome: 'updated' }),
+      ]),
+    );
+    expect(
+      runtime.databases.app
+        .prepare('SELECT COUNT(*) AS c FROM knowledge_source_snapshots WHERE source_id = ?')
+        .get(first.source.id),
+    ).toMatchObject({ c: 2 });
+
+    await runtime.close();
+  });
+
+  it('reports knowledge converter readiness through the runtime service', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-converters-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    const knowledgeService = (runtime as unknown as { knowledgeService: { fetchImpl: typeof fetch; runCommand: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }> } }).knowledgeService;
+
+    knowledgeService.fetchImpl = vi.fn(async (input: unknown) => {
+      const target = String(input);
+      if (target.startsWith('https://r.jina.ai/')) {
+        return new Response('ok', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+    knowledgeService.runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === 'markitdown') {
+        return { stdout: 'markitdown 0.1.0', stderr: '' };
+      }
+      if (command === 'python3' && args.join(' ').includes('trafilatura')) {
+        return { stdout: '1.0.0', stderr: '' };
+      }
+      throw new Error('missing');
+    });
+
+    const converters = await runtime.listKnowledgeConverters();
+    expect(converters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'jina_reader', status: 'ready', provenance: 'remote', installHint: expect.any(String), lastCheckedAt: expect.any(String) }),
+        expect.objectContaining({ id: 'trafilatura', status: 'ready', provenance: 'system', installHint: null, lastCheckedAt: expect.any(String) }),
+        expect.objectContaining({ id: 'markitdown', status: 'ready', provenance: 'system', installHint: null, lastCheckedAt: expect.any(String) }),
+        expect.objectContaining({ id: 'docling', status: 'missing', provenance: 'missing', installHint: expect.any(String), lastCheckedAt: expect.any(String) }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('prefers bundled Knowledge converter shims when they are configured', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-bundled-converters-'));
+    chmodSync(dir, 0o700);
+    const shimsDir = join(dir, 'knowledge-python-shims');
+    mkdirSync(shimsDir, { recursive: true });
+    const pythonShim = join(shimsDir, 'python3');
+    const markitdownShim = join(shimsDir, 'markitdown');
+    writeFileSync(pythonShim, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    writeFileSync(markitdownShim, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    chmodSync(pythonShim, 0o755);
+    chmodSync(markitdownShim, 0o755);
+
+    const previousEnv = {
+      shims: process.env.POPEYE_KNOWLEDGE_SHIMS,
+      python: process.env.POPEYE_KNOWLEDGE_PYTHON,
+      markitdown: process.env.POPEYE_KNOWLEDGE_MARKITDOWN,
+    };
+    process.env.POPEYE_KNOWLEDGE_SHIMS = shimsDir;
+    process.env.POPEYE_KNOWLEDGE_PYTHON = pythonShim;
+    process.env.POPEYE_KNOWLEDGE_MARKITDOWN = markitdownShim;
+
+    const runtime = createRuntimeService(makeConfig(dir));
+    const knowledgeService = (runtime as unknown as { knowledgeService: { fetchImpl: typeof fetch; runCommand: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }> } }).knowledgeService;
+
+    knowledgeService.fetchImpl = vi.fn(async (input: unknown) => {
+      const target = String(input);
+      if (target.startsWith('https://r.jina.ai/')) {
+        return new Response('ok', { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }) as unknown as typeof fetch;
+    knowledgeService.runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === markitdownShim) {
+        return { stdout: 'markitdown 0.1.5', stderr: '' };
+      }
+      if (command === pythonShim && args.join(' ').includes('trafilatura')) {
+        return { stdout: '2.0.0', stderr: '' };
+      }
+      throw new Error('missing');
+    });
+
+    try {
+      const converters = await runtime.listKnowledgeConverters();
+      expect(converters).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'jina_reader', status: 'ready', provenance: 'remote' }),
+          expect.objectContaining({ id: 'trafilatura', status: 'ready', provenance: 'bundled', installHint: null }),
+          expect.objectContaining({ id: 'markitdown', status: 'ready', provenance: 'bundled', installHint: null }),
+          expect.objectContaining({
+            id: 'docling',
+            status: 'missing',
+            provenance: 'bundled',
+            installHint: expect.stringContaining('Reinstall the packaged Popeye app or .pkg'),
+          }),
+        ]),
+      );
+    } finally {
+      await runtime.close();
+      if (previousEnv.shims === undefined) delete process.env.POPEYE_KNOWLEDGE_SHIMS;
+      else process.env.POPEYE_KNOWLEDGE_SHIMS = previousEnv.shims;
+      if (previousEnv.python === undefined) delete process.env.POPEYE_KNOWLEDGE_PYTHON;
+      else process.env.POPEYE_KNOWLEDGE_PYTHON = previousEnv.python;
+      if (previousEnv.markitdown === undefined) delete process.env.POPEYE_KNOWLEDGE_MARKITDOWN;
+      else process.env.POPEYE_KNOWLEDGE_MARKITDOWN = previousEnv.markitdown;
+    }
+  });
+
+  it('records and retrieves knowledge beta runs through the runtime service', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-beta-runs-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+
+    const created = runtime.recordKnowledgeBetaRun({
+      workspaceId: 'default',
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      reportMarkdown: '# Knowledge beta corpus report\n',
+      imports: [
+        {
+          label: 'article-1',
+          title: 'Compiler Article',
+          sourceType: 'website',
+          outcome: 'created',
+          sourceId: 'source-1',
+          adapter: 'jina_reader',
+          status: 'compiled',
+          assetStatus: 'localized',
+        },
+      ],
+      reingests: [
+        {
+          label: 'article-1',
+          title: 'Compiler Article',
+          sourceType: 'website',
+          outcome: 'unchanged',
+          sourceId: 'source-1',
+          adapter: 'jina_reader',
+          status: 'compiled',
+          assetStatus: 'localized',
+        },
+      ],
+      converters: [
+        {
+          id: 'jina_reader',
+          status: 'ready',
+          provenance: 'remote',
+          details: 'Remote Jina Reader probe succeeded.',
+          version: null,
+          lastCheckedAt: '2026-04-04T10:02:00Z',
+          installHint: 'Ensure outbound HTTPS access to r.jina.ai.',
+          usedFor: ['website', 'x_post'],
+          fallbackRank: 1,
+        },
+      ],
+      audit: {
+        totalSources: 1,
+        totalDocuments: 2,
+        totalDraftRevisions: 1,
+        unresolvedLinks: 0,
+        brokenLinks: 0,
+        failedConversions: 0,
+        degradedSources: 0,
+        warningSources: 0,
+        assetLocalizationFailures: 0,
+        lastCompileAt: '2026-04-04T10:01:00Z',
+      },
+      gate: {
+        status: 'passed',
+        minImportSuccessRate: 0.9,
+        actualImportSuccessRate: 1,
+        maxHardFailures: 0,
+        actualHardFailures: 0,
+        expectedReingestChecks: 1,
+        failedExpectedReingestChecks: 0,
+        checks: [
+          {
+            id: 'import-success-rate',
+            label: 'Import success rate',
+            passed: true,
+            details: '100% actual vs 90% minimum',
+          },
+        ],
+      },
+    });
+
+    expect(runtime.listKnowledgeBetaRuns({ workspaceId: 'default', limit: 5 })).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        gateStatus: 'passed',
+        importCount: 1,
+      }),
+    ]);
+    expect(runtime.getKnowledgeBetaRun(created.id)).toMatchObject({
+      id: created.id,
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      gate: expect.objectContaining({ status: 'passed' }),
+      imports: [
+        expect.objectContaining({ label: 'article-1', outcome: 'created' }),
+      ],
+    });
+
+    await runtime.close();
+  });
+
+  it('searches knowledge documents by markdown content through FTS-backed document queries', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-search-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-search-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+
+    await runtime.importKnowledgeSource({
+      workspaceId: 'default',
+      sourceType: 'manual_text',
+      title: 'Compiler Notes',
+      sourceText: 'SSA form improves optimization passes in modern compilers.',
+    });
+
+    const results = runtime.listKnowledgeDocuments({
+      workspaceId: 'default',
+      kind: 'source_normalized',
+      q: 'optimization passes',
+    });
+
+    expect(results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Compiler Notes' }),
+      ]),
+    );
+
+    await runtime.close();
+  });
+
+  it('rejects enabling a second knowledge root through file-root updates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-root-update-'));
+    chmodSync(dir, 0o700);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-knowledge-root-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+
+    const config = makeConfig(dir);
+    config.workspaces = [{
+      id: 'default',
+      name: 'Default workspace',
+      rootPath: workspaceRoot,
+      heartbeatEnabled: true,
+      heartbeatIntervalSeconds: 3600,
+    }];
+    const runtime = createRuntimeService(config);
+    mkdirSync(join(workspaceRoot, 'knowledge'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(workspaceRoot, 'notes'), { recursive: true, mode: 0o700 });
+
+    const primaryRoot = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'Knowledge Base',
+      rootPath: join(workspaceRoot, 'knowledge'),
+      kind: 'knowledge_base',
+      permission: 'index_and_derive',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+    const secondaryRoot = runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'Secondary Root',
+      rootPath: join(workspaceRoot, 'notes'),
+      kind: 'general',
+      permission: 'index',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+
+    expect(primaryRoot.kind).toBe('knowledge_base');
+    expect(() =>
+      runtime.updateFileRoot(secondaryRoot.id, {
+        kind: 'knowledge_base',
+      })).toThrow('already has a knowledge base root');
 
     await runtime.close();
   });

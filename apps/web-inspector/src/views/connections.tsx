@@ -8,6 +8,7 @@ import {
   useConnections,
   useEmailAccounts,
   useGithubAccounts,
+  useOAuthProviders,
   useTodoAccounts,
 } from '../api/hooks';
 import { PageHeader } from '../components/page-header';
@@ -19,8 +20,14 @@ import { Badge } from '../components/badge';
 import { Card } from '../components/card';
 
 type OAuthSessionRecord = OAuthSessionResponse;
+type OAuthProviderKind = 'gmail' | 'google_calendar' | 'google_tasks' | 'github';
 
 const MANUAL_SYNC_DOMAINS = new Set(['email', 'calendar', 'github', 'todos']);
+const OAUTH_PROVIDER_KINDS = new Set<OAuthProviderKind>(['gmail', 'google_calendar', 'google_tasks', 'github']);
+
+function isOAuthProviderKind(value: string): value is OAuthProviderKind {
+  return OAUTH_PROVIDER_KINDS.has(value as OAuthProviderKind);
+}
 
 export function Connections() {
   const api = useApi();
@@ -29,6 +36,7 @@ export function Connections() {
   const calendarAccounts = useCalendarAccounts();
   const githubAccounts = useGithubAccounts();
   const todoAccounts = useTodoAccounts();
+  const oauthProviders = useOAuthProviders();
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
@@ -52,12 +60,30 @@ export function Connections() {
 
   const resourceRules = useConnectionResourceRules(selectedConnectionId ?? '');
   const diagnostics = useConnectionDiagnostics(selectedConnectionId ?? '');
+  const oauthProvidersByKind = useMemo(
+    () => new Map((oauthProviders.data ?? []).map((provider) => [provider.providerKind, provider])),
+    [oauthProviders.data],
+  );
+  const blockedProviders = (oauthProviders.data ?? []).filter((provider) => provider.status !== 'ready');
 
-  if (connections.loading || emailAccounts.loading || calendarAccounts.loading || githubAccounts.loading || todoAccounts.loading) {
+  if (
+    connections.loading ||
+    emailAccounts.loading ||
+    calendarAccounts.loading ||
+    githubAccounts.loading ||
+    todoAccounts.loading ||
+    oauthProviders.loading
+  ) {
     return <Loading />;
   }
 
-  const loadError = connections.error ?? emailAccounts.error ?? calendarAccounts.error ?? githubAccounts.error ?? todoAccounts.error;
+  const loadError =
+    connections.error ??
+    emailAccounts.error ??
+    calendarAccounts.error ??
+    githubAccounts.error ??
+    todoAccounts.error ??
+    oauthProviders.error;
   if (loadError) {
     return <ErrorDisplay message={loadError} />;
   }
@@ -70,6 +96,7 @@ export function Connections() {
     calendarAccounts.refetch();
     githubAccounts.refetch();
     todoAccounts.refetch();
+    oauthProviders.refetch();
   };
 
   const pollOAuthSession = async (sessionId: string): Promise<void> => {
@@ -89,9 +116,15 @@ export function Connections() {
   };
 
   const handleConnect = async (
-    providerKind: 'gmail' | 'google_calendar' | 'google_tasks' | 'github',
+    providerKind: OAuthProviderKind,
     connectionId?: string,
   ) => {
+    const availability = oauthProvidersByKind.get(providerKind);
+    if (availability && availability.status !== 'ready') {
+      setActionError(availability.details);
+      return;
+    }
+
     try {
       setBusyKey(connectionId ? `reconnect:${connectionId}` : `connect:${providerKind}`);
       setActionError(null);
@@ -276,37 +309,48 @@ export function Connections() {
       key: 'actions',
       header: 'Actions',
       width: '240px',
-      render: (row) => (
-        <div className="flex flex-wrap gap-[8px]">
-          {MANUAL_SYNC_DOMAINS.has(row.domain) ? (
-            <button
-              className="rounded-[var(--radius-sm)] bg-[var(--color-accent)]/10 px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-accent)]"
-              onClick={() => void handleSync(row.id, row.domain)}
-              type="button"
-            >
-              {busyKey === `sync:${row.id}` ? 'Syncing…' : 'Sync'}
-            </button>
-          ) : null}
-          {row.providerKind === 'gmail' || row.providerKind === 'google_calendar' || row.providerKind === 'google_tasks' || row.providerKind === 'github' ? (
-            row.health?.remediation ? (
+      render: (row) => {
+        const oauthProviderKind = isOAuthProviderKind(row.providerKind) ? row.providerKind : null;
+        const oauthAvailability = oauthProviderKind ? oauthProvidersByKind.get(oauthProviderKind) : undefined;
+
+        return (
+          <div className="flex flex-wrap gap-[8px]">
+            {MANUAL_SYNC_DOMAINS.has(row.domain) ? (
               <button
-                className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
-                onClick={() => void handleConnect(row.providerKind as 'gmail' | 'google_calendar' | 'google_tasks' | 'github', row.id)}
+                className="rounded-[var(--radius-sm)] bg-[var(--color-accent)]/10 px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-accent)]"
+                onClick={() => void handleSync(row.id, row.domain)}
                 type="button"
               >
-                {busyKey === `reconnect:${row.id}` ? 'Opening…' : 'Reconnect'}
+                {busyKey === `sync:${row.id}` ? 'Syncing…' : 'Sync'}
               </button>
-            ) : null
-          ) : null}
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
-            onClick={() => void handleToggleConnection(row.id, !row.enabled)}
-            type="button"
-          >
-            {busyKey === `toggle:${row.id}` ? 'Saving…' : row.enabled ? 'Disable' : 'Enable'}
-          </button>
-        </div>
-      ),
+            ) : null}
+            {oauthProviderKind ? (
+              row.health?.remediation ? (
+                oauthAvailability && oauthAvailability.status !== 'ready' ? (
+                  <p className="w-full text-[12px] text-[var(--color-fg-muted)]">
+                    {oauthAvailability.details}
+                  </p>
+                ) : (
+                  <button
+                    className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
+                    onClick={() => void handleConnect(oauthProviderKind, row.id)}
+                    type="button"
+                  >
+                    {busyKey === `reconnect:${row.id}` ? 'Opening…' : 'Reconnect'}
+                  </button>
+                )
+              ) : null
+            ) : null}
+            <button
+              className="rounded-[var(--radius-sm)] bg-[var(--color-fg)]/[0.06] px-[10px] py-[6px] text-[12px] font-medium text-[var(--color-fg)]"
+              onClick={() => void handleToggleConnection(row.id, !row.enabled)}
+              type="button"
+            >
+              {busyKey === `toggle:${row.id}` ? 'Saving…' : row.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -337,35 +381,20 @@ export function Connections() {
           Browser OAuth is the blessed path for Gmail, Google Calendar, Google Tasks, and GitHub.
         </p>
         <div className="mt-[16px] flex flex-wrap gap-[12px]">
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-            onClick={() => void handleConnect('gmail')}
-            type="button"
-          >
-            {busyKey === 'connect:gmail' ? 'Connecting Gmail…' : 'Connect Gmail'}
-          </button>
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-            onClick={() => void handleConnect('google_calendar')}
-            type="button"
-          >
-            {busyKey === 'connect:google_calendar' ? 'Connecting Calendar…' : 'Connect Google Calendar'}
-          </button>
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-            onClick={() => void handleConnect('google_tasks')}
-            type="button"
-          >
-            {busyKey === 'connect:google_tasks' ? 'Connecting Tasks…' : 'Connect Google Tasks'}
-          </button>
-          <button
-            className="rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[14px] py-[8px] text-[13px] font-medium text-white"
-            onClick={() => void handleConnect('github')}
-            type="button"
-          >
-            {busyKey === 'connect:github' ? 'Connecting GitHub…' : 'Connect GitHub'}
-          </button>
+          {renderConnectButton('gmail', 'Gmail', busyKey, oauthProvidersByKind, handleConnect)}
+          {renderConnectButton('google_calendar', 'Google Calendar', busyKey, oauthProvidersByKind, handleConnect)}
+          {renderConnectButton('google_tasks', 'Google Tasks', busyKey, oauthProvidersByKind, handleConnect)}
+          {renderConnectButton('github', 'GitHub', busyKey, oauthProvidersByKind, handleConnect)}
         </div>
+        {blockedProviders.length > 0 ? (
+          <div className="mt-[12px] space-y-[6px]">
+            {blockedProviders.map((provider) => (
+              <p key={provider.providerKind} className="text-[13px] text-[var(--color-fg-muted)]">
+                {formatProviderLabel(provider.providerKind)}: {provider.details}
+              </p>
+            ))}
+          </div>
+        ) : null}
         <p className="mt-[12px] text-[13px] text-[var(--color-fg-muted)]">
           Google Tasks maps task lists to Popeye projects. Native priorities, labels, and due times are not supported.
         </p>
@@ -510,4 +539,44 @@ export function Connections() {
       ) : null}
     </div>
   );
+}
+
+function renderConnectButton(
+  providerKind: OAuthProviderKind,
+  label: string,
+  busyKey: string | null,
+  providersByKind: Map<string, { status: string }>,
+  handleConnect: (providerKind: OAuthProviderKind, connectionId?: string) => Promise<void>,
+) {
+  const isReady = providersByKind.get(providerKind)?.status === 'ready' || !providersByKind.get(providerKind);
+
+  return (
+    <button
+      className={`rounded-[var(--radius-sm)] px-[14px] py-[8px] text-[13px] font-medium ${
+        isReady
+          ? 'bg-[var(--color-accent)] text-white'
+          : 'bg-[var(--color-fg)]/[0.06] text-[var(--color-fg-muted)]'
+      }`}
+      disabled={!isReady}
+      onClick={() => void handleConnect(providerKind)}
+      type="button"
+    >
+      {busyKey === `connect:${providerKind}` ? `Connecting ${label}…` : `Connect ${label}`}
+    </button>
+  );
+}
+
+function formatProviderLabel(providerKind: string): string {
+  switch (providerKind) {
+    case 'gmail':
+      return 'Gmail';
+    case 'google_calendar':
+      return 'Google Calendar';
+    case 'google_tasks':
+      return 'Google Tasks';
+    case 'github':
+      return 'GitHub';
+    default:
+      return providerKind;
+  }
 }

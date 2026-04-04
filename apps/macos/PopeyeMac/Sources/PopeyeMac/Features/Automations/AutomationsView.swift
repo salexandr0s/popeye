@@ -51,7 +51,7 @@ struct AutomationsView: View {
                         filter: $store.filter,
                         automations: store.filteredAutomations
                     )
-                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+                    .popeyeSplitPane(minWidth: 280, idealWidth: 320, maxWidth: 360)
 
                     AutomationsContentPane(
                         store: store,
@@ -65,7 +65,7 @@ struct AutomationsView: View {
                         resume: { triggerResume() },
                         openRun: appModel.navigateToRun(id:)
                     )
-                    .frame(minWidth: 560)
+                    .popeyeSplitPane(minWidth: 560)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     MutationStateOverlay(state: store.mutationState, dismiss: store.dismissMutation)

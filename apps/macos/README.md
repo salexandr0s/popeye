@@ -12,6 +12,8 @@ Native Swift macOS operator console for the Popeye agent platform.
 - Swift 6.0+
 - Xcode 16+
 
+Packaged release artifacts are currently **Apple Silicon-only**. Source checkout / local development remains architecture-agnostic as documented elsewhere.
+
 ## Build
 
 ```bash
@@ -35,7 +37,19 @@ bash scripts/build-macos-app.sh
 ```
 
 That produces `dist/pkg/PopeyeMac.app` with the bundled companion CLI at `Contents/Resources/Bootstrap/pop`.
-The packaged bootstrap closure now includes only runtime dependency files, not test/docs/build-source extras.
+The packaged bootstrap closure now includes only runtime dependency files plus a private Apple Silicon Node 22 runtime at `Contents/Resources/Bootstrap/node/bin/node`, so end users do not need to install Node separately for packaged `.app` / `.pkg` flows.
+The packaged bootstrap wrapper resolves that bundled runtime first, still honors `POPEYE_NODE` as an explicit override, and only falls back to standard system Node 22 locations as a last-resort escape hatch.
+Packaged `.app` / `.pkg` artifacts now also bundle a Popeye-owned Knowledge Python closure at:
+
+- `Contents/Resources/Bootstrap/python/bin/python3`
+- `Contents/Resources/Bootstrap/python-site-packages`
+- `Contents/Resources/Bootstrap/knowledge-python-shims`
+
+That bundled closure provides packaged Knowledge converter support for
+**MarkItDown**, **Trafilatura**, and **Docling** without requiring a user-side
+`pip install`. The packaged wrappers export `POPEYE_KNOWLEDGE_SHIMS`,
+`POPEYE_KNOWLEDGE_PYTHON`, and `POPEYE_KNOWLEDGE_MARKITDOWN` automatically.
+Only **Jina Reader** remains a remote/network dependency.
 
 To sign/notarize the packaged macOS artifacts after building them:
 
@@ -43,7 +57,7 @@ To sign/notarize the packaged macOS artifacts after building them:
 bash scripts/sign-pkg.sh
 ```
 
-This upgrades `dist/pkg/PopeyeMac.app`, `dist/pkg/popeye-<version>-darwin.tar.gz`, and `dist/pkg/popeye-<version>-darwin.pkg` to the final signed artifact set when Developer ID credentials are available.
+This upgrades `dist/pkg/PopeyeMac.app`, `dist/pkg/popeye-<version>-darwin-arm64.tar.gz`, and `dist/pkg/popeye-<version>-darwin-arm64.pkg` to the final signed artifact set when Developer ID credentials are available.
 
 For local/dev packaging, missing signing identities leave the artifacts marked as local-only in `dist/pkg/SIGNING-STATUS.md`. The GitHub release workflow is stricter and now requires signing identities before it will publish release artifacts.
 

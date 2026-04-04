@@ -910,6 +910,10 @@ describe('openRuntimeDatabases', () => {
           '028-app-workspace-identities',
           '029-app-mutation-receipts',
           '030-native-app-sessions',
+          '031-app-knowledge-base',
+          '032-app-knowledge-reingest-and-snapshots',
+          '033-app-knowledge-search-and-history',
+          '034-app-knowledge-beta-runs',
         ]);
 
         const memMigrations = databases.memory

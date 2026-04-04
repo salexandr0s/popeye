@@ -24,13 +24,24 @@ model.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `providerAuth.google.clientId` | `string` | No | unset | Google OAuth client ID used by the Gmail, Google Calendar, and Google Tasks browser connect flows. Required to start blessed Google connect sessions. |
-| `providerAuth.google.clientSecret` | `string` | No | unset | Google OAuth client secret used for token exchange and refresh-token handling. Required to complete blessed Google connect sessions. |
+| `providerAuth.google.clientSecretRefId` | `string` | No | unset | Popeye secret-store reference for the Google OAuth client secret. Required for token exchange and refresh-token handling. |
 | `providerAuth.github.clientId` | `string` | No | unset | GitHub OAuth client ID used by the direct GitHub browser connect flow. Required to start blessed GitHub connect sessions. |
-| `providerAuth.github.clientSecret` | `string` | No | unset | GitHub OAuth client secret used for token exchange. Required to complete blessed GitHub connect sessions. |
+| `providerAuth.github.clientSecretRefId` | `string` | No | unset | Popeye secret-store reference for the GitHub OAuth client secret. Required for token exchange. |
 
-If the relevant client credentials are not configured, the browser OAuth
-connect routes fail closed with validation errors rather than silently falling
-back to legacy CLI-backed adapters.
+If the relevant client credentials are not configured, Popeye now reports that
+truth explicitly:
+
+- `GET /v1/connections/oauth/providers` marks the provider as not ready and
+  includes actionable `details`
+- `POST /v1/connections/oauth/start` fails closed with
+  `409 { error: "oauth_provider_not_configured", details }`
+
+Operators should manage provider OAuth credentials through the control plane
+(`GET/POST /v1/config/provider-auth/:provider`) or the macOS Setup/Settings
+editor. Client secrets belong in Popeye's secret store; the config file only
+stores the resulting `clientSecretRefId`.
+
+Popeye does not silently fall back to legacy CLI-backed adapters.
 
 ---
 

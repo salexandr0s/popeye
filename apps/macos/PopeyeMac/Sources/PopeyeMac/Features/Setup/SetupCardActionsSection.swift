@@ -103,6 +103,8 @@ struct SetupCardActionsSection: View {
         switch action {
         case .oauth(_, let providerKind, _):
             "Open the browser and continue \(providerKind.replacingOccurrences(of: "_", with: " ").capitalized) authorization."
+        case .configureOAuth(let provider):
+            "Edit the stored \(provider.title) OAuth client ID and client secret."
         case .telegramConfigure:
             "Edit Telegram bridge settings."
         case .telegramApply:

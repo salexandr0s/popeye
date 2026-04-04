@@ -39,10 +39,10 @@ struct CalendarView: View {
                     accounts: store.accounts,
                     events: store.events
                 )
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+                .popeyeSplitPane(minWidth: 300, idealWidth: 340, maxWidth: 380)
 
                 detail
-                    .frame(minWidth: 520)
+                    .popeyeSplitPane(minWidth: 520)
             }
         }
     }

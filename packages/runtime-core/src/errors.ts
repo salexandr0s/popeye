@@ -24,3 +24,12 @@ export class RuntimeValidationError extends Error {
     this.name = 'RuntimeValidationError';
   }
 }
+
+export class RuntimeConfigurationError extends Error {
+  readonly errorCode = 'configuration_error';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RuntimeConfigurationError';
+  }
+}

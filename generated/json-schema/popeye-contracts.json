@@ -261,6 +261,125 @@
       },
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
+    "KnowledgeSourceResponse": {
+      "$ref": "#/definitions/KnowledgeSourceResponse",
+      "definitions": {
+        "KnowledgeSourceResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeSourceListResponse": {
+      "$ref": "#/definitions/KnowledgeSourceListResponse",
+      "definitions": {
+        "KnowledgeSourceListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeImportResponse": {
+      "$ref": "#/definitions/KnowledgeImportResponse",
+      "definitions": {
+        "KnowledgeImportResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeDocumentListResponse": {
+      "$ref": "#/definitions/KnowledgeDocumentListResponse",
+      "definitions": {
+        "KnowledgeDocumentListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeDocumentDetailResponse": {
+      "$ref": "#/definitions/KnowledgeDocumentDetailResponse",
+      "definitions": {
+        "KnowledgeDocumentDetailResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeDocumentRevisionListResponse": {
+      "$ref": "#/definitions/KnowledgeDocumentRevisionListResponse",
+      "definitions": {
+        "KnowledgeDocumentRevisionListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeDocumentRevisionResponse": {
+      "$ref": "#/definitions/KnowledgeDocumentRevisionResponse",
+      "definitions": {
+        "KnowledgeDocumentRevisionResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeRevisionApplyResponse": {
+      "$ref": "#/definitions/KnowledgeRevisionApplyResponse",
+      "definitions": {
+        "KnowledgeRevisionApplyResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeRevisionRejectResponse": {
+      "$ref": "#/definitions/KnowledgeRevisionRejectResponse",
+      "definitions": {
+        "KnowledgeRevisionRejectResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeNeighborhoodResponse": {
+      "$ref": "#/definitions/KnowledgeNeighborhoodResponse",
+      "definitions": {
+        "KnowledgeNeighborhoodResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeLinkResponse": {
+      "$ref": "#/definitions/KnowledgeLinkResponse",
+      "definitions": {
+        "KnowledgeLinkResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeSourceSnapshotListResponse": {
+      "$ref": "#/definitions/KnowledgeSourceSnapshotListResponse",
+      "definitions": {
+        "KnowledgeSourceSnapshotListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeCompileJobListResponse": {
+      "$ref": "#/definitions/KnowledgeCompileJobListResponse",
+      "definitions": {
+        "KnowledgeCompileJobListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeConverterListResponse": {
+      "$ref": "#/definitions/KnowledgeConverterListResponse",
+      "definitions": {
+        "KnowledgeConverterListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeAuditResponse": {
+      "$ref": "#/definitions/KnowledgeAuditResponse",
+      "definitions": {
+        "KnowledgeAuditResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeBetaRunListResponse": {
+      "$ref": "#/definitions/KnowledgeBetaRunListResponse",
+      "definitions": {
+        "KnowledgeBetaRunListResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "KnowledgeBetaRunResponse": {
+      "$ref": "#/definitions/KnowledgeBetaRunResponse",
+      "definitions": {
+        "KnowledgeBetaRunResponse": {}
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
     "EmailAccountResponse": {
       "$ref": "#/definitions/EmailAccountResponse",
       "definitions": {

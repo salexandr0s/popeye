@@ -31,6 +31,7 @@ export interface LaunchdDaemonSpec {
   daemonEntryPoint: string;
   workingDirectory: string;
   programArguments: string[];
+  environmentVariables?: Record<string, string>;
 }
 
 export interface BootstrapCommandDependencies {
@@ -225,6 +226,7 @@ async function startDaemon(dependencies: BootstrapCommandDependencies): Promise<
       daemonEntryPoint: spec.daemonEntryPoint,
       workingDirectory: spec.workingDirectory,
       programArguments: spec.programArguments,
+      ...(spec.environmentVariables ? { environmentVariables: spec.environmentVariables } : {}),
     });
     const loadedAgent = loadLaunchAgent();
     if (!loadedAgent.ok) {

@@ -11,6 +11,7 @@ struct SetupChecklistPresentation {
     init(
         session: SetupSessionSnapshot,
         connections: [ConnectionDTO],
+        oauthProviders: [OAuthProviderAvailabilityDTO] = [],
         relayCheckpoint: TelegramRelayCheckpointDTO?,
         uncertainDeliveries: [TelegramDeliveryDTO],
         telegramConfig: TelegramConfigSnapshotDTO?,
@@ -21,6 +22,7 @@ struct SetupChecklistPresentation {
             cards: SetupCardFactory.makeCards(
                 session: session,
                 connections: connections,
+                oauthProviders: oauthProviders,
                 relayCheckpoint: relayCheckpoint,
                 uncertainDeliveries: uncertainDeliveries,
                 telegramConfig: telegramConfig,

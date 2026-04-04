@@ -88,9 +88,24 @@ import {
   InstructionSourceSchema,
   InstructionResolutionContextSchema,
   ConnectionProviderKindSchema,
+  OAuthProviderAvailabilityRecordSchema,
   OAuthProviderKindSchema,
+  ProviderAuthConfigRecordSchema,
+  ProviderAuthConfigUpdateInputSchema,
   TodoProviderKindSchema,
   TodoItemRecordSchema,
+  FileRootRecordSchema,
+  KnowledgeAuditReportSchema,
+  KnowledgeBetaRunCreateInputSchema,
+  KnowledgeBetaRunDetailSchema,
+  KnowledgeConverterAvailabilitySchema,
+  KnowledgeImportInputSchema,
+  KnowledgeImportResultSchema,
+  KnowledgeRevisionApplyResultSchema,
+  KnowledgeRevisionRejectResultSchema,
+  KnowledgeSourceRecordSchema,
+  KnowledgeSourceSnapshotRecordSchema,
+  MutationReceiptKindSchema,
 } from '@popeye/contracts';
 
 // ---------------------------------------------------------------------------
@@ -193,6 +208,341 @@ describe('Schema parse tests', () => {
     it('parses revoke responses', () => {
       const result = NativeAppSessionRevokeResponseSchema.parse({ revoked: true });
       expect(result.revoked).toBe(true);
+    });
+  });
+
+  describe('Knowledge schemas', () => {
+    it('parses website knowledge imports', () => {
+      const result = KnowledgeImportInputSchema.parse({
+        workspaceId: 'default',
+        sourceType: 'website',
+        title: 'Karpathy Notes',
+        sourceUri: 'https://example.com/post',
+      });
+
+      expect(result.sourceType).toBe('website');
+      expect(result.sourceUri).toBe('https://example.com/post');
+    });
+
+    it('parses knowledge source records and knowledge-base file roots', () => {
+      const source = KnowledgeSourceRecordSchema.parse({
+        id: 'source-1',
+        workspaceId: 'default',
+        knowledgeRootId: 'root-1',
+        sourceType: 'manual_text',
+        title: 'Compiler Notes',
+        originalUri: null,
+        originalPath: null,
+        originalFileName: null,
+        originalMediaType: 'text/plain',
+        adapter: 'native',
+        fallbackUsed: false,
+        status: 'compiled',
+        contentHash: 'hash-1',
+        assetStatus: 'none',
+        latestOutcome: 'created',
+        conversionWarnings: [],
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:00:00Z',
+      });
+      const root = FileRootRecordSchema.parse({
+        id: 'root-1',
+        workspaceId: 'default',
+        label: 'Knowledge Base',
+        rootPath: '/tmp/workspace/knowledge',
+        kind: 'knowledge_base',
+        permission: 'index_and_derive',
+        filePatterns: ['**/*.md'],
+        excludePatterns: [],
+        maxFileSizeBytes: 10_485_760,
+        enabled: true,
+        lastIndexedAt: null,
+        lastIndexedCount: 0,
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:00:00Z',
+      });
+
+      expect(source.status).toBe('compiled');
+      expect(root.kind).toBe('knowledge_base');
+      expect(MutationReceiptKindSchema.parse('knowledge_import')).toBe('knowledge_import');
+      expect(MutationReceiptKindSchema.parse('knowledge_revision_apply')).toBe('knowledge_revision_apply');
+      expect(MutationReceiptKindSchema.parse('knowledge_revision_reject')).toBe('knowledge_revision_reject');
+      expect(MutationReceiptKindSchema.parse('provider_auth_update')).toBe('provider_auth_update');
+    });
+
+    it('parses knowledge revision apply results', () => {
+      const result = KnowledgeRevisionApplyResultSchema.parse({
+        revision: {
+          id: 'rev-1',
+          documentId: 'doc-1',
+          workspaceId: 'default',
+          status: 'applied',
+          sourceKind: 'manual',
+          sourceId: null,
+          proposedTitle: 'Compiler Notes',
+          proposedMarkdown: '# Compiler Notes',
+          diffPreview: '+ Applied',
+          baseRevisionHash: 'hash-1',
+          createdAt: '2026-04-04T10:00:00Z',
+          appliedAt: '2026-04-04T10:01:00Z',
+        },
+        document: {
+          id: 'doc-1',
+          workspaceId: 'default',
+          knowledgeRootId: 'root-1',
+          sourceId: 'source-1',
+          kind: 'wiki_article',
+          title: 'Compiler Notes',
+          slug: 'compiler-notes',
+          relativePath: 'wiki/compiler-notes.md',
+          revisionHash: 'hash-2',
+          status: 'active',
+          createdAt: '2026-04-04T10:00:00Z',
+          updatedAt: '2026-04-04T10:01:00Z',
+          markdownText: '# Compiler Notes',
+          exists: true,
+          sourceIds: ['source-1'],
+        },
+        receipt: {
+          id: 'rcpt-1',
+          kind: 'knowledge_revision_apply',
+          component: 'knowledge',
+          status: 'succeeded',
+          summary: 'Applied knowledge revision',
+          details: 'Applied knowledge revision rev-1.',
+          actorRole: 'operator',
+          workspaceId: 'default',
+          usage: {
+            provider: 'internal',
+            model: 'none',
+            tokensIn: 0,
+            tokensOut: 0,
+            estimatedCostUsd: 0,
+          },
+          metadata: {
+            documentId: 'doc-1',
+            revisionId: 'rev-1',
+          },
+          createdAt: '2026-04-04T10:01:00Z',
+        },
+      });
+
+      expect(result.document.id).toBe('doc-1');
+      expect(result.receipt.kind).toBe('knowledge_revision_apply');
+    });
+
+    it('parses knowledge converter availability and import outcomes', () => {
+      const converter = KnowledgeConverterAvailabilitySchema.parse({
+        id: 'markitdown',
+        status: 'ready',
+        provenance: 'bundled',
+        details: 'MarkItDown is available.',
+        version: '0.1.0',
+        lastCheckedAt: '2026-04-04T10:02:00Z',
+        installHint: null,
+        usedFor: ['local_file', 'pdf', 'image'],
+        fallbackRank: 1,
+      });
+      const result = KnowledgeImportResultSchema.parse({
+        source: {
+          id: 'source-1',
+          workspaceId: 'default',
+          knowledgeRootId: 'root-1',
+          sourceType: 'website',
+          title: 'Karpathy Notes',
+          originalUri: 'https://example.com/post',
+          originalPath: null,
+          originalFileName: 'source.url',
+          originalMediaType: 'text/uri-list',
+          adapter: 'jina_reader',
+          fallbackUsed: false,
+          status: 'compiled_with_warnings',
+          contentHash: 'hash-1',
+          assetStatus: 'localized',
+          latestOutcome: 'updated',
+          conversionWarnings: ['downloaded 2 assets'],
+          createdAt: '2026-04-04T10:00:00Z',
+          updatedAt: '2026-04-04T10:02:00Z',
+        },
+        normalizedDocument: {
+          id: 'doc-1',
+          workspaceId: 'default',
+          knowledgeRootId: 'root-1',
+          sourceId: 'source-1',
+          kind: 'source_normalized',
+          title: 'Karpathy Notes',
+          slug: 'karpathy-notes-source-1',
+          relativePath: 'raw/source-1/normalized/source.md',
+          revisionHash: 'hash-1',
+          status: 'active',
+          createdAt: '2026-04-04T10:00:00Z',
+          updatedAt: '2026-04-04T10:02:00Z',
+        },
+        compileJob: {
+          id: 'job-1',
+          workspaceId: 'default',
+          sourceId: 'source-1',
+          targetDocumentId: 'doc-2',
+          status: 'succeeded',
+          summary: 'Source unchanged for Karpathy Notes',
+          warnings: [],
+          createdAt: '2026-04-04T10:02:00Z',
+          updatedAt: '2026-04-04T10:02:00Z',
+        },
+        draftRevision: null,
+        outcome: 'updated',
+      });
+
+      expect(converter.id).toBe('markitdown');
+      expect(result.outcome).toBe('updated');
+      expect(result.source.assetStatus).toBe('localized');
+    });
+
+    it('parses knowledge snapshot, reject results, and expanded audit fields', () => {
+      const snapshot = KnowledgeSourceSnapshotRecordSchema.parse({
+        id: 'snap-1',
+        sourceId: 'source-1',
+        workspaceId: 'default',
+        contentHash: 'hash-1',
+        adapter: 'jina_reader',
+        fallbackUsed: false,
+        status: 'compiled',
+        assetStatus: 'localized',
+        outcome: 'updated',
+        conversionWarnings: ['localized 1 asset'],
+        createdAt: '2026-04-04T10:05:00Z',
+      });
+      const rejectResult = KnowledgeRevisionRejectResultSchema.parse({
+        revision: {
+          id: 'rev-2',
+          documentId: 'doc-1',
+          workspaceId: 'default',
+          status: 'rejected',
+          sourceKind: 'manual',
+          sourceId: null,
+          proposedTitle: 'Compiler Notes',
+          proposedMarkdown: '# Compiler Notes',
+          diffPreview: '- Rejected',
+          baseRevisionHash: 'hash-2',
+          createdAt: '2026-04-04T10:05:00Z',
+          appliedAt: null,
+        },
+        document: {
+          id: 'doc-1',
+          workspaceId: 'default',
+          knowledgeRootId: 'root-1',
+          sourceId: 'source-1',
+          kind: 'wiki_article',
+          title: 'Compiler Notes',
+          slug: 'compiler-notes',
+          relativePath: 'wiki/compiler-notes.md',
+          revisionHash: 'hash-2',
+          status: 'active',
+          createdAt: '2026-04-04T10:00:00Z',
+          updatedAt: '2026-04-04T10:01:00Z',
+          markdownText: '# Compiler Notes',
+          exists: true,
+          sourceIds: ['source-1'],
+        },
+        receipt: {
+          id: 'rcpt-2',
+          kind: 'knowledge_revision_reject',
+          component: 'knowledge',
+          status: 'succeeded',
+          summary: 'Rejected knowledge revision',
+          details: 'Rejected knowledge revision rev-2.',
+          actorRole: 'operator',
+          workspaceId: 'default',
+          usage: {
+            provider: 'internal',
+            model: 'none',
+            tokensIn: 0,
+            tokensOut: 0,
+            estimatedCostUsd: 0,
+          },
+          metadata: {
+            documentId: 'doc-1',
+            revisionId: 'rev-2',
+          },
+          createdAt: '2026-04-04T10:05:00Z',
+        },
+      });
+      const audit = KnowledgeAuditReportSchema.parse({
+        totalSources: 3,
+        totalDocuments: 4,
+        totalDraftRevisions: 1,
+        unresolvedLinks: 2,
+        brokenLinks: 0,
+        failedConversions: 1,
+        degradedSources: 1,
+        warningSources: 1,
+        assetLocalizationFailures: 2,
+        lastCompileAt: '2026-04-04T10:05:00Z',
+      });
+
+      expect(snapshot.outcome).toBe('updated');
+      expect(rejectResult.receipt.kind).toBe('knowledge_revision_reject');
+      expect(audit.degradedSources).toBe(1);
+    });
+
+    it('parses knowledge beta run payloads', () => {
+      const createInput = KnowledgeBetaRunCreateInputSchema.parse({
+        workspaceId: 'default',
+        manifestPath: '/tmp/knowledge-beta-manifest.json',
+        reportMarkdown: '# Knowledge beta corpus report\n',
+        imports: [
+          {
+            label: 'article-1',
+            title: 'Compiler Article',
+            sourceType: 'website',
+            outcome: 'created',
+          },
+        ],
+        reingests: [],
+        converters: [],
+        audit: {
+          totalSources: 1,
+          totalDocuments: 1,
+          totalDraftRevisions: 1,
+          unresolvedLinks: 0,
+          brokenLinks: 0,
+          failedConversions: 0,
+          degradedSources: 0,
+          warningSources: 0,
+          assetLocalizationFailures: 0,
+          lastCompileAt: '2026-04-04T10:05:00Z',
+        },
+        gate: {
+          status: 'passed',
+          minImportSuccessRate: 0.9,
+          actualImportSuccessRate: 1,
+          maxHardFailures: 0,
+          actualHardFailures: 0,
+          expectedReingestChecks: 0,
+          failedExpectedReingestChecks: 0,
+          checks: [],
+        },
+      });
+      const detail = KnowledgeBetaRunDetailSchema.parse({
+        id: 'beta-1',
+        workspaceId: 'default',
+        manifestPath: '/tmp/knowledge-beta-manifest.json',
+        importCount: 1,
+        reingestCount: 0,
+        hardFailureCount: 0,
+        importSuccessRate: 1,
+        gateStatus: 'passed',
+        createdAt: '2026-04-04T10:06:00Z',
+        reportMarkdown: '# Knowledge beta corpus report\n',
+        imports: createInput.imports,
+        reingests: [],
+        converters: [],
+        audit: createInput.audit,
+        gate: createInput.gate,
+      });
+
+      expect(createInput.gate.status).toBe('passed');
+      expect(detail.importCount).toBe(1);
     });
   });
 
@@ -901,6 +1251,37 @@ describe('Enum coverage', () => {
 
       expect(item.projectId).toBe('@default');
       expect(item.projectName).toBe('My Tasks');
+    });
+
+    it('parses OAuth provider availability records', () => {
+      const record = OAuthProviderAvailabilityRecordSchema.parse({
+        providerKind: 'gmail',
+        domain: 'email',
+        status: 'missing_client_credentials',
+        details: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      });
+
+      expect(record.status).toBe('missing_client_credentials');
+      expect(record.details).toContain('providerAuth.google.clientId');
+    });
+
+    it('parses provider auth config records and update inputs', () => {
+      const record = ProviderAuthConfigRecordSchema.parse({
+        provider: 'google',
+        clientId: 'google-client-id',
+        clientSecretRefId: 'secret-google-client',
+        secretAvailability: 'available',
+        status: 'ready',
+        details: 'Google OAuth is configured.',
+      });
+      const update = ProviderAuthConfigUpdateInputSchema.parse({
+        clientId: 'google-client-id',
+        clientSecret: 'super-secret',
+        clearStoredSecret: false,
+      });
+
+      expect(record.clientSecretRefId).toBe('secret-google-client');
+      expect(update.clientSecret).toBe('super-secret');
     });
   });
 });

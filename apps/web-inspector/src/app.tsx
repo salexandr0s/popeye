@@ -27,6 +27,7 @@ import { Todos } from './views/todos';
 import { Finance } from './views/finance';
 import { Medical } from './views/medical';
 import { Files } from './views/files';
+import { Knowledge } from './views/knowledge';
 import { Playbooks } from './views/playbooks';
 import { PlaybookDetailView } from './views/playbook-detail';
 import { PlaybookProposals } from './views/playbook-proposals';
@@ -86,6 +87,7 @@ export function App() {
               <Route path="finance" element={<Finance />} />
               <Route path="medical" element={<Medical />} />
               <Route path="files" element={<Files />} />
+              <Route path="knowledge" element={<Knowledge />} />
               <Route path="vaults" element={<Vaults />} />
               <Route path="security-policy" element={<SecurityPolicy />} />
               <Route path="memory" element={<MemorySearch />} />

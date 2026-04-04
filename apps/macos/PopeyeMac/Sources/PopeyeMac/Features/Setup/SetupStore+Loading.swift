@@ -8,7 +8,12 @@ extension SetupStore {
         defer { isLoading = false }
 
         do {
-            connections = try await connectionsService.loadConnections()
+            async let loadedConnections = connectionsService.loadConnections()
+            async let loadedProviders = connectionsService.loadOAuthProviders()
+            async let loadedProviderAuthConfigs = providerAuthService.loadConfig()
+            connections = try await loadedConnections
+            oauthProviders = try await loadedProviders
+            providerAuthConfigs = try await loadedProviderAuthConfigs
             await loadTelegramDetailState()
             applySnapshotToDraft(force: false)
         } catch let apiError as APIError {

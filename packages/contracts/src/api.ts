@@ -18,7 +18,7 @@ import {
 import { ConnectionResourceRuleSchema, ConnectionResourceRuleCreateInputSchema, ConnectionResourceRuleDeleteInputSchema, ConnectionDiagnosticsResponseSchema, ConnectionReconnectRequestSchema } from './connection.js';
 import { ContextReleasePreviewSchema } from './context-release.js';
 import { VaultKindSchema } from './vault.js';
-import { OAuthConnectStartRequestSchema, OAuthSessionRecordSchema } from './oauth.js';
+import { OAuthConnectStartRequestSchema, OAuthProviderAvailabilityRecordSchema, OAuthSessionRecordSchema } from './oauth.js';
 import { FileRootRecordSchema, FileDocumentRecordSchema, FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchResponseSchema, FileIndexResultSchema, FileWriteIntentRecordSchema, FileWriteIntentCreateInputSchema, FileWriteIntentReviewInputSchema } from './file-roots.js';
 import { EmailAccountRecordSchema, EmailAccountRegistrationInputSchema, EmailThreadRecordSchema, EmailMessageRecordSchema, EmailDigestRecordSchema, EmailSearchResultSchema, EmailSyncResultSchema, EmailDraftCreateInputSchema, EmailDraftRecordSchema, EmailDraftUpdateInputSchema } from './email.js';
 import { GithubAccountRecordSchema, GithubRepoRecordSchema, GithubPullRequestRecordSchema, GithubIssueRecordSchema, GithubNotificationRecordSchema, GithubDigestRecordSchema, GithubSearchResultSchema, GithubSyncResultSchema, GithubCommentCreateInputSchema, GithubCommentRecordSchema, GithubNotificationMarkReadInputSchema } from './github.js';
@@ -26,6 +26,33 @@ import { CalendarAccountRecordSchema, CalendarAccountRegistrationInputSchema, Ca
 import { TodoAccountRecordSchema, TodoAccountRegistrationInputSchema, TodoItemRecordSchema, TodoProjectRecordSchema, TodoDigestRecordSchema, TodoSearchResultSchema, TodoCreateInputSchema, TodoSyncResultSchema, TodoReconcileResultSchema } from './todos.js';
 import { PersonIdentityAttachInputSchema, PersonIdentityDetachInputSchema, PersonMergeInputSchema, PersonRecordSchema, PersonSplitInputSchema, PersonUpdateInputSchema, PersonMergeEventRecordSchema, PersonMergeSuggestionSchema, PersonActivityRollupSchema } from './people.js';
 import { RecallDetailSchema, RecallSearchResponseSchema, RecallSourceKindSchema } from './recall.js';
+import {
+  KnowledgeAuditReportSchema,
+  KnowledgeBetaRunCreateInputSchema,
+  KnowledgeBetaRunDetailSchema,
+  KnowledgeBetaRunListQuerySchema,
+  KnowledgeBetaRunListResponseSchema,
+  KnowledgeCompileJobRecordSchema,
+  KnowledgeConverterListResponseSchema,
+  KnowledgeDocumentDetailSchema,
+  KnowledgeDocumentListResponseSchema,
+  KnowledgeDocumentQuerySchema,
+  KnowledgeDocumentRecordSchema,
+  KnowledgeDocumentRevisionApplyInputSchema,
+  KnowledgeRevisionApplyResultSchema,
+  KnowledgeRevisionRejectResultSchema,
+  KnowledgeDocumentRevisionListResponseSchema,
+  KnowledgeDocumentRevisionProposalInputSchema,
+  KnowledgeDocumentRevisionRecordSchema,
+  KnowledgeImportResultSchema,
+  KnowledgeImportInputSchema,
+  KnowledgeLinkCreateInputSchema,
+  KnowledgeLinkRecordSchema,
+  KnowledgeNeighborhoodSchema,
+  KnowledgeSourceSnapshotListResponseSchema,
+  KnowledgeSourceListResponseSchema,
+  KnowledgeSourceRecordSchema,
+} from './knowledge.js';
 import {
   PlaybookDetailSchema,
   PlaybookProposalKindSchema,
@@ -444,6 +471,9 @@ export type OAuthConnectStartRequestApi = z.infer<typeof OAuthConnectStartReques
 export const OAuthSessionResponseSchema = OAuthSessionRecordSchema;
 export type OAuthSessionResponse = z.infer<typeof OAuthSessionResponseSchema>;
 
+export const OAuthProviderAvailabilityResponseSchema = z.array(OAuthProviderAvailabilityRecordSchema);
+export type OAuthProviderAvailabilityResponse = z.infer<typeof OAuthProviderAvailabilityResponseSchema>;
+
 export const SecurityPolicyResponseSchema = z.object({
   domainPolicies: z.array(DomainPolicySchema),
   approvalRules: z.array(ApprovalPolicyRuleSchema),
@@ -551,6 +581,40 @@ export const FileDocumentResponseSchema = FileDocumentRecordSchema;
 export const FileSearchApiResponseSchema = FileSearchResponseSchema;
 
 export { FileRootRegistrationInputSchema, FileRootUpdateInputSchema, FileSearchResponseSchema, FileIndexResultSchema, FileWriteIntentRecordSchema, FileWriteIntentCreateInputSchema, FileWriteIntentReviewInputSchema };
+
+// --- Knowledge API schemas ---
+
+export const KnowledgeSourceResponseSchema = KnowledgeSourceRecordSchema;
+export const KnowledgeDocumentResponseSchema = KnowledgeDocumentRecordSchema;
+export const KnowledgeDocumentDetailResponseSchema = KnowledgeDocumentDetailSchema;
+export const KnowledgeDocumentRevisionResponseSchema = KnowledgeDocumentRevisionRecordSchema;
+export const KnowledgeRevisionApplyResponseSchema = KnowledgeRevisionApplyResultSchema;
+export const KnowledgeRevisionRejectResponseSchema = KnowledgeRevisionRejectResultSchema;
+export const KnowledgeLinkResponseSchema = KnowledgeLinkRecordSchema;
+export const KnowledgeNeighborhoodResponseSchema = KnowledgeNeighborhoodSchema;
+export const KnowledgeCompileJobResponseSchema = KnowledgeCompileJobRecordSchema;
+export const KnowledgeAuditResponseSchema = KnowledgeAuditReportSchema;
+export const KnowledgeImportResponseSchema = KnowledgeImportResultSchema;
+export const KnowledgeConverterListResponseApiSchema = KnowledgeConverterListResponseSchema;
+export const KnowledgeSourceSnapshotListResponseApiSchema = KnowledgeSourceSnapshotListResponseSchema;
+export const KnowledgeBetaRunCreateRequestSchema = KnowledgeBetaRunCreateInputSchema;
+export const KnowledgeBetaRunResponseSchema = KnowledgeBetaRunDetailSchema;
+export const KnowledgeBetaRunListResponseApiSchema = KnowledgeBetaRunListResponseSchema;
+export const KnowledgeBetaRunListQueryParamsSchema = KnowledgeBetaRunListQuerySchema;
+
+export {
+  KnowledgeBetaRunListResponseSchema,
+  KnowledgeSourceListResponseSchema,
+  KnowledgeSourceSnapshotListResponseSchema,
+  KnowledgeConverterListResponseSchema,
+  KnowledgeDocumentListResponseSchema,
+  KnowledgeDocumentRevisionListResponseSchema,
+  KnowledgeImportInputSchema,
+  KnowledgeDocumentRevisionProposalInputSchema,
+  KnowledgeDocumentRevisionApplyInputSchema,
+  KnowledgeDocumentQuerySchema,
+  KnowledgeLinkCreateInputSchema,
+};
 
 // --- Email API schemas ---
 

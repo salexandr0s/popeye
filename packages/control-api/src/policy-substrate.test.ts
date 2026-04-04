@@ -10,6 +10,7 @@ import {
   AutomationGrantRecordSchema,
   ConnectionRecordSchema,
   ContextReleasePreviewSchema,
+  OAuthProviderAvailabilityResponseSchema,
   OAuthSessionResponseSchema,
   SecurityPolicyResponseSchema,
   StandingApprovalRecordSchema,
@@ -35,15 +36,40 @@ function createTestEnv() {
     workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
     approvalPolicy: { rules: [], defaultRiskClass: 'ask', pendingExpiryMinutes: 60 },
     providerAuth: {
-      google: { clientId: 'google-client', clientSecret: 'google-secret' },
-      github: { clientId: 'github-client', clientSecret: 'github-secret' },
+      google: { clientId: 'google-client', clientSecretRefId: 'secret-google-client' },
+      github: { clientId: 'github-client', clientSecretRefId: 'secret-github-client' },
     },
+    vaults: { restrictedVaultDir: 'vaults', capabilityStoreDir: 'capabilities', backupEncryptedVaults: true },
+  });
+  runtime.setSecret({ id: 'secret-google-client', key: 'oauth-client-secret-google', value: 'google-secret' });
+  runtime.setSecret({ id: 'secret-github-client', key: 'oauth-client-secret-github', value: 'github-secret' });
+  const csrf = issueCsrfToken(readAuthStore(authFile));
+  const authHeaders = { authorization: `Bearer ${store.current.token}` };
+  const mutationHeaders = { ...authHeaders, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' };
+  return { dir, authFile, store, runtime, authHeaders, mutationHeaders, csrf };
+}
+
+function createMissingOAuthConfigEnv() {
+  const dir = mkdtempSync(join(tmpdir(), 'popeye-policy-oauth-missing-'));
+  chmodSync(dir, 0o700);
+  const authFile = join(dir, 'auth.json');
+  const store = initAuthStore(authFile);
+  const runtime = createRuntimeService({
+    runtimeDataDir: dir,
+    authFile,
+    security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+    telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, rateLimitWindowSeconds: 60 },
+    embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'] },
+    memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+    engine: { kind: 'fake', command: 'node', args: [] },
+    workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    approvalPolicy: { rules: [], defaultRiskClass: 'ask', pendingExpiryMinutes: 60 },
     vaults: { restrictedVaultDir: 'vaults', capabilityStoreDir: 'capabilities', backupEncryptedVaults: true },
   });
   const csrf = issueCsrfToken(readAuthStore(authFile));
   const authHeaders = { authorization: `Bearer ${store.current.token}` };
   const mutationHeaders = { ...authHeaders, 'x-popeye-csrf': csrf, 'sec-fetch-site': 'same-origin' };
-  return { dir, authFile, store, runtime, authHeaders, mutationHeaders, csrf };
+  return { runtime, mutationHeaders };
 }
 
 describe('policy substrate API routes', () => {
@@ -290,6 +316,91 @@ describe('policy substrate API routes', () => {
     );
 
     vi.unstubAllGlobals();
+    await runtime.close();
+    await app.close();
+  });
+
+  it('reports OAuth provider readiness from config', async () => {
+    const { runtime, authHeaders } = createTestEnv();
+    const app = await createControlApi({ runtime });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/connections/oauth/providers',
+      headers: authHeaders,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const providers = OAuthProviderAvailabilityResponseSchema.parse(response.json());
+    expect(providers).toEqual([
+      {
+        providerKind: 'gmail',
+        domain: 'email',
+        status: 'ready',
+        details: 'Google OAuth is configured.',
+      },
+      {
+        providerKind: 'google_calendar',
+        domain: 'calendar',
+        status: 'ready',
+        details: 'Google OAuth is configured.',
+      },
+      {
+        providerKind: 'google_tasks',
+        domain: 'todos',
+        status: 'ready',
+        details: 'Google OAuth is configured.',
+      },
+      {
+        providerKind: 'github',
+        domain: 'github',
+        status: 'ready',
+        details: 'GitHub OAuth is configured.',
+      },
+    ]);
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('returns 409 for OAuth start when provider config is missing', async () => {
+    const { runtime, mutationHeaders } = createMissingOAuthConfigEnv();
+    const app = await createControlApi({ runtime });
+
+    const cases = [
+      {
+        providerKind: 'gmail',
+        expectedDetails: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'google_calendar',
+        expectedDetails: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'google_tasks',
+        expectedDetails: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      {
+        providerKind: 'github',
+        expectedDetails: 'GitHub OAuth is not configured. Add providerAuth.github.clientId and save the GitHub OAuth client secret in Popeye so providerAuth.github.clientSecretRefId points to an available secret.',
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/connections/oauth/start',
+        headers: mutationHeaders,
+        payload: { providerKind: testCase.providerKind, mode: 'read_only', syncIntervalSeconds: 900 },
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({
+        error: 'oauth_provider_not_configured',
+        details: testCase.expectedDetails,
+      });
+    }
+
     await runtime.close();
     await app.close();
   });

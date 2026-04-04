@@ -58,6 +58,7 @@ struct SetupStoreTests {
 
         let store = SetupStore(
             connectionsService: connectionsService,
+            providerAuthService: StubProviderAuthService(),
             telegramService: StubTelegramService(),
             secretsService: StubSecretsService(),
             governanceService: StubGovernanceService(),
@@ -129,6 +130,7 @@ struct SetupStoreTests {
 
         let store = SetupStore(
             connectionsService: StubConnectionsService(),
+            providerAuthService: StubProviderAuthService(),
             telegramService: StubTelegramService(
                 loadConfigSnapshotHandler: {
                     await snapshotBox.get()
@@ -203,6 +205,7 @@ struct SetupStoreTests {
                     )
                 }
             ),
+            providerAuthService: StubProviderAuthService(),
             telegramService: StubTelegramService(),
             secretsService: StubSecretsService(),
             governanceService: StubGovernanceService(),
@@ -217,6 +220,127 @@ struct SetupStoreTests {
 
         #expect(store.errorMessage(for: .gmail) == "Still waiting for browser completion. Finish the provider auth in your browser, then try Refresh if needed.")
         #expect(invalidations.isEmpty)
+    }
+
+    @Test("Setup load also fetches OAuth provider availability")
+    func loadCapturesOAuthProviderAvailability() async {
+        let store = SetupStore(
+            connectionsService: StubConnectionsService(
+                loadConnectionsHandler: { [] },
+                loadOAuthProvidersHandler: {
+                    [
+                        OAuthProviderAvailabilityDTO(
+                            providerKind: "gmail",
+                            domain: "email",
+                            status: "missing_client_credentials",
+                            details: "Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret."
+                        )
+                    ]
+                }
+            ),
+            providerAuthService: StubProviderAuthService(),
+            telegramService: StubTelegramService(),
+            secretsService: StubSecretsService(),
+            governanceService: StubGovernanceService()
+        )
+
+        await store.load()
+
+        #expect(store.oauthProviders.count == 1)
+        #expect(store.oauthProviders.first?.providerKind == "gmail")
+        #expect(store.oauthProviders.first?.isReady == false)
+    }
+
+    @Test("Provider OAuth config saves through Setup and refreshes readiness")
+    func providerAuthConfigFlow() async throws {
+        let savedConfigs = [
+            ProviderAuthConfigDTO(
+                provider: "google",
+                clientId: "google-client-id",
+                clientSecretRefId: "secret-google-client",
+                secretAvailability: "available",
+                status: "ready",
+                details: "Google OAuth is configured."
+            ),
+            ProviderAuthConfigDTO(
+                provider: "github",
+                clientId: nil,
+                clientSecretRefId: nil,
+                secretAvailability: "not_configured",
+                status: "missing_client_credentials",
+                details: "GitHub OAuth is not configured."
+            ),
+        ]
+        var invalidations: [InvalidationSignal] = []
+
+        let store = SetupStore(
+            connectionsService: StubConnectionsService(
+                loadConnectionsHandler: { [] },
+                loadOAuthProvidersHandler: {
+                    [
+                        OAuthProviderAvailabilityDTO(
+                            providerKind: "gmail",
+                            domain: "email",
+                            status: "ready",
+                            details: "Google OAuth is configured."
+                        )
+                    ]
+                }
+            ),
+            providerAuthService: StubProviderAuthService(
+                loadConfigHandler: {
+                    [
+                        ProviderAuthConfigDTO(
+                            provider: "google",
+                            clientId: nil,
+                            clientSecretRefId: nil,
+                            secretAvailability: "not_configured",
+                            status: "missing_client_credentials",
+                            details: "Google OAuth is not configured."
+                        ),
+                    ]
+                },
+                saveConfigHandler: { provider, input in
+                    #expect(provider == "google")
+                    #expect(input.clientId == "google-client-id")
+                    #expect(input.clientSecret == "google-client-secret")
+                    #expect(input.clearStoredSecret == false)
+                    return savedConfigs
+                }
+            ),
+            telegramService: StubTelegramService(),
+            secretsService: StubSecretsService(),
+            governanceService: StubGovernanceService(),
+            emitInvalidation: { invalidations.append($0) }
+        )
+
+        store.selectedCardID = .gmail
+        store.providerAuthConfigs = [
+            ProviderAuthConfigDTO(
+                provider: "google",
+                clientId: nil,
+                clientSecretRefId: nil,
+                secretAvailability: "not_configured",
+                status: "missing_client_credentials",
+                details: "Google OAuth is not configured."
+            ),
+        ]
+        store.presentProviderAuthSheet(for: .google)
+        store.providerAuthDraft.clientId = "google-client-id"
+        store.providerAuthDraft.clientSecret = "google-client-secret"
+
+        await store.submitProviderAuthConfig()
+
+        #expect(store.providerAuthConfigs == savedConfigs)
+        #expect(store.oauthProviders.first?.status == "ready")
+        #expect(store.isPresentingProviderAuthConfig == false)
+        #expect(store.providerAuthDraft.clientSecret.isEmpty)
+        #expect(store.providerAuthSheetErrorMessage == nil)
+        #expect({
+            guard let first = invalidations.first else { return false }
+            if case .connections = first { return true }
+            return false
+        }())
     }
 
     private func waitUntil(
@@ -308,6 +432,7 @@ struct SetupStoreTests {
 
 private struct StubConnectionsService: SetupConnectionsServing {
     var loadConnectionsHandler: @Sendable () async throws -> [ConnectionDTO] = { [] }
+    var loadOAuthProvidersHandler: @Sendable () async throws -> [OAuthProviderAvailabilityDTO] = { [] }
     var startOAuthConnectionHandler: @Sendable (_ providerKind: String, _ connectionId: String?, _ mode: String, _ syncIntervalSeconds: Int) async throws -> OAuthSessionDTO = { _, _, _, _ in
         throw APIError.notFound
     }
@@ -317,10 +442,12 @@ private struct StubConnectionsService: SetupConnectionsServing {
 
     init(
         loadConnectionsHandler: @escaping @Sendable () async throws -> [ConnectionDTO] = { [] },
+        loadOAuthProvidersHandler: @escaping @Sendable () async throws -> [OAuthProviderAvailabilityDTO] = { [] },
         startOAuthConnectionHandler: @escaping @Sendable (_ providerKind: String, _ connectionId: String?, _ mode: String, _ syncIntervalSeconds: Int) async throws -> OAuthSessionDTO = { _, _, _, _ in throw APIError.notFound },
         loadOAuthSessionHandler: @escaping @Sendable (_ id: String) async throws -> OAuthSessionDTO = { _ in throw APIError.notFound }
     ) {
         self.loadConnectionsHandler = loadConnectionsHandler
+        self.loadOAuthProvidersHandler = loadOAuthProvidersHandler
         self.startOAuthConnectionHandler = startOAuthConnectionHandler
         self.loadOAuthSessionHandler = loadOAuthSessionHandler
     }
@@ -329,12 +456,37 @@ private struct StubConnectionsService: SetupConnectionsServing {
         try await loadConnectionsHandler()
     }
 
+    func loadOAuthProviders() async throws -> [OAuthProviderAvailabilityDTO] {
+        try await loadOAuthProvidersHandler()
+    }
+
     func startOAuthConnection(providerKind: String, connectionId: String?, mode: String, syncIntervalSeconds: Int) async throws -> OAuthSessionDTO {
         try await startOAuthConnectionHandler(providerKind, connectionId, mode, syncIntervalSeconds)
     }
 
     func loadOAuthSession(id: String) async throws -> OAuthSessionDTO {
         try await loadOAuthSessionHandler(id)
+    }
+}
+
+private struct StubProviderAuthService: SetupProviderAuthServing {
+    var loadConfigHandler: @Sendable () async throws -> [ProviderAuthConfigDTO] = { [] }
+    var saveConfigHandler: @Sendable (_ provider: String, _ input: ProviderAuthConfigUpdateInput) async throws -> [ProviderAuthConfigDTO] = { _, _ in [] }
+
+    init(
+        loadConfigHandler: @escaping @Sendable () async throws -> [ProviderAuthConfigDTO] = { [] },
+        saveConfigHandler: @escaping @Sendable (_ provider: String, _ input: ProviderAuthConfigUpdateInput) async throws -> [ProviderAuthConfigDTO] = { _, _ in [] }
+    ) {
+        self.loadConfigHandler = loadConfigHandler
+        self.saveConfigHandler = saveConfigHandler
+    }
+
+    func loadConfig() async throws -> [ProviderAuthConfigDTO] {
+        try await loadConfigHandler()
+    }
+
+    func saveConfig(provider: String, input: ProviderAuthConfigUpdateInput) async throws -> [ProviderAuthConfigDTO] {
+        try await saveConfigHandler(provider, input)
     }
 }
 

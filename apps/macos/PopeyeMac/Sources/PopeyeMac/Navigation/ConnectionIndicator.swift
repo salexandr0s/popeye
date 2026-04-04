@@ -23,6 +23,8 @@ struct ConnectionIndicator: View {
                     .clipShape(.capsule)
                 }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Connection")
         .accessibilityValue(accessibilityValue)

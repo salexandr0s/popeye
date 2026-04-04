@@ -21,14 +21,16 @@ This will:
 2. Build the TypeScript workspace and bundle the companion CLI + daemon
 3. Build a release `dist/pkg/PopeyeMac.app` bundle
 4. Bundle the companion CLI at `PopeyeMac.app/Contents/Resources/Bootstrap/pop`
-5. Create a drag-and-drop tarball at `dist/pkg/popeye-<version>-darwin.tar.gz`
-6. Create a `.pkg` installer at `dist/pkg/popeye-<version>-darwin.pkg` that installs the app to `/Applications` and the CLI/daemon wrappers to `/usr/local/bin`
-7. Generate a SHA-256 checksum file alongside the release artifacts
-8. Write `dist/pkg/SIGNING-STATUS.md` describing the current artifact state (unsigned until the signing step runs)
+5. Bundle a private Apple Silicon Node 22 runtime at `PopeyeMac.app/Contents/Resources/Bootstrap/node/bin/node`
+6. Bundle a private Apple Silicon Knowledge Python runtime closure at `PopeyeMac.app/Contents/Resources/Bootstrap/python/bin/python3` plus `python-site-packages/` and `knowledge-python-shims/`
+7. Create a drag-and-drop tarball at `dist/pkg/popeye-<version>-darwin-arm64.tar.gz`
+8. Create a `.pkg` installer at `dist/pkg/popeye-<version>-darwin-arm64.pkg` that installs the app to `/Applications`, the CLI/daemon wrappers to `/usr/local/bin`, the private Node runtime to `/usr/local/lib/popeye/node/bin/node`, and the Knowledge Python closure to `/usr/local/lib/popeye/python*`
+9. Generate a SHA-256 checksum file alongside the release artifacts
+10. Write `dist/pkg/SIGNING-STATUS.md` describing the current artifact state (unsigned until the signing step runs)
 
 The bundled Node dependency closure is pruned to runtime-only files so packaged artifacts do not carry test/docs/build-source content from third-party packages.
-
-Node 22 remains an external prerequisite for this milestone; the packaged app bundle carries the Popeye companion CLI, not a private Node runtime.
+The packaged Apple Silicon release now carries its own private Node 22 runtime; only source-checkout / local-dev workflows still require a separately installed Node 22+.
+Packaged Apple Silicon releases now also carry a Popeye-owned Knowledge Python converter closure for **MarkItDown**, **Trafilatura**, and **Docling**. Packaged users should not be told to run `pip install` for those converters; only **Jina Reader** remains remote.
 
 ## Signing (macOS)
 
@@ -42,8 +44,8 @@ For distribution outside the development machine:
 
 `scripts/sign-pkg.sh` now:
 - signs `dist/pkg/PopeyeMac.app` with a Developer ID Application identity
-- rebuilds `dist/pkg/popeye-<version>-darwin.tar.gz` from that signed app
-- rebuilds `dist/pkg/popeye-<version>-darwin.pkg` from the signed app bundle
+- rebuilds `dist/pkg/popeye-<version>-darwin-arm64.tar.gz` from that signed app
+- rebuilds `dist/pkg/popeye-<version>-darwin-arm64.pkg` from the signed app bundle
 - signs the installer with a Developer ID Installer identity
 - notarizes/staples the app archive and installer when Apple credentials are present
 - rewrites `CHECKSUMS.sha256` and `SIGNING-STATUS.md` for the final artifact set
@@ -57,16 +59,16 @@ Note: For local-only use (single machine), signing and notarization are not requ
 After `bash scripts/build-pkg.sh`, you have two packaged install paths:
 
 1. **Drag-and-drop app bundle**
-   - unpack `dist/pkg/popeye-<version>-darwin.tar.gz`
+   - unpack `dist/pkg/popeye-<version>-darwin-arm64.tar.gz`
    - move `PopeyeMac.app` into `/Applications`
    - launch the app and use the in-app bootstrap flow
 
 2. **Installer package**
-   - install `dist/pkg/popeye-<version>-darwin.pkg`
+   - install `dist/pkg/popeye-<version>-darwin-arm64.pkg`
    - this places `PopeyeMac.app` in `/Applications`
-   - it also installs `pop` / `popeyed` wrappers into `/usr/local/bin` and companion bundles into `/usr/local/lib/popeye`
+   - it also installs `pop` / `popeyed` wrappers into `/usr/local/bin`, companion bundles into `/usr/local/lib/popeye`, a private Node runtime into `/usr/local/lib/popeye/node/bin/node`, and bundled Knowledge Python converter assets into `/usr/local/lib/popeye/python*`
 
-Both packaged paths still require Node 22 on the machine.
+These packaged release artifacts are currently Apple Silicon-only and do not require any system-wide Node installation or `pip install` for packaged Knowledge converters.
 
 ### Source-checkout / dev install
 
@@ -90,6 +92,7 @@ This verifies:
 - `pop` binary is on PATH
 - `pop --version` returns successfully
 - Daemon health check responds (warning if daemon is not running)
+- if the daemon is running, `pop knowledge converters` responds successfully so packaged converter readiness can be inspected
 
 ## Upgrade verification
 
@@ -215,6 +218,18 @@ same frozen SHA for:
 - `pi-smoke` if the intended Pi ref is part of the release bar
 
 Do not mix release packaging with a moving candidate branch or a dirty worktree.
+
+### Knowledge v1 gate
+
+If the candidate includes Knowledge changes or is the first Knowledge-enabled
+release, also require a green pass from `docs/runbooks/knowledge-beta-corpus.md`
+on the same frozen SHA. That gate includes:
+
+- the committed Knowledge corpus fixture suite
+- the private beta corpus harness/report pass
+- a stored Knowledge beta run with `gate.status = "passed"` for that candidate
+- the beta run ID recorded in the release checklist or notes for the same SHA
+- zero blocker-class Knowledge findings
 
 ## Pi smoke CI (daily)
 

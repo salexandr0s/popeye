@@ -22,6 +22,7 @@ if pop daemon health; then
   pop security audit >/dev/null
   pop profile list >/dev/null
   pop playbook list >/dev/null
+  pop knowledge converters >/dev/null
   echo "    Installed-instance operator surfaces: OK"
 else
   echo "WARN: daemon not running (expected for fresh install); skipping installed-instance surface checks"

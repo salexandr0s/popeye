@@ -14,6 +14,7 @@ import {
 } from '@popeye/runtime-core';
 import { WebBootstrapNonceStore } from './web-bootstrap.js';
 import { TelegramControlPlane } from './telegram-control.js';
+import { ProviderAuthControlPlane } from './provider-auth-control.js';
 
 const configPath = process.env.POPEYE_CONFIG_PATH;
 if (!configPath) {
@@ -42,6 +43,7 @@ if (cleanedTempDirs > 0) {
 const runtime = createRuntimeService(config, undefined, undefined, { configPath });
 runtime.startScheduler();
 const telegramControl = new TelegramControlPlane(configPath, config, runtime);
+const providerAuthControl = new ProviderAuthControlPlane(configPath, config, runtime);
 const generateCspNonce = () => randomBytes(16).toString('base64');
 const webBootstrap = new WebBootstrapNonceStore();
 const currentScriptDir = (): string => {
@@ -92,6 +94,10 @@ const start = async (): Promise<void> => {
       getSnapshot: () => telegramControl.getSnapshot(),
       updateConfig: (input) => telegramControl.updateConfig(input),
       applyTelegramConfig: () => telegramControl.applyTelegramConfig(),
+    },
+    providerAuthConfigControl: {
+      getSnapshot: () => providerAuthControl.getSnapshot(),
+      updateConfig: (provider, input) => providerAuthControl.updateConfig(provider, input),
     },
     daemonControl: {
       getManagementStatus: () => ({

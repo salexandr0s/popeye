@@ -11,6 +11,7 @@ VERSION="$(node -p "require('./package.json').version")"
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_DATE="$(date -u +%Y-%m-%d)"
 BUILD_NUMBER="$(date -u +%Y%m%d%H%M)"
+BUNDLED_NODE_PLATFORM="darwin-arm64"
 
 CLI_BUNDLE="apps/cli/dist/index.cjs"
 DAEMON_BUNDLE="apps/daemon/dist/index.cjs"
@@ -42,6 +43,28 @@ if [[ ! -f "$DAEMON_BUNDLE" ]]; then
   exit 1
 fi
 
+BUNDLED_NODE_RUNTIME_ROOT="$(node scripts/fetch-bundled-node-runtime.mjs)"
+BUNDLED_NODE_VERSION="$(node -p "require('./scripts/bundled-node-runtime.json').version")"
+BUNDLED_NODE_SOURCE_URL="$(node -p "require('./scripts/bundled-node-runtime.json').platforms['${BUNDLED_NODE_PLATFORM}'].url")"
+BUNDLED_KNOWLEDGE_CLOSURE_ROOT="$(node scripts/build-bundled-knowledge-python.mjs)"
+BUNDLED_PYTHON_VERSION="$(node -p "require('./scripts/bundled-python-runtime.json').version")"
+BUNDLED_PYTHON_RELEASE_TRAIN="$(node -p "require('./scripts/bundled-python-runtime.json').releaseTrain")"
+BUNDLED_PYTHON_SOURCE_URL="$(node -p "require('./scripts/bundled-python-runtime.json').platforms['darwin-arm64'].url")"
+BUNDLED_KNOWLEDGE_MANIFEST_PATH="${BUNDLED_KNOWLEDGE_CLOSURE_ROOT}/manifest.json"
+
+if [[ ! -d "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python" ]]; then
+  echo "ERROR: bundled Knowledge Python runtime closure not found at $BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python"
+  exit 1
+fi
+if [[ ! -d "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python-site-packages" ]]; then
+  echo "ERROR: bundled Knowledge Python site-packages missing at $BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python-site-packages"
+  exit 1
+fi
+if [[ ! -d "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/knowledge-python-shims" ]]; then
+  echo "ERROR: bundled Knowledge Python shims missing at $BUNDLED_KNOWLEDGE_CLOSURE_ROOT/knowledge-python-shims"
+  exit 1
+fi
+
 rm -rf "$APP_BUNDLE_DIR"
 mkdir -p "$APP_BUNDLE_DIR/Contents/MacOS" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap"
 
@@ -54,18 +77,85 @@ cp "$CLI_BUNDLE" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/pop.cjs"
 cp "$DAEMON_BUNDLE" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/popeyed.cjs"
 chmod 644 "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/pop.cjs" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/popeyed.cjs"
 
+mkdir -p "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/bin"
+cp "$BUNDLED_NODE_RUNTIME_ROOT/bin/node" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/bin/node"
+chmod 755 "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/bin/node"
+for metadata_file in LICENSE README.md CHANGELOG.md; do
+  if [[ -f "$BUNDLED_NODE_RUNTIME_ROOT/$metadata_file" ]]; then
+    cp "$BUNDLED_NODE_RUNTIME_ROOT/$metadata_file" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/$metadata_file"
+    chmod 644 "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/$metadata_file"
+  fi
+done
+
 mkdir -p "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node_modules"
 node scripts/copy-node-package-closure.mjs   "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node_modules"   better-sqlite3 pino sqlite-vec
+
+ditto "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/python"
+ditto "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/python-site-packages" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/python-site-packages"
+ditto "$BUNDLED_KNOWLEDGE_CLOSURE_ROOT/knowledge-python-shims" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-shims"
+cp "$BUNDLED_KNOWLEDGE_MANIFEST_PATH" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-manifest.json"
+chmod -R u+rwX,go+rX "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/python" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/python-site-packages" "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-shims"
+find "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-shims" -type f -exec chmod 755 {} \;
+chmod 644 "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-manifest.json"
 
 cat > "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/pop" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if ! command -v node >/dev/null 2>&1; then
-  echo "Popeye requires Node 22+ to run the bundled companion CLI." >&2
+
+resolve_node() {
+  if [[ -n "${POPEYE_NODE:-}" ]]; then
+    if [[ -x "${POPEYE_NODE}" ]]; then
+      printf '%s\n' "${POPEYE_NODE}"
+      return 0
+    fi
+    echo "POPEYE_NODE points to a non-executable path: ${POPEYE_NODE}" >&2
+    return 1
+  fi
+
+  local candidate
+  for candidate in \
+    "$SCRIPT_DIR/node/bin/node" \
+    "/opt/homebrew/bin/node" \
+    "/usr/local/bin/node" \
+    "/opt/homebrew/opt/node@22/bin/node" \
+    "/usr/local/opt/node@22/bin/node"
+  do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+
+  echo "Popeye requires Node 22+ to run the bundled companion CLI. This packaged build should include a private runtime at $SCRIPT_DIR/node/bin/node; reinstall the app or set POPEYE_NODE to override it." >&2
+  return 1
+}
+
+export_bundled_knowledge_env() {
+  local shims_dir="$SCRIPT_DIR/knowledge-python-shims"
+  if [[ -x "$shims_dir/python3" ]]; then
+    export POPEYE_KNOWLEDGE_SHIMS="$shims_dir"
+    export POPEYE_KNOWLEDGE_PYTHON="$shims_dir/python3"
+    if [[ -x "$shims_dir/markitdown" ]]; then
+      export POPEYE_KNOWLEDGE_MARKITDOWN="$shims_dir/markitdown"
+    fi
+  fi
+}
+
+NODE_BIN="$(resolve_node)"
+NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+if [[ -z "$NODE_MAJOR" || "$NODE_MAJOR" -lt 22 ]]; then
+  echo "Popeye requires Node 22+ to run the bundled companion CLI. Resolved: $NODE_BIN" >&2
   exit 1
 fi
-exec node "$SCRIPT_DIR/pop.cjs" "$@"
+
+export_bundled_knowledge_env
+exec "$NODE_BIN" "$SCRIPT_DIR/pop.cjs" "$@"
 WRAPPER
 chmod 755 "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/pop"
 
@@ -75,7 +165,23 @@ cat > "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/manifest.json" <<MANIFEST
   "version": "${VERSION}",
   "gitSha": "${GIT_SHA}",
   "buildDate": "${BUILD_DATE}",
-  "nodeRequirement": ">=22",
+  "nodeRequirement": "bundled-private-node",
+  "bundledNode": {
+    "version": "${BUNDLED_NODE_VERSION}",
+    "platform": "${BUNDLED_NODE_PLATFORM}",
+    "binary": "node/bin/node",
+    "sourceUrl": "${BUNDLED_NODE_SOURCE_URL}"
+  },
+  "bundledKnowledgePython": {
+    "version": "${BUNDLED_PYTHON_VERSION}",
+    "releaseTrain": "${BUNDLED_PYTHON_RELEASE_TRAIN}",
+    "platform": "darwin-arm64",
+    "binary": "python/bin/python3",
+    "sitePackages": "python-site-packages",
+    "shims": "knowledge-python-shims",
+    "sourceUrl": "${BUNDLED_PYTHON_SOURCE_URL}",
+    "manifest": "knowledge-python-manifest.json"
+  },
   "cli": "pop",
   "cliBundle": "pop.cjs",
   "daemonBundle": "popeyed.cjs"
@@ -115,6 +221,18 @@ PY
 
 if [[ ! -x "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/pop" ]]; then
   echo "ERROR: bundled companion CLI wrapper was not created"
+  exit 1
+fi
+if [[ ! -x "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/node/bin/node" ]]; then
+  echo "ERROR: bundled private Node runtime missing from packaged app"
+  exit 1
+fi
+if [[ ! -x "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-shims/python3" ]]; then
+  echo "ERROR: bundled Knowledge Python shim missing from packaged app"
+  exit 1
+fi
+if [[ ! -x "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/knowledge-python-shims/markitdown" ]]; then
+  echo "ERROR: bundled Knowledge MarkItDown shim missing from packaged app"
   exit 1
 fi
 if [[ ! -f "$APP_BUNDLE_DIR/Contents/Resources/Bootstrap/popeyed.cjs" ]]; then

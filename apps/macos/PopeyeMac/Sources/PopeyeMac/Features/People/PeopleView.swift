@@ -13,9 +13,9 @@ struct PeopleView: View {
             } else {
                 HSplitView {
                     PeopleSidebar(store: store)
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+                        .popeyeSplitPane(minWidth: 280, idealWidth: 320, maxWidth: 360)
                     PeopleDetailPane(store: store)
-                        .frame(minWidth: 560)
+                        .popeyeSplitPane(minWidth: 560)
                 }
             }
         }

@@ -40,6 +40,7 @@ import type {
   MemorySearchResponse,
   CompiledInstructionBundle,
   ProjectListItem,
+  OAuthProviderAvailabilityResponse,
   StandingApprovalRecord,
   TodoAccountRecord,
   TodoProjectRecord,
@@ -400,6 +401,10 @@ export function useVaults() {
 export function useConnections(domain?: string) {
   const suffix = domain ? `?domain=${encodeURIComponent(domain)}` : '';
   return usePolling<ConnectionRecord[]>(`/v1/connections${suffix}`, 5000);
+}
+
+export function useOAuthProviders() {
+  return usePolling<OAuthProviderAvailabilityResponse>('/v1/connections/oauth/providers', 15_000);
 }
 
 export function useEmailAccounts() {

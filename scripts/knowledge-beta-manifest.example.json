@@ -1,0 +1,29 @@
+{
+  "workspaceId": "default",
+  "gate": {
+    "minImportSuccessRate": 0.9,
+    "maxHardFailures": 0
+  },
+  "sources": [
+    {
+      "label": "article-1",
+      "title": "Compiler Article",
+      "sourceType": "website",
+      "sourceUri": "https://example.com/compiler-article",
+      "reingestAfterImport": true,
+      "expectedReingestOutcome": "unchanged"
+    },
+    {
+      "label": "paper-1",
+      "title": "Optimization Paper",
+      "sourceType": "pdf",
+      "sourcePath": "./private-corpus/optimization-paper.pdf"
+    },
+    {
+      "label": "dataset-1",
+      "title": "metrics.csv",
+      "sourceType": "dataset",
+      "sourcePath": "./private-corpus/metrics.csv"
+    }
+  ]
+}

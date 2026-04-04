@@ -17,7 +17,7 @@ struct MedicalView: View {
             } else {
                 HSplitView {
                     MedicalSidebar(store: store)
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+                        .popeyeSplitPane(minWidth: 280, idealWidth: 320, maxWidth: 360)
                     MedicalDetailPane(
                         store: store,
                         showImportSheet: { isPresentingImportSheet = true },
@@ -25,7 +25,7 @@ struct MedicalView: View {
                         showMedicationSheet: { isPresentingMedicationSheet = true },
                         showDocumentSheet: { isPresentingDocumentSheet = true }
                     )
-                    .frame(minWidth: 620)
+                    .popeyeSplitPane(minWidth: 620)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     MutationStateOverlay(

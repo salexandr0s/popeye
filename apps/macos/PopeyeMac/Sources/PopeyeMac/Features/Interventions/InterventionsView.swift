@@ -43,9 +43,9 @@ struct InterventionsView: View {
     private var interventionsContent: some View {
         HSplitView {
             interventionsList
-                .frame(minWidth: 350)
+                .popeyeSplitPane(minWidth: 350)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -63,7 +63,7 @@ struct InterventionsView: View {
         } else {
             Text("Select an intervention to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

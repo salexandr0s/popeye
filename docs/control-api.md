@@ -252,9 +252,12 @@ The web inspector now exposes dedicated operator pages for:
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/v1/connections` | List connections. Optional query: `domain`. Returned records include additive `policy`, `health`, `sync`, and typed `resourceRules` read models. |
-| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, `google_tasks`, or `github`. Returns an `authorizationUrl` plus session metadata. Optional `connectionId` turns the same route into a reconnect / reauthorize flow. Invalid provider config or connection mismatch fails closed. |
+| GET | `/v1/connections/oauth/providers` | Return config-derived readiness for the blessed OAuth providers (`gmail`, `google_calendar`, `google_tasks`, `github`). Each record includes `status` plus actionable `details` so clients can suppress impossible setup actions before click. |
+| POST | `/v1/connections/oauth/start` | Start a blessed browser OAuth connect flow for `gmail`, `google_calendar`, `google_tasks`, or `github`. Returns an `authorizationUrl` plus session metadata. Optional `connectionId` turns the same route into a reconnect / reauthorize flow. Missing provider OAuth config now returns `409 { error: "oauth_provider_not_configured", details }`; invalid connection mismatch still fails closed with 400/404. |
 | GET | `/v1/connections/oauth/sessions/:id` | Read the current OAuth session state (`pending`, `completed`, `failed`, `expired`). Returns 404 if not found. |
 | GET | `/v1/connections/oauth/callback` | Loopback-only OAuth callback endpoint used by the browser connect flow. Returns a simple success/failure HTML page instead of JSON. |
+| GET | `/v1/config/provider-auth` | Return non-secret Google/GitHub OAuth readiness records including `clientId`, `clientSecretRefId`, `secretAvailability`, `status`, and actionable `details`. |
+| POST | `/v1/config/provider-auth/:provider` | Save Google or GitHub OAuth config. Accepts `clientId`, optional write-only `clientSecret`, and `clearStoredSecret`. Stores the secret in Popeye's secret store, updates `clientSecretRefId`, writes a `provider_auth_update` receipt, and records a security-audit event. |
 | POST | `/v1/connections` | Create a connection. Invalid provider/domain combinations or missing secret refs fail closed with `400 { error: "invalid_connection" }`. |
 | PATCH | `/v1/connections/:id` | Update a connection. Returns 404 if not found and `400 { error: "invalid_connection" }` for policy validation failures. |
 | DELETE | `/v1/connections/:id` | Delete a connection. Returns 404 if not found. |
@@ -396,6 +399,53 @@ matches do not.
 | GET | `/v1/files/search` | Search indexed files within registered roots. Disabled, unknown, or workspace-mismatched roots fail closed with `400 { error: "invalid_file_root" }` and emit `file_root_policy_denied`. |
 | GET | `/v1/files/documents/:id` | Read an indexed document. Returns 404 if the document is missing or its file root is no longer policy-allowed. |
 | POST | `/v1/files/roots/:id/reindex` | Reindex one file root. Disabled or unknown roots fail closed with `400 { error: "invalid_file_root" }` and emit `file_root_policy_denied`. |
+
+File roots now support a `kind` field. `kind: "knowledge_base"` reserves a
+single workspace-owned root for the Knowledge subsystem and is auto-created on
+first knowledge import.
+
+### Knowledge
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/knowledge/sources` | List knowledge sources. Query params: `workspaceId`. |
+| GET | `/v1/knowledge/sources/:id` | Get one knowledge source. Returns 404 if not found. |
+| POST | `/v1/knowledge/import` | Import one source into immutable `raw/` storage, normalize it to markdown, and auto-create a draft wiki compile revision. |
+| POST | `/v1/knowledge/sources/:id/reingest` | Reimport an existing logical source, dedupe unchanged content, and create a new snapshot + draft only when content materially changed. |
+| GET | `/v1/knowledge/sources/:id/snapshots` | List immutable snapshots for one logical source. Returns metadata only; runtime file paths stay private. |
+| GET | `/v1/knowledge/converters` | Return converter readiness for Jina Reader, Trafilatura, MarkItDown, and Docling, including whether each converter is coming from the bundled runtime, the system environment, a remote service, or is missing. |
+| GET | `/v1/knowledge/beta-runs` | List stored Knowledge beta corpus runs. Query params: `workspaceId`, optional `limit`. |
+| GET | `/v1/knowledge/beta-runs/:id` | Get one stored Knowledge beta corpus run with import/reingest rows, gate summary, audit snapshot, and markdown report. |
+| POST | `/v1/knowledge/beta-runs` | Store one Knowledge beta corpus run uploaded by the harness. Body uses `KnowledgeBetaRunCreateRequestSchema`. |
+| GET | `/v1/knowledge/documents` | List normalized source docs, wiki docs, or output docs. Query params: `workspaceId`, optional `kind`, optional `q`. Search is backed by title/slug/content FTS when `q` is provided. |
+| GET | `/v1/knowledge/documents/:id` | Get one knowledge document with markdown text. Returns 404 if not found. |
+| GET | `/v1/knowledge/documents/:id/revisions` | List knowledge revisions for a document. Returns 404 if the document is unknown. |
+| POST | `/v1/knowledge/documents/:id/revisions` | Propose a draft revision for an editable wiki/output document. Body uses `KnowledgeDocumentRevisionProposalInputSchema`. |
+| POST | `/v1/knowledge/revisions/:id/apply` | Apply a reviewed revision and persist a mutation receipt. Returns `{ revision, document, receipt }`. Body uses `KnowledgeDocumentRevisionApplyInputSchema`. |
+| POST | `/v1/knowledge/revisions/:id/reject` | Reject a draft revision and persist a mutation receipt. Returns `{ revision, document, receipt }`. |
+| GET | `/v1/knowledge/documents/:id/neighborhood` | Read the local document graph neighborhood: incoming links, outgoing links, and related docs. |
+| POST | `/v1/knowledge/links` | Create one explicit document link. Body uses `KnowledgeLinkCreateInputSchema`. |
+| GET | `/v1/knowledge/compile-jobs` | List recent knowledge compile jobs. Query params: `workspaceId`. |
+| GET | `/v1/knowledge/audit` | Read the knowledge audit summary for one workspace. Query params: `workspaceId`. Includes degraded-source, warning-source, and asset-localization-failure counts. |
+
+Knowledge imports are now logical-source aware. Reimporting the same URL/path/title
+reuses the same source record, stores immutable snapshots under `raw/<source-id>/snapshots/`,
+records `created | updated | unchanged` outcomes, and localizes discoverable assets into
+`raw/<source-id>/assets/` before the normalized markdown is compiled.
+
+Knowledge is markdown-first and local-first:
+
+- immutable source captures are written under `raw/<source-id>/`
+- canonical editable docs live under `wiki/` and `outputs/`
+- imports auto-run normalization, indexing, link extraction, and draft compile
+- canonical wiki writes still require explicit review/apply
+- Knowledge source responses expose operator-safe metadata only; the API does not
+  leak internal absolute runtime paths.
+- converter fallback order is URL/article: Jina Reader → Trafilatura → native;
+  file/doc: MarkItDown → Docling → native
+- converter readiness reports `provenance` as one of `bundled`, `system`,
+  `remote`, or `missing`; packaged `.app` / `.pkg` installs should normally
+  report bundled readiness for MarkItDown, Trafilatura, and Docling
 
 ### Messages
 

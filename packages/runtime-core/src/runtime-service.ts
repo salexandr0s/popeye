@@ -82,6 +82,28 @@ import type {
   CuratedDocumentRecord,
   CuratedDocumentSaveProposal,
   CuratedDocumentSummary,
+  KnowledgeAuditReport,
+  KnowledgeBetaRunCreateInput,
+  KnowledgeBetaRunDetail,
+  KnowledgeBetaRunListQuery,
+  KnowledgeBetaRunRecord,
+  KnowledgeCompileJobRecord,
+  KnowledgeConverterAvailability,
+  KnowledgeDocumentDetail,
+  KnowledgeDocumentQuery,
+  KnowledgeDocumentRecord,
+  KnowledgeDocumentRevisionApplyInput,
+  KnowledgeRevisionApplyResult,
+  KnowledgeRevisionRejectResult,
+  KnowledgeDocumentRevisionProposalInput,
+  KnowledgeDocumentRevisionRecord,
+  KnowledgeImportInput,
+  KnowledgeImportResult,
+  KnowledgeLinkCreateInput,
+  KnowledgeLinkRecord,
+  KnowledgeNeighborhood,
+  KnowledgeSourceRecord,
+  KnowledgeSourceSnapshotRecord,
   SessionSearchQuery,
   SessionSearchResponse,
   TrajectoryFormat,
@@ -91,6 +113,8 @@ import type {
   WorkspaceIdentityDefault,
   WorkspaceRegistrationInput,
   OAuthConnectStartRequest,
+  OAuthProviderAvailabilityRecord,
+  ProviderAuthProvider,
   OAuthSessionRecord,
   PlaybookDetail,
   PlaybookEffectiveness,
@@ -251,6 +275,7 @@ import { CalendarFacade } from './calendar-facade.js';
 import { TodoFacade } from './todo-facade.js';
 import { OAuthConnectService } from './oauth-connect.js';
 import { MutationReceiptManager } from './mutation-receipt-manager.js';
+import { KnowledgeService } from './knowledge-service.js';
 import { updateWorkspaceHeartbeatConfigFile } from './workspace-config-manager.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, type EmailProviderAdapter } from '@popeye/cap-email';
@@ -282,6 +307,7 @@ import {
 import type {
   OAuthTokenPayload,
 } from './provider-oauth.js';
+import { resolveProviderClientCredentials } from './provider-oauth.js';
 
 import { nowIso, DOMAIN_POLICY_DEFAULTS } from '@popeye/contracts';
 import { z } from 'zod';
@@ -317,7 +343,7 @@ import {
 } from './row-mappers.js';
 
 export { classifyFailureFromMessage, MessageIngressError };
-export { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError } from './errors.js';
+export { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError, RuntimeConfigurationError } from './errors.js';
 import { RuntimeNotFoundError, RuntimeConflictError, RuntimeValidationError } from './errors.js';
 
 
@@ -378,6 +404,7 @@ export class PopeyeRuntimeService {
   private readonly taskManager: TaskManager;
   private readonly automationService: AutomationService;
   private readonly curatedDocumentService: CuratedDocumentService;
+  private readonly knowledgeService: KnowledgeService;
   private readonly queryService: QueryService;
   private readonly secretStore: SecretStore;
   private readonly oauthSessionService: OAuthSessionService;
@@ -530,6 +557,7 @@ export class PopeyeRuntimeService {
       oauthSessionService: this.oauthSessionService,
       connectionService: this.connectionService,
       config: this.config,
+      getSecretValue: (id) => this.secretStore.getSecretValue(id),
       capabilityStoresDir: this.databases.paths.capabilityStoresDir,
       log: this.log,
     });
@@ -576,6 +604,19 @@ export class PopeyeRuntimeService {
       redactionPatterns: config.security.redactionPatterns,
       writeMutationReceipt: (input) => this.writeMutationReceipt(input),
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+    });
+    this.knowledgeService = new KnowledgeService({
+      db: this.databases.app,
+      workspaceRegistry: this.workspaceRegistry,
+      listFileRoots: (workspaceId) => this.listFileRoots(workspaceId),
+      registerFileRoot: (input) => this.registerFileRoot(input),
+      reindexFileRoot: (rootId) => {
+        this.reindexFileRoot(rootId);
+      },
+      redactionPatterns: config.security.redactionPatterns,
+      writeMutationReceipt: (input) => this.writeMutationReceipt(input),
+      recordSecurityAudit: (event) => this.recordSecurityAudit(event),
+      log: this.log,
     });
     this.taskManager = new TaskManager(this.databases, {
       emit: (event, payload) => this.emit(event, payload),
@@ -724,10 +765,11 @@ export class PopeyeRuntimeService {
       capabilityRegistry: this.capabilityRegistry,
       capabilityStoresDir: storesDir,
       log: this.log,
-      googleOAuthClient: {
-        clientId: this.config.providerAuth?.google?.clientId,
-        clientSecret: this.config.providerAuth?.google?.clientSecret,
-      },
+      resolveGoogleOAuthClientCredentials: () => resolveProviderClientCredentials(
+        this.config,
+        'google',
+        (id) => this.secretStore.getSecretValue(id),
+      ),
       buildCapabilityContext: () => this.buildCapabilityContext(),
       requireConnectionForOperation: (input) => this.requireConnectionForOperation(input),
       requireTodoAccountForOperation: (svc, accountId, purpose, options) => this.requireTodoAccountForOperation(svc, accountId, purpose, options),
@@ -958,6 +1000,92 @@ export class PopeyeRuntimeService {
     actorRole: AuthRole = 'operator',
   ): CuratedDocumentApplyResult {
     return this.curatedDocumentService.applySave(documentId, input, actorRole);
+  }
+
+  listKnowledgeSources(workspaceId: string): KnowledgeSourceRecord[] {
+    return this.knowledgeService.listSources(workspaceId);
+  }
+
+  getKnowledgeSource(sourceId: string): KnowledgeSourceRecord | null {
+    return this.knowledgeService.getSource(sourceId);
+  }
+
+  listKnowledgeSourceSnapshots(sourceId: string): KnowledgeSourceSnapshotRecord[] {
+    return this.knowledgeService.listSourceSnapshots(sourceId);
+  }
+
+  async importKnowledgeSource(input: KnowledgeImportInput, actorRole: AuthRole = 'operator'): Promise<KnowledgeImportResult> {
+    return this.knowledgeService.importSource(input, actorRole);
+  }
+
+  async reingestKnowledgeSource(sourceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeImportResult> {
+    return this.knowledgeService.reingestSource(sourceId, actorRole);
+  }
+
+  listKnowledgeDocuments(query: KnowledgeDocumentQuery): KnowledgeDocumentRecord[] {
+    return this.knowledgeService.listDocuments(query);
+  }
+
+  getKnowledgeDocument(documentId: string): KnowledgeDocumentDetail | null {
+    return this.knowledgeService.getDocument(documentId);
+  }
+
+  listKnowledgeDocumentRevisions(documentId: string): KnowledgeDocumentRevisionRecord[] {
+    return this.knowledgeService.listDocumentRevisions(documentId);
+  }
+
+  async proposeKnowledgeDocumentRevision(
+    documentId: string,
+    input: KnowledgeDocumentRevisionProposalInput,
+  ): Promise<KnowledgeDocumentRevisionRecord> {
+    return this.knowledgeService.proposeRevision(documentId, input);
+  }
+
+  async applyKnowledgeDocumentRevision(
+    revisionId: string,
+    input: KnowledgeDocumentRevisionApplyInput,
+    actorRole: AuthRole = 'operator',
+  ): Promise<KnowledgeRevisionApplyResult> {
+    return this.knowledgeService.applyRevision(revisionId, input, actorRole);
+  }
+
+  async rejectKnowledgeDocumentRevision(
+    revisionId: string,
+    actorRole: AuthRole = 'operator',
+  ): Promise<KnowledgeRevisionRejectResult> {
+    return this.knowledgeService.rejectRevision(revisionId, actorRole);
+  }
+
+  getKnowledgeNeighborhood(documentId: string): KnowledgeNeighborhood | null {
+    return this.knowledgeService.getNeighborhood(documentId);
+  }
+
+  createKnowledgeLink(input: KnowledgeLinkCreateInput): KnowledgeLinkRecord {
+    return this.knowledgeService.createLink(input);
+  }
+
+  listKnowledgeCompileJobs(workspaceId: string): KnowledgeCompileJobRecord[] {
+    return this.knowledgeService.listCompileJobs(workspaceId);
+  }
+
+  getKnowledgeAudit(workspaceId: string): KnowledgeAuditReport {
+    return this.knowledgeService.getAudit(workspaceId);
+  }
+
+  listKnowledgeBetaRuns(query: KnowledgeBetaRunListQuery): KnowledgeBetaRunRecord[] {
+    return this.knowledgeService.listBetaRuns(query.workspaceId, query.limit ?? 10);
+  }
+
+  getKnowledgeBetaRun(runId: string): KnowledgeBetaRunDetail | null {
+    return this.knowledgeService.getBetaRun(runId);
+  }
+
+  recordKnowledgeBetaRun(input: KnowledgeBetaRunCreateInput): KnowledgeBetaRunDetail {
+    return this.knowledgeService.recordBetaRun(input);
+  }
+
+  async listKnowledgeConverters(): Promise<KnowledgeConverterAvailability[]> {
+    return this.knowledgeService.listConverters();
   }
 
   async updateAutomation(
@@ -2327,6 +2455,24 @@ export class PopeyeRuntimeService {
     return this.oauthConnect.startOAuthConnectSession(input);
   }
 
+  listOAuthProviderAvailability(): OAuthProviderAvailabilityRecord[] {
+    return this.oauthConnect.listOAuthProviderAvailability();
+  }
+
+  applyProviderAuthConfig(
+    provider: ProviderAuthProvider,
+    input: { clientId: string | null; clientSecretRefId: string | null },
+  ): void {
+    const nextRecord: { clientId?: string; clientSecretRefId?: string } = {};
+    if (input.clientId) {
+      nextRecord.clientId = input.clientId;
+    }
+    if (input.clientSecretRefId) {
+      nextRecord.clientSecretRefId = input.clientSecretRefId;
+    }
+    this.config.providerAuth[provider] = nextRecord;
+  }
+
   getOAuthSession(id: string): OAuthSessionRecord | null {
     this.oauthSessionService.expirePendingSessions();
     return this.oauthSessionService.getSession(id);
@@ -3551,6 +3697,48 @@ export class PopeyeRuntimeService {
         },
       );
     }
+
+    if (input.kind === 'knowledge_base') {
+      const existingKnowledgeRoot = this.listFileRoots(input.workspaceId).find((root) => {
+        return root.enabled && root.kind === 'knowledge_base';
+      });
+      if (existingKnowledgeRoot) {
+        this.denyFileRootRegistration(
+          'knowledge_root_already_registered',
+          `Workspace ${input.workspaceId} already has a knowledge base root`,
+          {
+            workspaceId: input.workspaceId,
+            rootPath: canonicalRootPath,
+            existingRootId: existingKnowledgeRoot.id,
+          },
+        );
+      }
+    }
+  }
+
+  private validateFileRootUpdate(root: FileRootRecord, input: FileRootUpdateInput): void {
+    const nextKind = input.kind ?? root.kind;
+    const nextEnabled = input.enabled ?? root.enabled;
+    if (nextKind !== 'knowledge_base' || nextEnabled === false) {
+      return;
+    }
+
+    const existingKnowledgeRoot = this.listFileRoots(root.workspaceId).find((candidate) => {
+      return candidate.id !== root.id && candidate.enabled && candidate.kind === 'knowledge_base';
+    });
+    if (!existingKnowledgeRoot) {
+      return;
+    }
+
+    this.denyFileRootRegistration(
+      'knowledge_root_already_registered',
+      `Workspace ${root.workspaceId} already has a knowledge base root`,
+      {
+        workspaceId: root.workspaceId,
+        rootPath: canonicalizeLocalPath(root.rootPath),
+        existingRootId: existingKnowledgeRoot.id,
+      },
+    );
   }
 
   private requireFileRootForOperation(input: {
@@ -3610,6 +3798,9 @@ export class PopeyeRuntimeService {
   updateFileRoot(id: string, input: FileRootUpdateInput): FileRootRecord | null {
     const svc = this.getFilesRootService();
     if (!svc) return null;
+    const existing = svc.getRoot(id);
+    if (!existing) return null;
+    this.validateFileRootUpdate(existing, input);
     return svc.updateRoot(id, input);
   }
 

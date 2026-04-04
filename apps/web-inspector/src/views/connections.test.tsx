@@ -11,6 +11,7 @@ const hooks = vi.hoisted(() => ({
   useCalendarAccounts: vi.fn(),
   useGithubAccounts: vi.fn(),
   useTodoAccounts: vi.fn(),
+  useOAuthProviders: vi.fn(),
   useConnectionResourceRules: vi.fn(),
   useConnectionDiagnostics: vi.fn(),
 }));
@@ -87,6 +88,16 @@ function makeResult(data: unknown, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeOAuthProviders(overrides: Array<Record<string, unknown>> = []) {
+  const defaults = [
+    { providerKind: 'gmail', domain: 'email', status: 'ready', details: 'Google OAuth is configured.' },
+    { providerKind: 'google_calendar', domain: 'calendar', status: 'ready', details: 'Google OAuth is configured.' },
+    { providerKind: 'google_tasks', domain: 'todos', status: 'ready', details: 'Google OAuth is configured.' },
+    { providerKind: 'github', domain: 'github', status: 'ready', details: 'GitHub OAuth is configured.' },
+  ];
+  return defaults.map((entry, index) => ({ ...entry, ...(overrides[index] ?? {}) }));
+}
+
 function renderConnections() {
   return render(
     <MemoryRouter>
@@ -106,6 +117,7 @@ describe('Connections', () => {
     hooks.useCalendarAccounts.mockReturnValue(makeResult([]));
     hooks.useGithubAccounts.mockReturnValue(makeResult([]));
     hooks.useTodoAccounts.mockReturnValue(makeResult([]));
+    hooks.useOAuthProviders.mockReturnValue(makeResult(makeOAuthProviders()));
     hooks.useConnectionResourceRules.mockReturnValue(makeResult([]));
     hooks.useConnectionDiagnostics.mockReturnValue(makeResult(null));
     vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -237,5 +249,24 @@ describe('Connections', () => {
 
     expect(api.post).toHaveBeenCalledWith('/v1/email/sync', { accountId: 'email-account-1' });
     expect(refetchConnections).toHaveBeenCalled();
+  });
+
+  it('disables blocked OAuth providers and shows config guidance', () => {
+    hooks.useOAuthProviders.mockReturnValue(makeResult([
+      {
+        providerKind: 'gmail',
+        domain: 'email',
+        status: 'missing_client_credentials',
+        details: 'Google OAuth is not configured. Add providerAuth.google.clientId and save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      },
+      ...makeOAuthProviders().slice(1),
+    ]));
+
+    renderConnections();
+
+    const button = screen.getByRole('button', { name: 'Connect Gmail' });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/providerAuth\.google\.clientId/)).toBeTruthy();
+    expect(screen.getByText(/providerAuth\.google\.clientSecretRefId/)).toBeTruthy();
   });
 });

@@ -31,9 +31,9 @@ struct AgentProfilesView: View {
     private var profilesContent: some View {
         HSplitView {
             profilesList
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
             inspectorColumn
-                .frame(minWidth: 300)
+                .popeyeSplitPane(minWidth: 300)
         }
     }
 
@@ -51,7 +51,7 @@ struct AgentProfilesView: View {
         } else {
             Text("Select a profile to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

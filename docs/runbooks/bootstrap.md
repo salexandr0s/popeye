@@ -125,10 +125,12 @@ Set `engine.kind`, `engine.command`, `engine.piPath`, and `engine.piVersion` in 
   - `IDENTITY.md` (operator-facing mirror)
   - `identities/default.md` (canonical runtime identity)
   in `~/popeye-assistant`
-- set `providerAuth.google.clientId` / `providerAuth.google.clientSecret` to
-  enable the blessed Gmail, Google Calendar, and Google Tasks browser-OAuth flows
-- set `providerAuth.github.clientId` / `providerAuth.github.clientSecret` to
-  enable the blessed GitHub browser-OAuth flow
+- configure Google OAuth in Popeye so `providerAuth.google.clientId` is set and
+  `providerAuth.google.clientSecretRefId` points at a stored secret; this
+  enables the blessed Gmail, Google Calendar, and Google Tasks browser-OAuth flows
+- configure GitHub OAuth in Popeye so `providerAuth.github.clientId` is set and
+  `providerAuth.github.clientSecretRefId` points at a stored secret; this
+  enables the blessed GitHub browser-OAuth flow
 
 ### 8. Verify the Pi checkout and version pin
 
@@ -210,13 +212,16 @@ pop identity list --workspace default
 pop playbook recommend "triage inbox" --workspace default
 ```
 
-## Bundled install (alternative)
+## Local-install vs packaged-install alternatives
 
-Instead of running from the monorepo checkout, you can build standalone bundles.
+Once the repo is available, you can either:
 
-### Prerequisites
+- use `bash scripts/install.sh` to wire the local repo checkout into `/usr/local/bin` (still requires a system Node 22+), or
+- build and ship the packaged Apple Silicon artifacts from `bash scripts/build-pkg.sh` (these carry a private Node runtime plus a bundled Knowledge Python converter runtime and do not require a system Node install or `pip install` for packaged Knowledge conversion)
 
-- **Node.js 22 LTS** — required runtime
+### Prerequisites for `install.sh`
+
+- **Node.js 22 LTS**
 - **pnpm** — `corepack enable && corepack prepare pnpm@latest --activate`
 
 ### Run the installer
@@ -247,6 +252,29 @@ bash scripts/install.sh [--prefix /custom/path] [--force]
 Package builds emit to `dist/` only. Source-adjacent generated `src/*.js`,
 `src/*.d.ts`, and sourcemap artifacts are intentionally rejected by
 `pnpm verify:src-build-artifacts`.
+
+### Packaged `.app` / `.pkg` artifacts
+
+For packaged release artifacts built via `bash scripts/build-pkg.sh`:
+
+- the packaged artifacts are currently **Apple Silicon-only**
+- the app bundle includes a private Node runtime at
+  `PopeyeMac.app/Contents/Resources/Bootstrap/node/bin/node`
+- the app bundle also includes a bundled Knowledge Python runtime at
+  `PopeyeMac.app/Contents/Resources/Bootstrap/python/bin/python3`
+- packaged Knowledge converter shims live at
+  `PopeyeMac.app/Contents/Resources/Bootstrap/knowledge-python-shims`
+- the installer installs that same runtime at
+  `/usr/local/lib/popeye/node/bin/node`
+- the installer also places the Knowledge Python runtime + site-packages under
+  `/usr/local/lib/popeye/python`, `/usr/local/lib/popeye/python-site-packages`,
+  and `/usr/local/lib/popeye/knowledge-python-shims`
+- end users do **not** need to install Node globally for those packaged paths
+- end users do **not** need to run `python3 -m pip install markitdown trafilatura docling`
+  for packaged `.app` / `.pkg` installs
+- source-checkout / `install.sh` workflows still require a system Node 22+
+- source-checkout / `install.sh` workflows still use system Python tools or native
+  degraded fallback for Knowledge converters
 
 ### Where things end up
 

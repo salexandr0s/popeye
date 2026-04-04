@@ -11,6 +11,10 @@ public struct ConnectionsService: Sendable {
         try await client.listConnections()
     }
 
+    public func loadOAuthProviders() async throws -> [OAuthProviderAvailabilityDTO] {
+        try await client.listOAuthProviders()
+    }
+
     public func startOAuthConnection(
         providerKind: String,
         connectionId: String? = nil,

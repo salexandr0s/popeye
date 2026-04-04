@@ -109,6 +109,28 @@ describe('PopeyeApiClient', () => {
     await expect(client.getRun('nonexistent')).rejects.toThrow(ApiError);
   });
 
+  it('prefers details when decoding JSON API errors', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(409, {
+      error: 'oauth_provider_not_configured',
+      details: 'Google OAuth is not configured. Save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+    });
+
+    try {
+      await client.status();
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).statusCode).toBe(409);
+      expect((error as ApiError).message).toContain(
+        'Google OAuth is not configured. Save the Google OAuth client secret in Popeye so providerAuth.google.clientSecretRefId points to an available secret.',
+      );
+    }
+  });
+
   it('throws ApiError on 500 responses', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',
@@ -183,6 +205,446 @@ describe('PopeyeApiClient', () => {
 
     await expect(client.getJob('job-1')).resolves.toMatchObject({ id: 'job-1', lastRunId: 'run-1' });
     await expect(client.getRunReceipt('run-1')).resolves.toMatchObject({ id: 'receipt-1', runId: 'run-1' });
+  });
+
+  it('decodes knowledge revision apply results with receipt wrapper', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      revision: {
+        id: 'rev-1',
+        documentId: 'doc-1',
+        workspaceId: 'default',
+        status: 'applied',
+        sourceKind: 'manual',
+        sourceId: null,
+        proposedTitle: 'Compiler Notes',
+        proposedMarkdown: '# Compiler Notes\n',
+        diffPreview: '+ Applied',
+        baseRevisionHash: 'hash-1',
+        createdAt: '2026-04-04T10:00:00Z',
+        appliedAt: '2026-04-04T10:01:00Z',
+      },
+      document: {
+        id: 'doc-1',
+        workspaceId: 'default',
+        knowledgeRootId: 'root-1',
+        sourceId: 'source-1',
+        kind: 'wiki_article',
+        title: 'Compiler Notes',
+        slug: 'compiler-notes',
+        relativePath: 'wiki/compiler-notes.md',
+        revisionHash: 'hash-2',
+        status: 'active',
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:01:00Z',
+        markdownText: '# Compiler Notes\n',
+        exists: true,
+        sourceIds: ['source-1'],
+      },
+      receipt: {
+        id: 'rcpt-1',
+        kind: 'knowledge_revision_apply',
+        component: 'knowledge',
+        status: 'succeeded',
+        summary: 'Applied knowledge revision',
+        details: 'Applied revision',
+        actorRole: 'operator',
+        workspaceId: 'default',
+        usage: {
+          provider: 'internal',
+          model: 'none',
+          tokensIn: 0,
+          tokensOut: 0,
+          estimatedCostUsd: 0,
+        },
+        metadata: {
+          documentId: 'doc-1',
+          revisionId: 'rev-1',
+        },
+        createdAt: '2026-04-04T10:01:00Z',
+      },
+    });
+
+    await expect(
+      client.applyKnowledgeDocumentRevision('rev-1', { approved: true }),
+    ).resolves.toMatchObject({
+      document: expect.objectContaining({ id: 'doc-1' }),
+      receipt: expect.objectContaining({ kind: 'knowledge_revision_apply' }),
+    });
+  });
+
+  it('decodes knowledge converter availability', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, [
+      {
+        id: 'jina_reader',
+        status: 'ready',
+        provenance: 'remote',
+        details: 'Remote Jina Reader probe succeeded.',
+        version: null,
+        lastCheckedAt: '2026-04-04T10:02:00Z',
+        installHint: 'Ensure outbound HTTPS access to r.jina.ai.',
+        usedFor: ['website', 'x_post'],
+        fallbackRank: 1,
+      },
+      {
+        id: 'docling',
+        status: 'missing',
+        provenance: 'missing',
+        details: 'docling is unavailable.',
+        version: null,
+        lastCheckedAt: '2026-04-04T10:02:00Z',
+        installHint: 'Install with: python3 -m pip install docling',
+        usedFor: ['local_file', 'pdf', 'image'],
+        fallbackRank: 2,
+      },
+    ]);
+
+    await expect(client.listKnowledgeConverters()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'jina_reader', status: 'ready', provenance: 'remote', installHint: expect.any(String) }),
+        expect.objectContaining({ id: 'docling', status: 'missing', provenance: 'missing', installHint: expect.any(String) }),
+      ]),
+    );
+  });
+
+  it('lists knowledge source snapshots and rejects revisions', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, [
+      {
+        id: 'snap-1',
+        sourceId: 'source-1',
+        workspaceId: 'default',
+        contentHash: 'hash-1',
+        adapter: 'native',
+        fallbackUsed: false,
+        status: 'compiled',
+        assetStatus: 'none',
+        outcome: 'created',
+        conversionWarnings: [],
+        createdAt: '2026-04-04T10:00:00Z',
+      },
+    ]);
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      revision: {
+        id: 'rev-1',
+        documentId: 'doc-1',
+        workspaceId: 'default',
+        status: 'rejected',
+        sourceKind: 'manual',
+        sourceId: null,
+        proposedTitle: 'Compiler Notes',
+        proposedMarkdown: '# Compiler Notes\n',
+        diffPreview: '- Rejected',
+        baseRevisionHash: 'hash-1',
+        createdAt: '2026-04-04T10:01:00Z',
+        appliedAt: null,
+      },
+      document: {
+        id: 'doc-1',
+        workspaceId: 'default',
+        knowledgeRootId: 'root-1',
+        sourceId: 'source-1',
+        kind: 'wiki_article',
+        title: 'Compiler Notes',
+        slug: 'compiler-notes',
+        relativePath: 'wiki/compiler-notes.md',
+        revisionHash: null,
+        status: 'draft_only',
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:01:00Z',
+        markdownText: '',
+        exists: false,
+        sourceIds: ['source-1'],
+      },
+      receipt: {
+        id: 'rcpt-2',
+        kind: 'knowledge_revision_reject',
+        component: 'knowledge',
+        status: 'succeeded',
+        summary: 'Rejected knowledge revision',
+        details: 'Rejected revision',
+        actorRole: 'operator',
+        workspaceId: 'default',
+        usage: {
+          provider: 'internal',
+          model: 'none',
+          tokensIn: 0,
+          tokensOut: 0,
+          estimatedCostUsd: 0,
+        },
+        metadata: {
+          documentId: 'doc-1',
+          revisionId: 'rev-1',
+        },
+        createdAt: '2026-04-04T10:01:00Z',
+      },
+    });
+
+    await expect(client.listKnowledgeSourceSnapshots('source-1')).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'snap-1', outcome: 'created' }),
+      ]),
+    );
+    await expect(client.rejectKnowledgeDocumentRevision('rev-1')).resolves.toMatchObject({
+      revision: expect.objectContaining({ status: 'rejected' }),
+      receipt: expect.objectContaining({ kind: 'knowledge_revision_reject' }),
+    });
+  });
+
+  it('reingests knowledge sources and decodes import outcomes', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      source: {
+        id: 'source-1',
+        workspaceId: 'default',
+        knowledgeRootId: 'root-1',
+        sourceType: 'local_file',
+        title: 'Compiler Notes',
+        originalUri: null,
+        originalPath: '/tmp/notes.md',
+        originalFileName: 'notes.md',
+        originalMediaType: 'text/markdown',
+        adapter: 'native',
+        fallbackUsed: false,
+        status: 'compiled',
+        contentHash: 'hash-2',
+        assetStatus: 'none',
+        latestOutcome: 'updated',
+        conversionWarnings: [],
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:02:00Z',
+      },
+      normalizedDocument: {
+        id: 'doc-1',
+        workspaceId: 'default',
+        knowledgeRootId: 'root-1',
+        sourceId: 'source-1',
+        kind: 'source_normalized',
+        title: 'Compiler Notes',
+        slug: 'compiler-notes-source-1',
+        relativePath: 'raw/source-1/normalized/source.md',
+        revisionHash: 'hash-2',
+        status: 'active',
+        createdAt: '2026-04-04T10:00:00Z',
+        updatedAt: '2026-04-04T10:02:00Z',
+      },
+      compileJob: {
+        id: 'job-1',
+        workspaceId: 'default',
+        sourceId: 'source-1',
+        targetDocumentId: 'doc-2',
+        status: 'succeeded',
+        summary: 'Auto-compiled draft for Compiler Notes',
+        warnings: [],
+        createdAt: '2026-04-04T10:02:00Z',
+        updatedAt: '2026-04-04T10:02:00Z',
+      },
+      draftRevision: {
+        id: 'rev-1',
+        documentId: 'doc-2',
+        workspaceId: 'default',
+        status: 'draft',
+        sourceKind: 'auto_compile',
+        sourceId: 'source-1',
+        proposedTitle: 'Compiler Notes',
+        proposedMarkdown: '# Compiler Notes\n',
+        diffPreview: '+ Updated',
+        baseRevisionHash: 'hash-1',
+        createdAt: '2026-04-04T10:02:00Z',
+        appliedAt: null,
+      },
+      outcome: 'updated',
+    });
+
+    await expect(client.reingestKnowledgeSource('source-1')).resolves.toMatchObject({
+      outcome: 'updated',
+      source: expect.objectContaining({ latestOutcome: 'updated' }),
+      draftRevision: expect.objectContaining({ id: 'rev-1' }),
+    });
+  });
+
+  it('creates and lists knowledge beta runs', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, {
+      id: 'beta-1',
+      workspaceId: 'default',
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      importCount: 1,
+      reingestCount: 0,
+      hardFailureCount: 0,
+      importSuccessRate: 1,
+      gateStatus: 'passed',
+      createdAt: '2026-04-04T10:03:00Z',
+      reportMarkdown: '# Knowledge beta corpus report\n',
+      imports: [
+        {
+          label: 'article-1',
+          title: 'Compiler Article',
+          sourceType: 'website',
+          outcome: 'created',
+          sourceId: 'source-1',
+          adapter: 'jina_reader',
+          status: 'compiled',
+          assetStatus: 'localized',
+        },
+      ],
+      reingests: [],
+      converters: [],
+      audit: {
+        totalSources: 1,
+        totalDocuments: 1,
+        totalDraftRevisions: 1,
+        unresolvedLinks: 0,
+        brokenLinks: 0,
+        failedConversions: 0,
+        degradedSources: 0,
+        warningSources: 0,
+        assetLocalizationFailures: 0,
+        lastCompileAt: '2026-04-04T10:01:00Z',
+      },
+      gate: {
+        status: 'passed',
+        minImportSuccessRate: 0.9,
+        actualImportSuccessRate: 1,
+        maxHardFailures: 0,
+        actualHardFailures: 0,
+        expectedReingestChecks: 0,
+        failedExpectedReingestChecks: 0,
+        checks: [
+          {
+            id: 'import-success-rate',
+            label: 'Import success rate',
+            passed: true,
+            details: '100% actual vs 90% minimum',
+          },
+        ],
+      },
+    });
+    mockFetch(200, [
+      {
+        id: 'beta-1',
+        workspaceId: 'default',
+        manifestPath: '/tmp/knowledge-beta-manifest.json',
+        importCount: 1,
+        reingestCount: 0,
+        hardFailureCount: 0,
+        importSuccessRate: 1,
+        gateStatus: 'passed',
+        createdAt: '2026-04-04T10:03:00Z',
+      },
+    ]);
+    mockFetch(200, {
+      id: 'beta-1',
+      workspaceId: 'default',
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      importCount: 1,
+      reingestCount: 0,
+      hardFailureCount: 0,
+      importSuccessRate: 1,
+      gateStatus: 'passed',
+      createdAt: '2026-04-04T10:03:00Z',
+      reportMarkdown: '# Knowledge beta corpus report\n',
+      imports: [
+        {
+          label: 'article-1',
+          title: 'Compiler Article',
+          sourceType: 'website',
+          outcome: 'created',
+        },
+      ],
+      reingests: [],
+      converters: [],
+      audit: {
+        totalSources: 1,
+        totalDocuments: 1,
+        totalDraftRevisions: 1,
+        unresolvedLinks: 0,
+        brokenLinks: 0,
+        failedConversions: 0,
+        degradedSources: 0,
+        warningSources: 0,
+        assetLocalizationFailures: 0,
+        lastCompileAt: '2026-04-04T10:01:00Z',
+      },
+      gate: {
+        status: 'passed',
+        minImportSuccessRate: 0.9,
+        actualImportSuccessRate: 1,
+        maxHardFailures: 0,
+        actualHardFailures: 0,
+        expectedReingestChecks: 0,
+        failedExpectedReingestChecks: 0,
+        checks: [],
+      },
+    });
+
+    await expect(client.createKnowledgeBetaRun({
+      workspaceId: 'default',
+      manifestPath: '/tmp/knowledge-beta-manifest.json',
+      reportMarkdown: '# Knowledge beta corpus report\n',
+      imports: [
+        {
+          label: 'article-1',
+          title: 'Compiler Article',
+          sourceType: 'website',
+          outcome: 'created',
+        },
+      ],
+      reingests: [],
+      converters: [],
+      audit: {
+        totalSources: 1,
+        totalDocuments: 1,
+        totalDraftRevisions: 1,
+        unresolvedLinks: 0,
+        brokenLinks: 0,
+        failedConversions: 0,
+        degradedSources: 0,
+        warningSources: 0,
+        assetLocalizationFailures: 0,
+        lastCompileAt: '2026-04-04T10:01:00Z',
+      },
+      gate: {
+        status: 'passed',
+        minImportSuccessRate: 0.9,
+        actualImportSuccessRate: 1,
+        maxHardFailures: 0,
+        actualHardFailures: 0,
+        expectedReingestChecks: 0,
+        failedExpectedReingestChecks: 0,
+        checks: [],
+      },
+    })).resolves.toMatchObject({
+      id: 'beta-1',
+      gate: expect.objectContaining({ status: 'passed' }),
+    });
+    await expect(client.listKnowledgeBetaRuns({ workspaceId: 'default', limit: 5 })).resolves.toEqual([
+      expect.objectContaining({ id: 'beta-1', gateStatus: 'passed' }),
+    ]);
+    await expect(client.getKnowledgeBetaRun('beta-1')).resolves.toMatchObject({
+      id: 'beta-1',
+      imports: [expect.objectContaining({ label: 'article-1' })],
+    });
   });
 
   it('fetches packaged run replies and Telegram relay state', async () => {

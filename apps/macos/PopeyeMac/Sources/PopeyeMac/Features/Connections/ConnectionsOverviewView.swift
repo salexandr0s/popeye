@@ -34,9 +34,9 @@ struct ConnectionsOverviewView: View {
             Divider()
             HSplitView {
                 connectionsList
-                    .frame(minWidth: 350)
+                    .popeyeSplitPane(minWidth: 350)
                 inspectorColumn
-                    .frame(minWidth: 300)
+                    .popeyeSplitPane(minWidth: 300)
             }
         }
     }
@@ -75,7 +75,7 @@ struct ConnectionsOverviewView: View {
         } else {
             Text("Select a connection to inspect")
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }

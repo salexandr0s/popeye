@@ -32,6 +32,7 @@ export async function handleFiles(ctx: CommandContext): Promise<void> {
       workspaceId: 'default',
       label,
       rootPath: resolve(arg1),
+      kind: 'general',
       permission: permission as 'read' | 'index' | 'index_and_derive',
       filePatterns: ['**/*.md', '**/*.txt'],
       excludePatterns: [],

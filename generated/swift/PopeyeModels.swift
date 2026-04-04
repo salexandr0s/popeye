@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-04-03
+// Generated: 2026-04-04
 import Foundation
 
 // MARK: - Enums
@@ -64,6 +64,104 @@ public enum RecallSourceKind: String, Codable, Sendable {
     case messageIngress = "message_ingress"
     case intervention = "intervention"
     case memory = "memory"
+}
+
+public enum KnowledgeSourceType: String, Codable, Sendable {
+    case localFile = "local_file"
+    case manualText = "manual_text"
+    case website = "website"
+    case pdf = "pdf"
+    case xPost = "x_post"
+    case repo = "repo"
+    case dataset = "dataset"
+    case image = "image"
+}
+
+public enum KnowledgeConversionAdapter: String, Codable, Sendable {
+    case native = "native"
+    case jinaReader = "jina_reader"
+    case trafilatura = "trafilatura"
+    case markitdown = "markitdown"
+    case docling = "docling"
+}
+
+public enum KnowledgeConverterStatus: String, Codable, Sendable {
+    case ready = "ready"
+    case missing = "missing"
+    case degraded = "degraded"
+}
+
+public enum KnowledgeConverterId: String, Codable, Sendable {
+    case jinaReader = "jina_reader"
+    case trafilatura = "trafilatura"
+    case markitdown = "markitdown"
+    case docling = "docling"
+}
+
+public enum KnowledgeAssetStatus: String, Codable, Sendable {
+    case none = "none"
+    case localized = "localized"
+    case partialFailure = "partial_failure"
+    case failed = "failed"
+}
+
+public enum KnowledgeImportOutcome: String, Codable, Sendable {
+    case created = "created"
+    case updated = "updated"
+    case unchanged = "unchanged"
+}
+
+public enum KnowledgeSourceStatus: String, Codable, Sendable {
+    case pending = "pending"
+    case imported = "imported"
+    case converted = "converted"
+    case conversionFailed = "conversion_failed"
+    case compiled = "compiled"
+    case compiledWithWarnings = "compiled_with_warnings"
+    case degraded = "degraded"
+}
+
+public enum KnowledgeDocumentKind: String, Codable, Sendable {
+    case sourceNormalized = "source_normalized"
+    case wikiArticle = "wiki_article"
+    case outputNote = "output_note"
+}
+
+public enum KnowledgeDocumentStatus: String, Codable, Sendable {
+    case active = "active"
+    case draftOnly = "draft_only"
+    case archived = "archived"
+}
+
+public enum KnowledgeRevisionStatus: String, Codable, Sendable {
+    case draft = "draft"
+    case applied = "applied"
+    case rejected = "rejected"
+}
+
+public enum KnowledgeLinkKind: String, Codable, Sendable {
+    case markdown = "markdown"
+    case wikilink = "wikilink"
+    case compiledFrom = "compiled_from"
+    case citation = "citation"
+    case related = "related"
+}
+
+public enum KnowledgeLinkStatus: String, Codable, Sendable {
+    case active = "active"
+    case broken = "broken"
+    case unresolved = "unresolved"
+}
+
+public enum KnowledgeCompileJobStatus: String, Codable, Sendable {
+    case queued = "queued"
+    case succeeded = "succeeded"
+    case failed = "failed"
+}
+
+public enum KnowledgeBetaGateStatus: String, Codable, Sendable {
+    case passed = "passed"
+    case failed = "failed"
 }
 
 // MARK: - Models
@@ -314,4 +412,289 @@ public struct VaultRecord: Codable, Sendable {
     public let status: String
     public let createdAt: String
     public let lastAccessedAt: String
+}
+
+public struct KnowledgeConverterAvailability: Codable, Sendable {
+    public let id: String
+    public let status: String
+    public let provenance: String
+    public let details: String
+    public let version: String
+    public let lastCheckedAt: String
+    public let installHint: String
+    public let usedFor: String
+    public let fallbackRank: String
+}
+
+public struct KnowledgeSourceRecord: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let knowledgeRootId: String
+    public let sourceType: String
+    public let title: String
+    public let originalUri: String
+    public let originalPath: String
+    public let originalFileName: String
+    public let originalMediaType: String
+    public let adapter: String
+    public let fallbackUsed: String
+    public let status: String
+    public let contentHash: String
+    public let assetStatus: String
+    public let latestOutcome: String
+    public let conversionWarnings: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct KnowledgeDocumentRecord: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let knowledgeRootId: String
+    public let sourceId: String
+    public let kind: String
+    public let title: String
+    public let slug: String
+    public let relativePath: String
+    public let revisionHash: String
+    public let status: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct KnowledgeDocumentDetail: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let knowledgeRootId: String
+    public let sourceId: String
+    public let kind: String
+    public let title: String
+    public let slug: String
+    public let relativePath: String
+    public let revisionHash: String
+    public let status: String
+    public let createdAt: String
+    public let updatedAt: String
+    public let markdownText: String
+    public let exists: String
+    public let sourceIds: String
+}
+
+public struct KnowledgeSourceSnapshotRecord: Codable, Sendable {
+    public let id: String
+    public let sourceId: String
+    public let workspaceId: String
+    public let contentHash: String
+    public let adapter: String
+    public let fallbackUsed: String
+    public let status: String
+    public let assetStatus: String
+    public let outcome: String
+    public let conversionWarnings: String
+    public let createdAt: String
+}
+
+public struct KnowledgeBetaReportRow: Codable, Sendable {
+    public let label: String
+    public let title: String
+    public let sourceType: String
+    public let outcome: String
+    public let sourceId: String
+    public let adapter: String
+    public let status: String
+    public let assetStatus: String
+    public let draftRevisionId: String
+    public let error: String
+}
+
+public struct KnowledgeBetaGateCheck: Codable, Sendable {
+    public let id: String
+    public let label: String
+    public let passed: String
+    public let details: String
+}
+
+public struct KnowledgeBetaGate: Codable, Sendable {
+    public let status: String
+    public let minImportSuccessRate: String
+    public let actualImportSuccessRate: String
+    public let maxHardFailures: String
+    public let actualHardFailures: String
+    public let expectedReingestChecks: String
+    public let failedExpectedReingestChecks: String
+    public let checks: String
+}
+
+public struct KnowledgeBetaRunRecord: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let manifestPath: String
+    public let importCount: String
+    public let reingestCount: String
+    public let hardFailureCount: String
+    public let importSuccessRate: String
+    public let gateStatus: String
+    public let createdAt: String
+}
+
+public struct KnowledgeBetaRunDetail: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let manifestPath: String
+    public let importCount: String
+    public let reingestCount: String
+    public let hardFailureCount: String
+    public let importSuccessRate: String
+    public let gateStatus: String
+    public let createdAt: String
+    public let reportMarkdown: String
+    public let imports: String
+    public let reingests: String
+    public let converters: String
+    public let audit: String
+    public let gate: String
+}
+
+public struct KnowledgeBetaRunCreateInput: Codable, Sendable {
+    public let workspaceId: String
+    public let manifestPath: String
+    public let reportMarkdown: String
+    public let imports: String
+    public let reingests: String
+    public let converters: String
+    public let audit: String
+    public let gate: String
+}
+
+public struct KnowledgeBetaRunListQuery: Codable, Sendable {
+    public let workspaceId: String
+    public let limit: String
+}
+
+public struct KnowledgeDocumentRevisionRecord: Codable, Sendable {
+    public let id: String
+    public let documentId: String
+    public let workspaceId: String
+    public let status: String
+    public let sourceKind: String
+    public let sourceId: String
+    public let proposedTitle: String
+    public let proposedMarkdown: String
+    public let diffPreview: String
+    public let baseRevisionHash: String
+    public let createdAt: String
+    public let appliedAt: String
+}
+
+public struct KnowledgeRevisionRejectResult: Codable, Sendable {
+    public let revision: String
+    public let document: String
+    public let receipt: String
+}
+
+public struct KnowledgeLinkRecord: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let sourceDocumentId: String
+    public let targetDocumentId: String
+    public let targetSlug: String
+    public let targetLabel: String
+    public let linkKind: String
+    public let linkStatus: String
+    public let confidence: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct KnowledgeCompileJobRecord: Codable, Sendable {
+    public let id: String
+    public let workspaceId: String
+    public let sourceId: String
+    public let targetDocumentId: String
+    public let status: String
+    public let summary: String
+    public let warnings: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct KnowledgeAuditReport: Codable, Sendable {
+    public let totalSources: String
+    public let totalDocuments: String
+    public let totalDraftRevisions: String
+    public let unresolvedLinks: String
+    public let brokenLinks: String
+    public let failedConversions: String
+    public let degradedSources: String
+    public let warningSources: String
+    public let assetLocalizationFailures: String
+    public let lastCompileAt: String
+}
+
+public struct KnowledgeNeighborhood: Codable, Sendable {
+    public let document: String
+    public let incoming: String
+    public let outgoing: String
+    public let relatedDocuments: String
+}
+
+public struct KnowledgeImportInput: Codable, Sendable {
+    public let workspaceId: String
+    public let sourceType: String
+    public let title: String
+    public let sourceUri: String
+    public let sourcePath: String
+    public let sourceText: String
+}
+
+public struct KnowledgeImportResult: Codable, Sendable {
+    public let source: String
+    public let normalizedDocument: String
+    public let compileJob: String
+    public let draftRevision: String
+    public let outcome: String
+}
+
+public struct KnowledgeDocumentRevisionProposalInput: Codable, Sendable {
+    public let title: String
+    public let markdownText: String
+    public let baseRevisionHash: String
+}
+
+public struct KnowledgeDocumentRevisionApplyInput: Codable, Sendable {
+    public let approved: String
+}
+
+public struct KnowledgeRevisionApplyResult: Codable, Sendable {
+    public let revision: String
+    public let document: String
+    public let receipt: String
+}
+
+public struct KnowledgeLinkCreateInput: Codable, Sendable {
+    public let sourceDocumentId: String
+    public let targetDocumentId: String
+    public let targetSlug: String
+    public let targetLabel: String
+    public let linkKind: String
+}
+
+public struct KnowledgeDocumentQuery: Codable, Sendable {
+    public let workspaceId: String
+    public let kind: String
+    public let q: String
+}
+
+public struct MutationReceiptRecord: Codable, Sendable {
+    public let id: String
+    public let kind: String
+    public let component: String
+    public let status: String
+    public let summary: String
+    public let details: String
+    public let actorRole: String
+    public let workspaceId: String
+    public let usage: String
+    public let metadata: String
+    public let createdAt: String
 }
