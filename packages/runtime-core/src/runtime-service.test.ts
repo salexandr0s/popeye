@@ -4251,6 +4251,41 @@ describe('startup regex validation', () => {
     await runtime.close();
   });
 
+  it('decouples knowledge wiki compilation from the embeddings provider', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-knowledge-config-'));
+    chmodSync(dir, 0o700);
+
+    const enabledConfig = makeConfig(dir);
+    enabledConfig.embeddings.provider = 'disabled';
+    enabledConfig.knowledge = {
+      wikiCompilation: {
+        provider: 'openai',
+        model: 'gpt-4.1-mini',
+        timeoutMs: 15_000,
+      },
+    };
+    const enabledRuntime = createRuntimeService(enabledConfig);
+    expect(
+      ((enabledRuntime as unknown as { knowledgeService: { wikiCompilationClient: { enabled: boolean } | null } }).knowledgeService.wikiCompilationClient?.enabled),
+    ).toBe(true);
+    await enabledRuntime.close();
+
+    const disabledConfig = makeConfig(dir);
+    disabledConfig.embeddings.provider = 'openai';
+    disabledConfig.knowledge = {
+      wikiCompilation: {
+        provider: 'disabled',
+        model: 'gpt-4.1-mini',
+        timeoutMs: 15_000,
+      },
+    };
+    const disabledRuntime = createRuntimeService(disabledConfig);
+    expect(
+      ((disabledRuntime as unknown as { knowledgeService: { wikiCompilationClient: { enabled: boolean } | null } }).knowledgeService.wikiCompilationClient?.enabled),
+    ).toBe(false);
+    await disabledRuntime.close();
+  });
+
   it('preserves paused heartbeat automation across restart and skips paused heartbeat enqueue', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-automation-pause-'));
     chmodSync(dir, 0o700);

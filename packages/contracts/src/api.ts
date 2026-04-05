@@ -35,6 +35,7 @@ import {
   KnowledgeCompileJobRecordSchema,
   KnowledgeConverterListResponseSchema,
   KnowledgeDocumentDetailSchema,
+  KnowledgeFileQueryInputSchema,
   KnowledgeDocumentListResponseSchema,
   KnowledgeDocumentQuerySchema,
   KnowledgeDocumentRecordSchema,
@@ -48,10 +49,13 @@ import {
   KnowledgeImportInputSchema,
   KnowledgeLinkCreateInputSchema,
   KnowledgeLinkRecordSchema,
+  KnowledgeLintReportSchema,
   KnowledgeNeighborhoodSchema,
   KnowledgeSourceSnapshotListResponseSchema,
   KnowledgeSourceListResponseSchema,
   KnowledgeSourceRecordSchema,
+  KnowledgeSyncResponseSchema,
+  KnowledgeWorkspaceMutationInputSchema,
 } from './knowledge.js';
 import {
   PlaybookDetailSchema,
@@ -601,6 +605,8 @@ export const KnowledgeBetaRunCreateRequestSchema = KnowledgeBetaRunCreateInputSc
 export const KnowledgeBetaRunResponseSchema = KnowledgeBetaRunDetailSchema;
 export const KnowledgeBetaRunListResponseApiSchema = KnowledgeBetaRunListResponseSchema;
 export const KnowledgeBetaRunListQueryParamsSchema = KnowledgeBetaRunListQuerySchema;
+export const KnowledgeLintResponseSchema = KnowledgeLintReportSchema;
+export const KnowledgeSyncResponseApiSchema = KnowledgeSyncResponseSchema;
 
 export {
   KnowledgeBetaRunListResponseSchema,
@@ -609,11 +615,14 @@ export {
   KnowledgeConverterListResponseSchema,
   KnowledgeDocumentListResponseSchema,
   KnowledgeDocumentRevisionListResponseSchema,
+  KnowledgeFileQueryInputSchema,
   KnowledgeImportInputSchema,
   KnowledgeDocumentRevisionProposalInputSchema,
   KnowledgeDocumentRevisionApplyInputSchema,
   KnowledgeDocumentQuerySchema,
   KnowledgeLinkCreateInputSchema,
+  KnowledgeWorkspaceMutationInputSchema,
+  KnowledgeSyncResponseSchema,
 };
 
 // --- Email API schemas ---

@@ -96,8 +96,12 @@ export const MutationReceiptKindSchema = z.enum([
   'automation_resume',
   'curated_document_save',
   'knowledge_import',
+  'knowledge_index_regenerate',
+  'knowledge_lint',
+  'knowledge_query_filed',
   'knowledge_revision_apply',
   'knowledge_revision_reject',
+  'knowledge_sync',
 ]);
 export type MutationReceiptKind = z.infer<typeof MutationReceiptKindSchema>;
 

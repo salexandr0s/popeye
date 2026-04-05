@@ -403,6 +403,19 @@ describe('PopeyeApiClient', () => {
     });
   });
 
+  it('decodes knowledge sync responses through the shared contract', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, { token: 'csrf-abc' });
+    mockFetch(200, { synced: 2 });
+
+    await expect(client.syncKnowledgeWikiDocuments('default')).resolves.toEqual({
+      synced: 2,
+    });
+  });
+
   it('reingests knowledge sources and decodes import outcomes', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',

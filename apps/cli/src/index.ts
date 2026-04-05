@@ -164,6 +164,11 @@ const COMMANDS: Record<string, Record<string, { desc: string; usage: string; arg
     reingest: { desc: 'Reingest a knowledge source', usage: 'pop knowledge reingest <sourceId>' },
     audit: { desc: 'Show knowledge audit stats', usage: 'pop knowledge audit [--workspace <id>]' },
     converters: { desc: 'Show knowledge converter readiness', usage: 'pop knowledge converters' },
+    lint: { desc: 'Run wiki health checks', usage: 'pop knowledge lint [--workspace <id>]' },
+    index: { desc: 'Regenerate wiki index', usage: 'pop knowledge index [--workspace <id>]' },
+    log: { desc: 'Show wiki activity log', usage: 'pop knowledge log [--workspace <id>]' },
+    file: { desc: 'File a query answer as wiki page', usage: 'pop knowledge file <title> --answer <text> [--workspace <id>]' },
+    sync: { desc: 'Sync wiki documents to filesystem', usage: 'pop knowledge sync [--workspace <id>]' },
   },
   jobs: {
     list: { desc: 'List jobs', usage: 'pop jobs list' },

@@ -84,6 +84,7 @@ import type {
   CuratedDocumentSummary,
   KnowledgeAuditReport,
   KnowledgeBetaRunCreateInput,
+  KnowledgeLintReport,
   KnowledgeBetaRunDetail,
   KnowledgeBetaRunListQuery,
   KnowledgeBetaRunRecord,
@@ -219,6 +220,7 @@ import type {
   MedicalSearchResult,
 } from '@popeye/contracts';
 import {
+  DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG,
   RunReplySchema,
   TaskCreateInputSchema,
 } from '@popeye/contracts';
@@ -276,6 +278,7 @@ import { TodoFacade } from './todo-facade.js';
 import { OAuthConnectService } from './oauth-connect.js';
 import { MutationReceiptManager } from './mutation-receipt-manager.js';
 import { KnowledgeService } from './knowledge-service.js';
+import { createOpenAIWikiCompilationClient, createDisabledWikiCompilationClient } from './wiki-compilation-client.js';
 import { updateWorkspaceHeartbeatConfigFile } from './workspace-config-manager.js';
 import { createFilesCapability, FileRootService, FileIndexer, FileSearchService } from '@popeye/cap-files';
 import { createEmailCapability, EmailService, EmailSearchService, type EmailProviderAdapter } from '@popeye/cap-email';
@@ -605,6 +608,16 @@ export class PopeyeRuntimeService {
       writeMutationReceipt: (input) => this.writeMutationReceipt(input),
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
     });
+    const wikiCompilationConfig = config.knowledge?.wikiCompilation ?? {
+      ...DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG,
+      provider: config.embeddings.provider === 'openai' ? 'openai' : DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG.provider,
+    };
+    const wikiCompilationClient = wikiCompilationConfig.provider === 'openai'
+      ? createOpenAIWikiCompilationClient({
+          model: wikiCompilationConfig.model,
+          timeoutMs: wikiCompilationConfig.timeoutMs,
+        })
+      : createDisabledWikiCompilationClient();
     this.knowledgeService = new KnowledgeService({
       db: this.databases.app,
       workspaceRegistry: this.workspaceRegistry,
@@ -617,6 +630,7 @@ export class PopeyeRuntimeService {
       writeMutationReceipt: (input) => this.writeMutationReceipt(input),
       recordSecurityAudit: (event) => this.recordSecurityAudit(event),
       log: this.log,
+      wikiCompilationClient,
     });
     this.taskManager = new TaskManager(this.databases, {
       emit: (event, payload) => this.emit(event, payload),
@@ -1086,6 +1100,28 @@ export class PopeyeRuntimeService {
 
   async listKnowledgeConverters(): Promise<KnowledgeConverterAvailability[]> {
     return this.knowledgeService.listConverters();
+  }
+
+  async regenerateKnowledgeIndex(workspaceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeDocumentRecord> {
+    return this.knowledgeService.regenerateIndex(workspaceId, actorRole);
+  }
+
+  async runKnowledgeLint(workspaceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeLintReport> {
+    return this.knowledgeService.runLint(workspaceId, actorRole);
+  }
+
+  fileQueryAsKnowledge(
+    workspaceId: string,
+    title: string,
+    answerText: string,
+    sourceDocumentIds: string[] = [],
+    actorRole: AuthRole = 'operator',
+  ): KnowledgeDocumentRecord {
+    return this.knowledgeService.fileQueryAsWiki(workspaceId, title, answerText, sourceDocumentIds, actorRole);
+  }
+
+  syncKnowledgeWikiDocuments(workspaceId: string, actorRole: AuthRole = 'operator'): number {
+    return this.knowledgeService.syncAllWikiDocuments(workspaceId, actorRole);
   }
 
   async updateAutomation(

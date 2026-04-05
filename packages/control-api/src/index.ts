@@ -108,12 +108,15 @@ import {
   CuratedDocumentSummarySchema,
   HomeSummarySchema,
   KnowledgeAuditResponseSchema,
+  KnowledgeFileQueryInputSchema,
+  KnowledgeLintResponseSchema,
   KnowledgeBetaRunCreateRequestSchema,
   KnowledgeBetaRunListQueryParamsSchema,
   KnowledgeBetaRunListResponseApiSchema,
   KnowledgeBetaRunResponseSchema,
   KnowledgeCompileJobListResponseSchema,
   KnowledgeConverterListResponseSchema,
+  KnowledgeDocumentResponseSchema,
   KnowledgeDocumentDetailResponseSchema,
   KnowledgeDocumentListResponseSchema,
   KnowledgeDocumentQuerySchema,
@@ -129,6 +132,8 @@ import {
   KnowledgeSourceSnapshotListResponseSchema,
   KnowledgeSourceListResponseSchema,
   KnowledgeSourceResponseSchema,
+  KnowledgeSyncResponseApiSchema,
+  KnowledgeWorkspaceMutationInputSchema,
   WorkspaceRecordSchema,
   WorkspaceRegistrationInputSchema,
 } from '@popeye/contracts';
@@ -1661,6 +1666,41 @@ export async function createControlApi(
     return KnowledgeAuditResponseSchema.parse(
       dependencies.runtime.getKnowledgeAudit(query.workspaceId),
     );
+  });
+
+  app.post('/v1/knowledge/lint', async (request) => {
+    const body = KnowledgeWorkspaceMutationInputSchema.parse(request.body ?? {});
+    const actorRole = readActorRole(request);
+    return KnowledgeLintResponseSchema.parse(
+      await dependencies.runtime.runKnowledgeLint(body.workspaceId, actorRole),
+    );
+  });
+
+  app.post('/v1/knowledge/index/regenerate', async (request) => {
+    const body = KnowledgeWorkspaceMutationInputSchema.parse(request.body ?? {});
+    const actorRole = readActorRole(request);
+    return KnowledgeDocumentResponseSchema.parse(
+      await dependencies.runtime.regenerateKnowledgeIndex(body.workspaceId, actorRole),
+    );
+  });
+
+  app.post('/v1/knowledge/file-query', async (request, reply) => {
+    const bodyResult = KnowledgeFileQueryInputSchema.safeParse(request.body ?? {});
+    if (!bodyResult.success) {
+      return reply.code(400).send({ error: 'invalid_knowledge_file_query', details: bodyResult.error.message });
+    }
+    const body = bodyResult.data;
+    const actorRole = readActorRole(request);
+    return KnowledgeDocumentResponseSchema.parse(
+      dependencies.runtime.fileQueryAsKnowledge(body.workspaceId, body.title, body.answerText, body.sourceDocumentIds, actorRole),
+    );
+  });
+
+  app.post('/v1/knowledge/sync', async (request) => {
+    const body = KnowledgeWorkspaceMutationInputSchema.parse(request.body ?? {});
+    const actorRole = readActorRole(request);
+    const synced = dependencies.runtime.syncKnowledgeWikiDocuments(body.workspaceId, actorRole);
+    return KnowledgeSyncResponseApiSchema.parse({ synced });
   });
 
   app.get('/v1/interventions', async () => dependencies.runtime.listInterventions());

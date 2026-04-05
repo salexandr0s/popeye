@@ -136,5 +136,51 @@ export async function handleKnowledge(ctx: CommandContext): Promise<void> {
 
   if (subcommand === 'converters') {
     console.info(JSON.stringify(await client.listKnowledgeConverters(), null, 2));
+    return;
   }
+
+  if (subcommand === 'lint') {
+    const result = await client.runKnowledgeLint(workspaceId);
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (subcommand === 'index') {
+    const result = await client.regenerateKnowledgeIndex(workspaceId);
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (subcommand === 'file') {
+    requireArg(arg1, 'title');
+    const answerText = readFlagValue('--answer');
+    requireArg(answerText, '--answer <text>');
+    const result = await client.fileQueryAsKnowledge(workspaceId, arg1, answerText);
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (subcommand === 'sync') {
+    const result = await client.syncKnowledgeWikiDocuments(workspaceId);
+    console.info(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (subcommand === 'log') {
+    try {
+      const rows = await client.listKnowledgeDocuments({ workspaceId, q: '_log' });
+      const logDoc = rows.find((d: { slug: string }) => d.slug === '_log');
+      if (logDoc) {
+        const detail = await client.getKnowledgeDocument(logDoc.id);
+        console.info(detail.markdownText ?? 'No log entries yet.');
+      } else {
+        console.info('No wiki log found.');
+      }
+    } catch {
+      console.info('No wiki log found.');
+    }
+    return;
+  }
+
+  console.error(`Unknown knowledge subcommand: ${subcommand}`);
 }

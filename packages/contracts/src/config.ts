@@ -193,6 +193,24 @@ const DEFAULT_MEMORY_CONFIG = {
   expandTokenCap: 8000,
 };
 
+export const DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG = {
+  provider: 'disabled',
+  model: 'gpt-4o-mini',
+  timeoutMs: 60_000,
+} as const;
+
+export const KnowledgeWikiCompilationConfigSchema = z.object({
+  provider: z.enum(['disabled', 'openai']).default(DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG.provider),
+  model: z.string().min(1).default(DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG.model),
+  timeoutMs: z.number().int().positive().default(DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG.timeoutMs),
+});
+export type KnowledgeWikiCompilationConfig = z.infer<typeof KnowledgeWikiCompilationConfigSchema>;
+
+export const KnowledgeConfigSchema = z.object({
+  wikiCompilation: KnowledgeWikiCompilationConfigSchema.default(DEFAULT_KNOWLEDGE_WIKI_COMPILATION_CONFIG),
+});
+export type KnowledgeConfig = z.infer<typeof KnowledgeConfigSchema>;
+
 export const LogLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']);
 export type LogLevel = z.infer<typeof LogLevelSchema>;
 
@@ -228,6 +246,7 @@ export const AppConfigSchema = z.object({
   security: SecurityConfigSchema,
   telegram: TelegramConfigSchema,
   embeddings: EmbeddingConfigSchema,
+  knowledge: KnowledgeConfigSchema.optional(),
   engine: EngineConfigSchema.default(DEFAULT_ENGINE_CONFIG),
   logging: LoggingConfigSchema.default(DEFAULT_LOGGING_CONFIG),
   memory: MemoryConfigSchema.default(DEFAULT_MEMORY_CONFIG),

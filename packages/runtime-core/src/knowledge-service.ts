@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -46,6 +47,8 @@ import type {
   KnowledgeNeighborhood,
   KnowledgeSourceRecord,
   KnowledgeSourceSnapshotRecord,
+  KnowledgeLintReport,
+  KnowledgeLogOperation,
   MutationReceiptKind,
   MutationReceiptRecord,
   MutationReceiptStatus,
@@ -67,6 +70,7 @@ import {
   KnowledgeRevisionApplyResultSchema,
   KnowledgeRevisionRejectResultSchema,
   KnowledgeSourceRecordSchema,
+  KnowledgeLintReportSchema,
   KnowledgeSourceSnapshotRecordSchema,
   nowIso,
 } from '@popeye/contracts';
@@ -75,9 +79,13 @@ import type { WorkspaceRegistry } from '@popeye/workspace';
 import { redactText, sha256 } from '@popeye/observability';
 
 import { RuntimeConflictError, RuntimeNotFoundError, RuntimeValidationError } from './errors.js';
+import type { WikiCompilationClient, WikiCompileOutput } from './wiki-compilation-client.js';
+import { buildEntityPagePrompt, buildIndexPrompt, buildSourceCompilePrompt, buildSourceUpdatePrompt } from './wiki-compile-prompts.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_SUMMARY_CHARS = 1600;
+const MAX_FILE_QUERY_TITLE_CHARS = 200;
+const MAX_FILE_QUERY_ANSWER_CHARS = 100_000;
 
 type KnowledgeCommandResolution = {
   command: string;
@@ -109,6 +117,7 @@ export interface KnowledgeServiceOptions {
   };
   fetchImpl?: typeof fetch;
   runCommand?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
+  wikiCompilationClient?: WikiCompilationClient;
 }
 
 interface ConvertedSource {
@@ -307,6 +316,10 @@ function resolveWikiRelativePath(slug: string): string {
   return `wiki/${slug}.md`;
 }
 
+function resolveOutputRelativePath(slug: string, dateStamp: string): string {
+  return `outputs/${dateStamp}/${slug}.md`;
+}
+
 function extractKnowledgeLinks(markdown: string): Array<{ targetLabel: string; targetSlug: string | null; href: string | null; linkKind: KnowledgeLinkKind; external: boolean }> {
   const results: Array<{ targetLabel: string; targetSlug: string | null; href: string | null; linkKind: KnowledgeLinkKind; external: boolean }> = [];
 
@@ -449,6 +462,7 @@ export class KnowledgeService {
   private readonly log: KnowledgeServiceOptions['log'];
   private readonly fetchImpl: typeof fetch;
   private readonly runCommand: NonNullable<KnowledgeServiceOptions['runCommand']>;
+  private readonly wikiCompilationClient: WikiCompilationClient | null;
 
   constructor(options: KnowledgeServiceOptions) {
     this.db = options.db;
@@ -462,6 +476,7 @@ export class KnowledgeService {
     this.log = options.log;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.runCommand = options.runCommand ?? (async (command, args) => execFileAsync(command, args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }));
+    this.wikiCompilationClient = options.wikiCompilationClient ?? null;
     this.rebuildSearchIndex();
   }
 
@@ -1044,19 +1059,20 @@ export class KnowledgeService {
     }
 
     const source = this.getSource(sourceId)!;
-    const compileJob = unchanged
-      ? this.createCompileJob({
-          workspaceId: input.workspaceId,
-          sourceId,
-          targetDocumentId: normalizedDocument.id,
-          summary: `Source unchanged for ${input.title}`,
-          warnings: mergedWarnings,
-        })
-      : (() => {
-          const result = this.createCompileDraftForSource(source, normalizedDocument, redacted.text);
-          draftRevision = result.draftRevision;
-          return result.compileJob;
-        })();
+    let compileJob: KnowledgeCompileJobRecord;
+    if (unchanged) {
+      compileJob = this.createCompileJob({
+        workspaceId: input.workspaceId,
+        sourceId,
+        targetDocumentId: normalizedDocument.id,
+        summary: `Source unchanged for ${input.title}`,
+        warnings: mergedWarnings,
+      });
+    } else {
+      const result = await this.createCompileDraftForSource(source, normalizedDocument, redacted.text);
+      draftRevision = result.draftRevision;
+      compileJob = result.compileJob;
+    }
 
     if (!unchanged) {
       try {
@@ -1084,6 +1100,15 @@ export class KnowledgeService {
         outcome,
       },
     });
+
+    // Append to wiki log and regenerate index
+    const logOp: KnowledgeLogOperation = existingSourceRow ? 'reingest' : 'ingest';
+    this.appendToLog(input.workspaceId, logOp, `${verb} "${input.title}" (${input.sourceType})`, [normalizedDocument.id]);
+    try {
+      await this.regenerateIndex(input.workspaceId);
+    } catch (error) {
+      this.log?.warn('index regeneration failed after import', { error: error instanceof Error ? error.message : String(error) });
+    }
 
     return KnowledgeImportResultSchema.parse({
       source,
@@ -1527,6 +1552,8 @@ export class KnowledgeService {
       },
     });
 
+    this.appendToLog(document.workspaceId, 'revision_applied', `Applied revision for "${row.proposed_title ?? document.title}"`, [document.id]);
+
     return KnowledgeRevisionApplyResultSchema.parse({
       revision: this.listDocumentRevisions(document.id).find((revision) => revision.id === revisionId)!,
       document: this.getDocument(document.id)!,
@@ -1623,6 +1650,21 @@ export class KnowledgeService {
       excludePatterns: [],
       maxFileSizeBytes: 10 * 1024 * 1024,
     });
+  }
+
+  private resolveKnowledgeRoot(workspaceId: string, knowledgeRootId: string): FileRootRecord {
+    const roots = this.listFileRoots(workspaceId);
+    const matchingRoot = roots.find((candidate) => candidate.id === knowledgeRootId);
+    if (matchingRoot) {
+      return matchingRoot;
+    }
+
+    const activeKnowledgeRoot = roots.find((candidate) => candidate.enabled && candidate.kind === 'knowledge_base');
+    if (activeKnowledgeRoot) {
+      return activeKnowledgeRoot;
+    }
+
+    throw new RuntimeNotFoundError(`Knowledge root ${knowledgeRootId} not found`);
   }
 
   private async convertSource(input: KnowledgeImportInput): Promise<ConvertedSource> {
@@ -1957,11 +1999,11 @@ export class KnowledgeService {
     };
   }
 
-  private createCompileDraftForSource(
+  private async createCompileDraftForSource(
     source: KnowledgeSourceRecord,
     normalizedDocument: KnowledgeDocumentRecord,
     normalizedMarkdown: string,
-  ): { compileJob: KnowledgeCompileJobRecord; draftRevision: KnowledgeDocumentRevisionRecord } {
+  ): Promise<{ compileJob: KnowledgeCompileJobRecord; draftRevision: KnowledgeDocumentRevisionRecord; compileOutput: WikiCompileOutput | null }> {
     const existingWiki = this.findWikiDocumentBySlug(source.workspaceId, slugify(source.title));
     const defaultSlug = slugify(source.title);
     const wikiDocument = existingWiki
@@ -1980,7 +2022,7 @@ export class KnowledgeService {
           status: 'draft_only',
         });
     const currentMarkdown = existingWiki ? this.getDocument(wikiDocument.id)?.markdownText ?? '' : '';
-    const proposedMarkdown = this.compileWikiMarkdown(source, normalizedMarkdown, currentMarkdown);
+    const { proposedMarkdown, compileOutput } = await this.compileWikiMarkdown(source, normalizedMarkdown, currentMarkdown);
     const revisionId = randomUUID();
     const now = nowIso();
     this.db.prepare(
@@ -2020,10 +2062,441 @@ export class KnowledgeService {
     return {
       compileJob: this.mapCompileJobRow(this.db.prepare('SELECT * FROM knowledge_compile_jobs WHERE id = ?').get(compileJobId) as KnowledgeCompileJobRow),
       draftRevision: this.mapRevisionRow(this.db.prepare('SELECT * FROM knowledge_document_revisions WHERE id = ?').get(revisionId) as KnowledgeRevisionRow),
+      compileOutput,
     };
   }
 
-  private compileWikiMarkdown(source: KnowledgeSourceRecord, normalizedMarkdown: string, currentMarkdown: string): string {
+  private async generateEntityPages(
+    workspaceId: string,
+    knowledgeRootId: string,
+    parentDocumentId: string,
+    sourceId: string,
+    suggestedEntities: string[],
+    sourceContext: string,
+  ): Promise<void> {
+    if (!this.wikiCompilationClient?.enabled) return;
+
+    const contextSnippet = summarizeMarkdown(sourceContext);
+
+    for (const entityName of suggestedEntities.slice(0, 10)) {
+      const entitySlug = slugify(entityName);
+      if (!entitySlug || entitySlug === 'knowledge-doc') continue;
+
+      const existing = this.findWikiDocumentBySlug(workspaceId, entitySlug);
+      if (existing) {
+        // Entity page already exists — create a related link if not present
+        this.createLinkIfMissing(parentDocumentId, existing.id, entityName, 'related', workspaceId);
+        continue;
+      }
+
+      try {
+        const prompt = buildEntityPagePrompt(entityName, [contextSnippet], null);
+        const output = await this.wikiCompilationClient.compile(prompt);
+        if (!output.markdown.trim()) continue;
+
+        const finalSlug = dedupeSlug(entitySlug, (candidate) => this.findWikiDocumentBySlug(workspaceId, candidate) !== null);
+        const entityDoc = this.upsertDocument({
+          workspaceId,
+          knowledgeRootId,
+          sourceId,
+          kind: 'wiki_article',
+          title: entityName,
+          slug: finalSlug,
+          relativePath: resolveWikiRelativePath(finalSlug),
+          revisionHash: null,
+          status: 'draft_only',
+        });
+
+        // Create draft revision with LLM output
+        const entityMarkdown = normalizeMarkdown(output.markdown);
+        const entityRevisionId = randomUUID();
+        const now = nowIso();
+        this.db.prepare(
+          `INSERT INTO knowledge_document_revisions (
+            id, document_id, workspace_id, status, source_kind, source_id, proposed_title, proposed_markdown,
+            diff_preview, base_revision_hash, created_at, applied_at
+          ) VALUES (?, ?, ?, 'draft', 'entity_auto', ?, ?, ?, ?, NULL, ?, NULL)`,
+        ).run(entityRevisionId, entityDoc.id, workspaceId, sourceId, entityName, entityMarkdown, buildPlaybookDiff(null, entityMarkdown), now);
+
+        // Link entity page to parent article
+        this.createLinkIfMissing(parentDocumentId, entityDoc.id, entityName, 'related', workspaceId);
+
+        // Resolve any previously unresolved links that match this entity slug
+        this.resolveUnresolvedLinks(workspaceId, finalSlug, entityDoc.id);
+
+        this.log?.info('generated entity page', { entityName, slug: finalSlug, parentDocumentId });
+      } catch (error) {
+        this.log?.warn('entity page generation failed', {
+          entityName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private createLinkIfMissing(
+    sourceDocumentId: string,
+    targetDocumentId: string,
+    targetLabel: string,
+    linkKind: KnowledgeLinkKind,
+    workspaceId: string,
+  ): void {
+    const existing = this.db.prepare(
+      'SELECT id FROM knowledge_links WHERE workspace_id = ? AND source_document_id = ? AND target_document_id = ? AND link_kind = ?',
+    ).get(workspaceId, sourceDocumentId, targetDocumentId, linkKind) as { id: string } | undefined;
+    if (existing) return;
+
+    const now = nowIso();
+    this.db.prepare(
+      `INSERT INTO knowledge_links (
+        id, workspace_id, source_document_id, target_document_id, target_slug, target_label, link_kind, link_status,
+        confidence, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'active', 1.0, ?, ?)`,
+    ).run(randomUUID(), workspaceId, sourceDocumentId, targetDocumentId, targetLabel, linkKind, now, now);
+  }
+
+  private resolveUnresolvedLinks(workspaceId: string, slug: string, documentId: string): void {
+    this.db.prepare(
+      `UPDATE knowledge_links
+       SET target_document_id = ?, link_status = 'active', updated_at = ?
+       WHERE workspace_id = ? AND target_slug = ? AND link_status = 'unresolved'`,
+    ).run(documentId, nowIso(), workspaceId, slug);
+  }
+
+  async regenerateIndex(workspaceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeDocumentRecord> {
+    const rows = this.db.prepare(
+      "SELECT * FROM knowledge_documents WHERE workspace_id = ? AND kind = 'wiki_article' AND slug != '_index' AND slug != '_log' ORDER BY title ASC",
+    ).all(workspaceId) as KnowledgeDocumentRow[];
+
+    const documents = rows.map((row) => {
+      const doc = this.mapDocumentRow(row);
+      const markdown = this.readDocumentSearchMarkdown(doc);
+      const summary = summarizeMarkdown(markdown).split('\n')[0] ?? '';
+      return { slug: doc.slug, title: doc.title, summary };
+    });
+
+    let indexMarkdown: string;
+    if (this.wikiCompilationClient?.enabled && documents.length > 0) {
+      try {
+        const prompt = buildIndexPrompt(documents);
+        const output = await this.wikiCompilationClient.compile(prompt);
+        indexMarkdown = output.markdown.trim() ? normalizeMarkdown(output.markdown) : this.buildIndexTemplate(documents);
+      } catch {
+        indexMarkdown = this.buildIndexTemplate(documents);
+      }
+    } else {
+      indexMarkdown = this.buildIndexTemplate(documents);
+    }
+
+    const knowledgeRoot = this.ensureKnowledgeRoot(workspaceId);
+
+    const indexDoc = this.upsertDocument({
+      workspaceId,
+      knowledgeRootId: knowledgeRoot.id,
+      sourceId: null,
+      kind: 'wiki_article',
+      title: 'Wiki Index',
+      slug: '_index',
+      relativePath: resolveWikiRelativePath('_index'),
+      revisionHash: buildRevisionHash(indexMarkdown),
+      status: 'active',
+    });
+
+    const absolutePath = this.resolveDocumentAbsolutePath(indexDoc);
+    writeUtf8(absolutePath, indexMarkdown);
+    this.syncDocumentSearchEntry(indexDoc, indexMarkdown);
+    this.writeMutationReceipt({
+      kind: 'knowledge_index_regenerate',
+      component: 'knowledge',
+      status: 'succeeded',
+      summary: `Regenerated knowledge index for ${workspaceId}`,
+      details: `Regenerated ${indexDoc.relativePath} with ${documents.length} indexed wiki pages.`,
+      actorRole,
+      workspaceId,
+      metadata: {
+        documentId: indexDoc.id,
+        pageCount: String(documents.length),
+      },
+    });
+
+    return indexDoc;
+  }
+
+  private buildIndexTemplate(documents: Array<{ slug: string; title: string; summary: string }>): string {
+    const lines = [
+      '# Wiki Index',
+      '',
+      `${documents.length} pages in this knowledge base.`,
+      '',
+    ];
+    for (const doc of documents) {
+      lines.push(`- [[${doc.slug}]] — ${doc.summary || doc.title}`);
+    }
+    lines.push('');
+    return normalizeMarkdown(lines.join('\n'));
+  }
+
+  appendToLog(workspaceId: string, operation: KnowledgeLogOperation, summary: string, relatedDocumentIds: string[] = []): void {
+    const knowledgeRoot = this.ensureKnowledgeRoot(workspaceId);
+
+    const logDoc = this.upsertDocument({
+      workspaceId,
+      knowledgeRootId: knowledgeRoot.id,
+      sourceId: null,
+      kind: 'wiki_article',
+      title: 'Wiki Log',
+      slug: '_log',
+      relativePath: resolveWikiRelativePath('_log'),
+      revisionHash: null,
+      status: 'active',
+    });
+
+    const absolutePath = this.resolveDocumentAbsolutePath(logDoc);
+    const now = new Date().toISOString();
+    const entry = `[${operation.toUpperCase()} ${now}] ${summary}${relatedDocumentIds.length ? ` (docs: ${relatedDocumentIds.join(', ')})` : ''}\n`;
+    ensureDir(dirname(absolutePath));
+    try {
+      writeFileSync(absolutePath, '# Wiki Log\n\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') {
+        throw error;
+      }
+    }
+    appendFileSync(absolutePath, entry, { encoding: 'utf8' });
+
+    // Update revision hash and search index
+    const updated = readFileSync(absolutePath, 'utf8');
+    const hash = buildRevisionHash(updated);
+    this.db.prepare('UPDATE knowledge_documents SET revision_hash = ?, updated_at = ? WHERE id = ?').run(hash, nowIso(), logDoc.id);
+    this.syncDocumentSearchEntry(logDoc, updated);
+  }
+
+  async runLint(workspaceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeLintReport> {
+    const now = nowIso();
+
+    // Structural checks
+    const orphanRows = this.db.prepare(
+      `SELECT d.id FROM knowledge_documents d
+       WHERE d.workspace_id = ? AND d.kind = 'wiki_article'
+         AND d.slug NOT IN ('_index', '_log')
+         AND NOT EXISTS (
+           SELECT 1 FROM knowledge_links l
+           WHERE l.target_document_id = d.id AND l.workspace_id = ?
+         )`,
+    ).all(workspaceId, workspaceId) as Array<{ id: string }>;
+
+    const unresolvedCount = this.scalarCount(
+      "SELECT COUNT(*) AS c FROM knowledge_links WHERE workspace_id = ? AND link_status = 'unresolved'",
+      workspaceId,
+    );
+
+    const staleDays = 30;
+    const staleThreshold = new Date(Date.now() - staleDays * 24 * 60 * 60 * 1000).toISOString();
+    const staleCount = this.scalarCount(
+      `SELECT COUNT(*) AS c FROM knowledge_documents
+       WHERE workspace_id = ? AND kind = 'wiki_article' AND slug NOT IN ('_index', '_log')
+         AND updated_at < ?`,
+      workspaceId,
+      staleThreshold,
+    );
+
+    const findings: KnowledgeLintReport['findings'] = [];
+
+    for (const row of orphanRows) {
+      findings.push({
+        kind: 'orphan_page',
+        severity: 'warning',
+        message: `Wiki page ${row.id} has no incoming links`,
+        documentIds: [row.id],
+        confidence: 1,
+      });
+    }
+
+    if (unresolvedCount > 0) {
+      findings.push({
+        kind: 'unresolved_link',
+        severity: 'warning',
+        message: `${unresolvedCount} unresolved wiki links`,
+        documentIds: [],
+        confidence: 1,
+      });
+    }
+
+    if (staleCount > 0) {
+      findings.push({
+        kind: 'stale_page',
+        severity: 'info',
+        message: `${staleCount} wiki pages not updated in ${staleDays}+ days`,
+        documentIds: [],
+        confidence: 1,
+      });
+    }
+
+    const report: KnowledgeLintReport = KnowledgeLintReportSchema.parse({
+      findings,
+      orphanPages: orphanRows.length,
+      unresolvedLinks: unresolvedCount,
+      stalePages: staleCount,
+      contradictions: 0,
+      dataGaps: 0,
+      lintedAt: now,
+    });
+
+    this.writeMutationReceipt({
+      kind: 'knowledge_lint',
+      component: 'knowledge',
+      status: 'succeeded',
+      summary: `Linted knowledge workspace ${workspaceId}`,
+      details: `Linted knowledge pages and found ${findings.length} findings.`,
+      actorRole,
+      workspaceId,
+      metadata: {
+        findingCount: String(findings.length),
+        orphanPages: String(orphanRows.length),
+        unresolvedLinks: String(unresolvedCount),
+        stalePages: String(staleCount),
+      },
+    });
+    this.appendToLog(workspaceId, 'lint', `Lint completed: ${findings.length} findings`);
+
+    return report;
+  }
+
+  fileQueryAsWiki(
+    workspaceId: string,
+    title: string,
+    answerText: string,
+    sourceDocumentIds: string[] = [],
+    actorRole: AuthRole = 'operator',
+  ): KnowledgeDocumentRecord {
+    const normalizedTitle = title.trim();
+    const normalizedAnswer = answerText.trim();
+    if (!normalizedTitle) {
+      throw new RuntimeValidationError('Knowledge file-query title is required');
+    }
+    if (!normalizedAnswer) {
+      throw new RuntimeValidationError('Knowledge file-query answer text is required');
+    }
+    if (normalizedTitle.length > MAX_FILE_QUERY_TITLE_CHARS) {
+      throw new RuntimeValidationError(`Knowledge file-query title exceeds ${MAX_FILE_QUERY_TITLE_CHARS} characters`);
+    }
+    if (normalizedAnswer.length > MAX_FILE_QUERY_ANSWER_CHARS) {
+      throw new RuntimeValidationError(`Knowledge file-query answer text exceeds ${MAX_FILE_QUERY_ANSWER_CHARS} characters`);
+    }
+
+    const knowledgeRoot = this.ensureKnowledgeRoot(workspaceId);
+    const slug = dedupeSlug(slugify(normalizedTitle), (candidate) => this.findDocumentBySlug(workspaceId, candidate) !== null);
+    const dateStamp = nowIso().slice(0, 10);
+
+    const markdown = normalizeMarkdown([
+      `# ${normalizedTitle}`,
+      '',
+      normalizedAnswer,
+      '',
+      sourceDocumentIds.length ? `## Sources\n${sourceDocumentIds.map((id) => `- ${id}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n'));
+
+    const doc = this.upsertDocument({
+      workspaceId,
+      knowledgeRootId: knowledgeRoot.id,
+      sourceId: null,
+      kind: 'output_note',
+      title: normalizedTitle,
+      slug,
+      relativePath: resolveOutputRelativePath(slug, dateStamp),
+      revisionHash: buildRevisionHash(markdown),
+      status: 'active',
+    });
+
+    const absolutePath = this.resolveDocumentAbsolutePath(doc);
+    writeUtf8(absolutePath, markdown);
+    this.syncDocumentSearchEntry(doc, markdown);
+    this.refreshLinksForDocument(doc.id, markdown, workspaceId);
+
+    // Create citation links to source documents
+    for (const sourceDocId of sourceDocumentIds) {
+      this.createLinkIfMissing(doc.id, sourceDocId, 'source', 'citation', workspaceId);
+    }
+
+    this.writeMutationReceipt({
+      kind: 'knowledge_query_filed',
+      component: 'knowledge',
+      status: 'succeeded',
+      summary: `Filed knowledge query "${normalizedTitle}"`,
+      details: `Filed a knowledge output note at ${doc.relativePath}.`,
+      actorRole,
+      workspaceId,
+      metadata: {
+        documentId: doc.id,
+        sourceCount: String(sourceDocumentIds.length),
+      },
+    });
+    this.appendToLog(workspaceId, 'query_filed', `Filed query answer as "${normalizedTitle}"`, [doc.id]);
+
+    return doc;
+  }
+
+  syncAllWikiDocuments(workspaceId: string, actorRole: AuthRole = 'operator'): number {
+    const rows = this.db.prepare(
+      "SELECT * FROM knowledge_documents WHERE workspace_id = ? AND kind IN ('wiki_article', 'output_note') AND status = 'active'",
+    ).all(workspaceId) as KnowledgeDocumentRow[];
+
+    let synced = 0;
+    for (const row of rows) {
+      const doc = this.mapDocumentRow(row);
+      try {
+        const absolutePath = this.resolveDocumentAbsolutePath(doc);
+        const markdown = this.readDocumentSearchMarkdown(doc);
+        if (markdown.trim()) {
+          writeUtf8(absolutePath, markdown);
+          synced += 1;
+        }
+      } catch (error) {
+        this.log?.warn('wiki sync failed for document', {
+          documentId: doc.id,
+          slug: doc.slug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    this.writeMutationReceipt({
+      kind: 'knowledge_sync',
+      component: 'knowledge',
+      status: 'succeeded',
+      summary: `Synced knowledge documents for ${workspaceId}`,
+      details: `Synced ${synced} active wiki/output knowledge documents to disk.`,
+      actorRole,
+      workspaceId,
+      metadata: {
+        synced: String(synced),
+      },
+    });
+    return synced;
+  }
+
+  private async compileWikiMarkdown(source: KnowledgeSourceRecord, normalizedMarkdown: string, currentMarkdown: string): Promise<{ proposedMarkdown: string; compileOutput: WikiCompileOutput | null }> {
+    if (this.wikiCompilationClient?.enabled) {
+      try {
+        const prompt = currentMarkdown.trim()
+          ? buildSourceUpdatePrompt(source, normalizedMarkdown, currentMarkdown)
+          : buildSourceCompilePrompt(source, normalizedMarkdown, currentMarkdown);
+        const output = await this.wikiCompilationClient.compile(prompt);
+        if (output.markdown.trim()) {
+          return { proposedMarkdown: normalizeMarkdown(output.markdown), compileOutput: output };
+        }
+        this.log?.warn('wiki compilation returned empty markdown, falling back to template', { sourceId: source.id });
+      } catch (error) {
+        this.log?.warn('wiki compilation failed, falling back to template', {
+          sourceId: source.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { proposedMarkdown: this.compileWikiMarkdownTemplate(source, normalizedMarkdown, currentMarkdown), compileOutput: null };
+  }
+
+  private compileWikiMarkdownTemplate(source: KnowledgeSourceRecord, normalizedMarkdown: string, currentMarkdown: string): string {
     const sourceLink = `[Normalized source](../raw/${source.id}/normalized/source.md)`;
     const summary = summarizeMarkdown(normalizedMarkdown);
     if (currentMarkdown.trim()) {
@@ -2190,8 +2663,7 @@ export class KnowledgeService {
   }
 
   private resolveDocumentAbsolutePath(document: KnowledgeDocumentRecord): string {
-    const root = this.listFileRoots(document.workspaceId).find((candidate) => candidate.id === document.knowledgeRootId);
-    if (!root) throw new RuntimeNotFoundError(`Knowledge root ${document.knowledgeRootId} not found`);
+    const root = this.resolveKnowledgeRoot(document.workspaceId, document.knowledgeRootId);
     return resolve(root.rootPath, document.relativePath);
   }
 

@@ -271,6 +271,9 @@ import {
   type KnowledgeDocumentKind,
   KnowledgeDocumentListResponseSchema,
   type KnowledgeDocumentRecord,
+  KnowledgeDocumentRecordSchema,
+  type KnowledgeLintReport,
+  KnowledgeLintReportSchema,
   type KnowledgeDocumentRevisionApplyInput,
   type KnowledgeRevisionApplyResult,
   KnowledgeRevisionApplyResponseSchema,
@@ -293,6 +296,8 @@ import {
   KnowledgeSourceListResponseSchema,
   type KnowledgeSourceRecord,
   KnowledgeSourceRecordSchema,
+  type KnowledgeSyncResponse,
+  KnowledgeSyncResponseSchema,
   type FinanceImportRecord,
   FinanceImportRecordSchema,
   type FinanceTransactionRecord,
@@ -1397,6 +1402,22 @@ export class PopeyeApiClient {
 
   async getKnowledgeAudit(workspaceId: string): Promise<KnowledgeAuditReport> {
     return this.get(`/v1/knowledge/audit${this.buildQuery({ workspaceId })}`, KnowledgeAuditReportSchema);
+  }
+
+  async runKnowledgeLint(workspaceId: string): Promise<KnowledgeLintReport> {
+    return this.post('/v1/knowledge/lint', { workspaceId }, KnowledgeLintReportSchema);
+  }
+
+  async regenerateKnowledgeIndex(workspaceId: string): Promise<KnowledgeDocumentRecord> {
+    return this.post('/v1/knowledge/index/regenerate', { workspaceId }, KnowledgeDocumentRecordSchema);
+  }
+
+  async fileQueryAsKnowledge(workspaceId: string, title: string, answerText: string, sourceDocumentIds: string[] = []): Promise<KnowledgeDocumentRecord> {
+    return this.post('/v1/knowledge/file-query', { workspaceId, title, answerText, sourceDocumentIds }, KnowledgeDocumentRecordSchema);
+  }
+
+  async syncKnowledgeWikiDocuments(workspaceId: string): Promise<KnowledgeSyncResponse> {
+    return this.post('/v1/knowledge/sync', { workspaceId }, KnowledgeSyncResponseSchema);
   }
 
   // --- File roots ---

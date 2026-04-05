@@ -206,6 +206,19 @@ export const KnowledgeImportInputSchema = z.object({
 });
 export type KnowledgeImportInput = z.infer<typeof KnowledgeImportInputSchema>;
 
+export const KnowledgeFileQueryInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  title: z.string().min(1).max(200),
+  answerText: z.string().min(1).max(100_000),
+  sourceDocumentIds: z.array(z.string().min(1)).max(100).default([]),
+});
+export type KnowledgeFileQueryInput = z.infer<typeof KnowledgeFileQueryInputSchema>;
+
+export const KnowledgeWorkspaceMutationInputSchema = z.object({
+  workspaceId: z.string().min(1),
+});
+export type KnowledgeWorkspaceMutationInput = z.infer<typeof KnowledgeWorkspaceMutationInputSchema>;
+
 export const KnowledgeDocumentRevisionProposalInputSchema = z.object({
   title: z.string().min(1).optional(),
   markdownText: z.string().min(1),
@@ -238,6 +251,10 @@ export const KnowledgeSourceListResponseSchema = z.array(KnowledgeSourceRecordSc
 export const KnowledgeDocumentListResponseSchema = z.array(KnowledgeDocumentRecordSchema);
 export const KnowledgeDocumentRevisionListResponseSchema = z.array(KnowledgeDocumentRevisionRecordSchema);
 export const KnowledgeCompileJobListResponseSchema = z.array(KnowledgeCompileJobRecordSchema);
+export const KnowledgeSyncResponseSchema = z.object({
+  synced: z.number().int().nonnegative(),
+});
+export type KnowledgeSyncResponse = z.infer<typeof KnowledgeSyncResponseSchema>;
 
 export const KnowledgeConverterAvailabilitySchema = z.object({
   id: KnowledgeConverterIdSchema,
@@ -376,3 +393,41 @@ export const KnowledgeRevisionRejectResultSchema = z.object({
   receipt: MutationReceiptRecordSchema,
 });
 export type KnowledgeRevisionRejectResult = z.infer<typeof KnowledgeRevisionRejectResultSchema>;
+
+export const KnowledgeLogOperationSchema = z.enum([
+  'ingest',
+  'reingest',
+  'query_filed',
+  'lint',
+  'entity_created',
+  'revision_applied',
+]);
+export type KnowledgeLogOperation = z.infer<typeof KnowledgeLogOperationSchema>;
+
+export const KnowledgeLogEntrySchema = z.object({
+  timestamp: z.string(),
+  operation: KnowledgeLogOperationSchema,
+  summary: z.string(),
+  relatedDocumentIds: z.array(z.string()).default([]),
+});
+export type KnowledgeLogEntry = z.infer<typeof KnowledgeLogEntrySchema>;
+
+export const KnowledgeLintFindingSchema = z.object({
+  kind: z.enum(['orphan_page', 'unresolved_link', 'stale_page', 'contradiction', 'data_gap', 'missing_entity']),
+  severity: z.enum(['info', 'warning', 'error']),
+  message: z.string(),
+  documentIds: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1).default(1),
+});
+export type KnowledgeLintFinding = z.infer<typeof KnowledgeLintFindingSchema>;
+
+export const KnowledgeLintReportSchema = z.object({
+  findings: z.array(KnowledgeLintFindingSchema),
+  orphanPages: z.number().int().nonnegative(),
+  unresolvedLinks: z.number().int().nonnegative(),
+  stalePages: z.number().int().nonnegative(),
+  contradictions: z.number().int().nonnegative(),
+  dataGaps: z.number().int().nonnegative(),
+  lintedAt: z.string(),
+});
+export type KnowledgeLintReport = z.infer<typeof KnowledgeLintReportSchema>;

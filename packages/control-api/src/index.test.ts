@@ -1060,6 +1060,106 @@ describe('control api', () => {
     await app.close();
   });
 
+  it('bounds knowledge file-query input size through the control API', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-file-query-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-file-query-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const oversizedTitle = await app.inject({
+      method: 'POST',
+      url: '/v1/knowledge/file-query',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        title: 'x'.repeat(201),
+        answerText: 'short answer',
+      },
+    });
+    expect(oversizedTitle.statusCode).toBe(400);
+    expect(oversizedTitle.json()).toMatchObject({ error: 'invalid_knowledge_file_query' });
+
+    const oversizedAnswer = await app.inject({
+      method: 'POST',
+      url: '/v1/knowledge/file-query',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+        title: 'Reasonable title',
+        answerText: 'x'.repeat(100_001),
+      },
+    });
+    expect(oversizedAnswer.statusCode).toBe(400);
+    expect(oversizedAnswer.json()).toMatchObject({ error: 'invalid_knowledge_file_query' });
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('schema-validates the knowledge sync response payload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-sync-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-sync-workspace-'));
+    mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+    chmodSync(workspaceRoot, 0o700);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', rootPath: workspaceRoot, heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    (runtime as unknown as { syncKnowledgeWikiDocuments: () => number }).syncKnowledgeWikiDocuments = () => -1;
+    const app = await createControlApi({ runtime });
+    const csrf = issueCsrfToken(readAuthStore(authFile));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/knowledge/sync',
+      headers: {
+        authorization: `Bearer ${store.current.token}`,
+        'x-popeye-csrf': csrf,
+        'sec-fetch-site': 'same-origin',
+      },
+      payload: {
+        workspaceId: 'default',
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('returns knowledge converter readiness through the control API', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-knowledge-converters-'));
     chmodSync(dir, 0o700);

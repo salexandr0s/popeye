@@ -99,12 +99,14 @@ import {
   KnowledgeBetaRunCreateInputSchema,
   KnowledgeBetaRunDetailSchema,
   KnowledgeConverterAvailabilitySchema,
+  KnowledgeFileQueryInputSchema,
   KnowledgeImportInputSchema,
   KnowledgeImportResultSchema,
   KnowledgeRevisionApplyResultSchema,
   KnowledgeRevisionRejectResultSchema,
   KnowledgeSourceRecordSchema,
   KnowledgeSourceSnapshotRecordSchema,
+  KnowledgeSyncResponseSchema,
   MutationReceiptKindSchema,
 } from '@popeye/contracts';
 
@@ -265,8 +267,12 @@ describe('Schema parse tests', () => {
       expect(source.status).toBe('compiled');
       expect(root.kind).toBe('knowledge_base');
       expect(MutationReceiptKindSchema.parse('knowledge_import')).toBe('knowledge_import');
+      expect(MutationReceiptKindSchema.parse('knowledge_index_regenerate')).toBe('knowledge_index_regenerate');
+      expect(MutationReceiptKindSchema.parse('knowledge_lint')).toBe('knowledge_lint');
+      expect(MutationReceiptKindSchema.parse('knowledge_query_filed')).toBe('knowledge_query_filed');
       expect(MutationReceiptKindSchema.parse('knowledge_revision_apply')).toBe('knowledge_revision_apply');
       expect(MutationReceiptKindSchema.parse('knowledge_revision_reject')).toBe('knowledge_revision_reject');
+      expect(MutationReceiptKindSchema.parse('knowledge_sync')).toBe('knowledge_sync');
       expect(MutationReceiptKindSchema.parse('provider_auth_update')).toBe('provider_auth_update');
     });
 
@@ -483,6 +489,28 @@ describe('Schema parse tests', () => {
       expect(snapshot.outcome).toBe('updated');
       expect(rejectResult.receipt.kind).toBe('knowledge_revision_reject');
       expect(audit.degradedSources).toBe(1);
+    });
+
+    it('parses knowledge file-query limits and sync responses', () => {
+      const fileQuery = KnowledgeFileQueryInputSchema.parse({
+        workspaceId: 'default',
+        title: 'Compiler answer',
+        answerText: 'SSA simplifies optimization passes.',
+        sourceDocumentIds: ['doc-1'],
+      });
+      const sync = KnowledgeSyncResponseSchema.parse({
+        synced: 2,
+      });
+
+      expect(fileQuery.sourceDocumentIds).toEqual(['doc-1']);
+      expect(sync.synced).toBe(2);
+      expect(() =>
+        KnowledgeFileQueryInputSchema.parse({
+          workspaceId: 'default',
+          title: 'x'.repeat(201),
+          answerText: 'hello',
+        }),
+      ).toThrow();
     });
 
     it('parses knowledge beta run payloads', () => {

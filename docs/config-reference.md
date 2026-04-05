@@ -90,6 +90,26 @@ Embedding provider configuration for vector-based memory search.
 
 ---
 
+## `knowledge`
+
+Knowledge-base configuration. Controls LLM-backed wiki compilation independently
+from the embeddings provider.
+
+### `knowledge.wikiCompilation`
+
+| Field | Type | Required | Default | Constraints | Description |
+|---|---|---|---|---|---|
+| `provider` | `"disabled" \| "openai"` | No | `"disabled"` | -- | Wiki-compilation provider. Set to `"openai"` to enable LLM-generated wiki/index drafts. |
+| `model` | `string` | No | `"gpt-4o-mini"` | Min length 1 | Model identifier for knowledge wiki compilation calls. |
+| `timeoutMs` | `integer` | No | `60000` | Must be positive | Timeout for one wiki compilation request in milliseconds. |
+
+When `knowledge.wikiCompilation` is omitted, Popeye preserves the legacy
+behavior of enabling wiki compilation automatically when
+`embeddings.provider === "openai"`. Set `knowledge.wikiCompilation.provider`
+explicitly to control compilation independently of embeddings.
+
+---
+
 ## `engine`
 
 Engine adapter configuration. Controls how Pi (or a fake engine) is invoked.

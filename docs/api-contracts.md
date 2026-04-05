@@ -180,6 +180,10 @@ Current control API routes with response schema references (all schemas from `@p
 | POST | `/v1/knowledge/links` | `KnowledgeLinkResponseSchema` (req: `KnowledgeLinkCreateInputSchema`) |
 | GET | `/v1/knowledge/compile-jobs` | `KnowledgeCompileJobListResponseSchema` |
 | GET | `/v1/knowledge/audit` | `KnowledgeAuditResponseSchema` |
+| POST | `/v1/knowledge/lint` | `KnowledgeLintResponseSchema` (req: `KnowledgeWorkspaceMutationInputSchema`) |
+| POST | `/v1/knowledge/index/regenerate` | `KnowledgeDocumentResponseSchema` (req: `KnowledgeWorkspaceMutationInputSchema`) |
+| POST | `/v1/knowledge/file-query` | `KnowledgeDocumentResponseSchema` (req: `KnowledgeFileQueryInputSchema`) |
+| POST | `/v1/knowledge/sync` | `KnowledgeSyncResponseApiSchema` (req: `KnowledgeWorkspaceMutationInputSchema`) |
 
 `KnowledgeConverterAvailabilitySchema` includes converter `status`,
 `provenance`, `details`, `version`, `lastCheckedAt`, `installHint`, `usedFor`,

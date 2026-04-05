@@ -427,6 +427,10 @@ first knowledge import.
 | POST | `/v1/knowledge/links` | Create one explicit document link. Body uses `KnowledgeLinkCreateInputSchema`. |
 | GET | `/v1/knowledge/compile-jobs` | List recent knowledge compile jobs. Query params: `workspaceId`. |
 | GET | `/v1/knowledge/audit` | Read the knowledge audit summary for one workspace. Query params: `workspaceId`. Includes degraded-source, warning-source, and asset-localization-failure counts. |
+| POST | `/v1/knowledge/lint` | Run the knowledge lint pass for one workspace. Body uses `{ workspaceId }`. Persists a mutation receipt. |
+| POST | `/v1/knowledge/index/regenerate` | Regenerate `wiki/_index.md` for one workspace. Body uses `{ workspaceId }`. Persists a mutation receipt. |
+| POST | `/v1/knowledge/file-query` | File an answer into `outputs/YYYY-MM-DD/*.md` as an `output_note`. Body uses `KnowledgeFileQueryInputSchema` (`title` max 200 chars, `answerText` max 100000 chars). Persists a mutation receipt. |
+| POST | `/v1/knowledge/sync` | Rewrite active `wiki_article` and `output_note` documents from the indexed markdown back to disk. Body uses `{ workspaceId }`. Returns `{ synced }` and persists a mutation receipt. |
 
 Knowledge imports are now logical-source aware. Reimporting the same URL/path/title
 reuses the same source record, stores immutable snapshots under `raw/<source-id>/snapshots/`,
