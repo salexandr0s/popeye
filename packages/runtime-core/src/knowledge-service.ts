@@ -3,13 +3,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
@@ -86,6 +89,10 @@ const execFileAsync = promisify(execFile);
 const MAX_SUMMARY_CHARS = 1600;
 const MAX_FILE_QUERY_TITLE_CHARS = 200;
 const MAX_FILE_QUERY_ANSWER_CHARS = 100_000;
+const KNOWLEDGE_FILE_LOCK_TIMEOUT_MS = 2_000;
+const KNOWLEDGE_FILE_LOCK_RETRY_MS = 20;
+const KNOWLEDGE_FILE_LOCK_STALE_MS = 30_000;
+const LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 type KnowledgeCommandResolution = {
   command: string;
@@ -260,6 +267,68 @@ function writeUtf8(path: string, content: string): void {
 function writeBinary(path: string, content: Buffer): void {
   ensureDir(dirname(path));
   writeFileSync(path, content, { mode: 0o600 });
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(LOCK_SLEEP_BUFFER, 0, 0, ms);
+}
+
+function isFsErrorCode(error: unknown, code: string): error is Error & { code?: string } {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+function releaseExclusiveFileLock(lockFd: number, lockPath: string): void {
+  closeSync(lockFd);
+  try {
+    unlinkSync(lockPath);
+  } catch (error) {
+    if (!isFsErrorCode(error, 'ENOENT')) {
+      throw error;
+    }
+  }
+}
+
+function withExclusiveFileLock<T>(path: string, label: string, fn: () => T): T {
+  const lockPath = `${path}.lock`;
+  ensureDir(dirname(lockPath));
+  const deadline = Date.now() + KNOWLEDGE_FILE_LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      const lockFd = openSync(lockPath, 'wx', 0o600);
+      let result!: T;
+      try {
+        result = fn();
+      } catch (error) {
+        releaseExclusiveFileLock(lockFd, lockPath);
+        throw error;
+      }
+      releaseExclusiveFileLock(lockFd, lockPath);
+      return result;
+    } catch (error) {
+      if (!isFsErrorCode(error, 'EEXIST')) {
+        throw error;
+      }
+
+      try {
+        const lockAgeMs = Date.now() - statSync(lockPath).mtimeMs;
+        if (lockAgeMs >= KNOWLEDGE_FILE_LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch (lockError) {
+        if (!isFsErrorCode(lockError, 'ENOENT')) {
+          throw lockError;
+        }
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        throw new RuntimeConflictError(`${label} is already being updated: ${path}`);
+      }
+      sleepSync(KNOWLEDGE_FILE_LOCK_RETRY_MS);
+    }
+  }
 }
 
 function normalizeMarkdown(markdown: string): string {
@@ -2254,21 +2323,18 @@ export class KnowledgeService {
     const absolutePath = this.resolveDocumentAbsolutePath(logDoc);
     const now = new Date().toISOString();
     const entry = `[${operation.toUpperCase()} ${now}] ${summary}${relatedDocumentIds.length ? ` (docs: ${relatedDocumentIds.join(', ')})` : ''}\n`;
-    ensureDir(dirname(absolutePath));
-    try {
-      writeFileSync(absolutePath, '# Wiki Log\n\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    } catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') {
-        throw error;
+    withExclusiveFileLock(absolutePath, 'Knowledge log', () => {
+      ensureDir(dirname(absolutePath));
+      if (!existsSync(absolutePath)) {
+        writeFileSync(absolutePath, '# Wiki Log\n\n', { encoding: 'utf8', mode: 0o600, flag: 'w' });
       }
-    }
-    appendFileSync(absolutePath, entry, { encoding: 'utf8' });
+      appendFileSync(absolutePath, entry, { encoding: 'utf8' });
 
-    // Update revision hash and search index
-    const updated = readFileSync(absolutePath, 'utf8');
-    const hash = buildRevisionHash(updated);
-    this.db.prepare('UPDATE knowledge_documents SET revision_hash = ?, updated_at = ? WHERE id = ?').run(hash, nowIso(), logDoc.id);
-    this.syncDocumentSearchEntry(logDoc, updated);
+      const updated = readFileSync(absolutePath, 'utf8');
+      const hash = buildRevisionHash(updated);
+      this.db.prepare('UPDATE knowledge_documents SET revision_hash = ?, updated_at = ? WHERE id = ?').run(hash, nowIso(), logDoc.id);
+      this.syncDocumentSearchEntry(logDoc, updated);
+    });
   }
 
   async runLint(workspaceId: string, actorRole: AuthRole = 'operator'): Promise<KnowledgeLintReport> {

@@ -1,6 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -224,6 +225,62 @@ describe('KnowledgeService integration', () => {
     expect(logMarkdown).toContain('First lint pass');
     expect(logMarkdown).toContain('Second lint pass');
 
+    await runtime.close();
+  });
+
+  it('waits for an in-flight log writer lock before appending', async () => {
+    const { runtime, workspaceRoot } = createKnowledgeRuntime();
+    const customRootPath = join(workspaceRoot, 'kb-root');
+    mkdirSync(customRootPath, { recursive: true, mode: 0o700 });
+    runtime.registerFileRoot({
+      workspaceId: 'default',
+      label: 'KB Root',
+      rootPath: customRootPath,
+      kind: 'knowledge_base',
+      permission: 'index_and_derive',
+      filePatterns: ['**/*.md'],
+      excludePatterns: [],
+      maxFileSizeBytes: 1_048_576,
+    });
+
+    const knowledgeService = getKnowledgeService(runtime);
+    const logPath = join(customRootPath, 'wiki', '_log.md');
+    const lockPath = `${logPath}.lock`;
+    mkdirSync(join(customRootPath, 'wiki'), { recursive: true, mode: 0o700 });
+    writeFileSync(lockPath, 'locked', { encoding: 'utf8', mode: 0o600 });
+
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require('node:worker_threads');
+        const { unlinkSync } = require('node:fs');
+        setTimeout(() => {
+          unlinkSync(workerData.lockPath);
+          parentPort.postMessage('released');
+        }, workerData.delayMs);
+      `,
+      {
+        eval: true,
+        workerData: { lockPath, delayMs: 80 },
+      },
+    );
+
+    const releasePromise = new Promise<string>((resolve, reject) => {
+      worker.once('message', (message) => resolve(String(message)));
+      worker.once('error', reject);
+    });
+
+    const startedAt = Date.now();
+    knowledgeService.appendToLog('default', 'lint', 'Blocked until lock released');
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(await releasePromise).toBe('released');
+    expect(elapsedMs).toBeGreaterThanOrEqual(50);
+    expect(readFileSync(logPath, 'utf8')).toContain('Blocked until lock released');
+
+    await worker.terminate();
+    if (existsSync(lockPath)) {
+      unlinkSync(lockPath);
+    }
     await runtime.close();
   });
 });
