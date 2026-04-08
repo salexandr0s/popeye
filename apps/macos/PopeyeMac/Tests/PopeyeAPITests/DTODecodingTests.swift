@@ -481,6 +481,27 @@ struct DTODecodingTests {
         #expect(digest.pendingCount == 14)
     }
 
+    @Test("Decode Todo reconcile result DTO")
+    func decodeTodoReconcileResultDTO() throws {
+        let data = Data("""
+        {
+          "accountId": "todo-acct-1",
+          "added": 3,
+          "updated": 5,
+          "removed": 1,
+          "errors": []
+        }
+        """.utf8)
+
+        let result = try decoder.decode(TodoReconcileResultDTO.self, from: data)
+
+        #expect(result.accountId == "todo-acct-1")
+        #expect(result.added == 3)
+        #expect(result.updated == 5)
+        #expect(result.removed == 1)
+        #expect(result.errors.isEmpty)
+    }
+
     @Test("Decode people fixtures")
     func decodePeopleDTOs() throws {
         let personData = try loadFixture("person")

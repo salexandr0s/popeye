@@ -215,7 +215,7 @@ v1 should use Setup + Connections together:
 
 ## Domain vertical endpoints
 
-These surfaces now have an initial native foothold. The current native implementation keeps email/calendar/todos read-first, while People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
+These surfaces now have an initial native foothold. Email and Calendar remain read-first, while Todos, People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
 
 ### Home
 
@@ -264,8 +264,9 @@ These surfaces now have an initial native foothold. The current native implement
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `GET /v1/todos/projects` | Native Todos split view with account/project filters, digest, and item detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; complete/reprioritize/reschedule stay later | `DomainDigestService` |
-| `POST /v1/todos/accounts`, `POST /v1/todos/items`, `POST /v1/todos/sync`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/items/:id/reprioritize`, `POST /v1/todos/items/:id/reschedule`, `POST /v1/todos/items/:id/move`, `POST /v1/todos/reconcile` | Later todo actions | Write | `operator` | Refetch after success | Defer | Broad, task-oriented admin UI; not native v1 | `DomainDigestService` |
+| `GET /v1/todos/accounts`, `GET /v1/todos/items`, `GET /v1/todos/items/:id`, `GET /v1/todos/search`, `GET /v1/todos/digest`, `GET /v1/todos/projects` | Native Todos split view with account/project filters, digest, item detail, and mutation context | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a narrow native task surface with digest plus selected-item action state | `DomainDigestService` |
+| `POST /v1/todos/sync`, `POST /v1/todos/items/:id/complete`, `POST /v1/todos/items/:id/reprioritize`, `POST /v1/todos/items/:id/reschedule`, `POST /v1/todos/items/:id/move`, `POST /v1/todos/reconcile` | Native Todos toolbar and selected-item actions | Write | `operator` | Refetch after success | Ready with wrapper | Shipped as targeted native mutations for pending items and account operations; broader CRUD still stays out of scope | `DomainDigestService` |
+| `POST /v1/todos/accounts`, `POST /v1/todos/items` | Later todo administration | Write | `operator` | Refetch after success | Defer | Account registration and broad item creation remain web/CLI-first | `DomainDigestService` |
 
 ### People
 
@@ -295,7 +296,7 @@ These surfaces now have an initial native foothold. The current native implement
 
 ### Native recommendation
 
-These domain surfaces now exist as native complements to the operator-console core. Email/calendar/todos remain read-first, while People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
+These domain surfaces now exist as native complements to the operator-console core. Email and Calendar remain read-first, while Todos, People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
 
 ---
 
@@ -323,7 +324,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
 | Playbooks / Proposals | Playbooks | **Shipped, authoring + review** | Native now covers canonical records, stale signals, proposal draft/patch authoring, suggested-patch seeding, review, apply, activate, and retire |
 | People | People | **Shipped, targeted mutations** | Relationship browsing, suggestions, activity, merge, split, and identity repair now fit the native split view |
-| Todos | Todos | **Shipped, read-first** | Native planning view without broad CRUD |
+| Todos | Todos | **Shipped, targeted mutations** | Native now supports sync/reconcile plus complete, reprioritize, reschedule, and move for selected pending items |
 | Finance | Finance | **Shipped, targeted mutations** | High-trust digest/search plus vault/import/transaction actions work natively |
 | Medical | Medical | **Shipped, targeted mutations** | High-trust appointment/medication/document/import actions work natively |
 | Files | Files | **Shipped, targeted mutations** | Workspace-scoped document browsing, root management, and write-intent review fit native well |
@@ -347,7 +348,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | Upgrade verify/rollback | CLI | Missing | Keep CLI-first |
 | Files admin/write-intent review | Web inspector / CLI | Native support shipped | Keep deeper file-authoring and generic markdown editing out of Files |
 | GitHub review triage | Web inspector | Native support shipped | Keep higher-risk GitHub actions web-first |
-| Playbook proposal authoring | Web inspector / CLI | Partially missing | Keep draft/patch authoring web-first while native focuses on review/apply |
+| Playbook proposal authoring | Web inspector / CLI | Native support shipped | Keep broader playbook admin and deletion workflows web-first |
 | People merge/split/identity repair | Web inspector / CLI | Native support shipped | Keep bulk repair/admin tooling web-first |
 | Finance/medical imports | CLI / web | Native support shipped | Keep broader admin/import forensics and batch tooling web-first |
 | Memory maintenance/import | Web inspector / CLI | Missing | Defer |

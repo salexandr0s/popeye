@@ -30,4 +30,24 @@ public struct TodosDomainService: Sendable {
     public func sync(accountId: String) async throws -> TodoSyncResultDTO {
         try await client.syncTodoAccount(accountId: accountId)
     }
+
+    public func reconcile(accountId: String) async throws -> TodoReconcileResultDTO {
+        try await client.reconcileTodoAccount(accountId: accountId)
+    }
+
+    public func complete(id: String) async throws -> TodoItemDTO {
+        try await client.completeTodo(id: id)
+    }
+
+    public func reprioritize(id: String, priority: Int) async throws -> TodoItemDTO {
+        try await client.reprioritizeTodo(id: id, input: TodoReprioritizeInput(priority: priority))
+    }
+
+    public func reschedule(id: String, dueDate: String, dueTime: String?) async throws -> TodoItemDTO {
+        try await client.rescheduleTodo(id: id, input: TodoRescheduleInput(dueDate: dueDate, dueTime: dueTime))
+    }
+
+    public func move(id: String, projectName: String) async throws -> TodoItemDTO {
+        try await client.moveTodo(id: id, input: TodoMoveInput(projectName: projectName))
+    }
 }

@@ -62,3 +62,37 @@ public struct TodoSyncResultDTO: Codable, Sendable, Equatable {
     public let todosUpdated: Int
     public let errors: [String]
 }
+
+public struct TodoReprioritizeInput: Encodable, Sendable, Equatable {
+    public let priority: Int
+
+    public init(priority: Int) {
+        self.priority = priority
+    }
+}
+
+public struct TodoRescheduleInput: Encodable, Sendable, Equatable {
+    public let dueDate: String
+    public let dueTime: String?
+
+    public init(dueDate: String, dueTime: String? = nil) {
+        self.dueDate = dueDate
+        self.dueTime = dueTime
+    }
+}
+
+public struct TodoMoveInput: Encodable, Sendable, Equatable {
+    public let projectName: String
+
+    public init(projectName: String) {
+        self.projectName = projectName
+    }
+}
+
+public struct TodoReconcileResultDTO: Codable, Sendable, Equatable {
+    public let accountId: String
+    public let added: Int
+    public let updated: Int
+    public let removed: Int
+    public let errors: [String]
+}

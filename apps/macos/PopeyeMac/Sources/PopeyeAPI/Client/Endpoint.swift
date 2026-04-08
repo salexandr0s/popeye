@@ -557,6 +557,11 @@ public extension Endpoint {
         let items = accountId.map { [URLQueryItem(name: "accountId", value: $0)] } ?? []
         return Endpoint(path: "/v1/todos/digest", queryItems: items)
     }
+    static func completeTodo(id: String) -> Endpoint { Endpoint(path: "/v1/todos/items/\(id)/complete", method: .post) }
+    static func reprioritizeTodo(id: String) -> Endpoint { Endpoint(path: "/v1/todos/items/\(id)/reprioritize", method: .post) }
+    static func rescheduleTodo(id: String) -> Endpoint { Endpoint(path: "/v1/todos/items/\(id)/reschedule", method: .post) }
+    static func moveTodo(id: String) -> Endpoint { Endpoint(path: "/v1/todos/items/\(id)/move", method: .post) }
+    static let reconcileTodos = Endpoint(path: "/v1/todos/reconcile", method: .post)
 
     static let people = Endpoint(path: "/v1/people")
     static func peopleSearch(query: String, limit: Int = 20) -> Endpoint {

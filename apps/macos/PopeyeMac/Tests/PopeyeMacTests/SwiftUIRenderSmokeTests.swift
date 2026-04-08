@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+@testable import PopeyeAPI
 @testable import PopeyeMac
 
 @MainActor
@@ -45,6 +46,130 @@ struct SwiftUIRenderSmokeTests {
             NavigationStack {
                 UsageSecurityView(store: store)
             }
+        )
+    }
+
+    @Test("Todos view renders with actionable item detail")
+    func rendersTodosView() async {
+        let appModel = FeaturePreviewFixtures.previewAppModel()
+        appModel.connectionState = .connected
+        appModel.sseConnected = true
+        let store = TodosStore(
+            dependencies: .init(
+                loadAccounts: {
+                    [TodoAccountDTO(
+                        id: "todo-acct-1",
+                        connectionId: "conn-todo-1",
+                        providerKind: "google_tasks",
+                        displayName: "Personal Tasks",
+                        syncCursorSince: nil,
+                        lastSyncAt: "2026-04-08T09:00:00Z",
+                        todoCount: 2,
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-08T09:00:00Z"
+                    )]
+                },
+                loadItems: { _, _, _ in
+                    [TodoItemDTO(
+                        id: "todo-1",
+                        accountId: "todo-acct-1",
+                        externalId: "ext-1",
+                        title: "Review inbox triage",
+                        description: "Check new PRs and route follow-ups.",
+                        priority: 2,
+                        status: "pending",
+                        dueDate: "2026-04-10",
+                        dueTime: "09:30",
+                        labels: ["today"],
+                        projectId: "inbox",
+                        projectName: "Inbox",
+                        parentId: nil,
+                        completedAt: nil,
+                        createdAtExternal: "2026-04-01T08:00:00Z",
+                        updatedAtExternal: "2026-04-08T09:00:00Z",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-08T09:00:00Z"
+                    )]
+                },
+                loadItem: { _ in
+                    TodoItemDTO(
+                        id: "todo-1",
+                        accountId: "todo-acct-1",
+                        externalId: "ext-1",
+                        title: "Review inbox triage",
+                        description: "Check new PRs and route follow-ups.",
+                        priority: 2,
+                        status: "pending",
+                        dueDate: "2026-04-10",
+                        dueTime: "09:30",
+                        labels: ["today"],
+                        projectId: "inbox",
+                        projectName: "Inbox",
+                        parentId: nil,
+                        completedAt: nil,
+                        createdAtExternal: "2026-04-01T08:00:00Z",
+                        updatedAtExternal: "2026-04-08T09:00:00Z",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-08T09:00:00Z"
+                    )
+                },
+                loadProjects: { _ in
+                    [
+                        TodoProjectDTO(
+                            id: "project-inbox",
+                            accountId: "todo-acct-1",
+                            externalId: "ext-inbox",
+                            name: "Inbox",
+                            color: "#448AFF",
+                            todoCount: 1,
+                            createdAt: "2026-04-01T08:00:00Z",
+                            updatedAt: "2026-04-08T09:00:00Z"
+                        ),
+                        TodoProjectDTO(
+                            id: "project-today",
+                            accountId: "todo-acct-1",
+                            externalId: "ext-today",
+                            name: "Today",
+                            color: "#66BB6A",
+                            todoCount: 1,
+                            createdAt: "2026-04-01T08:00:00Z",
+                            updatedAt: "2026-04-08T09:00:00Z"
+                        )
+                    ]
+                },
+                loadDigest: { _ in
+                    TodoDigestDTO(
+                        id: "digest-1",
+                        accountId: "todo-acct-1",
+                        workspaceId: "default",
+                        date: "2026-04-08",
+                        pendingCount: 2,
+                        overdueCount: 0,
+                        completedTodayCount: 1,
+                        summaryMarkdown: "Two tasks need attention today.",
+                        generatedAt: "2026-04-08T09:00:00Z"
+                    )
+                },
+                syncAccount: { accountId in
+                    TodoSyncResultDTO(accountId: accountId, todosSynced: 2, todosUpdated: 1, errors: [])
+                },
+                reconcileAccount: { accountId in
+                    TodoReconcileResultDTO(accountId: accountId, added: 1, updated: 1, removed: 0, errors: [])
+                },
+                completeItem: { _ in fatalError("unused in render smoke") },
+                reprioritizeItem: { _, _ in fatalError("unused in render smoke") },
+                rescheduleItem: { _, _, _ in fatalError("unused in render smoke") },
+                moveItem: { _, _ in fatalError("unused in render smoke") },
+                emitInvalidation: { _ in }
+            )
+        )
+        await store.load()
+
+        assertRenders(
+            NavigationStack {
+                TodosView(store: store)
+            }
+            .environment(appModel)
         )
     }
 

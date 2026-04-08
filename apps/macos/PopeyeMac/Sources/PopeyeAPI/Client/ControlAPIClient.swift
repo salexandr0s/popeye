@@ -809,6 +809,26 @@ public actor ControlAPIClient {
         try await post(.syncTodos, body: ["accountId": accountId])
     }
 
+    public func completeTodo(id: String) async throws -> TodoItemDTO {
+        try await post(.completeTodo(id: id), body: [String: String]())
+    }
+
+    public func reprioritizeTodo(id: String, input: TodoReprioritizeInput) async throws -> TodoItemDTO {
+        try await post(.reprioritizeTodo(id: id), body: input)
+    }
+
+    public func rescheduleTodo(id: String, input: TodoRescheduleInput) async throws -> TodoItemDTO {
+        try await post(.rescheduleTodo(id: id), body: input)
+    }
+
+    public func moveTodo(id: String, input: TodoMoveInput) async throws -> TodoItemDTO {
+        try await post(.moveTodo(id: id), body: input)
+    }
+
+    public func reconcileTodoAccount(accountId: String) async throws -> TodoReconcileResultDTO {
+        try await post(.reconcileTodos, body: ["accountId": accountId])
+    }
+
     public func listPeople() async throws -> [PersonDTO] {
         try await get(.people)
     }

@@ -256,6 +256,11 @@ struct ServiceTests {
     let todoItems = Endpoint.todoItems(accountId: "acct-todo-1", project: "Inbox", limit: 75)
     let todoProjects = Endpoint.todoProjects(accountId: "acct-todo-1")
     let todoDigest = Endpoint.todoDigest(accountId: "acct-todo-1")
+    let todoComplete = Endpoint.completeTodo(id: "todo-1")
+    let todoReprioritize = Endpoint.reprioritizeTodo(id: "todo-1")
+    let todoReschedule = Endpoint.rescheduleTodo(id: "todo-1")
+    let todoMove = Endpoint.moveTodo(id: "todo-1")
+    let todoReconcile = Endpoint.reconcileTodos
 
     #expect(emailThreads.path == "/v1/email/threads")
     #expect(emailSync.path == "/v1/email/sync")
@@ -289,6 +294,16 @@ struct ServiceTests {
     #expect(todoProjects.path == "/v1/todos/projects")
     #expect(todoProjects.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-todo-1")))
     #expect(todoDigest.path == "/v1/todos/digest")
+    #expect(todoComplete.path == "/v1/todos/items/todo-1/complete")
+    #expect(todoComplete.method == .post)
+    #expect(todoReprioritize.path == "/v1/todos/items/todo-1/reprioritize")
+    #expect(todoReprioritize.method == .post)
+    #expect(todoReschedule.path == "/v1/todos/items/todo-1/reschedule")
+    #expect(todoReschedule.method == .post)
+    #expect(todoMove.path == "/v1/todos/items/todo-1/move")
+    #expect(todoMove.method == .post)
+    #expect(todoReconcile.path == "/v1/todos/reconcile")
+    #expect(todoReconcile.method == .post)
   }
 
   @Test("People and files endpoints encode filters")
