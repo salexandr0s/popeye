@@ -21,6 +21,7 @@ final class AppStoreRegistry {
     private var brainStore: BrainStore?
     private var memoryStore: MemoryStore?
     private var knowledgeStore: KnowledgeStore?
+    private var playbooksStore: PlaybooksStore?
     private var agentProfilesStore: AgentProfilesStore?
     private var instructionPreviewStore: InstructionPreviewStore?
     private var automationStore: AutomationStore?
@@ -30,6 +31,7 @@ final class AppStoreRegistry {
     private var todosStore: TodosStore?
     private var peopleStore: PeopleStore?
     private var filesStore: FilesStore?
+    private var githubStore: GithubStore?
     private var financeStore: FinanceStore?
     private var medicalStore: MedicalStore?
     private var telegramStore: TelegramStore?
@@ -152,6 +154,14 @@ final class AppStoreRegistry {
         return store
     }
 
+    func playbooks() -> PlaybooksStore {
+        if let playbooksStore { return playbooksStore }
+        let store = PlaybooksStore(client: connectedClient())
+        store.workspaceID = workspaceIDProvider()
+        playbooksStore = store
+        return store
+    }
+
     func agentProfiles() -> AgentProfilesStore {
         if let agentProfilesStore { return agentProfilesStore }
         let store = AgentProfilesStore(client: connectedClient())
@@ -222,6 +232,14 @@ final class AppStoreRegistry {
         return store
     }
 
+    func github() -> GithubStore {
+        if let githubStore { return githubStore }
+        let store = GithubStore(client: connectedClient())
+        store.workspaceID = workspaceIDProvider()
+        githubStore = store
+        return store
+    }
+
     func finance() -> FinanceStore {
         if let financeStore { return financeStore }
         let store = FinanceStore(client: connectedClient())
@@ -248,6 +266,7 @@ final class AppStoreRegistry {
         brainStore?.workspaceID = selectedWorkspaceID
         memoryStore?.workspaceID = selectedWorkspaceID
         knowledgeStore?.workspaceID = selectedWorkspaceID
+        playbooksStore?.workspaceID = selectedWorkspaceID
         instructionPreviewStore?.adoptWorkspaceScope(selectedWorkspaceID)
         automationStore?.workspaceID = selectedWorkspaceID
         homeStore?.workspaceID = selectedWorkspaceID
@@ -255,6 +274,7 @@ final class AppStoreRegistry {
         calendarStore?.workspaceID = selectedWorkspaceID
         todosStore?.workspaceID = selectedWorkspaceID
         filesStore?.workspaceID = selectedWorkspaceID
+        githubStore?.workspaceID = selectedWorkspaceID
     }
 
     func reconfigurePollingStores() {
@@ -282,6 +302,7 @@ final class AppStoreRegistry {
         brainStore = nil
         memoryStore = nil
         knowledgeStore = nil
+        playbooksStore = nil
         agentProfilesStore = nil
         instructionPreviewStore = nil
         automationStore = nil
@@ -291,6 +312,7 @@ final class AppStoreRegistry {
         todosStore = nil
         peopleStore = nil
         filesStore = nil
+        githubStore = nil
         financeStore = nil
         medicalStore = nil
         telegramStore = nil

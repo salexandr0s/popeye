@@ -10,6 +10,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case brain
     case memory
     case knowledge
+    case playbooks
     case instructionPreview
     case agentProfiles
     case automations
@@ -18,6 +19,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
     case todos
     case people
     case files
+    case github
     case finance
     case medical
     case scheduler
@@ -42,6 +44,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .brain: "Overview"
         case .memory: "Memory"
         case .knowledge: "Knowledge"
+        case .playbooks: "Playbooks"
         case .instructionPreview: "Instructions"
         case .agentProfiles: "Agent Profiles"
         case .automations: "Automations"
@@ -50,6 +53,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .todos: "Todos"
         case .people: "People"
         case .files: "Files"
+        case .github: "GitHub"
         case .finance: "Finance"
         case .medical: "Medical"
         case .scheduler: "Scheduler"
@@ -74,6 +78,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .brain: "brain.head.profile"
         case .memory: "brain"
         case .knowledge: "point.3.connected.trianglepath.dotted"
+        case .playbooks: "books.vertical"
         case .instructionPreview: "doc.plaintext"
         case .agentProfiles: "person.2"
         case .automations: "bolt.badge.clock"
@@ -82,6 +87,7 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         case .todos: "checklist"
         case .people: "person.3"
         case .files: "folder"
+        case .github: "chevron.left.forwardslash.chevron.right"
         case .finance: "creditcard"
         case .medical: "cross.case"
         case .scheduler: "clock.arrow.2.circlepath"
@@ -99,9 +105,9 @@ enum AppRoute: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home, .dashboard, .commandCenter: .overview
         case .setup, .connections, .telegram: .setup
-        case .brain, .memory, .knowledge, .instructionPreview, .agentProfiles: .brain
+        case .brain, .memory, .knowledge, .playbooks, .instructionPreview, .agentProfiles: .brain
         case .automations: .automations
-        case .email, .calendar, .todos, .people, .files: .life
+        case .email, .calendar, .todos, .people, .files, .github: .life
         case .finance, .medical: .privateDomains
         case .scheduler, .usage, .runs, .jobs, .receipts, .interventions, .approvals, .usageSecurity: .system
         }

@@ -4,6 +4,7 @@ import PopeyeAPI
 struct BrainCompositionPane: View {
     let snapshot: BrainSnapshot
     let openInstructions: () -> Void
+    let openPlaybook: (AppliedPlaybookDTO) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
@@ -18,19 +19,26 @@ struct BrainCompositionPane: View {
             if !snapshot.playbooks.isEmpty {
                 InspectorSection(title: "Applied Playbooks") {
                     ForEach(snapshot.playbooks) { playbook in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(playbook.title)
-                                Text(playbook.id)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        Button {
+                            openPlaybook(playbook)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playbook.title)
+                                    Text(playbook.id)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                StatusBadge(state: playbook.scope)
                             }
-                            Spacer()
-                            StatusBadge(state: playbook.scope)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(playbook.title)
                         .accessibilityValue("\(playbook.scope.replacingOccurrences(of: "_", with: " ").capitalized) scope, \(playbook.id)")
+                        .accessibilityHint("Opens the related playbook")
                     }
                 }
             }

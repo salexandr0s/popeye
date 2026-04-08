@@ -1,5 +1,5 @@
 // Auto-generated from @popeye/contracts — do not edit
-// Generated: 2026-04-05
+// Generated: 2026-04-08
 import Foundation
 
 // MARK: - Enums
@@ -64,6 +64,37 @@ public enum RecallSourceKind: String, Codable, Sendable {
     case messageIngress = "message_ingress"
     case intervention = "intervention"
     case memory = "memory"
+}
+
+public enum PlaybookScope: String, Codable, Sendable {
+    case global = "global"
+    case workspace = "workspace"
+    case project = "project"
+}
+
+public enum PlaybookStatus: String, Codable, Sendable {
+    case draft = "draft"
+    case active = "active"
+    case retired = "retired"
+}
+
+public enum PlaybookProposalKind: String, Codable, Sendable {
+    case draft = "draft"
+    case patch = "patch"
+}
+
+public enum PlaybookProposalStatus: String, Codable, Sendable {
+    case drafting = "drafting"
+    case pendingReview = "pending_review"
+    case approved = "approved"
+    case rejected = "rejected"
+    case applied = "applied"
+}
+
+public enum PlaybookProposalSource: String, Codable, Sendable {
+    case operatorApi = "operator_api"
+    case runtimeTool = "runtime_tool"
+    case maintenanceJob = "maintenance_job"
 }
 
 public enum KnowledgeSourceType: String, Codable, Sendable {
@@ -412,6 +443,350 @@ public struct VaultRecord: Codable, Sendable {
     public let status: String
     public let createdAt: String
     public let lastAccessedAt: String
+}
+
+public struct GithubAccountRecord: Codable, Sendable {
+    public let id: String
+    public let connectionId: String
+    public let githubUsername: String
+    public let displayName: String
+    public let syncCursorSince: String
+    public let lastSyncAt: String
+    public let repoCount: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct GithubRepoRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let githubRepoId: String
+    public let owner: String
+    public let name: String
+    public let fullName: String
+    public let description: String
+    public let isPrivate: String
+    public let isFork: String
+    public let defaultBranch: String
+    public let language: String
+    public let starsCount: String
+    public let openIssuesCount: String
+    public let lastPushedAt: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct GithubPullRequestRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let repoId: String
+    public let githubPrNumber: String
+    public let title: String
+    public let bodyPreview: String
+    public let author: String
+    public let state: String
+    public let isDraft: String
+    public let reviewDecision: String
+    public let ciStatus: String
+    public let headBranch: String
+    public let baseBranch: String
+    public let additions: String
+    public let deletions: String
+    public let changedFiles: String
+    public let labels: String
+    public let requestedReviewers: String
+    public let createdAtGh: String
+    public let updatedAtGh: String
+    public let mergedAt: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct GithubIssueRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let repoId: String
+    public let githubIssueNumber: String
+    public let title: String
+    public let bodyPreview: String
+    public let author: String
+    public let state: String
+    public let labels: String
+    public let assignees: String
+    public let milestone: String
+    public let isAssignedToMe: String
+    public let isMentioned: String
+    public let createdAtGh: String
+    public let updatedAtGh: String
+    public let closedAt: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct GithubNotificationRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let githubNotificationId: String
+    public let repoFullName: String
+    public let subjectTitle: String
+    public let subjectType: String
+    public let reason: String
+    public let isUnread: String
+    public let updatedAtGh: String
+    public let createdAt: String
+    public let updatedAt: String
+}
+
+public struct GithubDigestRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let workspaceId: String
+    public let date: String
+    public let openPrsCount: String
+    public let reviewRequestsCount: String
+    public let assignedIssuesCount: String
+    public let unreadNotificationsCount: String
+    public let summaryMarkdown: String
+    public let generatedAt: String
+}
+
+public struct GithubSearchQuery: Codable, Sendable {
+    public let query: String
+    public let accountId: String
+    public let limit: String
+    public let entityType: String
+}
+
+public struct GithubSearchResult: Codable, Sendable {
+    public let entityType: String
+    public let entityId: String
+    public let repoFullName: String
+    public let number: String
+    public let title: String
+    public let author: String
+    public let state: String
+    public let updatedAt: String
+    public let score: String
+}
+
+public struct GithubSyncResult: Codable, Sendable {
+    public let accountId: String
+    public let reposSynced: String
+    public let prsSynced: String
+    public let issuesSynced: String
+    public let notificationsSynced: String
+    public let errors: String
+}
+
+public struct GithubCommentRecord: Codable, Sendable {
+    public let id: String
+    public let accountId: String
+    public let repoFullName: String
+    public let issueNumber: String
+    public let bodyPreview: String
+    public let htmlUrl: String
+    public let createdAt: String
+}
+
+public struct GithubCommentCreateInput: Codable, Sendable {
+    public let accountId: String
+    public let repoFullName: String
+    public let issueNumber: String
+    public let body: String
+}
+
+public struct GithubNotificationMarkReadInput: Codable, Sendable {
+    public let notificationId: String
+}
+
+public struct PlaybookEffectiveness: Codable, Sendable {
+    public let useCount30d: String
+    public let succeededRuns30d: String
+    public let failedRuns30d: String
+    public let intervenedRuns30d: String
+    public let successRate30d: String
+    public let failureRate30d: String
+    public let interventionRate30d: String
+    public let lastUsedAt: String
+    public let lastUpdatedAt: String
+}
+
+public struct PlaybookProposalEvidenceMetrics: Codable, Sendable {
+    public let useCount30d: String
+    public let failedRuns30d: String
+    public let interventions30d: String
+}
+
+public struct PlaybookProposalEvidence: Codable, Sendable {
+    public let runIds: String
+    public let interventionIds: String
+    public let lastProblemAt: String
+    public let metrics30d: String
+    public let suggestedPatchNote: String
+}
+
+public struct PlaybookFrontMatter: Codable, Sendable {
+    public let id: String
+    public let title: String
+    public let status: String
+    public let allowedProfileIds: String
+}
+
+public struct ResolvedPlaybook: Codable, Sendable {
+    public let recordId: String
+    public let id: String
+    public let title: String
+    public let status: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let path: String
+    public let body: String
+    public let contentHash: String
+    public let revisionHash: String
+    public let allowedProfileIds: String
+}
+
+public struct AppliedPlaybook: Codable, Sendable {
+    public let id: String
+    public let title: String
+    public let scope: String
+    public let revisionHash: String
+}
+
+public struct PlaybookRecord: Codable, Sendable {
+    public let recordId: String
+    public let playbookId: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let title: String
+    public let status: String
+    public let allowedProfileIds: String
+    public let filePath: String
+    public let currentRevisionHash: String
+    public let createdAt: String
+    public let updatedAt: String
+    public let effectiveness: String
+}
+
+public struct PlaybookSearchResult: Codable, Sendable {
+    public let recordId: String
+    public let playbookId: String
+    public let title: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let status: String
+    public let currentRevisionHash: String
+    public let allowedProfileIds: String
+    public let snippet: String
+    public let score: String
+}
+
+public struct PlaybookRecommendation: Codable, Sendable {
+    public let recordId: String
+    public let playbookId: String
+    public let title: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let currentRevisionHash: String
+    public let allowedProfileIds: String
+    public let snippet: String
+    public let score: String
+    public let reason: String
+}
+
+public struct PlaybookRevisionRecord: Codable, Sendable {
+    public let playbookRecordId: String
+    public let revisionHash: String
+    public let title: String
+    public let status: String
+    public let allowedProfileIds: String
+    public let filePath: String
+    public let contentHash: String
+    public let markdownText: String
+    public let createdAt: String
+    public let current: String
+}
+
+public struct PlaybookDetail: Codable, Sendable {
+    public let recordId: String
+    public let playbookId: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let title: String
+    public let status: String
+    public let allowedProfileIds: String
+    public let filePath: String
+    public let currentRevisionHash: String
+    public let createdAt: String
+    public let updatedAt: String
+    public let effectiveness: String
+    public let body: String
+    public let markdownText: String
+    public let indexedMemoryId: String
+}
+
+public struct PlaybookUsageRunRecord: Codable, Sendable {
+    public let runId: String
+    public let taskId: String
+    public let jobId: String
+    public let runState: String
+    public let startedAt: String
+    public let finishedAt: String
+    public let interventionCount: String
+    public let receiptId: String
+}
+
+public struct PlaybookStaleCandidate: Codable, Sendable {
+    public let recordId: String
+    public let title: String
+    public let scope: String
+    public let currentRevisionHash: String
+    public let lastUsedAt: String
+    public let useCount30d: String
+    public let failedRuns30d: String
+    public let interventions30d: String
+    public let lastProposalAt: String
+    public let indexedMemoryId: String
+    public let reasons: String
+}
+
+public struct PlaybookProposalRecord: Codable, Sendable {
+    public let id: String
+    public let kind: String
+    public let status: String
+    public let targetRecordId: String
+    public let baseRevisionHash: String
+    public let playbookId: String
+    public let scope: String
+    public let workspaceId: String
+    public let projectId: String
+    public let title: String
+    public let proposedStatus: String
+    public let allowedProfileIds: String
+    public let summary: String
+    public let body: String
+    public let markdownText: String
+    public let diffPreview: String
+    public let contentHash: String
+    public let revisionHash: String
+    public let scanVerdict: String
+    public let scanMatchedRules: String
+    public let sourceRunId: String
+    public let proposedBy: String
+    public let evidence: String
+    public let reviewedBy: String
+    public let reviewedAt: String
+    public let reviewNote: String
+    public let appliedRecordId: String
+    public let appliedRevisionHash: String
+    public let appliedAt: String
+    public let createdAt: String
+    public let updatedAt: String
 }
 
 public struct KnowledgeConverterAvailability: Codable, Sendable {

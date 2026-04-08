@@ -2,6 +2,7 @@ import SwiftUI
 import PopeyeAPI
 
 struct InstructionCompiledPreviewPane: View {
+    @Environment(AppModel.self) private var appModel
     let preview: InstructionPreviewDTO
 
     var body: some View {
@@ -30,7 +31,12 @@ struct InstructionCompiledPreviewPane: View {
                 InstructionPreviewWarningsSection(warnings: preview.warnings)
             }
             if preview.playbooks.isEmpty == false {
-                InstructionPreviewPlaybooksSection(playbooks: preview.playbooks)
+                InstructionPreviewPlaybooksSection(
+                    playbooks: preview.playbooks,
+                    openPlaybook: { playbook in
+                        appModel.navigateToAppliedPlaybook(id: playbook.id, scope: playbook.scope)
+                    }
+                )
             }
             InstructionPreviewSourcesSection(sources: preview.sources)
         }

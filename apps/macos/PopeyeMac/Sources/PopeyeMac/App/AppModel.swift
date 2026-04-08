@@ -150,6 +150,7 @@ final class AppModel {
     func brainStore() -> BrainStore { stores.brain() }
     func memoryStore() -> MemoryStore { stores.memory() }
     func knowledgeStore() -> KnowledgeStore { stores.knowledge() }
+    func playbooksStore() -> PlaybooksStore { stores.playbooks() }
     func agentProfilesStore() -> AgentProfilesStore { stores.agentProfiles() }
     func instructionPreviewStore() -> InstructionPreviewStore { stores.instructionPreview() }
     func automationStore() -> AutomationStore { stores.automations() }
@@ -159,6 +160,7 @@ final class AppModel {
     func todosStore() -> TodosStore { stores.todos() }
     func peopleStore() -> PeopleStore { stores.people() }
     func filesStore() -> FilesStore { stores.files() }
+    func githubStore() -> GithubStore { stores.github() }
     func financeStore() -> FinanceStore { stores.finance() }
     func medicalStore() -> MedicalStore { stores.medical() }
     func telegramStore() -> TelegramStore { stores.telegram() }
@@ -185,12 +187,14 @@ final class AppModel {
     func navigateToSetup() { navigate(to: .setup) }
     func navigateToBrain() { navigate(to: .brain) }
     func navigateToKnowledge() { navigate(to: .knowledge) }
+    func navigateToPlaybooks() { navigate(to: .playbooks) }
     func navigateToAutomations() { navigate(to: .automations) }
     func navigateToMail() { navigate(to: .email) }
     func navigateToCalendar() { navigate(to: .calendar) }
     func navigateToTodos() { navigate(to: .todos) }
     func navigateToPeople() { navigate(to: .people) }
     func navigateToFiles() { navigate(to: .files) }
+    func navigateToGithub() { navigate(to: .github) }
     func navigateToFinance() { navigate(to: .finance) }
     func navigateToMedical() { navigate(to: .medical) }
     func navigateToInstructions() { navigate(to: .instructionPreview) }
@@ -206,6 +210,20 @@ final class AppModel {
             store.selectedMemoryId = id
         }
         navigate(to: .memory)
+    }
+
+    func navigateToPlaybookRecord(id: String) {
+        navigate(to: .playbooks)
+        Task { @MainActor in
+            await playbooksStore().revealPlaybookRecord(id: id)
+        }
+    }
+
+    func navigateToAppliedPlaybook(id: String, scope: String) {
+        navigate(to: .playbooks)
+        Task { @MainActor in
+            await playbooksStore().revealAppliedPlaybook(id: id, scope: scope)
+        }
     }
 
     // MARK: - Connection

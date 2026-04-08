@@ -21,8 +21,8 @@ solid."
 
 ## Locked defaults
 
-- The primary GUI is the **web inspector**.
-- The native macOS app is **deferred** and does not block the polished bar.
+- The native macOS app is a **first-class polished-bar surface** and is the primary desktop shell.
+- The web inspector remains a **first-class companion operator surface**; it is not the only GUI.
 - Pi remains the engine boundary; Pi changes are allowed only when a stable
   engine hook is cleaner there than in runtime wrappers.
 - Restricted domains are **bounded** products, not general-purpose mutation
@@ -83,6 +83,9 @@ true.
 
 ### 4. Operator surfaces
 
+- The native macOS app includes first-class views for setup, connections,
+  home/dashboard, runtime investigation, knowledge, playbooks, GitHub, people,
+  files, finance, medical, approvals, and security.
 - The web inspector includes first-class views for connections, approvals,
   policies, playbooks, proposals, people, email, calendar, todos, GitHub,
   finance, medical, backups, upgrades, and security.

@@ -305,6 +305,140 @@ public extension Endpoint {
 // MARK: - Domain Endpoints
 
 public extension Endpoint {
+    static let githubAccounts = Endpoint(path: "/v1/github/accounts")
+    static func githubRepos(accountId: String? = nil, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/github/repos", queryItems: items)
+    }
+    static func githubPullRequests(
+        accountId: String? = nil,
+        state: String? = nil,
+        limit: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let state { items.append(URLQueryItem(name: "state", value: state)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/github/prs", queryItems: items)
+    }
+    static func githubPullRequest(id: String) -> Endpoint { Endpoint(path: "/v1/github/prs/\(id)") }
+    static func githubIssues(
+        accountId: String? = nil,
+        state: String? = nil,
+        assigned: Bool? = nil,
+        limit: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let state { items.append(URLQueryItem(name: "state", value: state)) }
+        if let assigned { items.append(URLQueryItem(name: "assigned", value: assigned ? "true" : "false")) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/github/issues", queryItems: items)
+    }
+    static func githubIssue(id: String) -> Endpoint { Endpoint(path: "/v1/github/issues/\(id)") }
+    static func githubNotifications(accountId: String? = nil, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/github/notifications", queryItems: items)
+    }
+    static func githubDigest(accountId: String? = nil) -> Endpoint {
+        let items = accountId.map { [URLQueryItem(name: "accountId", value: $0)] } ?? []
+        return Endpoint(path: "/v1/github/digest", queryItems: items)
+    }
+    static func githubSearch(
+        query: String,
+        accountId: String? = nil,
+        entityType: String? = nil,
+        limit: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = [URLQueryItem(name: "query", value: query)]
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let entityType { items.append(URLQueryItem(name: "entityType", value: entityType)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/github/search", queryItems: items)
+    }
+    static let syncGithub = Endpoint(path: "/v1/github/sync", method: .post)
+    static let createGithubComment = Endpoint(path: "/v1/github/comments", method: .post)
+    static let markGithubNotificationRead = Endpoint(
+        path: "/v1/github/notifications/mark-read", method: .post)
+
+    static func playbooks(
+        q: String? = nil,
+        scope: String? = nil,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        status: String? = nil,
+        limit: Int? = nil,
+        offset: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let q, !q.isEmpty { items.append(URLQueryItem(name: "q", value: q)) }
+        if let scope { items.append(URLQueryItem(name: "scope", value: scope)) }
+        if let workspaceId { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
+        if let projectId { items.append(URLQueryItem(name: "projectId", value: projectId)) }
+        if let status { items.append(URLQueryItem(name: "status", value: status)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return Endpoint(path: "/v1/playbooks", queryItems: items)
+    }
+    static func playbook(id: String) -> Endpoint { Endpoint(path: "/v1/playbooks/\(id)") }
+    static let playbookStaleCandidates = Endpoint(path: "/v1/playbooks/stale-candidates")
+    static func playbookRevisions(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbooks/\(id)/revisions")
+    }
+    static func playbookUsage(id: String, limit: Int? = nil, offset: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return Endpoint(path: "/v1/playbooks/\(id)/usage", queryItems: items)
+    }
+    static func playbookProposals(
+        q: String? = nil,
+        status: String? = nil,
+        kind: String? = nil,
+        scope: String? = nil,
+        sourceRunId: String? = nil,
+        targetRecordId: String? = nil,
+        sort: String? = nil,
+        limit: Int? = nil,
+        offset: Int? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let q, !q.isEmpty { items.append(URLQueryItem(name: "q", value: q)) }
+        if let status { items.append(URLQueryItem(name: "status", value: status)) }
+        if let kind { items.append(URLQueryItem(name: "kind", value: kind)) }
+        if let scope { items.append(URLQueryItem(name: "scope", value: scope)) }
+        if let sourceRunId { items.append(URLQueryItem(name: "sourceRunId", value: sourceRunId)) }
+        if let targetRecordId {
+            items.append(URLQueryItem(name: "targetRecordId", value: targetRecordId))
+        }
+        if let sort { items.append(URLQueryItem(name: "sort", value: sort)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        if let offset { items.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return Endpoint(path: "/v1/playbook-proposals", queryItems: items)
+    }
+    static func playbookProposal(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbook-proposals/\(id)")
+    }
+    static func reviewPlaybookProposal(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbook-proposals/\(id)/review", method: .post)
+    }
+    static func submitPlaybookProposalForReview(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbook-proposals/\(id)/submit-review", method: .post)
+    }
+    static func applyPlaybookProposal(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbook-proposals/\(id)/apply", method: .post)
+    }
+    static func activatePlaybook(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbooks/\(id)/activate", method: .post)
+    }
+    static func retirePlaybook(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbooks/\(id)/retire", method: .post)
+    }
+
     static let emailAccounts = Endpoint(path: "/v1/email/accounts")
     static func emailThreads(accountId: String? = nil, limit: Int? = nil, unreadOnly: Bool? = nil) -> Endpoint {
         var items: [URLQueryItem] = []

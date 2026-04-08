@@ -44,7 +44,10 @@ struct BrainView: View {
                 case .composition:
                     BrainCompositionPane(
                         snapshot: store.snapshot,
-                        openInstructions: appModel.navigateToInstructions
+                        openInstructions: appModel.navigateToInstructions,
+                        openPlaybook: { playbook in
+                            appModel.navigateToAppliedPlaybook(id: playbook.id, scope: playbook.scope)
+                        }
                     )
                 }
             }

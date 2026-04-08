@@ -24,6 +24,8 @@ struct AppRouteDestinationView: View {
             MemoryView(store: appModel.memoryStore())
         case .knowledge:
             KnowledgeView(store: appModel.knowledgeStore())
+        case .playbooks:
+            PlaybooksView(store: appModel.playbooksStore())
         case .instructionPreview:
             InstructionPreviewView(store: appModel.instructionPreviewStore())
         case .agentProfiles:
@@ -40,6 +42,8 @@ struct AppRouteDestinationView: View {
             PeopleView(store: appModel.peopleStore())
         case .files:
             FilesView(store: appModel.filesStore())
+        case .github:
+            GithubView(store: appModel.githubStore())
         case .finance:
             FinanceView(store: appModel.financeStore())
         case .medical:

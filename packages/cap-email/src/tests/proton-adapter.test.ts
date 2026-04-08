@@ -50,7 +50,9 @@ function createMockClient(messages: Array<{
     }),
   };
 
-  MockImapFlow.mockImplementation(() => client as unknown as ImapFlow);
+  MockImapFlow.mockImplementation(function mockImapFlowInstance() {
+    return client as unknown as ImapFlow;
+  });
   return client;
 }
 

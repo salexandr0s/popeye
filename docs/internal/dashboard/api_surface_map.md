@@ -41,7 +41,9 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | `MemoryService` | memory search/audit/list/detail/maintenance | later |
 | `PeopleService` | people search/detail/activity/suggestions | people browser in current native slice |
 | `FilesService` | file roots/search/documents/write intents | files browser in current native slice |
-| `DomainDigestService` | email/calendar/github/todos read-mostly digest/search surfaces | email/calendar/todos in current native slice |
+| `DomainDigestService` | email/calendar/todos read-mostly digest/search surfaces | email/calendar/todos in current native slice |
+| `GithubService` | GitHub notifications, PRs, issues, repos, digest, search, and low-risk actions | GitHub in current native slice |
+| `PlaybooksService` | playbook list/detail, proposal review/apply flows, and stale-candidate repair review | playbooks in current native slice |
 | `FinanceService` | finance vaults/imports/digest/search/documents/transactions | finance in current native slice |
 | `MedicalService` | medical vaults/imports/digest/search/documents/appointments/medications | medical in current native slice |
 
@@ -246,8 +248,16 @@ These surfaces now have an initial native foothold. The current native implement
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/github/accounts`, `GET /v1/github/repos`, `GET /v1/github/prs`, `GET /v1/github/prs/:id`, `GET /v1/github/issues`, `GET /v1/github/issues/:id`, `GET /v1/github/notifications`, `GET /v1/github/search`, `GET /v1/github/digest` | Later GitHub digest/search screen | Read | `operator` | Poll on screen | Ready with wrapper | Rich and useful, but not first native priority | `DomainDigestService` |
-| `POST /v1/github/sync`, `POST /v1/github/comments`, `POST /v1/github/notifications/mark-read` | Later GitHub action flows | Write | `operator` | Refetch after success | Defer | Web-first | `DomainDigestService` |
+| `GET /v1/github/accounts`, `GET /v1/github/repos`, `GET /v1/github/prs`, `GET /v1/github/prs/:id`, `GET /v1/github/issues`, `GET /v1/github/issues/:id`, `GET /v1/github/notifications`, `GET /v1/github/search`, `GET /v1/github/digest` | Native GitHub split view with notifications, PRs, issues, repos, digest, and unified search | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a native review/triage surface | `GithubService` |
+| `POST /v1/github/sync`, `POST /v1/github/comments`, `POST /v1/github/notifications/mark-read` | Native GitHub low-risk actions | Write | `operator` | Refetch after success | Ready with wrapper | Scoped intentionally to sync, comment, and mark-read | `GithubService` |
+
+### Playbooks
+
+| Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /v1/playbooks`, `GET /v1/playbooks/:id`, `GET /v1/playbooks/:id/revisions`, `GET /v1/playbooks/:id/usage`, `GET /v1/playbooks/stale-candidates` | Native Playbooks split view with canonical records, stale-repair signals, revisions, and usage drilldowns | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a native review/inspection surface | `PlaybooksService` |
+| `GET /v1/playbook-proposals`, `GET /v1/playbook-proposals/:id` | Native proposal review queue and detail | Read | `operator` | Poll on screen | Ready with wrapper | Supports review/apply workflows without adding native authoring yet | `PlaybooksService` |
+| `POST /v1/playbook-proposals/:id/review`, `POST /v1/playbook-proposals/:id/submit-review`, `POST /v1/playbook-proposals/:id/apply`, `POST /v1/playbooks/:id/activate`, `POST /v1/playbooks/:id/retire` | Native playbook review/apply lifecycle | Write | `operator` | Refetch after success | Ready with wrapper | Scoped to review/apply/activate/retire; authoring remains web-first | `PlaybooksService` |
 
 ### Todos
 
@@ -309,7 +319,8 @@ These domain surfaces now exist as native complements to the operator-console co
 | Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
 | Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
 | Calendar | Calendar | **Shipped, read-first** | Same |
-| GitHub | GitHub | **Defer** | Same |
+| GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
+| Playbooks / Proposals | Playbooks | **Shipped, review-first** | Native now covers canonical records, stale signals, proposal review, apply, activate, and retire |
 | People | People | **Shipped, targeted mutations** | Relationship browsing, suggestions, activity, merge, split, and identity repair now fit the native split view |
 | Todos | Todos | **Shipped, read-first** | Native planning view without broad CRUD |
 | Finance | Finance | **Shipped, targeted mutations** | High-trust digest/search plus vault/import/transaction actions work natively |
@@ -334,6 +345,8 @@ These domain surfaces now exist as native complements to the operator-console co
 | Daemon install/start/stop/status | CLI / installer | Missing | Keep CLI-first unless explicit API appears |
 | Upgrade verify/rollback | CLI | Missing | Keep CLI-first |
 | Files admin/write-intent review | Web inspector / CLI | Native support shipped | Keep deeper file-authoring and generic markdown editing out of Files |
+| GitHub review triage | Web inspector | Native support shipped | Keep higher-risk GitHub actions web-first |
+| Playbook proposal authoring | Web inspector / CLI | Partially missing | Keep draft/patch authoring web-first while native focuses on review/apply |
 | People merge/split/identity repair | Web inspector / CLI | Native support shipped | Keep bulk repair/admin tooling web-first |
 | Finance/medical imports | CLI / web | Native support shipped | Keep broader admin/import forensics and batch tooling web-first |
 | Memory maintenance/import | Web inspector / CLI | Missing | Defer |
@@ -349,12 +362,14 @@ These domain surfaces now exist as native complements to the operator-console co
 - Command Center
 - Setup
 - Brain
+- Playbooks
 - Automations
 - Mail
 - Calendar
 - Todos
 - People
 - Files
+- GitHub
 - Finance
 - Medical
 - Runs
@@ -365,13 +380,10 @@ These domain surfaces now exist as native complements to the operator-console co
 - Usage & Security
 - Connections overview (read-only / narrow)
 
-### In native later, likely read-only first
-
-- GitHub digest/search
-
 ### Remain web-first or CLI-first initially
 
 - policy authoring
+- playbook proposal authoring and patch drafting
 - broad files authoring beyond roots + write-intent review
 - daemon lifecycle management
 - upgrades/migrations

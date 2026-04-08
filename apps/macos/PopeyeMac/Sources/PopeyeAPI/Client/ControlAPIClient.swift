@@ -478,6 +478,176 @@ public actor ControlAPIClient {
         try await get(.knowledgeAudit(workspaceId: workspaceId))
     }
 
+    public func listGithubAccounts() async throws -> [GithubAccountDTO] {
+        try await get(.githubAccounts)
+    }
+
+    public func listGithubRepos(accountId: String? = nil, limit: Int = 50) async throws
+        -> [GithubRepoDTO]
+    {
+        try await get(.githubRepos(accountId: accountId, limit: limit))
+    }
+
+    public func listGithubPullRequests(
+        accountId: String? = nil,
+        state: String? = nil,
+        limit: Int = 50
+    ) async throws -> [GithubPullRequestDTO] {
+        try await get(.githubPullRequests(accountId: accountId, state: state, limit: limit))
+    }
+
+    public func getGithubPullRequest(id: String) async throws -> GithubPullRequestDTO {
+        try await get(.githubPullRequest(id: id))
+    }
+
+    public func listGithubIssues(
+        accountId: String? = nil,
+        state: String? = nil,
+        assigned: Bool? = nil,
+        limit: Int = 50
+    ) async throws -> [GithubIssueDTO] {
+        try await get(
+            .githubIssues(accountId: accountId, state: state, assigned: assigned, limit: limit))
+    }
+
+    public func getGithubIssue(id: String) async throws -> GithubIssueDTO {
+        try await get(.githubIssue(id: id))
+    }
+
+    public func listGithubNotifications(accountId: String? = nil, limit: Int = 50) async throws
+        -> [GithubNotificationDTO]
+    {
+        try await get(.githubNotifications(accountId: accountId, limit: limit))
+    }
+
+    public func githubDigest(accountId: String) async throws -> GithubDigestDTO? {
+        try? await get(.githubDigest(accountId: accountId))
+    }
+
+    public func searchGithub(
+        query: String,
+        accountId: String,
+        entityType: String? = nil,
+        limit: Int = 20
+    ) async throws -> GithubSearchResponseDTO {
+        try await get(
+            .githubSearch(query: query, accountId: accountId, entityType: entityType, limit: limit)
+        )
+    }
+
+    public func syncGithubAccount(accountId: String) async throws -> GithubSyncResultDTO {
+        try await post(.syncGithub, body: ["accountId": accountId])
+    }
+
+    public func createGithubComment(input: GithubCommentCreateInput) async throws
+        -> GithubCommentDTO
+    {
+        try await post(.createGithubComment, body: input)
+    }
+
+    public func markGithubNotificationRead(input: GithubNotificationMarkReadInput) async throws
+        -> GithubNotificationDTO
+    {
+        try await post(.markGithubNotificationRead, body: input)
+    }
+
+    public func listPlaybooks(
+        q: String? = nil,
+        scope: String? = nil,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        status: String? = nil,
+        limit: Int = 25,
+        offset: Int = 0
+    ) async throws -> [PlaybookRecordDTO] {
+        try await get(
+            .playbooks(
+                q: q,
+                scope: scope,
+                workspaceId: workspaceId,
+                projectId: projectId,
+                status: status,
+                limit: limit,
+                offset: offset))
+    }
+
+    public func getPlaybook(id: String) async throws -> PlaybookDetailDTO {
+        try await get(.playbook(id: id))
+    }
+
+    public func listPlaybookStaleCandidates() async throws -> [PlaybookStaleCandidateDTO] {
+        try await get(.playbookStaleCandidates)
+    }
+
+    public func listPlaybookRevisions(id: String) async throws -> [PlaybookRevisionDTO] {
+        try await get(.playbookRevisions(id: id))
+    }
+
+    public func listPlaybookUsage(id: String, limit: Int = 10, offset: Int = 0) async throws
+        -> [PlaybookUsageRunDTO]
+    {
+        try await get(.playbookUsage(id: id, limit: limit, offset: offset))
+    }
+
+    public func listPlaybookProposals(
+        q: String? = nil,
+        status: String? = nil,
+        kind: String? = nil,
+        scope: String? = nil,
+        sourceRunId: String? = nil,
+        targetRecordId: String? = nil,
+        sort: String? = nil,
+        limit: Int = 25,
+        offset: Int = 0
+    ) async throws -> [PlaybookProposalDTO] {
+        try await get(
+            .playbookProposals(
+                q: q,
+                status: status,
+                kind: kind,
+                scope: scope,
+                sourceRunId: sourceRunId,
+                targetRecordId: targetRecordId,
+                sort: sort,
+                limit: limit,
+                offset: offset))
+    }
+
+    public func getPlaybookProposal(id: String) async throws -> PlaybookProposalDTO {
+        try await get(.playbookProposal(id: id))
+    }
+
+    public func reviewPlaybookProposal(id: String, input: PlaybookProposalReviewInput) async throws
+        -> PlaybookProposalDTO
+    {
+        try await post(.reviewPlaybookProposal(id: id), body: input)
+    }
+
+    public func submitPlaybookProposalForReview(
+        id: String,
+        input: PlaybookProposalSubmitReviewInput
+    ) async throws -> PlaybookProposalDTO {
+        try await post(.submitPlaybookProposalForReview(id: id), body: input)
+    }
+
+    public func applyPlaybookProposal(id: String, input: PlaybookProposalApplyInput) async throws
+        -> PlaybookProposalDTO
+    {
+        try await post(.applyPlaybookProposal(id: id), body: input)
+    }
+
+    public func activatePlaybook(id: String, input: PlaybookLifecycleActionInput) async throws
+        -> PlaybookDetailDTO
+    {
+        try await post(.activatePlaybook(id: id), body: input)
+    }
+
+    public func retirePlaybook(id: String, input: PlaybookLifecycleActionInput) async throws
+        -> PlaybookDetailDTO
+    {
+        try await post(.retirePlaybook(id: id), body: input)
+    }
+
     public func listEmailAccounts() async throws -> [EmailAccountDTO] {
         try await get(.emailAccounts)
     }
