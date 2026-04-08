@@ -206,6 +206,46 @@ public actor ControlAPIClient {
         try await post(.createApproval, body: input)
     }
 
+    public func listStandingApprovals(
+        status: String? = nil,
+        domain: String? = nil,
+        actionKind: String? = nil
+    ) async throws -> [StandingApprovalRecordDTO] {
+        try await get(.standingApprovals(status: status, domain: domain, actionKind: actionKind))
+    }
+
+    public func createStandingApproval(input: StandingApprovalCreateInput) async throws -> StandingApprovalRecordDTO {
+        try await post(.createStandingApproval, body: input)
+    }
+
+    public func revokeStandingApproval(id: String, input: PolicyGrantRevokeInput) async throws -> StandingApprovalRecordDTO {
+        try await post(.revokeStandingApproval(id: id), body: input)
+    }
+
+    public func listAutomationGrants(
+        status: String? = nil,
+        domain: String? = nil,
+        actionKind: String? = nil
+    ) async throws -> [AutomationGrantRecordDTO] {
+        try await get(.automationGrants(status: status, domain: domain, actionKind: actionKind))
+    }
+
+    public func createAutomationGrant(input: AutomationGrantCreateInput) async throws -> AutomationGrantRecordDTO {
+        try await post(.createAutomationGrant, body: input)
+    }
+
+    public func revokeAutomationGrant(id: String, input: PolicyGrantRevokeInput) async throws -> AutomationGrantRecordDTO {
+        try await post(.revokeAutomationGrant(id: id), body: input)
+    }
+
+    public func securityPolicy() async throws -> SecurityPolicyResponseDTO {
+        try await get(.securityPolicy)
+    }
+
+    public func getVault(id: String) async throws -> VaultRecordDTO {
+        try await get(.vault(id: id))
+    }
+
     // MARK: - Connections
 
     public func listConnections() async throws -> [ConnectionDTO] {

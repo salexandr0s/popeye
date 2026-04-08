@@ -32,7 +32,7 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | --- | --- | --- |
 | `SystemService` | health, status, scheduler, engine capabilities, usage, session roots, security audit | v1 |
 | `OperationsService` | tasks, jobs, runs, run events, envelopes, receipts, interventions, instruction previews | v1 |
-| `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults, mutation receipts | approvals + mutation receipts in v1; rest later |
+| `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults, mutation receipts | native approvals plus Usage & Security governance parity in v1; vaults remain summary-only |
 | `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets, Telegram config/apply helpers | full connection admin/remediation in native v1; Telegram config stays setup-first |
 | `AutomationsService` | automation list/detail plus run-now, pause/resume, and cadence editing | automations hub in current native slice |
 | `CuratedDocumentsService` | curated markdown documents, propose/apply save flow, and revision-safe editor state | instructions + curated memory editing in current native slice |
@@ -149,15 +149,15 @@ If the app only shipped Dashboard + Command Center + Runs + Jobs + Receipts + In
 
 | Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/policies/standing-approvals` | Later governance screen | Read | `operator` | Poll on screen | Standing approval records | Defer | Exists in web; not first native scope | `GovernanceService` |
-| `POST /v1/policies/standing-approvals` | Later, if ever | Write | `operator` | Refetch after success | Create input | Defer | Form-heavy, web-first for now | `GovernanceService` |
-| `POST /v1/policies/standing-approvals/:id/revoke` | Later | Write | `operator` | Refetch after success | Revoke input | Defer | Same reason | `GovernanceService` |
-| `GET /v1/policies/automation-grants` | Later governance screen | Read | `operator` | Poll on screen | Automation grant records | Defer | Useful later; not needed early | `GovernanceService` |
-| `POST /v1/policies/automation-grants` | Later | Write | `operator` | Refetch after success | Create input | Defer | Web-first | `GovernanceService` |
-| `POST /v1/policies/automation-grants/:id/revoke` | Later | Write | `operator` | Refetch after success | Revoke input | Defer | Web-first | `GovernanceService` |
-| `GET /v1/security/policy` | Later policy read-only page | Read | `operator` | Poll on screen | Security policy response | Ready with wrapper | Good later read view; not core v1 | `GovernanceService` |
-| `GET /v1/vaults` | Later vault overview | Read | `operator` | Poll on screen | Vault records | Ready with wrapper | Sensitive but stable; later | `GovernanceService` |
-| `GET /v1/vaults/:id` | Later vault detail | Read | `operator` | On demand | Vault record | Defer | Not first native need | `GovernanceService` |
+| `GET /v1/policies/standing-approvals` | Native Usage & Security governance section | Read | `operator` | Refresh / invalidation | Standing approval records | Ready with wrapper | Shipped in native with local filters and create/revoke workflow | `GovernanceService` |
+| `POST /v1/policies/standing-approvals` | Native Usage & Security governance section | Write | `operator` | Refetch after success | Create input | Ready with wrapper | Native create flow uses the same control-plane schema as web | `GovernanceService` |
+| `POST /v1/policies/standing-approvals/:id/revoke` | Native Usage & Security governance section | Write | `operator` | Refetch after success | Revoke input | Ready with wrapper | Native revoke action is shipped | `GovernanceService` |
+| `GET /v1/policies/automation-grants` | Native Usage & Security governance section | Read | `operator` | Refresh / invalidation | Automation grant records | Ready with wrapper | Shipped in native with local filters and create/revoke workflow | `GovernanceService` |
+| `POST /v1/policies/automation-grants` | Native Usage & Security governance section | Write | `operator` | Refetch after success | Create input | Ready with wrapper | Native create flow uses API defaults for task sources | `GovernanceService` |
+| `POST /v1/policies/automation-grants/:id/revoke` | Native Usage & Security governance section | Write | `operator` | Refetch after success | Revoke input | Ready with wrapper | Native revoke action is shipped | `GovernanceService` |
+| `GET /v1/security/policy` | Native Usage & Security read-only policy section | Read | `operator` | Refresh / invalidation | Security policy response | Ready with wrapper | Shipped as read-only posture visibility in native | `GovernanceService` |
+| `GET /v1/vaults` | Native Usage & Security vault summary | Read | `operator` | Refresh / invalidation | Vault records | Ready with wrapper | Shipped as summary-only vault visibility in native | `GovernanceService` |
+| `GET /v1/vaults/:id` | Reserved for future native detail drilldown | Read | `operator` | On demand | Vault record | Ready with wrapper | Current native slice stays summary-only | `GovernanceService` |
 | `POST /v1/vaults` | Not native v1 | Write | `operator` | Refetch after success | Vault create input | Defer | Too much admin breadth | `GovernanceService` |
 | `POST /v1/vaults/:id/open` | Possibly later | Write | `operator` | Refetch after success | Vault open input | Defer | Sensitive workflow | `GovernanceService` |
 | `POST /v1/vaults/:id/close` | Later maybe | Write | `operator` | Refetch after success | Vault record | Defer | Could be added after core console stabilizes | `GovernanceService` |
@@ -165,7 +165,7 @@ If the app only shipped Dashboard + Command Center + Runs + Jobs + Receipts + In
 
 ### Native recommendation
 
-Only **Approvals** belongs in early native scope. The rest should wait.
+Approvals plus Usage & Security governance parity now belong in native. Policy editing and sensitive vault mutations still stay out of scope.
 
 ---
 
@@ -313,9 +313,9 @@ These domain surfaces now exist as native complements to the operator-console co
 | Instructions | Instructions | **Later, read-only** | Useful but secondary |
 | Interventions | Interventions | **Mirror** | Key operator queue |
 | Approvals | Approvals | **Mirror** | Key operator queue |
-| Standing Approvals | Standing Approvals | **Defer** | Form-heavy admin flow |
-| Automation Grants | Automation Grants | **Defer** | Same |
-| Connections | Connections overview | **Adapt / narrow** | Use native for health summary, not full authoring first |
+| Standing Approvals | Usage & Security | **Shipped, targeted mutations** | Native now supports filter/create/revoke governance flow |
+| Automation Grants | Usage & Security | **Shipped, targeted mutations** | Native now supports filter/create/revoke governance flow |
+| Connections | Connections | **Shipped, admin parity** | Native now owns OAuth/remediation/resource-rule admin flows |
 | Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
 | Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
 | Calendar | Calendar | **Shipped, read-first** | Same |
@@ -327,8 +327,8 @@ These domain surfaces now exist as native complements to the operator-console co
 | Medical | Medical | **Shipped, targeted mutations** | High-trust appointment/medication/document/import actions work natively |
 | Files | Files | **Shipped, targeted mutations** | Workspace-scoped document browsing, root management, and write-intent review fit native well |
 | Instructions / Curated Memory | Instructions + Memory | **Shipped, native-first** | AppKit-backed markdown editing with preview, propose/apply save, and receipts now exists in the Mac app |
-| Vaults | Vaults | **Defer / maybe later limited status** | Sensitive admin surface |
-| Security Policy | Usage & Security (summary only) | **Adapt / narrow** | Native should show risk posture before editing policy |
+| Vaults | Usage & Security | **Shipped, summary-only** | Native shows vault posture without sensitive mutations |
+| Security Policy | Usage & Security | **Shipped, read-only** | Native shows domain posture, action defaults, and approval rules |
 | Memory | Memory search | **Later read-only** | Valuable later but not initial |
 | Usage | Usage & Security | **Mirror + adapt** | Good v1 fit |
 
@@ -378,7 +378,7 @@ These domain surfaces now exist as native complements to the operator-console co
 - Interventions
 - Approvals
 - Usage & Security
-- Connections overview (read-only / narrow)
+- Usage & Security governance parity
 
 ### Remain web-first or CLI-first initially
 

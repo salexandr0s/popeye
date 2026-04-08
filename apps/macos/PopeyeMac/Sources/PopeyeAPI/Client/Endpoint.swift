@@ -95,9 +95,53 @@ public extension Endpoint {
     static func resolveApproval(id: String) -> Endpoint {
         Endpoint(path: "/v1/approvals/\(id)/resolve", method: .post)
     }
+
+    static func standingApprovals(
+        status: String? = nil,
+        domain: String? = nil,
+        actionKind: String? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let status { items.append(URLQueryItem(name: "status", value: status)) }
+        if let domain { items.append(URLQueryItem(name: "domain", value: domain)) }
+        if let actionKind { items.append(URLQueryItem(name: "actionKind", value: actionKind)) }
+        return Endpoint(path: "/v1/policies/standing-approvals", queryItems: items)
+    }
+
+    static let createStandingApproval = Endpoint(path: "/v1/policies/standing-approvals", method: .post)
+
+    static func revokeStandingApproval(id: String) -> Endpoint {
+        Endpoint(path: "/v1/policies/standing-approvals/\(id)/revoke", method: .post)
+    }
+
+    static func automationGrants(
+        status: String? = nil,
+        domain: String? = nil,
+        actionKind: String? = nil
+    ) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let status { items.append(URLQueryItem(name: "status", value: status)) }
+        if let domain { items.append(URLQueryItem(name: "domain", value: domain)) }
+        if let actionKind { items.append(URLQueryItem(name: "actionKind", value: actionKind)) }
+        return Endpoint(path: "/v1/policies/automation-grants", queryItems: items)
+    }
+
+    static let createAutomationGrant = Endpoint(path: "/v1/policies/automation-grants", method: .post)
+
+    static func revokeAutomationGrant(id: String) -> Endpoint {
+        Endpoint(path: "/v1/policies/automation-grants/\(id)/revoke", method: .post)
+    }
+
+    static let securityPolicy = Endpoint(path: "/v1/security/policy")
+
+    static func vault(id: String) -> Endpoint {
+        Endpoint(path: "/v1/vaults/\(id)")
+    }
+
     static func openVault(id: String) -> Endpoint {
         Endpoint(path: "/v1/vaults/\(id)/open", method: .post)
     }
+
     static func closeVault(id: String) -> Endpoint {
         Endpoint(path: "/v1/vaults/\(id)/close", method: .post)
     }

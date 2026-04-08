@@ -36,6 +36,18 @@ struct SwiftUIRenderSmokeTests {
         )
     }
 
+    @Test("Usage & Security view renders with governance data")
+    func rendersUsageSecurityView() async {
+        let store = UsageSecurityStore(dependencies: .stub())
+        await store.load()
+
+        assertRenders(
+            NavigationStack {
+                UsageSecurityView(store: store)
+            }
+        )
+    }
+
     private func assertRenders<Content: View>(_ view: Content) {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
