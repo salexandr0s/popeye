@@ -43,7 +43,7 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | `FilesService` | file roots/search/documents/write intents | files browser in current native slice |
 | `DomainDigestService` | email/calendar/todos read-mostly digest/search surfaces | email/calendar/todos in current native slice |
 | `GithubService` | GitHub notifications, PRs, issues, repos, digest, search, and low-risk actions | GitHub in current native slice |
-| `PlaybooksService` | playbook list/detail, proposal review/apply flows, and stale-candidate repair review | playbooks in current native slice |
+| `PlaybooksService` | playbook list/detail, proposal authoring/review/apply flows, and stale-candidate repair review | playbooks in current native slice |
 | `FinanceService` | finance vaults/imports/digest/search/documents/transactions | finance in current native slice |
 | `MedicalService` | medical vaults/imports/digest/search/documents/appointments/medications | medical in current native slice |
 
@@ -256,8 +256,9 @@ These surfaces now have an initial native foothold. The current native implement
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /v1/playbooks`, `GET /v1/playbooks/:id`, `GET /v1/playbooks/:id/revisions`, `GET /v1/playbooks/:id/usage`, `GET /v1/playbooks/stale-candidates` | Native Playbooks split view with canonical records, stale-repair signals, revisions, and usage drilldowns | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a native review/inspection surface | `PlaybooksService` |
-| `GET /v1/playbook-proposals`, `GET /v1/playbook-proposals/:id` | Native proposal review queue and detail | Read | `operator` | Poll on screen | Ready with wrapper | Supports review/apply workflows without adding native authoring yet | `PlaybooksService` |
-| `POST /v1/playbook-proposals/:id/review`, `POST /v1/playbook-proposals/:id/submit-review`, `POST /v1/playbook-proposals/:id/apply`, `POST /v1/playbooks/:id/activate`, `POST /v1/playbooks/:id/retire` | Native playbook review/apply lifecycle | Write | `operator` | Refetch after success | Ready with wrapper | Scoped to review/apply/activate/retire; authoring remains web-first | `PlaybooksService` |
+| `GET /v1/playbook-proposals`, `GET /v1/playbook-proposals/:id` | Native proposal queue, draft detail, and editable drafting proposals | Read | `operator` | Poll on screen | Ready with wrapper | Supports in-place draft editing inside Playbooks | `PlaybooksService` |
+| `POST /v1/playbook-proposals`, `PATCH /v1/playbook-proposals/:id`, `POST /v1/playbooks/:id/suggest-patch` | Native playbook proposal authoring and suggested-patch seeding | Write | `operator` | Refetch after success | Ready with wrapper | Draft/patch authoring now shipped in native Playbooks | `PlaybooksService` |
+| `POST /v1/playbook-proposals/:id/review`, `POST /v1/playbook-proposals/:id/submit-review`, `POST /v1/playbook-proposals/:id/apply`, `POST /v1/playbooks/:id/activate`, `POST /v1/playbooks/:id/retire` | Native playbook review/apply lifecycle | Write | `operator` | Refetch after success | Ready with wrapper | Review/apply remains native alongside authoring | `PlaybooksService` |
 
 ### Todos
 
@@ -320,7 +321,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
 | Calendar | Calendar | **Shipped, read-first** | Same |
 | GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
-| Playbooks / Proposals | Playbooks | **Shipped, review-first** | Native now covers canonical records, stale signals, proposal review, apply, activate, and retire |
+| Playbooks / Proposals | Playbooks | **Shipped, authoring + review** | Native now covers canonical records, stale signals, proposal draft/patch authoring, suggested-patch seeding, review, apply, activate, and retire |
 | People | People | **Shipped, targeted mutations** | Relationship browsing, suggestions, activity, merge, split, and identity repair now fit the native split view |
 | Todos | Todos | **Shipped, read-first** | Native planning view without broad CRUD |
 | Finance | Finance | **Shipped, targeted mutations** | High-trust digest/search plus vault/import/transaction actions work natively |
@@ -383,7 +384,7 @@ These domain surfaces now exist as native complements to the operator-console co
 ### Remain web-first or CLI-first initially
 
 - policy authoring
-- playbook proposal authoring and patch drafting
+- deeper playbook/admin workflows beyond shipped draft authoring
 - broad files authoring beyond roots + write-intent review
 - daemon lifecycle management
 - upgrades/migrations

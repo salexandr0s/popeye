@@ -138,15 +138,32 @@ struct PlaybookAPITests {
         #expect(proposals.queryItems.contains(URLQueryItem(name: "kind", value: "patch")))
         #expect(proposals.queryItems.contains(URLQueryItem(name: "targetRecordId", value: "workspace:default:triage")))
         #expect(Endpoint.playbookProposal(id: "proposal-1").path == "/v1/playbook-proposals/proposal-1")
+        #expect(Endpoint.createPlaybookProposal.method == .post)
         #expect(Endpoint.reviewPlaybookProposal(id: "proposal-1").path == "/v1/playbook-proposals/proposal-1/review")
+        #expect(Endpoint.updatePlaybookProposal(id: "proposal-1").method == .patch)
         #expect(Endpoint.submitPlaybookProposalForReview(id: "proposal-1").path == "/v1/playbook-proposals/proposal-1/submit-review")
         #expect(Endpoint.applyPlaybookProposal(id: "proposal-1").path == "/v1/playbook-proposals/proposal-1/apply")
+        #expect(Endpoint.suggestPlaybookPatch(id: "workspace:default:triage").path == "/v1/playbooks/workspace:default:triage/suggest-patch")
         #expect(Endpoint.activatePlaybook(id: "workspace:default:triage").path == "/v1/playbooks/workspace:default:triage/activate")
         #expect(Endpoint.retirePlaybook(id: "workspace:default:triage").path == "/v1/playbooks/workspace:default:triage/retire")
+        #expect(Endpoint.projects.path == "/v1/projects")
     }
 
     @Test("Decode playbook DTOs from inline JSON")
     func decodePlaybookDTOs() throws {
+        let project = try decoder.decode(
+            ProjectRecordDTO.self,
+            from: Data(
+                """
+                {
+                  "id": "proj-1",
+                  "workspaceId": "default",
+                  "name": "Project One",
+                  "path": "/tmp/default/project-one",
+                  "createdAt": "2026-04-02T08:00:00Z"
+                }
+                """.utf8)
+        )
         let detail = try decoder.decode(
             PlaybookDetailDTO.self,
             from: Data(
@@ -231,6 +248,7 @@ struct PlaybookAPITests {
                 """.utf8)
         )
 
+        #expect(project.workspaceId == "default")
         #expect(detail.effectiveness?.useCount30d == 14)
         #expect(proposal.kind == "patch")
         #expect(proposal.evidence?.metrics30d.failedRuns30d == 2)

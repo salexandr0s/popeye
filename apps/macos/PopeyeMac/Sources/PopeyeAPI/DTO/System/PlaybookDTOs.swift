@@ -178,3 +178,93 @@ public struct PlaybookLifecycleActionInput: Encodable, Sendable, Equatable {
         self.updatedBy = updatedBy
     }
 }
+
+public struct PlaybookProposalCreateDraftInput: Encodable, Sendable, Equatable {
+    public let kind: String
+    public let playbookId: String
+    public let scope: String
+    public let workspaceId: String?
+    public let projectId: String?
+    public let title: String
+    public let allowedProfileIds: [String]
+    public let body: String
+    public let summary: String
+
+    public init(
+        playbookId: String,
+        scope: String,
+        workspaceId: String? = nil,
+        projectId: String? = nil,
+        title: String,
+        allowedProfileIds: [String] = [],
+        body: String,
+        summary: String = ""
+    ) {
+        self.kind = "draft"
+        self.playbookId = playbookId
+        self.scope = scope
+        self.workspaceId = workspaceId
+        self.projectId = projectId
+        self.title = title
+        self.allowedProfileIds = allowedProfileIds
+        self.body = body
+        self.summary = summary
+    }
+}
+
+public struct PlaybookProposalCreatePatchInput: Encodable, Sendable, Equatable {
+    public let kind: String
+    public let targetRecordId: String
+    public let baseRevisionHash: String?
+    public let title: String
+    public let allowedProfileIds: [String]
+    public let body: String
+    public let summary: String
+
+    public init(
+        targetRecordId: String,
+        baseRevisionHash: String? = nil,
+        title: String,
+        allowedProfileIds: [String] = [],
+        body: String,
+        summary: String = ""
+    ) {
+        self.kind = "patch"
+        self.targetRecordId = targetRecordId
+        self.baseRevisionHash = baseRevisionHash
+        self.title = title
+        self.allowedProfileIds = allowedProfileIds
+        self.body = body
+        self.summary = summary
+    }
+}
+
+public struct PlaybookProposalUpdateInput: Encodable, Sendable, Equatable {
+    public let title: String
+    public let allowedProfileIds: [String]
+    public let summary: String
+    public let body: String
+    public let updatedBy: String
+
+    public init(
+        title: String,
+        allowedProfileIds: [String] = [],
+        summary: String = "",
+        body: String,
+        updatedBy: String
+    ) {
+        self.title = title
+        self.allowedProfileIds = allowedProfileIds
+        self.summary = summary
+        self.body = body
+        self.updatedBy = updatedBy
+    }
+}
+
+public struct PlaybookSuggestPatchInput: Encodable, Sendable, Equatable {
+    public let proposedBy: String
+
+    public init(proposedBy: String) {
+        self.proposedBy = proposedBy
+    }
+}

@@ -37,6 +37,7 @@ public extension Endpoint {
     static let securityAudit = Endpoint(path: "/v1/security/audit")
     static let daemonState = Endpoint(path: "/v1/daemon/state")
     static let workspaces = Endpoint(path: "/v1/workspaces")
+    static let projects = Endpoint(path: "/v1/projects")
     static func vaults(domain: String? = nil) -> Endpoint {
         let items = domain.map { [URLQueryItem(name: "domain", value: $0)] } ?? []
         return Endpoint(path: "/v1/vaults", queryItems: items)
@@ -488,14 +489,21 @@ public extension Endpoint {
     static func playbookProposal(id: String) -> Endpoint {
         Endpoint(path: "/v1/playbook-proposals/\(id)")
     }
+    static let createPlaybookProposal = Endpoint(path: "/v1/playbook-proposals", method: .post)
     static func reviewPlaybookProposal(id: String) -> Endpoint {
         Endpoint(path: "/v1/playbook-proposals/\(id)/review", method: .post)
+    }
+    static func updatePlaybookProposal(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbook-proposals/\(id)", method: .patch)
     }
     static func submitPlaybookProposalForReview(id: String) -> Endpoint {
         Endpoint(path: "/v1/playbook-proposals/\(id)/submit-review", method: .post)
     }
     static func applyPlaybookProposal(id: String) -> Endpoint {
         Endpoint(path: "/v1/playbook-proposals/\(id)/apply", method: .post)
+    }
+    static func suggestPlaybookPatch(id: String) -> Endpoint {
+        Endpoint(path: "/v1/playbooks/\(id)/suggest-patch", method: .post)
     }
     static func activatePlaybook(id: String) -> Endpoint {
         Endpoint(path: "/v1/playbooks/\(id)/activate", method: .post)

@@ -33,18 +33,27 @@ struct PlaybooksView: View {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await store.load() }
                 }
-
-                if store.mode != .proposals {
-                    Button("Activate", systemImage: "checkmark.circle") {
-                        Task { await store.activateSelectedPlaybook() }
+                if store.isAuthoring {
+                    Button("Save Draft", systemImage: "square.and.arrow.down") {
+                        Task { await store.saveAuthoringDraft() }
                     }
-                    .disabled(store.selectedPlaybookDetail?.status == "active" || store.mutationState == .executing || store.selectedPlaybookDetail == nil)
+                    .disabled(store.mutationState == .executing)
 
-                    Button("Retire", systemImage: "xmark.circle") {
-                        Task { await store.retireSelectedPlaybook() }
+                    Button("Submit", systemImage: "paperplane") {
+                        Task { await store.submitAuthoringDraftForReview() }
                     }
-                    .disabled(store.selectedPlaybookDetail == nil || store.selectedPlaybookDetail?.status == "retired" || store.mutationState == .executing)
-                } else {
+                    .disabled(store.mutationState == .executing)
+
+                    Button("Cancel", systemImage: "xmark") {
+                        store.cancelAuthoring()
+                    }
+                    .disabled(store.mutationState == .executing)
+                } else if store.mode == .proposals {
+                    Button("Edit Draft", systemImage: "square.and.pencil") {
+                        store.editSelectedDraft()
+                    }
+                    .disabled(!store.canEditSelectedDraft || store.mutationState == .executing)
+
                     Button("Submit", systemImage: "paperplane") {
                         Task { await store.submitSelectedProposalForReview() }
                     }
@@ -64,6 +73,37 @@ struct PlaybooksView: View {
                         Task { await store.applySelectedProposal() }
                     }
                     .disabled(store.selectedProposalDetail?.status != "approved" || store.mutationState == .executing)
+                } else {
+                    Button("New Draft", systemImage: "doc.badge.plus") {
+                        store.startNewDraftAuthoring()
+                    }
+                    .disabled(store.mutationState == .executing)
+
+                    Button(store.mode == .needsReview ? "Draft Repair" : "Draft Patch", systemImage: "square.and.pencil") {
+                        if store.mode == .needsReview {
+                            store.startRepairDraftForSelectedCandidate()
+                        } else {
+                            store.startPatchDraftAuthoring()
+                        }
+                    }
+                    .disabled((store.mode == .needsReview ? !store.canDraftRepairFromSelection : !store.canDraftPatchFromSelection) || store.mutationState == .executing)
+
+                    if store.mode == .playbooks {
+                        Button("Suggest Patch", systemImage: "wand.and.stars") {
+                            Task { await store.suggestPatchForSelectedPlaybook() }
+                        }
+                        .disabled(!store.canDraftPatchFromSelection || store.mutationState == .executing)
+                    }
+
+                    Button("Activate", systemImage: "checkmark.circle") {
+                        Task { await store.activateSelectedPlaybook() }
+                    }
+                    .disabled(store.selectedPlaybookDetail?.status == "active" || store.mutationState == .executing || store.selectedPlaybookDetail == nil)
+
+                    Button("Retire", systemImage: "xmark.circle") {
+                        Task { await store.retireSelectedPlaybook() }
+                    }
+                    .disabled(store.selectedPlaybookDetail == nil || store.selectedPlaybookDetail?.status == "retired" || store.mutationState == .executing)
                 }
             }
         }
@@ -245,11 +285,15 @@ struct PlaybooksView: View {
                         .foregroundStyle(.red)
                 }
 
-                switch store.mode {
-                case .playbooks, .needsReview:
-                    playbookDetail
-                case .proposals:
-                    proposalDetail
+                if store.isAuthoring {
+                    PlaybookProposalEditorView(store: store)
+                } else {
+                    switch store.mode {
+                    case .playbooks, .needsReview:
+                        playbookDetail
+                    case .proposals:
+                        proposalDetail
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -269,6 +313,15 @@ struct PlaybooksView: View {
                             Label(reason, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
                         }
+                        HStack {
+                            Button("Draft Repair", systemImage: "square.and.pencil") {
+                                store.startRepairDraftForSelectedCandidate()
+                            }
+                            .disabled(store.mutationState == .executing)
+
+                            Spacer()
+                        }
+                        .padding(.top, 4)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -285,6 +338,17 @@ struct PlaybooksView: View {
                     LabeledContent("Revision", value: playbook.currentRevisionHash)
                     LabeledContent("Profiles", value: playbook.allowedProfileIds.isEmpty ? "all profiles" : playbook.allowedProfileIds.joined(separator: ", "))
                     LabeledContent("Indexed memory", value: playbook.indexedMemoryId ?? "not indexed")
+                    HStack {
+                        Button("Draft Patch", systemImage: "square.and.pencil") {
+                            store.startPatchDraftAuthoring()
+                        }
+                        .disabled(store.mutationState == .executing)
+
+                        Button("Suggest Patch", systemImage: "wand.and.stars") {
+                            Task { await store.suggestPatchForSelectedPlaybook() }
+                        }
+                        .disabled(store.mutationState == .executing)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -399,6 +463,11 @@ struct PlaybooksView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    if proposal.status == "drafting" {
+                        Button("Edit Draft", systemImage: "square.and.pencil") {
+                            store.editSelectedDraft()
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -451,6 +520,206 @@ struct PlaybooksView: View {
 
     private func reload() {
         Task { await store.load() }
+    }
+}
+
+private struct PlaybookProposalEditorView: View {
+    @Bindable var store: PlaybooksStore
+
+    var body: some View {
+        if let editor = store.editor {
+            VStack(alignment: .leading, spacing: PopeyeUI.sectionSpacing) {
+                GroupBox(editorTitle(editor)) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 10) {
+                            StatusBadge(state: editor.kind)
+                            if let status = editor.proposalStatus {
+                                StatusBadge(state: status)
+                            }
+                            if editor.isDraft {
+                                StatusBadge(state: editor.scope)
+                            }
+                        }
+                        LabeledContent("Context", value: editor.sourceLabel)
+                        if editor.isPatch {
+                            LabeledContent("Target record", value: editor.targetRecordId ?? "—")
+                            LabeledContent("Base revision", value: editor.baseRevisionHash ?? "—")
+                        } else {
+                            LabeledContent("Selected workspace", value: editor.workspaceId.isEmpty ? "global" : editor.workspaceId)
+                        }
+                        if editor.canUseSuggestedSeed {
+                            Button("Seed Suggested Patch", systemImage: "wand.and.stars") {
+                                Task { await store.suggestPatchForSelectedPlaybook() }
+                            }
+                            .disabled(store.mutationState == .executing)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let errorMessage = store.editorErrorMessage ?? store.editorValidationMessage {
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                }
+
+                GroupBox("Proposal details") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if editor.isDraft {
+                            TextField("Playbook ID", text: playbookIDBinding)
+                            Picker("Scope", selection: scopeBinding) {
+                                Text("Global").tag("global")
+                                Text("Workspace").tag("workspace")
+                                Text("Project").tag("project")
+                            }
+                            if editor.scope != "global" {
+                                if workspaceOptions.isEmpty {
+                                    LabeledContent("Workspace", value: editor.workspaceId)
+                                } else {
+                                    Picker("Workspace", selection: workspaceBinding) {
+                                        ForEach(workspaceOptions) { workspace in
+                                            Text(workspace.name).tag(workspace.id)
+                                        }
+                                    }
+                                }
+                            }
+                            if editor.scope == "project" {
+                                if store.availableProjectsForEditor.isEmpty {
+                                    Text("No projects are registered for the selected workspace.")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Picker("Project", selection: projectBinding) {
+                                        ForEach(store.availableProjectsForEditor) { project in
+                                            Text(project.name).tag(project.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        TextField("Title", text: titleBinding)
+                        TextField("Allowed profiles", text: allowedProfilesBinding, prompt: Text("default, reviewer"))
+                        TextField("Summary", text: summaryBinding, axis: .vertical)
+                            .lineLimit(2...5)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Markdown body") {
+                    MacMarkdownEditor(text: bodyBinding)
+                        .frame(minHeight: 260)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(.quaternary, lineWidth: 1)
+                        )
+                }
+
+                GroupBox("Preview") {
+                    MarkdownPreviewView(markdown: editor.body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack {
+                    Button("Save Draft", systemImage: "square.and.arrow.down") {
+                        Task { await store.saveAuthoringDraft() }
+                    }
+                    .disabled(store.mutationState == .executing)
+
+                    Button("Submit for Review", systemImage: "paperplane") {
+                        Task { await store.submitAuthoringDraftForReview() }
+                    }
+                    .disabled(store.mutationState == .executing)
+
+                    Spacer()
+
+                    if store.isEditorDirty {
+                        Text("Unsaved changes")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("Cancel", systemImage: "xmark") {
+                        store.cancelAuthoring()
+                    }
+                    .disabled(store.mutationState == .executing)
+                }
+            }
+        }
+    }
+
+    private var workspaceOptions: [WorkspaceRecordDTO] {
+        if store.workspaces.isEmpty, let editor = store.editor, !editor.workspaceId.isEmpty {
+            return [WorkspaceRecordDTO(id: editor.workspaceId, name: editor.workspaceId, rootPath: nil, createdAt: "")]
+        }
+        return store.workspaces
+    }
+
+    private func editorTitle(_ editor: PlaybooksStore.ProposalEditor) -> String {
+        switch editor.sessionKind {
+        case .newDraft:
+            return "New Draft Proposal"
+        case .newPatch:
+            return "New Patch Proposal"
+        case .editDraft:
+            return "Edit Draft Proposal"
+        }
+    }
+
+    private var titleBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.title ?? "" },
+            set: { store.updateEditorTitle($0) }
+        )
+    }
+
+    private var playbookIDBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.playbookId ?? "" },
+            set: { store.updateEditorPlaybookID($0) }
+        )
+    }
+
+    private var allowedProfilesBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.allowedProfileIdsText ?? "" },
+            set: { store.updateEditorAllowedProfilesText($0) }
+        )
+    }
+
+    private var summaryBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.summary ?? "" },
+            set: { store.updateEditorSummary($0) }
+        )
+    }
+
+    private var bodyBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.body ?? "" },
+            set: { store.updateEditorBody($0) }
+        )
+    }
+
+    private var scopeBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.scope ?? "workspace" },
+            set: { store.updateEditorScope($0) }
+        )
+    }
+
+    private var workspaceBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.workspaceId ?? store.workspaceID },
+            set: { store.updateEditorWorkspaceID($0) }
+        )
+    }
+
+    private var projectBinding: Binding<String> {
+        Binding(
+            get: { store.editor?.projectId ?? "" },
+            set: { store.updateEditorProjectID($0) }
+        )
     }
 }
 

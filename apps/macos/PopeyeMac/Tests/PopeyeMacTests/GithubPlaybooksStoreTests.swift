@@ -83,6 +83,94 @@ struct PlaybooksStoreTests {
         #expect(store.selectedPlaybookDetail?.playbookId == "triage")
     }
 
+    @Test("New draft authoring creates a drafting proposal and switches to proposals")
+    func createDraftAuthoringFlow() async {
+        let draftingProposal = samplePlaybookProposal(kind: "draft", status: "drafting", targetRecordId: nil, playbookId: "inbox-triage", title: "Inbox triage", body: "# Inbox triage\n\nFollow the inbox checklist.", summary: "Created in native authoring")
+        let store = PlaybooksStore(dependencies: .stub(
+            loadProposals: { _, _, _, _, _, _, _ in [draftingProposal] },
+            loadProposal: { _ in draftingProposal },
+            createDraftProposal: { _ in draftingProposal }
+        ))
+
+        await store.load()
+        store.startNewDraftAuthoring()
+        store.updateEditorPlaybookID("inbox-triage")
+        store.updateEditorTitle("Inbox triage")
+        store.updateEditorSummary("Created in native authoring")
+        store.updateEditorBody("# Inbox triage\n\nFollow the inbox checklist.")
+        await store.saveAuthoringDraft()
+
+        #expect(store.mode == .proposals)
+        #expect(store.selectedProposalID == "proposal-1")
+        #expect(store.selectedProposalDetail?.status == "drafting")
+        #expect(store.editor?.proposalID == "proposal-1")
+        #expect(store.mutationState == .succeeded("Playbook draft created"))
+    }
+
+    @Test("Submitting authoring draft persists and submits for review")
+    func submitDraftAuthoringFlow() async {
+        let submittedProposal = samplePlaybookProposal(id: "proposal-1", kind: "draft", status: "pending_review", targetRecordId: nil, playbookId: "triage-v2", title: "Triage v2", body: "Updated authoring body")
+        let store = PlaybooksStore(dependencies: .stub(
+            loadProposals: { _, _, _, _, _, _, _ in [submittedProposal] },
+            loadProposal: { _ in submittedProposal },
+            createDraftProposal: { input in
+                samplePlaybookProposal(id: "proposal-1", kind: "draft", status: "drafting", targetRecordId: nil, playbookId: input.playbookId, title: input.title, body: input.body, summary: input.summary, allowedProfileIds: input.allowedProfileIds)
+            },
+            submitProposalForReview: { _, _ in submittedProposal }
+        ))
+
+        await store.load()
+        store.startNewDraftAuthoring()
+        store.updateEditorPlaybookID("triage-v2")
+        store.updateEditorTitle("Triage v2")
+        store.updateEditorBody("Updated authoring body")
+        await store.submitAuthoringDraftForReview()
+
+        #expect(store.mode == .proposals)
+        #expect(store.selectedProposalDetail?.status == "pending_review")
+        #expect(store.editor == nil)
+        #expect(store.mutationState == .succeeded("Playbook proposal submitted"))
+    }
+
+    @Test("Suggest patch opens the returned drafting proposal in the editor")
+    func suggestPatchSeedsEditor() async {
+        let suggested = samplePlaybookProposal(id: "proposal-2", kind: "patch", status: "drafting")
+        let store = PlaybooksStore(dependencies: .stub(
+            loadProposals: { _, _, _, _, _, _, _ in [suggested] },
+            loadProposal: { _ in suggested },
+            suggestPatch: { _, _ in suggested }
+        ))
+
+        await store.load()
+        await store.suggestPatchForSelectedPlaybook()
+
+        #expect(store.mode == .proposals)
+        #expect(store.selectedProposalID == "proposal-2")
+        #expect(store.selectedProposalDetail?.status == "drafting")
+        #expect(store.editor?.proposalID == "proposal-2")
+        #expect(store.editor?.kind == "patch")
+    }
+
+    @Test("Editing selected drafting proposal loads the draft into the editor")
+    func editSelectedDraft() async {
+        let store = PlaybooksStore(dependencies: .stub(
+            loadProposals: { _, _, _, _, _, _, _ in
+                [samplePlaybookProposal(id: "proposal-3", kind: "draft", status: "drafting", targetRecordId: nil)]
+            },
+            loadProposal: { _ in
+                samplePlaybookProposal(id: "proposal-3", kind: "draft", status: "drafting", targetRecordId: nil)
+            }
+        ))
+        store.mode = .proposals
+
+        await store.load()
+        store.editSelectedDraft()
+
+        #expect(store.editor?.proposalID == "proposal-3")
+        #expect(store.editor?.kind == "draft")
+        #expect(store.editor?.playbookId == "triage")
+    }
+
     @Test("Apply proposal switches back to playbooks and loads applied detail")
     func applyProposalTransitionsToCanonicalRecord() async {
         let store = PlaybooksStore(dependencies: .stub())
@@ -197,6 +285,53 @@ extension PlaybooksStore.Dependencies {
         loadProposal: @Sendable @escaping (_ id: String) async throws -> PlaybookProposalDTO = { _ in
             samplePlaybookProposal(status: "approved")
         },
+        loadWorkspaces: @Sendable @escaping () async throws -> [WorkspaceRecordDTO] = {
+            [sampleWorkspace()]
+        },
+        loadProjects: @Sendable @escaping () async throws -> [ProjectRecordDTO] = {
+            [sampleProject()]
+        },
+        createDraftProposal: @Sendable @escaping (_ input: PlaybookProposalCreateDraftInput) async throws -> PlaybookProposalDTO = { input in
+            samplePlaybookProposal(
+                kind: "draft",
+                status: "drafting",
+                targetRecordId: nil,
+                playbookId: input.playbookId,
+                scope: input.scope,
+                workspaceId: input.workspaceId,
+                projectId: input.projectId,
+                title: input.title,
+                body: input.body,
+                summary: input.summary,
+                allowedProfileIds: input.allowedProfileIds
+            )
+        },
+        createPatchProposal: @Sendable @escaping (_ input: PlaybookProposalCreatePatchInput) async throws -> PlaybookProposalDTO = { input in
+            samplePlaybookProposal(
+                kind: "patch",
+                status: "drafting",
+                targetRecordId: input.targetRecordId,
+                title: input.title,
+                body: input.body,
+                summary: input.summary,
+                allowedProfileIds: input.allowedProfileIds
+            )
+        },
+        updateProposal: @Sendable @escaping (_ id: String, _ input: PlaybookProposalUpdateInput) async throws -> PlaybookProposalDTO = { id, input in
+            samplePlaybookProposal(
+                id: id,
+                kind: "draft",
+                status: "drafting",
+                targetRecordId: nil,
+                title: input.title,
+                body: input.body,
+                summary: input.summary,
+                allowedProfileIds: input.allowedProfileIds
+            )
+        },
+        suggestPatch: @Sendable @escaping (_ id: String, _ proposedBy: String) async throws -> PlaybookProposalDTO = { _, _ in
+            samplePlaybookProposal(id: "proposal-2", kind: "patch", status: "drafting")
+        },
         reviewProposal: @Sendable @escaping (_ id: String, _ decision: String, _ reviewedBy: String) async throws -> PlaybookProposalDTO = { _, decision, _ in
             samplePlaybookProposal(status: decision)
         },
@@ -221,6 +356,12 @@ extension PlaybooksStore.Dependencies {
             loadStaleCandidates: loadStaleCandidates,
             loadProposals: loadProposals,
             loadProposal: loadProposal,
+            loadWorkspaces: loadWorkspaces,
+            loadProjects: loadProjects,
+            createDraftProposal: createDraftProposal,
+            createPatchProposal: createPatchProposal,
+            updateProposal: updateProposal,
+            suggestPatch: suggestPatch,
             reviewProposal: reviewProposal,
             submitProposalForReview: submitProposalForReview,
             applyProposal: applyProposal,
@@ -361,6 +502,25 @@ private func sampleGithubSearchResult() -> GithubSearchResultDTO {
     )
 }
 
+private func sampleWorkspace() -> WorkspaceRecordDTO {
+    WorkspaceRecordDTO(
+        id: "default",
+        name: "Default Workspace",
+        rootPath: "/tmp/default",
+        createdAt: "2026-04-01T08:00:00Z"
+    )
+}
+
+private func sampleProject() -> ProjectRecordDTO {
+    ProjectRecordDTO(
+        id: "proj-1",
+        workspaceId: "default",
+        name: "Project One",
+        path: "/tmp/default/project-one",
+        createdAt: "2026-04-02T08:00:00Z"
+    )
+}
+
 private func samplePlaybookRecord(status: String = "active") -> PlaybookRecordDTO {
     PlaybookRecordDTO(
         recordId: "workspace:default:triage",
@@ -445,25 +605,36 @@ private func samplePlaybookStaleCandidate() -> PlaybookStaleCandidateDTO {
 }
 
 private func samplePlaybookProposal(
+    id: String = "proposal-1",
+    kind: String = "patch",
     status: String,
-    appliedRecordId: String? = nil
+    appliedRecordId: String? = nil,
+    targetRecordId: String? = "workspace:default:triage",
+    playbookId: String = "triage",
+    scope: String = "workspace",
+    workspaceId: String? = "default",
+    projectId: String? = nil,
+    title: String = "Triage repair",
+    body: String = "Updated patch body",
+    summary: String = "Repair stale steps",
+    allowedProfileIds: [String] = ["default"]
 ) -> PlaybookProposalDTO {
     PlaybookProposalDTO(
-        id: "proposal-1",
-        kind: "patch",
+        id: id,
+        kind: kind,
         status: status,
-        targetRecordId: "workspace:default:triage",
+        targetRecordId: targetRecordId,
         baseRevisionHash: "rev-1",
-        playbookId: "triage",
-        scope: "workspace",
-        workspaceId: "default",
-        projectId: nil,
-        title: "Triage repair",
+        playbookId: playbookId,
+        scope: scope,
+        workspaceId: workspaceId,
+        projectId: projectId,
+        title: title,
         proposedStatus: "active",
-        allowedProfileIds: ["default"],
-        summary: "Repair stale steps",
-        body: "Updated patch body",
-        markdownText: "# Triage repair\n\nUpdated patch body",
+        allowedProfileIds: allowedProfileIds,
+        summary: summary,
+        body: body,
+        markdownText: "# \(title)\n\n\(body)",
         diffPreview: "+ Improve repair wording",
         contentHash: "content-2",
         revisionHash: "rev-2",

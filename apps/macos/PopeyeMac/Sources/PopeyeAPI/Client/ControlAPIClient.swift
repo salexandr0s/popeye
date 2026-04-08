@@ -126,6 +126,10 @@ public actor ControlAPIClient {
         try await get(.workspaces)
     }
 
+    public func listProjects() async throws -> [ProjectRecordDTO] {
+        try await get(.projects)
+    }
+
     public func listVaults(domain: String? = nil) async throws -> [VaultRecordDTO] {
         try await get(.vaults(domain: domain))
     }
@@ -690,10 +694,23 @@ public actor ControlAPIClient {
         try await get(.playbookProposal(id: id))
     }
 
+    public func createPlaybookProposal(
+        input: any Encodable & Sendable
+    ) async throws -> PlaybookProposalDTO {
+        try await post(.createPlaybookProposal, body: input)
+    }
+
     public func reviewPlaybookProposal(id: String, input: PlaybookProposalReviewInput) async throws
         -> PlaybookProposalDTO
     {
         try await post(.reviewPlaybookProposal(id: id), body: input)
+    }
+
+    public func updatePlaybookProposal(
+        id: String,
+        input: PlaybookProposalUpdateInput
+    ) async throws -> PlaybookProposalDTO {
+        try await patch(.updatePlaybookProposal(id: id), body: input)
     }
 
     public func submitPlaybookProposalForReview(
@@ -707,6 +724,13 @@ public actor ControlAPIClient {
         -> PlaybookProposalDTO
     {
         try await post(.applyPlaybookProposal(id: id), body: input)
+    }
+
+    public func suggestPlaybookPatch(
+        id: String,
+        input: PlaybookSuggestPatchInput
+    ) async throws -> PlaybookProposalDTO {
+        try await post(.suggestPlaybookPatch(id: id), body: input)
     }
 
     public func activatePlaybook(id: String, input: PlaybookLifecycleActionInput) async throws

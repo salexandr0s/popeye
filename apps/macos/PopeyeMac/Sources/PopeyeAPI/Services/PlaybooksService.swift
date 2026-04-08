@@ -65,6 +65,32 @@ public struct PlaybooksService: Sendable {
         try await client.getPlaybookProposal(id: id)
     }
 
+    public func loadWorkspaces() async throws -> [WorkspaceRecordDTO] {
+        try await client.listWorkspaces()
+    }
+
+    public func loadProjects() async throws -> [ProjectRecordDTO] {
+        try await client.listProjects()
+    }
+
+    public func createDraftProposal(input: PlaybookProposalCreateDraftInput) async throws
+        -> PlaybookProposalDTO
+    {
+        try await client.createPlaybookProposal(input: input)
+    }
+
+    public func createPatchProposal(input: PlaybookProposalCreatePatchInput) async throws
+        -> PlaybookProposalDTO
+    {
+        try await client.createPlaybookProposal(input: input)
+    }
+
+    public func updateProposal(id: String, input: PlaybookProposalUpdateInput) async throws
+        -> PlaybookProposalDTO
+    {
+        try await client.updatePlaybookProposal(id: id, input: input)
+    }
+
     public func reviewProposal(id: String, decision: String, reviewedBy: String, note: String? = nil)
         async throws -> PlaybookProposalDTO
     {
@@ -88,6 +114,12 @@ public struct PlaybooksService: Sendable {
         try await client.applyPlaybookProposal(
             id: id,
             input: PlaybookProposalApplyInput(appliedBy: appliedBy))
+    }
+
+    public func suggestPatch(id: String, proposedBy: String) async throws -> PlaybookProposalDTO {
+        try await client.suggestPlaybookPatch(
+            id: id,
+            input: PlaybookSuggestPatchInput(proposedBy: proposedBy))
     }
 
     public func activatePlaybook(id: String, updatedBy: String) async throws -> PlaybookDetailDTO {
