@@ -89,6 +89,12 @@ struct ServiceTests {
     let oauthStart = Endpoint.startOAuthConnection
     let oauthProviders = Endpoint.oauthConnectionProviders
     let oauthSession = Endpoint.oauthConnectionSession(id: "oauth-session-001")
+    let updateConnection = Endpoint.updateConnection(id: "conn-001")
+    let resourceRules = Endpoint.connectionResourceRules(id: "conn-001")
+    let addRule = Endpoint.addConnectionResourceRule(id: "conn-001")
+    let deleteRule = Endpoint.deleteConnectionResourceRule(id: "conn-001")
+    let diagnostics = Endpoint.connectionDiagnostics(id: "conn-001")
+    let reconnect = Endpoint.reconnectConnection(id: "conn-001")
     let secretStore = Endpoint.storeSecret
 
     #expect(oauthStart.path == "/v1/connections/oauth/start")
@@ -96,6 +102,17 @@ struct ServiceTests {
     #expect(oauthProviders.path == "/v1/connections/oauth/providers")
     #expect(oauthProviders.method == .get)
     #expect(oauthSession.path == "/v1/connections/oauth/sessions/oauth-session-001")
+    #expect(updateConnection.path == "/v1/connections/conn-001")
+    #expect(updateConnection.method == .patch)
+    #expect(resourceRules.path == "/v1/connections/conn-001/resource-rules")
+    #expect(resourceRules.method == .get)
+    #expect(addRule.path == "/v1/connections/conn-001/resource-rules")
+    #expect(addRule.method == .post)
+    #expect(deleteRule.path == "/v1/connections/conn-001/resource-rules")
+    #expect(deleteRule.method == .delete)
+    #expect(diagnostics.path == "/v1/connections/conn-001/diagnostics")
+    #expect(reconnect.path == "/v1/connections/conn-001/reconnect")
+    #expect(reconnect.method == .post)
     #expect(secretStore.path == "/v1/secrets")
     #expect(secretStore.method == .post)
   }
@@ -224,6 +241,9 @@ struct ServiceTests {
 
   @Test("Mail, Calendar, and Todos endpoints encode filters")
   func lifeDomainEndpoints() {
+    let emailSync = Endpoint.syncEmail
+    let calendarSync = Endpoint.syncCalendar
+    let todoSync = Endpoint.syncTodos
     let emailThreads = Endpoint.emailThreads(accountId: "acct-email-1", limit: 25, unreadOnly: true)
     let emailDigest = Endpoint.emailDigest(accountId: "acct-email-1")
     let calendarEvents = Endpoint.calendarEvents(
@@ -238,6 +258,8 @@ struct ServiceTests {
     let todoDigest = Endpoint.todoDigest(accountId: "acct-todo-1")
 
     #expect(emailThreads.path == "/v1/email/threads")
+    #expect(emailSync.path == "/v1/email/sync")
+    #expect(emailSync.method == .post)
     #expect(
       emailThreads.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-email-1")))
     #expect(emailThreads.queryItems.contains(URLQueryItem(name: "limit", value: "25")))
@@ -245,6 +267,8 @@ struct ServiceTests {
     #expect(emailDigest.path == "/v1/email/digest")
 
     #expect(calendarEvents.path == "/v1/calendar/events")
+    #expect(calendarSync.path == "/v1/calendar/sync")
+    #expect(calendarSync.method == .post)
     #expect(
       calendarEvents.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-cal-1")))
     #expect(
@@ -257,6 +281,8 @@ struct ServiceTests {
     #expect(calendarDigest.path == "/v1/calendar/digest")
 
     #expect(todoItems.path == "/v1/todos/items")
+    #expect(todoSync.path == "/v1/todos/sync")
+    #expect(todoSync.method == .post)
     #expect(todoItems.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-todo-1")))
     #expect(todoItems.queryItems.contains(URLQueryItem(name: "project", value: "Inbox")))
     #expect(todoItems.queryItems.contains(URLQueryItem(name: "limit", value: "75")))

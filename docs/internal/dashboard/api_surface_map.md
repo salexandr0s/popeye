@@ -33,7 +33,7 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | `SystemService` | health, status, scheduler, engine capabilities, usage, session roots, security audit | v1 |
 | `OperationsService` | tasks, jobs, runs, run events, envelopes, receipts, interventions, instruction previews | v1 |
 | `GovernanceService` | approvals, standing approvals, automation grants, security policy, vaults, mutation receipts | approvals + mutation receipts in v1; rest later |
-| `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets, Telegram config/apply helpers | overview + provider setup in v1; deeper flows later |
+| `ConnectionsService` | connections, OAuth start/poll, resource rules, diagnostics, reconnect, secrets, Telegram config/apply helpers | full connection admin/remediation in native v1; Telegram config stays setup-first |
 | `AutomationsService` | automation list/detail plus run-now, pause/resume, and cadence editing | automations hub in current native slice |
 | `CuratedDocumentsService` | curated markdown documents, propose/apply save flow, and revision-safe editor state | instructions + curated memory editing in current native slice |
 | `UsageSecurityService` | usage + security summary composition | v1 |
@@ -175,9 +175,9 @@ Only **Approvals** belongs in early native scope. The rest should wait.
 
 | Endpoint | Native view / use | Read/Write | Min role | Live update | Contract/model dependencies | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/connections` | Connections overview page, dashboard health summary | Read | `operator` | Poll 5s–10s | Connection records incl. health/policy/sync/resource rules | Ready with wrapper | Good v1 read-only overview surface | `ConnectionsService` |
+| `GET /v1/connections` | Connections admin page, dashboard health summary | Read | `operator` | Poll 5s–10s | Connection records incl. health/policy/sync/resource rules | Ready with wrapper | Core native admin surface | `ConnectionsService` |
 | `POST /v1/connections` | Not for early native | Write | `operator` | Refetch after success | Connection create input | Defer | Creation/setup is web-first | `ConnectionsService` |
-| `PATCH /v1/connections/:id` | Not for early native | Write | `operator` | Refetch after success | Update input | Defer | Rich form flow; defer | `ConnectionsService` |
+| `PATCH /v1/connections/:id` | Enable/disable from the native Connections inspector | Write | `operator` | Refetch after success | Update input | Ready with wrapper | Native uses this narrowly for enable/disable, not full record editing | `ConnectionsService` |
 | `DELETE /v1/connections/:id` | Not for early native | Write | `operator` | Refetch after success | none | Defer | Destructive admin surface; web-first | `ConnectionsService` |
 
 ### OAuth sessions and deep remediation
@@ -186,11 +186,11 @@ Only **Approvals** belongs in early native scope. The rest should wait.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `POST /v1/connections/oauth/start` | Setup hub Start Setup / Reconnect / Reauthorize for GitHub, Gmail, Calendar | Write | `operator` | Poll session after start | OAuth start request/response | Ready with wrapper | Native opens the default browser and refreshes in place after completion | `ConnectionsService` |
 | `GET /v1/connections/oauth/sessions/:id` | Setup hub OAuth progress polling | Read | `operator` | Poll while flow active | OAuth session record | Ready with wrapper | Used only while the browser flow is active | `ConnectionsService` |
-| `GET /v1/connections/:id/resource-rules` | Later resource-rule editor | Read | `operator` | Poll on screen | Resource rule records | Defer | Deep admin flow; web-first | `ConnectionsService` |
-| `POST /v1/connections/:id/resource-rules` | Later resource-rule editor | Write | `operator` | Refetch after success | Create input | Defer | Deeper than v1 needs | `ConnectionsService` |
-| `DELETE /v1/connections/:id/resource-rules` | Later resource-rule editor | Write | `operator` | Refetch after success | Delete input body | Defer | Same reason | `ConnectionsService` |
-| `GET /v1/connections/:id/diagnostics` | Later diagnostics pane | Read | `operator` | On demand | Diagnostics response | Defer | Good later support surface | `ConnectionsService` |
-| `POST /v1/connections/:id/reconnect` | Possible later quick action | Write | `operator` | Refetch after success | Reconnect input | Defer | Add only after read-only overview feels clean | `ConnectionsService` |
+| `GET /v1/connections/:id/resource-rules` | Native resource-rule inspector/editor | Read | `operator` | Poll on selection | Resource rule records | Ready with wrapper | Now part of the native Connections inspector | `ConnectionsService` |
+| `POST /v1/connections/:id/resource-rules` | Native resource-rule editor | Write | `operator` | Refetch after success | Create input | Ready with wrapper | Additive allowlist management in native | `ConnectionsService` |
+| `DELETE /v1/connections/:id/resource-rules` | Native resource-rule editor | Write | `operator` | Refetch after success | Delete input body | Ready with wrapper | Same native inspector flow | `ConnectionsService` |
+| `GET /v1/connections/:id/diagnostics` | Native diagnostics/remediation pane | Read | `operator` | On demand | Diagnostics response | Ready with wrapper | Inspector shows health, sync, and human summary | `ConnectionsService` |
+| `POST /v1/connections/:id/reconnect` | Native remediation action | Write | `operator` | Refetch after success | Reconnect input | Ready with wrapper | Used for non-browser reconnect/remediation paths | `ConnectionsService` |
 | `POST /v1/secrets` | Setup hub Telegram token storage | Write | `operator` | N/A | Secret reference record | Ready with wrapper | Used narrowly for Telegram bot-token handoff; app clears local token entry state immediately | `ConnectionsService` |
 
 ### Telegram control-plane and mutation receipt endpoints
@@ -208,7 +208,7 @@ Only **Approvals** belongs in early native scope. The rest should wait.
 
 v1 should use Setup + Connections together:
 - **Setup** owns the quick-start provider actions and Telegram runtime guidance
-- **Connections** remains the deeper diagnostics surface
+- **Connections** is now the deeper admin/remediation surface for provider health, enable/disable, sync, resource rules, and diagnostics
 - **Mutation receipts** make Telegram save/apply/restart actions observable without inventing hidden state
 
 ---

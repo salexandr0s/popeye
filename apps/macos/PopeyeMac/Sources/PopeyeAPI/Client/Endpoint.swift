@@ -109,11 +109,32 @@ public extension Endpoint {
     static let connections = Endpoint(path: "/v1/connections")
     static let storeSecret = Endpoint(path: "/v1/secrets", method: .post)
     static let providerAuthConfig = Endpoint(path: "/v1/config/provider-auth")
+    static let syncEmail = Endpoint(path: "/v1/email/sync", method: .post)
+    static let syncCalendar = Endpoint(path: "/v1/calendar/sync", method: .post)
+    static let syncTodos = Endpoint(path: "/v1/todos/sync", method: .post)
 
     static let oauthConnectionProviders = Endpoint(path: "/v1/connections/oauth/providers")
     static let startOAuthConnection = Endpoint(path: "/v1/connections/oauth/start", method: .post)
     static func updateProviderAuthConfig(provider: String) -> Endpoint {
         Endpoint(path: "/v1/config/provider-auth/\(provider)", method: .post)
+    }
+    static func updateConnection(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)", method: .patch)
+    }
+    static func connectionResourceRules(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)/resource-rules")
+    }
+    static func addConnectionResourceRule(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)/resource-rules", method: .post)
+    }
+    static func deleteConnectionResourceRule(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)/resource-rules", method: .delete)
+    }
+    static func connectionDiagnostics(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)/diagnostics")
+    }
+    static func reconnectConnection(id: String) -> Endpoint {
+        Endpoint(path: "/v1/connections/\(id)/reconnect", method: .post)
     }
 
     static func oauthConnectionSession(id: String) -> Endpoint {

@@ -55,3 +55,10 @@ public struct TodoDigestDTO: Codable, Sendable, Identifiable, Equatable {
     public let summaryMarkdown: String
     public let generatedAt: String
 }
+
+public struct TodoSyncResultDTO: Codable, Sendable, Equatable {
+    public let accountId: String
+    public let todosSynced: Int
+    public let todosUpdated: Int
+    public let errors: [String]
+}

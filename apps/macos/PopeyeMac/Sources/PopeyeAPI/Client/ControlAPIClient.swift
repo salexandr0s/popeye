@@ -232,6 +232,39 @@ public actor ControlAPIClient {
         try await get(.oauthConnectionSession(id: id))
     }
 
+    public func updateConnection(id: String, input: ConnectionUpdateInput) async throws -> ConnectionDTO {
+        try await patch(.updateConnection(id: id), body: input)
+    }
+
+    public func listConnectionResourceRules(connectionId: String) async throws -> [ConnectionResourceRuleDTO] {
+        try await get(.connectionResourceRules(id: connectionId))
+    }
+
+    public func addConnectionResourceRule(
+        connectionId: String,
+        input: ConnectionResourceRuleCreateInput
+    ) async throws -> ConnectionDTO {
+        try await post(.addConnectionResourceRule(id: connectionId), body: input)
+    }
+
+    public func removeConnectionResourceRule(
+        connectionId: String,
+        input: ConnectionResourceRuleDeleteInput
+    ) async throws -> ConnectionDTO {
+        try await delete(.deleteConnectionResourceRule(id: connectionId), body: input)
+    }
+
+    public func getConnectionDiagnostics(connectionId: String) async throws -> ConnectionDiagnosticsDTO {
+        try await get(.connectionDiagnostics(id: connectionId))
+    }
+
+    public func reconnectConnection(
+        connectionId: String,
+        input: ConnectionReconnectInput
+    ) async throws -> ConnectionDTO {
+        try await post(.reconnectConnection(id: connectionId), body: input)
+    }
+
     // MARK: - Identities
 
     public func listIdentities(workspaceId: String) async throws -> [IdentityRecordDTO] {
@@ -664,6 +697,10 @@ public actor ControlAPIClient {
         try? await get(.emailDigest(accountId: accountId))
     }
 
+    public func syncEmailAccount(accountId: String) async throws -> EmailSyncResultDTO {
+        try await post(.syncEmail, body: ["accountId": accountId])
+    }
+
     public func listCalendarAccounts() async throws -> [CalendarAccountDTO] {
         try await get(.calendarAccounts)
     }
@@ -678,6 +715,10 @@ public actor ControlAPIClient {
 
     public func calendarDigest(accountId: String) async throws -> CalendarDigestDTO? {
         try? await get(.calendarDigest(accountId: accountId))
+    }
+
+    public func syncCalendarAccount(accountId: String) async throws -> CalendarSyncResultDTO {
+        try await post(.syncCalendar, body: ["accountId": accountId])
     }
 
     public func listTodoAccounts() async throws -> [TodoAccountDTO] {
@@ -698,6 +739,10 @@ public actor ControlAPIClient {
 
     public func todoDigest(accountId: String) async throws -> TodoDigestDTO? {
         try? await get(.todoDigest(accountId: accountId))
+    }
+
+    public func syncTodoAccount(accountId: String) async throws -> TodoSyncResultDTO {
+        try await post(.syncTodos, body: ["accountId": accountId])
     }
 
     public func listPeople() async throws -> [PersonDTO] {

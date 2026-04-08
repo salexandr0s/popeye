@@ -44,7 +44,7 @@ older "current state" claims in:
 | Backup and restore | **Product-complete** | Vault backup/restore/verify with SHA-256 manifests. Migration manager integrated into DB open path. |
 | Packaging and installer | **Substrate-complete** | Build-pkg, uninstall, smoke-test, and verify-upgrade scripts exist. Migration manager with backup-before-migrate, versioned apply, verify, and rollback is implemented. |
 | Connections provider hardening | **Product-complete** | Resource-rule CRUD, diagnostics rollup, reconnect flows, and typed enforcement on calendar/github/todo write paths with API/CLI/web surfaces. |
-| Native macOS app | **Experimental** | The native client is now a real operator surface with setup, dashboard, command-center/runtime views, memory, knowledge, files, people, finance, medical, email/calendar/todos, GitHub, and playbook review flows. It still trails the web inspector for broad authoring/admin parity, but it is no longer deferred. |
+| Native macOS app | **Experimental** | The native client is now a real operator surface with setup, dashboard, command-center/runtime views, memory, knowledge, files, people, finance, medical, email/calendar/todos, GitHub, playbook review flows, and full connection admin/remediation for OAuth, diagnostics, enable/disable, sync, and resource rules. It still trails the web inspector for broad authoring/admin parity, but it is no longer deferred. |
 
 ## What counts as still missing for "fully polished"
 

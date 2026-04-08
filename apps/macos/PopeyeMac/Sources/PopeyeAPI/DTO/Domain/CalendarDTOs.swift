@@ -44,3 +44,10 @@ public struct CalendarDigestDTO: Codable, Sendable, Identifiable, Equatable {
     public let summaryMarkdown: String
     public let generatedAt: String
 }
+
+public struct CalendarSyncResultDTO: Codable, Sendable, Equatable {
+    public let accountId: String
+    public let eventsSynced: Int
+    public let eventsUpdated: Int
+    public let errors: [String]
+}

@@ -22,4 +22,8 @@ public struct EmailDomainService: Sendable {
     public func loadDigest(accountId: String) async throws -> EmailDigestDTO? {
         try await client.emailDigest(accountId: accountId)
     }
+
+    public func sync(accountId: String) async throws -> EmailSyncResultDTO {
+        try await client.syncEmailAccount(accountId: accountId)
+    }
 }

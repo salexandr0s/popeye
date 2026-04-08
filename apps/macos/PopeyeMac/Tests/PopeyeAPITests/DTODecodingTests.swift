@@ -916,4 +916,83 @@ struct DTODecodingTests {
         #expect(sync.lagSummary == "0s")
         #expect(sync.lastSuccessAt != nil)
     }
+
+    @Test("Decode ConnectionDiagnosticsDTO from inline JSON")
+    func decodeConnectionDiagnostics() throws {
+        let data = Data("""
+        {
+          "connection_id": "conn-gh-001",
+          "label": "GitHub",
+          "provider_kind": "github",
+          "domain": "github",
+          "enabled": true,
+          "health": {
+            "status": "degraded",
+            "auth_state": "invalid_scopes",
+            "checked_at": "2026-04-08T10:00:00Z",
+            "last_error": "Missing repo scope",
+            "diagnostics": [
+              { "code": "missing_scope", "severity": "warn", "message": "Repository write scope is missing." }
+            ],
+            "remediation": {
+              "action": "scope_fix",
+              "message": "Reconnect GitHub to repair scopes.",
+              "updated_at": "2026-04-08T10:01:00Z"
+            }
+          },
+          "sync": {
+            "last_attempt_at": "2026-04-08T09:55:00Z",
+            "last_success_at": "2026-04-08T09:50:00Z",
+            "status": "partial",
+            "cursor_kind": "since",
+            "cursor_present": true,
+            "lag_summary": "5m behind"
+          },
+          "policy": {
+            "status": "ready",
+            "secret_status": "configured",
+            "mutating_requires_approval": true,
+            "diagnostics": [
+              { "code": "approval_gate", "severity": "info", "message": "Mutations require approval." }
+            ]
+          },
+          "remediation": {
+            "action": "scope_fix",
+            "message": "Reconnect GitHub to repair scopes.",
+            "updated_at": "2026-04-08T10:01:00Z"
+          },
+          "human_summary": "GitHub connection is readable but missing write scopes."
+        }
+        """.utf8)
+
+        let dto = try decoder.decode(ConnectionDiagnosticsDTO.self, from: data)
+
+        #expect(dto.connectionId == "conn-gh-001")
+        #expect(dto.health.status == "degraded")
+        #expect(dto.health.diagnostics?.first?.code == "missing_scope")
+        #expect(dto.sync.cursorKind == "since")
+        #expect(dto.policy.diagnostics?.first?.severity == "info")
+        #expect(dto.humanSummary.contains("missing write scopes"))
+    }
+
+    @Test("Decode ConnectionResourceRuleDTO list from inline JSON")
+    func decodeConnectionResourceRules() throws {
+        let data = Data("""
+        [
+          {
+            "resource_type": "repo",
+            "resource_id": "nationalbank/popeye",
+            "display_name": "popeye",
+            "write_allowed": true,
+            "created_at": "2026-04-08T09:00:00Z",
+            "updated_at": "2026-04-08T09:00:00Z"
+          }
+        ]
+        """.utf8)
+
+        let dto = try decoder.decode([ConnectionResourceRuleDTO].self, from: data)
+        #expect(dto.count == 1)
+        #expect(dto.first?.resourceType == "repo")
+        #expect(dto.first?.writeAllowed == true)
+    }
 }

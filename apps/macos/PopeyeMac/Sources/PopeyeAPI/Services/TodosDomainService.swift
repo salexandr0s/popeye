@@ -26,4 +26,8 @@ public struct TodosDomainService: Sendable {
     public func loadDigest(accountId: String) async throws -> TodoDigestDTO? {
         try await client.todoDigest(accountId: accountId)
     }
+
+    public func sync(accountId: String) async throws -> TodoSyncResultDTO {
+        try await client.syncTodoAccount(accountId: accountId)
+    }
 }

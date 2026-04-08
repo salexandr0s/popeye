@@ -177,9 +177,7 @@ final class AppModel {
     }
 
     func navigateToConnection(id: String?) {
-        if let id {
-            connectionsStore().selectedId = id
-        }
+        connectionsStore().selectedId = id
         navigate(to: .connections)
     }
 

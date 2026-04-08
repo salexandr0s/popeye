@@ -57,3 +57,10 @@ public struct EmailDigestDTO: Codable, Sendable, Identifiable, Equatable {
     public let summaryMarkdown: String
     public let generatedAt: String
 }
+
+public struct EmailSyncResultDTO: Codable, Sendable, Equatable {
+    public let accountId: String
+    public let synced: Int
+    public let updated: Int
+    public let errors: [String]
+}

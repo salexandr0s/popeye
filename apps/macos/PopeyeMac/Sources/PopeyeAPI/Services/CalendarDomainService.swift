@@ -22,4 +22,8 @@ public struct CalendarDomainService: Sendable {
     public func loadDigest(accountId: String) async throws -> CalendarDigestDTO? {
         try await client.calendarDigest(accountId: accountId)
     }
+
+    public func sync(accountId: String) async throws -> CalendarSyncResultDTO {
+        try await client.syncCalendarAccount(accountId: accountId)
+    }
 }
