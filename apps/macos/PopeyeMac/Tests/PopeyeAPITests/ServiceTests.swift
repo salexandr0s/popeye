@@ -246,6 +246,10 @@ struct ServiceTests {
     let todoSync = Endpoint.syncTodos
     let emailThreads = Endpoint.emailThreads(accountId: "acct-email-1", limit: 25, unreadOnly: true)
     let emailDigest = Endpoint.emailDigest(accountId: "acct-email-1")
+    let emailSearch = Endpoint.emailSearch(query: "launch", accountId: "acct-email-1", limit: 15)
+    let generateEmailDigest = Endpoint.generateEmailDigest
+    let createEmailDraft = Endpoint.createEmailDraft
+    let updateEmailDraft = Endpoint.updateEmailDraft(id: "draft-1")
     let calendarEvents = Endpoint.calendarEvents(
       accountId: "acct-cal-1",
       dateFrom: "2026-04-01T00:00:00Z",
@@ -272,6 +276,16 @@ struct ServiceTests {
     #expect(emailThreads.queryItems.contains(URLQueryItem(name: "limit", value: "25")))
     #expect(emailThreads.queryItems.contains(URLQueryItem(name: "unreadOnly", value: "true")))
     #expect(emailDigest.path == "/v1/email/digest")
+    #expect(emailSearch.path == "/v1/email/search")
+    #expect(emailSearch.queryItems.contains(URLQueryItem(name: "query", value: "launch")))
+    #expect(emailSearch.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-email-1")))
+    #expect(emailSearch.queryItems.contains(URLQueryItem(name: "limit", value: "15")))
+    #expect(generateEmailDigest.path == "/v1/email/digest")
+    #expect(generateEmailDigest.method == .post)
+    #expect(createEmailDraft.path == "/v1/email/drafts")
+    #expect(createEmailDraft.method == .post)
+    #expect(updateEmailDraft.path == "/v1/email/drafts/draft-1")
+    #expect(updateEmailDraft.method == .patch)
 
     #expect(calendarEvents.path == "/v1/calendar/events")
     #expect(calendarSync.path == "/v1/calendar/sync")

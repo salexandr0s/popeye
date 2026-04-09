@@ -41,7 +41,7 @@ This is intentionally a **native-client map**, not a full restatement of every b
 | `MemoryService` | memory search/audit/list/detail/maintenance | later |
 | `PeopleService` | people search/detail/activity/suggestions | people browser in current native slice |
 | `FilesService` | file roots/search/documents/write intents | files browser in current native slice |
-| `DomainDigestService` | email/calendar/todos read-mostly digest/search surfaces | email/calendar/todos in current native slice |
+| `DomainDigestService` | email/calendar/todos digest/search surfaces plus targeted native-safe mutations | email/calendar/todos in current native slice |
 | `GithubService` | GitHub notifications, PRs, issues, repos, digest, search, and low-risk actions | GitHub in current native slice |
 | `PlaybooksService` | playbook list/detail, proposal authoring/review/apply flows, and stale-candidate repair review | playbooks in current native slice |
 | `FinanceService` | finance vaults/imports/digest/search/documents/transactions | finance in current native slice |
@@ -215,7 +215,7 @@ v1 should use Setup + Connections together:
 
 ## Domain vertical endpoints
 
-These surfaces now have an initial native foothold. Email remains read-first, while Calendar, Todos, People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
+These surfaces now have a meaningful native foothold. Email, Calendar, and Todos all expose narrow operator-safe mutations through the control API, alongside People, Files, Finance, and Medical.
 
 ### Home
 
@@ -234,8 +234,9 @@ These surfaces now have an initial native foothold. Email remains read-first, wh
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/providers` | Native Mail split view with account picker, thread list, digest, and thread detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; compose/send stays out of scope | `DomainDigestService` |
-| `POST /v1/email/accounts`, `POST /v1/email/sync`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` | Later email account/draft tooling | Write | `operator` | Refetch after success | Defer | Web-first until native core is proven | `DomainDigestService` |
+| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/providers` | Native Mail split view with account picker, inbox/search modes, unread-only filtering, digest, draft summary, and thread detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a daily-use native mail surface with explicit search + filter controls; provider-side send/reply and durable draft retrieval still stay out of scope | `DomainDigestService` |
+| `POST /v1/email/sync`, `POST /v1/email/digest`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` | Native Mail toolbar, digest controls, and draft editor sheet actions | Write | `operator` | Refetch after success | Ready with wrapper | Shipped as targeted native mailbox sync, digest generation, and Popeye-managed draft create/edit | `DomainDigestService` |
+| `POST /v1/email/accounts` | Later email administration | Write | `operator` | Refetch after success | Defer | Account registration remains web/CLI-first | `DomainDigestService` |
 
 ### Calendar
 
@@ -297,7 +298,7 @@ These surfaces now have an initial native foothold. Email remains read-first, wh
 
 ### Native recommendation
 
-These domain surfaces now exist as native complements to the operator-console core. Email remains read-first, while Calendar, Todos, People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
+These domain surfaces now exist as native complements to the operator-console core. Email, Calendar, and Todos now expose narrow operator-safe actions, and curated markdown editing is available for instruction and curated-memory documents.
 
 ---
 
@@ -320,7 +321,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | Automation Grants | Usage & Security | **Shipped, targeted mutations** | Native now supports filter/create/revoke governance flow |
 | Connections | Connections | **Shipped, admin parity** | Native now owns OAuth/remediation/resource-rule admin flows |
 | Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
-| Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
+| Email | Mail | **Shipped, search + targeted mutations** | Native now covers account-scoped search, unread filtering, mailbox sync, digest generation, and Popeye-managed draft create/edit in addition to the split view |
 | Calendar | Calendar | **Shipped, targeted mutations** | Native now supports sync plus targeted create/edit event workflows |
 | GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
 | Playbooks / Proposals | Playbooks | **Shipped, authoring + review** | Native now covers canonical records, stale signals, proposal draft/patch authoring, suggested-patch seeding, review, apply, activate, and retire |

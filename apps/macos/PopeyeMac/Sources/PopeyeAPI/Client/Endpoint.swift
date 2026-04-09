@@ -521,10 +521,19 @@ public extension Endpoint {
         return Endpoint(path: "/v1/email/threads", queryItems: items)
     }
     static func emailThread(id: String) -> Endpoint { Endpoint(path: "/v1/email/threads/\(id)") }
+    static func emailSearch(query: String, accountId: String? = nil, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = [URLQueryItem(name: "query", value: query)]
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/email/search", queryItems: items)
+    }
     static func emailDigest(accountId: String? = nil) -> Endpoint {
         let items = accountId.map { [URLQueryItem(name: "accountId", value: $0)] } ?? []
         return Endpoint(path: "/v1/email/digest", queryItems: items)
     }
+    static let generateEmailDigest = Endpoint(path: "/v1/email/digest", method: .post)
+    static let createEmailDraft = Endpoint(path: "/v1/email/drafts", method: .post)
+    static func updateEmailDraft(id: String) -> Endpoint { Endpoint(path: "/v1/email/drafts/\(id)", method: .patch) }
 
     static let calendarAccounts = Endpoint(path: "/v1/calendar/accounts")
     static func calendarEvents(accountId: String? = nil, dateFrom: String? = nil, dateTo: String? = nil, limit: Int? = nil) -> Endpoint {

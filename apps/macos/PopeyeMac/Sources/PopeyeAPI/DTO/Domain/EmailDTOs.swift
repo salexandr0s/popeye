@@ -58,9 +58,82 @@ public struct EmailDigestDTO: Codable, Sendable, Identifiable, Equatable {
     public let generatedAt: String
 }
 
+public struct EmailSearchResultDTO: Codable, Sendable, Identifiable, Equatable {
+    public let threadId: String
+    public let subject: String
+    public let snippet: String
+    public let from: String
+    public let lastMessageAt: String
+    public let score: Double
+
+    public var id: String { threadId }
+}
+
+public struct EmailSearchResponseDTO: Codable, Sendable, Equatable {
+    public let query: String
+    public let results: [EmailSearchResultDTO]
+}
+
 public struct EmailSyncResultDTO: Codable, Sendable, Equatable {
     public let accountId: String
     public let synced: Int
     public let updated: Int
     public let errors: [String]
+}
+
+public struct EmailDraftDTO: Codable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let accountId: String
+    public let connectionId: String
+    public let providerDraftId: String
+    public let providerMessageId: String?
+    public let to: [String]
+    public let cc: [String]
+    public let subject: String
+    public let bodyPreview: String
+    public let updatedAt: String
+}
+
+public struct EmailDraftCreateInput: Encodable, Sendable, Equatable {
+    public let accountId: String
+    public let to: [String]
+    public let cc: [String]
+    public let subject: String
+    public let body: String
+
+    public init(
+        accountId: String,
+        to: [String] = [],
+        cc: [String] = [],
+        subject: String,
+        body: String = ""
+    ) {
+        self.accountId = accountId
+        self.to = to
+        self.cc = cc
+        self.subject = subject
+        self.body = body
+    }
+}
+
+public struct EmailDraftUpdateInput: Encodable, Sendable, Equatable {
+    public let accountId: String?
+    public let to: [String]?
+    public let cc: [String]?
+    public let subject: String?
+    public let body: String?
+
+    public init(
+        accountId: String? = nil,
+        to: [String]? = nil,
+        cc: [String]? = nil,
+        subject: String? = nil,
+        body: String? = nil
+    ) {
+        self.accountId = accountId
+        self.to = to
+        self.cc = cc
+        self.subject = subject
+        self.body = body
+    }
 }

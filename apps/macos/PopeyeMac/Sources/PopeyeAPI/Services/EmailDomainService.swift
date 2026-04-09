@@ -23,7 +23,23 @@ public struct EmailDomainService: Sendable {
         try await client.emailDigest(accountId: accountId)
     }
 
+    public func search(query: String, accountId: String, limit: Int = 20) async throws -> EmailSearchResponseDTO {
+        try await client.searchEmail(query: query, accountId: accountId, limit: limit)
+    }
+
     public func sync(accountId: String) async throws -> EmailSyncResultDTO {
         try await client.syncEmailAccount(accountId: accountId)
+    }
+
+    public func generateDigest(accountId: String) async throws -> EmailDigestDTO? {
+        try await client.generateEmailDigest(accountId: accountId)
+    }
+
+    public func createDraft(input: EmailDraftCreateInput) async throws -> EmailDraftDTO {
+        try await client.createEmailDraft(input: input)
+    }
+
+    public func updateDraft(id: String, input: EmailDraftUpdateInput) async throws -> EmailDraftDTO {
+        try await client.updateEmailDraft(id: id, input: input)
     }
 }

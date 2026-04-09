@@ -757,12 +757,28 @@ public actor ControlAPIClient {
         try await get(.emailThread(id: id))
     }
 
+    public func searchEmail(query: String, accountId: String, limit: Int = 20) async throws -> EmailSearchResponseDTO {
+        try await get(.emailSearch(query: query, accountId: accountId, limit: limit))
+    }
+
     public func emailDigest(accountId: String) async throws -> EmailDigestDTO? {
         try? await get(.emailDigest(accountId: accountId))
     }
 
     public func syncEmailAccount(accountId: String) async throws -> EmailSyncResultDTO {
         try await post(.syncEmail, body: ["accountId": accountId])
+    }
+
+    public func generateEmailDigest(accountId: String) async throws -> EmailDigestDTO? {
+        try await post(.generateEmailDigest, body: EmailDigestRequest(accountId: accountId))
+    }
+
+    public func createEmailDraft(input: EmailDraftCreateInput) async throws -> EmailDraftDTO {
+        try await post(.createEmailDraft, body: input)
+    }
+
+    public func updateEmailDraft(id: String, input: EmailDraftUpdateInput) async throws -> EmailDraftDTO {
+        try await patch(.updateEmailDraft(id: id), body: input)
     }
 
     public func listCalendarAccounts() async throws -> [CalendarAccountDTO] {
@@ -1124,6 +1140,10 @@ public actor ControlAPIClient {
         let response: CsrfTokenDTO = try await get(.csrfToken)
         csrfToken = response.token
     }
+}
+
+private struct EmailDigestRequest: Encodable, Sendable {
+    let accountId: String?
 }
 
 struct ErrorResponseDTO: Decodable, Sendable {

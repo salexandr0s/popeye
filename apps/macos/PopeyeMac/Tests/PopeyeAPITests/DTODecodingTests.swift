@@ -421,7 +421,7 @@ struct DTODecodingTests {
         #expect(dto.recentRuns[0].pendingApprovalCount == 1)
     }
 
-    @Test("Decode Email account, thread, and digest fixtures")
+    @Test("Decode Email account, thread, digest, and search fixtures")
     func decodeEmailDomainDTOs() throws {
         let accountData = try loadFixture("email_account")
         let threadData = try loadFixture("email_thread")
@@ -430,6 +430,25 @@ struct DTODecodingTests {
         let account = try decoder.decode(EmailAccountDTO.self, from: accountData)
         let thread = try decoder.decode(EmailThreadDTO.self, from: threadData)
         let digest = try decoder.decode(EmailDigestDTO.self, from: digestData)
+        let search = try decoder.decode(
+            EmailSearchResponseDTO.self,
+            from: Data(
+                """
+                {
+                  "query": "launch",
+                  "results": [
+                    {
+                      "threadId": "thread-1",
+                      "subject": "Launch plan",
+                      "snippet": "Draft the launch note and gather approvals.",
+                      "from": "annie@example.com",
+                      "lastMessageAt": "2026-04-09T09:00:00Z",
+                      "score": 0.98
+                    }
+                  ]
+                }
+                """.utf8)
+        )
 
         #expect(account.id == "email-acct-1")
         #expect(account.emailAddress == "operator@example.com")
@@ -438,6 +457,9 @@ struct DTODecodingTests {
         #expect(thread.labelIds.contains("INBOX"))
         #expect(digest.accountId == "email-acct-1")
         #expect(digest.unreadCount == 12)
+        #expect(search.query == "launch")
+        #expect(search.results.first?.threadId == "thread-1")
+        #expect(search.results.first?.from == "annie@example.com")
     }
 
     @Test("Decode Calendar account, event, and digest fixtures")
@@ -1015,5 +1037,32 @@ struct DTODecodingTests {
         #expect(dto.count == 1)
         #expect(dto.first?.resourceType == "repo")
         #expect(dto.first?.writeAllowed == true)
+    }
+
+    @Test("Decode EmailDraftDTO from inline JSON")
+    func decodeEmailDraft() throws {
+        let dto = try decoder.decode(
+            EmailDraftDTO.self,
+            from: Data(
+                """
+                {
+                  "id": "email-draft-1",
+                  "accountId": "email-acct-1",
+                  "connectionId": "conn-email-1",
+                  "providerDraftId": "draft-1",
+                  "providerMessageId": null,
+                  "to": ["annie@example.com"],
+                  "cc": ["ben@example.com"],
+                  "subject": "Launch plan",
+                  "bodyPreview": "Draft the launch note.",
+                  "updatedAt": "2026-04-09T09:00:00Z"
+                }
+                """.utf8)
+        )
+
+        #expect(dto.providerDraftId == "draft-1")
+        #expect(dto.to == ["annie@example.com"])
+        #expect(dto.cc == ["ben@example.com"])
+        #expect(dto.bodyPreview == "Draft the launch note.")
     }
 }

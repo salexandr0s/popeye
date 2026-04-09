@@ -269,6 +269,130 @@ struct SwiftUIRenderSmokeTests {
         )
     }
 
+    @Test("Email view renders with mailbox actions and draft summary")
+    func rendersEmailView() async {
+        let appModel = FeaturePreviewFixtures.previewAppModel()
+        appModel.connectionState = .connected
+        appModel.sseConnected = true
+
+        let store = EmailStore(
+            dependencies: .init(
+                loadAccounts: {
+                    [EmailAccountDTO(
+                        id: "email-acct-1",
+                        connectionId: "conn-email-1",
+                        emailAddress: "operator@example.com",
+                        displayName: "Work Inbox",
+                        syncCursorPageToken: nil,
+                        syncCursorHistoryId: nil,
+                        lastSyncAt: "2026-04-09T09:00:00Z",
+                        messageCount: 12,
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )]
+                },
+                loadThreads: { _, _, _ in
+                    [EmailThreadDTO(
+                        id: "thread-1",
+                        accountId: "email-acct-1",
+                        gmailThreadId: "gmail-thread-1",
+                        subject: "Launch plan",
+                        snippet: "Draft the launch note and gather approvals.",
+                        lastMessageAt: "2026-04-09T09:00:00Z",
+                        messageCount: 2,
+                        labelIds: ["INBOX"],
+                        isUnread: true,
+                        isStarred: false,
+                        importance: "high",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )]
+                },
+                loadThread: { _ in
+                    EmailThreadDTO(
+                        id: "thread-1",
+                        accountId: "email-acct-1",
+                        gmailThreadId: "gmail-thread-1",
+                        subject: "Launch plan",
+                        snippet: "Draft the launch note and gather approvals.",
+                        lastMessageAt: "2026-04-09T09:00:00Z",
+                        messageCount: 2,
+                        labelIds: ["INBOX"],
+                        isUnread: true,
+                        isStarred: false,
+                        importance: "high",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )
+                },
+                loadDigest: { _ in
+                    EmailDigestDTO(
+                        id: "email-digest-1",
+                        accountId: "email-acct-1",
+                        workspaceId: "default",
+                        date: "2026-04-09",
+                        unreadCount: 3,
+                        highSignalCount: 1,
+                        summaryMarkdown: "Three unread items need attention.",
+                        generatedAt: "2026-04-09T09:00:00Z"
+                    )
+                },
+                search: { query, _, _ in
+                    EmailSearchResponseDTO(
+                        query: query,
+                        results: [EmailSearchResultDTO(
+                            threadId: "thread-1",
+                            subject: "Launch plan",
+                            snippet: "Draft the launch note and gather approvals.",
+                            from: "annie@example.com",
+                            lastMessageAt: "2026-04-09T09:00:00Z",
+                            score: 0.99
+                        )]
+                    )
+                },
+                syncAccount: { accountId in
+                    EmailSyncResultDTO(accountId: accountId, synced: 3, updated: 1, errors: [])
+                },
+                generateDigest: { accountId in
+                    EmailDigestDTO(
+                        id: "email-digest-1",
+                        accountId: accountId,
+                        workspaceId: "default",
+                        date: "2026-04-09",
+                        unreadCount: 3,
+                        highSignalCount: 1,
+                        summaryMarkdown: "Three unread items need attention.",
+                        generatedAt: "2026-04-09T09:00:00Z"
+                    )
+                },
+                createDraft: { _ in fatalError("unused in render smoke") },
+                updateDraft: { _, _ in fatalError("unused in render smoke") },
+                emitInvalidation: { _ in }
+            )
+        )
+        await store.load()
+        store.draftsByAccountID["email-acct-1"] = EmailDraftDTO(
+            id: "email-draft-1",
+            accountId: "email-acct-1",
+            connectionId: "conn-email-1",
+            providerDraftId: "draft-1",
+            providerMessageId: nil,
+            to: ["annie@example.com"],
+            cc: [],
+            subject: "Launch plan",
+            bodyPreview: "Draft the launch note.",
+            updatedAt: "2026-04-09T09:00:00Z"
+        )
+        store.draftBodiesByProviderDraftID["draft-1"] = "Draft the launch note."
+
+        assertRenders(
+            NavigationStack {
+                EmailView(store: store)
+            }
+            .environment(appModel)
+        )
+    }
+
     private func assertRenders<Content: View>(_ view: Content) {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
