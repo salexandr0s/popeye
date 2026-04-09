@@ -328,6 +328,14 @@ export class EmailService {
     return row ? mapDraftRow(row) : null;
   }
 
+  listDrafts(accountId: string, options: { limit?: number | undefined } = {}): EmailDraftRecord[] {
+    const limit = options.limit ?? 20;
+    const rows = prepareAll<EmailDraftRow>(this.db,
+      'SELECT * FROM email_drafts WHERE account_id = ? ORDER BY updated_at DESC, created_at DESC, provider_draft_id DESC LIMIT ?',
+    )(accountId, limit);
+    return rows.map(mapDraftRow);
+  }
+
   upsertDraft(input: {
     accountId: string;
     connectionId: string;

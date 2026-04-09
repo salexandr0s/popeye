@@ -115,9 +115,13 @@ struct EmailView: View {
                 )
 
                 EmailDraftSection(
-                    draft: store.visibleDraft,
-                    canEdit: store.canEditVisibleDraft,
-                    editDraft: store.beginEditVisibleDraft
+                    drafts: store.visibleDrafts,
+                    isLoadingDetail: store.isLoadingDraftDetail,
+                    detailError: store.draftDetailError,
+                    canEditDrafts: store.canBeginDraftEdit,
+                    editDraft: { draft in
+                        Task { await store.beginEditDraft(draft) }
+                    }
                 )
 
                 if store.isSearchMode, let query = store.activeSearchQuery {

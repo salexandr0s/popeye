@@ -35,6 +35,14 @@ public struct EmailDomainService: Sendable {
         try await client.generateEmailDigest(accountId: accountId)
     }
 
+    public func loadDrafts(accountId: String, limit: Int = 20) async throws -> [EmailDraftDTO] {
+        try await client.listEmailDrafts(accountId: accountId, limit: limit)
+    }
+
+    public func loadDraft(id: String) async throws -> EmailDraftDetailDTO {
+        try await client.getEmailDraft(id: id)
+    }
+
     public func createDraft(input: EmailDraftCreateInput) async throws -> EmailDraftDTO {
         try await client.createEmailDraft(input: input)
     }

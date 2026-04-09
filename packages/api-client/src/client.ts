@@ -179,6 +179,8 @@ import {
   type EmailDigestRecord,
   EmailDigestRecordSchema,
   type EmailDraftCreateInput,
+  type EmailDraftDetailRecord,
+  EmailDraftDetailRecordSchema,
   type EmailDraftRecord,
   EmailDraftRecordSchema,
   type EmailDraftUpdateInput,
@@ -1514,6 +1516,15 @@ export class PopeyeApiClient {
       if (err instanceof ApiError && err.statusCode === 404) return null;
       return null;
     }
+  }
+
+  async listEmailDrafts(options?: { accountId?: string | undefined; limit?: number | undefined }): Promise<EmailDraftRecord[]> {
+    const params = this.buildQuery({ accountId: options?.accountId, limit: options?.limit });
+    return this.getArray(`/v1/email/drafts${params}`, EmailDraftRecordSchema);
+  }
+
+  async getEmailDraft(id: string): Promise<EmailDraftDetailRecord> {
+    return this.get(`/v1/email/drafts/${encodeURIComponent(id)}`, EmailDraftDetailRecordSchema);
   }
 
   async createEmailDraft(input: EmailDraftCreateInput): Promise<EmailDraftRecord> {

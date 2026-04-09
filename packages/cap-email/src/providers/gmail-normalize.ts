@@ -69,6 +69,10 @@ export function parseAddressList(value: string): string[] {
 }
 
 export function extractBodyPreview(payload: GmailMessagePart): string {
+  return extractBodyText(payload).slice(0, BODY_PREVIEW_MAX_CHARS);
+}
+
+export function extractBodyText(payload: GmailMessagePart): string {
   const textPart = findPart(payload, 'text/plain') ?? findPart(payload, 'text/html');
   if (!textPart?.body.data) return '';
 
@@ -78,7 +82,7 @@ export function extractBodyPreview(payload: GmailMessagePart): string {
     ? decoded.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
     : decoded;
 
-  return text.slice(0, BODY_PREVIEW_MAX_CHARS);
+  return text;
 }
 
 function findPart(part: GmailMessagePart, mimeType: string): GmailMessagePart | undefined {

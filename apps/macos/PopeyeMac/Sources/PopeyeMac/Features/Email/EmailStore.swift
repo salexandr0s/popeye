@@ -25,6 +25,8 @@ final class EmailStore {
         var loadThreads: @Sendable (_ accountId: String, _ limit: Int, _ unreadOnly: Bool) async throws -> [EmailThreadDTO]
         var loadThread: @Sendable (_ id: String) async throws -> EmailThreadDTO
         var loadDigest: @Sendable (_ accountId: String) async throws -> EmailDigestDTO?
+        var loadDrafts: @Sendable (_ accountId: String, _ limit: Int) async throws -> [EmailDraftDTO]
+        var loadDraft: @Sendable (_ id: String) async throws -> EmailDraftDetailDTO
         var search: @Sendable (_ query: String, _ accountId: String, _ limit: Int) async throws -> EmailSearchResponseDTO
         var syncAccount: @Sendable (_ accountId: String) async throws -> EmailSyncResultDTO
         var generateDigest: @Sendable (_ accountId: String) async throws -> EmailDigestDTO?
@@ -41,6 +43,8 @@ final class EmailStore {
                 },
                 loadThread: { id in try await service.loadThread(id: id) },
                 loadDigest: { accountId in try await service.loadDigest(accountId: accountId) },
+                loadDrafts: { accountId, limit in try await service.loadDrafts(accountId: accountId, limit: limit) },
+                loadDraft: { id in try await service.loadDraft(id: id) },
                 search: { query, accountId, limit in
                     try await service.search(query: query, accountId: accountId, limit: limit)
                 },
@@ -87,6 +91,7 @@ final class EmailStore {
             lastSyncResult = nil
             draftsByAccountID = [:]
             draftBodiesByProviderDraftID = [:]
+            draftDetailPhase = .idle
             isLoading = false
             error = nil
             mutations.dismiss()
@@ -95,8 +100,9 @@ final class EmailStore {
 
     var editor: DraftEditor?
     var lastSyncResult: EmailSyncResultDTO?
-    var draftsByAccountID: [String: EmailDraftDTO] = [:]
+    var draftsByAccountID: [String: [EmailDraftDTO]] = [:]
     var draftBodiesByProviderDraftID: [String: String] = [:]
+    var draftDetailPhase: ScreenOperationPhase = .idle
 
     let mutations = MutationExecutor()
     var mutationState: MutationState { mutations.state }
@@ -117,9 +123,9 @@ final class EmailStore {
         return accounts.first(where: { $0.id == selectedAccountID }) ?? accounts.first
     }
 
-    var visibleDraft: EmailDraftDTO? {
-        guard let activeAccount else { return nil }
-        return draftsByAccountID[activeAccount.id]
+    var visibleDrafts: [EmailDraftDTO] {
+        guard let activeAccount else { return [] }
+        return draftsByAccountID[activeAccount.id] ?? []
     }
 
     var visibleSyncResult: EmailSyncResultDTO? {
@@ -144,21 +150,28 @@ final class EmailStore {
         searchPhase.isLoading
     }
 
+    var draftDetailError: APIError? {
+        draftDetailPhase.error
+    }
+
+    var isLoadingDraftDetail: Bool {
+        draftDetailPhase.isLoading
+    }
+
     var canSyncSelectedAccount: Bool {
-        activeAccount != nil && mutationState != .executing && isSearching == false
+        activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     var canGenerateDigest: Bool {
-        activeAccount != nil && mutationState != .executing && isSearching == false
+        activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     var canCreateDraft: Bool {
-        activeAccount != nil && mutationState != .executing && isSearching == false
+        activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
-    var canEditVisibleDraft: Bool {
-        guard let draft = visibleDraft else { return false }
-        return draftBodiesByProviderDraftID[draft.providerDraftId] != nil && mutationState != .executing && isSearching == false
+    var canBeginDraftEdit: Bool {
+        activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     var canSearch: Bool {
@@ -166,14 +179,15 @@ final class EmailStore {
             && trimmedSearchQuery.isEmpty == false
             && mutationState != .executing
             && isSearching == false
+            && isLoadingDraftDetail == false
     }
 
     var canToggleUnreadOnly: Bool {
-        activeAccount != nil && mutationState != .executing && isSearching == false
+        activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     var canClearSearch: Bool {
-        isSearchMode && mutationState != .executing && isSearching == false
+        isSearchMode && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     var draftValidationMessage: String? {
@@ -192,7 +206,7 @@ final class EmailStore {
     }
 
     var canSaveDraft: Bool {
-        editor != nil && draftValidationMessage == nil && mutationState != .executing && isSearching == false
+        editor != nil && draftValidationMessage == nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
 
     func load() async {
@@ -214,6 +228,7 @@ final class EmailStore {
                 selectedThread = nil
                 clearSearchState(resetQuery: true)
                 inboxSelectedThreadID = nil
+                draftDetailPhase = .idle
                 return
             }
 
@@ -234,6 +249,8 @@ final class EmailStore {
         guard oldValue != newValue else { return }
         guard oldValue != nil else { return }
         clearSearchState(resetQuery: true)
+        draftDetailPhase = .idle
+        editor = nil
         inboxSelectedThreadID = nil
         selectedThreadID = nil
         selectedThread = nil
@@ -322,6 +339,7 @@ final class EmailStore {
 
     func beginCreateDraft() {
         guard let account = activeAccount else { return }
+        draftDetailPhase = .idle
         editor = DraftEditor(
             mode: .create,
             draftProviderDraftId: nil,
@@ -333,20 +351,40 @@ final class EmailStore {
         )
     }
 
-    func beginEditVisibleDraft() {
-        guard let draft = visibleDraft,
-              let fullBody = draftBodiesByProviderDraftID[draft.providerDraftId]
-        else { return }
+    func beginEditDraft(_ draft: EmailDraftDTO) async {
+        guard canBeginDraftEdit else { return }
 
-        editor = DraftEditor(
-            mode: .edit,
-            draftProviderDraftId: draft.providerDraftId,
-            accountId: draft.accountId,
-            toText: draft.to.joined(separator: ", "),
-            ccText: draft.cc.joined(separator: ", "),
-            subject: draft.subject,
-            body: fullBody
-        )
+        if let cachedBody = draftBodiesByProviderDraftID[draft.providerDraftId] {
+            draftDetailPhase = .idle
+            editor = DraftEditor(
+                mode: .edit,
+                draftProviderDraftId: draft.providerDraftId,
+                accountId: draft.accountId,
+                toText: draft.to.joined(separator: ", "),
+                ccText: draft.cc.joined(separator: ", "),
+                subject: draft.subject,
+                body: cachedBody
+            )
+            return
+        }
+
+        draftDetailPhase = .loading
+        do {
+            let detail = try await dependencies.loadDraft(draft.id)
+            cacheDraftDetail(detail)
+            draftDetailPhase = .idle
+            editor = DraftEditor(
+                mode: .edit,
+                draftProviderDraftId: detail.providerDraftId,
+                accountId: detail.accountId,
+                toText: detail.to.joined(separator: ", "),
+                ccText: detail.cc.joined(separator: ", "),
+                subject: detail.subject,
+                body: detail.body
+            )
+        } catch {
+            draftDetailPhase = .failed(Self.map(error))
+        }
     }
 
     func cancelDraftEditor() {
@@ -435,8 +473,10 @@ final class EmailStore {
     private func reloadInboxSnapshot(accountId: String) async throws {
         async let loadedThreads = dependencies.loadThreads(accountId, 50, isUnreadOnly)
         async let loadedDigest = dependencies.loadDigest(accountId)
+        async let loadedDrafts = dependencies.loadDrafts(accountId, 20)
         threads = try await loadedThreads
         digest = try await loadedDigest
+        draftsByAccountID[accountId] = try await loadedDrafts
     }
 
     private func refreshActiveSearch(accountId: String) async throws {
@@ -494,8 +534,36 @@ final class EmailStore {
     }
 
     private func cacheDraft(_ draft: EmailDraftDTO, fullBody: String) {
-        draftsByAccountID[draft.accountId] = draft
+        cacheDraftSummary(draft)
         draftBodiesByProviderDraftID[draft.providerDraftId] = fullBody
+    }
+
+    private func cacheDraftSummary(_ draft: EmailDraftDTO) {
+        var drafts = draftsByAccountID[draft.accountId] ?? []
+        if let existingIndex = drafts.firstIndex(where: { $0.id == draft.id || $0.providerDraftId == draft.providerDraftId }) {
+            drafts[existingIndex] = draft
+        } else {
+            drafts.insert(draft, at: 0)
+        }
+        draftsByAccountID[draft.accountId] = drafts.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func cacheDraftDetail(_ detail: EmailDraftDetailDTO) {
+        cacheDraftSummary(
+            EmailDraftDTO(
+                id: detail.id,
+                accountId: detail.accountId,
+                connectionId: detail.connectionId,
+                providerDraftId: detail.providerDraftId,
+                providerMessageId: detail.providerMessageId,
+                to: detail.to,
+                cc: detail.cc,
+                subject: detail.subject,
+                bodyPreview: detail.bodyPreview,
+                updatedAt: detail.updatedAt
+            )
+        )
+        draftBodiesByProviderDraftID[detail.providerDraftId] = detail.body
     }
 
     fileprivate static func parseRecipients(_ value: String) -> [String] {

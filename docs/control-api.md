@@ -287,6 +287,8 @@ Connection rollups are additive read models:
 | GET | `/v1/email/threads/:id` | Read one thread record. Returns 404 if not found. |
 | GET | `/v1/email/messages/:id` | Read one message record. Returns 404 if not found. |
 | GET | `/v1/email/digest` | Read the latest digest for one account. Optional query: `accountId`. |
+| GET | `/v1/email/drafts` | List Popeye-tracked drafts for one account. Optional query: `accountId`, `limit`. |
+| GET | `/v1/email/drafts/:id` | Read one Popeye-tracked draft with full body content. Accepts either the local draft id or the provider draft id. Returns 404 if not found. |
 | GET | `/v1/email/search` | Search synced email threads. Query params: `query`, optional `accountId`, `limit`. |
 | POST | `/v1/email/accounts` | Register an email account manually. Blessed browser OAuth now auto-registers the happy path. |
 | POST | `/v1/email/sync` | Trigger a sync for one email account. Body: `{ accountId }`. |
@@ -301,7 +303,8 @@ evaluation.
 
 Draft ownership is now persisted locally. Popeye records `draftId -> accountId ->
 connectionId` so updates resolve deterministically across multiple Gmail
-accounts instead of assuming a single mailbox.
+accounts instead of assuming a single mailbox, while full draft bodies are
+fetched from the provider on demand rather than persisted in the local draft DB.
 
 ### GitHub
 

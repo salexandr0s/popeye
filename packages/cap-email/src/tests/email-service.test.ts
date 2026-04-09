@@ -167,6 +167,33 @@ describe('EmailService', () => {
 
   // --- Digests ---
 
+  it('lists drafts ordered by most recently updated', () => {
+    const account = svc.registerAccount({ connectionId: 'c1', emailAddress: 'u@t.com', displayName: 'U' });
+    svc.upsertDraft({
+      accountId: account.id,
+      connectionId: account.connectionId,
+      providerDraftId: 'draft-1',
+      providerMessageId: null,
+      to: ['a@test.com'],
+      cc: [],
+      subject: 'First draft',
+      bodyPreview: 'First body',
+    });
+    svc.upsertDraft({
+      accountId: account.id,
+      connectionId: account.connectionId,
+      providerDraftId: 'draft-2',
+      providerMessageId: null,
+      to: ['b@test.com'],
+      cc: [],
+      subject: 'Second draft',
+      bodyPreview: 'Second body',
+    });
+
+    const drafts = svc.listDrafts(account.id, { limit: 10 });
+    expect(drafts.map((draft) => draft.providerDraftId)).toEqual(['draft-2', 'draft-1']);
+  });
+
   it('inserts and retrieves digests', () => {
     const account = svc.registerAccount({ connectionId: 'c1', emailAddress: 'u@t.com', displayName: 'U' });
     const digest = svc.insertDigest({

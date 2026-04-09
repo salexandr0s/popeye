@@ -123,6 +123,17 @@ export const EmailDraftRecordSchema = z.object({
 });
 export type EmailDraftRecord = z.infer<typeof EmailDraftRecordSchema>;
 
+export const EmailDraftDetailRecordSchema = EmailDraftRecordSchema.extend({
+  body: z.string().default(''),
+});
+export type EmailDraftDetailRecord = z.infer<typeof EmailDraftDetailRecordSchema>;
+
+export const EmailDraftListQuerySchema = z.object({
+  accountId: z.string().optional(),
+  limit: z.number().int().positive().max(100).default(20),
+});
+export type EmailDraftListQuery = z.infer<typeof EmailDraftListQuerySchema>;
+
 export const EmailDraftCreateInputSchema = z.object({
   accountId: z.string().min(1),
   to: z.array(z.string().email()).default([]),

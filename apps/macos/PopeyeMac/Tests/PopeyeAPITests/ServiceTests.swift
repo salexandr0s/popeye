@@ -248,6 +248,8 @@ struct ServiceTests {
     let emailDigest = Endpoint.emailDigest(accountId: "acct-email-1")
     let emailSearch = Endpoint.emailSearch(query: "launch", accountId: "acct-email-1", limit: 15)
     let generateEmailDigest = Endpoint.generateEmailDigest
+    let emailDrafts = Endpoint.emailDrafts(accountId: "acct-email-1", limit: 10)
+    let emailDraft = Endpoint.emailDraft(id: "draft-1")
     let createEmailDraft = Endpoint.createEmailDraft
     let updateEmailDraft = Endpoint.updateEmailDraft(id: "draft-1")
     let calendarEvents = Endpoint.calendarEvents(
@@ -282,6 +284,11 @@ struct ServiceTests {
     #expect(emailSearch.queryItems.contains(URLQueryItem(name: "limit", value: "15")))
     #expect(generateEmailDigest.path == "/v1/email/digest")
     #expect(generateEmailDigest.method == .post)
+    #expect(emailDrafts.path == "/v1/email/drafts")
+    #expect(emailDrafts.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-email-1")))
+    #expect(emailDrafts.queryItems.contains(URLQueryItem(name: "limit", value: "10")))
+    #expect(emailDraft.path == "/v1/email/drafts/draft-1")
+    #expect(emailDraft.method == .get)
     #expect(createEmailDraft.path == "/v1/email/drafts")
     #expect(createEmailDraft.method == .post)
     #expect(updateEmailDraft.path == "/v1/email/drafts/draft-1")

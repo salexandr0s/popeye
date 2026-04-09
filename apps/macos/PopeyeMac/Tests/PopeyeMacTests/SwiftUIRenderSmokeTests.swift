@@ -337,6 +337,37 @@ struct SwiftUIRenderSmokeTests {
                         generatedAt: "2026-04-09T09:00:00Z"
                     )
                 },
+                loadDrafts: { _, _ in
+                    [
+                        EmailDraftDTO(
+                            id: "email-draft-1",
+                            accountId: "email-acct-1",
+                            connectionId: "conn-email-1",
+                            providerDraftId: "draft-1",
+                            providerMessageId: nil,
+                            to: ["annie@example.com"],
+                            cc: [],
+                            subject: "Launch plan",
+                            bodyPreview: "Draft the launch note.",
+                            updatedAt: "2026-04-09T09:00:00Z"
+                        )
+                    ]
+                },
+                loadDraft: { id in
+                    EmailDraftDetailDTO(
+                        id: id,
+                        accountId: "email-acct-1",
+                        connectionId: "conn-email-1",
+                        providerDraftId: "draft-1",
+                        providerMessageId: nil,
+                        to: ["annie@example.com"],
+                        cc: [],
+                        subject: "Launch plan",
+                        bodyPreview: "Draft the launch note.",
+                        updatedAt: "2026-04-09T09:00:00Z",
+                        body: "Draft the launch note."
+                    )
+                },
                 search: { query, _, _ in
                     EmailSearchResponseDTO(
                         query: query,
@@ -371,18 +402,20 @@ struct SwiftUIRenderSmokeTests {
             )
         )
         await store.load()
-        store.draftsByAccountID["email-acct-1"] = EmailDraftDTO(
-            id: "email-draft-1",
-            accountId: "email-acct-1",
-            connectionId: "conn-email-1",
-            providerDraftId: "draft-1",
-            providerMessageId: nil,
-            to: ["annie@example.com"],
-            cc: [],
-            subject: "Launch plan",
-            bodyPreview: "Draft the launch note.",
-            updatedAt: "2026-04-09T09:00:00Z"
-        )
+        store.draftsByAccountID["email-acct-1"] = [
+            EmailDraftDTO(
+                id: "email-draft-1",
+                accountId: "email-acct-1",
+                connectionId: "conn-email-1",
+                providerDraftId: "draft-1",
+                providerMessageId: nil,
+                to: ["annie@example.com"],
+                cc: [],
+                subject: "Launch plan",
+                bodyPreview: "Draft the launch note.",
+                updatedAt: "2026-04-09T09:00:00Z"
+            )
+        ]
         store.draftBodiesByProviderDraftID["draft-1"] = "Draft the launch note."
 
         assertRenders(

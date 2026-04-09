@@ -15,7 +15,7 @@ export { EmailSyncService } from './email-sync.js';
 export { EmailDigestService } from './email-digest.js';
 export { EmailSearchService } from './email-search.js';
 export { getEmailMigrations } from './migrations.js';
-export type { EmailProviderAdapter, NormalizedThread, NormalizedMessage, ThreadListPage, HistoryChange } from './providers/adapter-interface.js';
+export type { EmailProviderAdapter, NormalizedThread, NormalizedMessage, ThreadListPage, HistoryChange, NormalizedDraft, NormalizedDraftDetail } from './providers/adapter-interface.js';
 export { createAdapter, type AdapterCredentials } from './providers/create-adapter.js';
 export { GwsCliAdapter, type GwsCliAdapterConfig } from './providers/gws-adapter.js';
 export { GmailAdapter, type GmailAdapterConfig } from './providers/gmail-adapter.js';

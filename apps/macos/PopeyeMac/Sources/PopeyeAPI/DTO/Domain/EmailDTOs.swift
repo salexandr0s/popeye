@@ -92,6 +92,70 @@ public struct EmailDraftDTO: Codable, Sendable, Identifiable, Equatable {
     public let subject: String
     public let bodyPreview: String
     public let updatedAt: String
+
+    public init(
+        id: String,
+        accountId: String,
+        connectionId: String,
+        providerDraftId: String,
+        providerMessageId: String?,
+        to: [String],
+        cc: [String],
+        subject: String,
+        bodyPreview: String,
+        updatedAt: String
+    ) {
+        self.id = id
+        self.accountId = accountId
+        self.connectionId = connectionId
+        self.providerDraftId = providerDraftId
+        self.providerMessageId = providerMessageId
+        self.to = to
+        self.cc = cc
+        self.subject = subject
+        self.bodyPreview = bodyPreview
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct EmailDraftDetailDTO: Codable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let accountId: String
+    public let connectionId: String
+    public let providerDraftId: String
+    public let providerMessageId: String?
+    public let to: [String]
+    public let cc: [String]
+    public let subject: String
+    public let bodyPreview: String
+    public let updatedAt: String
+    public let body: String
+
+    public init(
+        id: String,
+        accountId: String,
+        connectionId: String,
+        providerDraftId: String,
+        providerMessageId: String?,
+        to: [String],
+        cc: [String],
+        subject: String,
+        bodyPreview: String,
+        updatedAt: String,
+        body: String
+    ) {
+        self.id = id
+        self.accountId = accountId
+        self.connectionId = connectionId
+        self.providerDraftId = providerDraftId
+        self.providerMessageId = providerMessageId
+        self.to = to
+        self.cc = cc
+        self.subject = subject
+        self.bodyPreview = bodyPreview
+        self.updatedAt = updatedAt
+        self.body = body
+    }
 }
 
 public struct EmailDraftCreateInput: Encodable, Sendable, Equatable {

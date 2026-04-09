@@ -90,7 +90,9 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/email/threads/:id` | `EmailThreadRecordSchema` |
 | GET | `/v1/email/messages/:id` | `EmailMessageRecordSchema` |
 | GET | `/v1/email/digest` | `EmailDigestRecordSchema \| null` |
-| GET | `/v1/email/search?query=...` | `EmailSearchResultSchema[]` |
+| GET | `/v1/email/drafts` | `EmailDraftRecordSchema[]` |
+| GET | `/v1/email/drafts/:id` | `EmailDraftDetailRecordSchema` |
+| GET | `/v1/email/search?query=...` | `{ query: string, results: EmailSearchResultSchema[] }` |
 | POST | `/v1/email/accounts` | `EmailAccountRecordSchema` (req: `EmailAccountRegistrationInputSchema`) |
 | POST | `/v1/email/sync` | `EmailSyncResultSchema` |
 | POST | `/v1/email/digest` | `EmailDigestRecordSchema` |

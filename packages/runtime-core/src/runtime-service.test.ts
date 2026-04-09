@@ -873,6 +873,79 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('lists local email drafts and resolves full draft detail by internal or provider draft id', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-email-draft-detail-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const connection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Draft Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+
+    const account = runtime.registerEmailAccount({
+      connectionId: connection.id,
+      emailAddress: 'drafts@example.com',
+      displayName: 'Drafts',
+    });
+
+    const emailDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'email.db'));
+    const emailService = new EmailService(emailDb as never);
+    const storedDraft = emailService.upsertDraft({
+      accountId: account.id,
+      connectionId: connection.id,
+      providerDraftId: 'provider-draft-1',
+      providerMessageId: 'provider-message-1',
+      to: ['reader@example.com'],
+      cc: ['copy@example.com'],
+      subject: 'Stored draft',
+      bodyPreview: 'Stored preview',
+    });
+    emailDb.close();
+
+    (runtime as any).resolveEmailAdapterForConnection = async (connectionId: string) => ({
+      adapter: {
+        getDraft: async (draftId: string) => ({
+          draftId,
+          messageId: 'provider-message-1',
+          to: ['reader@example.com'],
+          cc: ['copy@example.com'],
+          subject: 'Stored draft',
+          bodyPreview: 'Stored preview',
+          body: 'Full draft body from provider',
+          updatedAt: '2026-03-21T12:00:00.000Z',
+        }),
+      },
+      account: {
+        id: account.id,
+        connectionId,
+        emailAddress: 'drafts@example.com',
+      },
+    });
+
+    expect(runtime.listEmailDrafts(account.id).map((draft) => draft.providerDraftId)).toEqual(['provider-draft-1']);
+
+    await expect(runtime.getEmailDraft(storedDraft.id)).resolves.toMatchObject({
+      id: storedDraft.id,
+      providerDraftId: 'provider-draft-1',
+      body: 'Full draft body from provider',
+    });
+
+    await expect(runtime.getEmailDraft('provider-draft-1')).resolves.toMatchObject({
+      id: storedDraft.id,
+      providerDraftId: 'provider-draft-1',
+      body: 'Full draft body from provider',
+    });
+
+    await runtime.close();
+  });
+
   it('passes structured engine run requests with runtime metadata', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-engine-request-'));
     chmodSync(dir, 0o700);

@@ -13,8 +13,9 @@ import type {
   ThreadListPage,
   HistoryChange,
   NormalizedDraft,
+  NormalizedDraftDetail,
 } from './adapter-interface.js';
-import { normalizeGmailThread, normalizeGmailMessage } from './gmail-normalize.js';
+import { extractBodyText, normalizeGmailThread, normalizeGmailMessage } from './gmail-normalize.js';
 
 // Re-export types for backward compatibility
 export type { NormalizedThread, NormalizedMessage, ThreadListPage } from './adapter-interface.js';
@@ -151,15 +152,12 @@ export class GmailAdapter implements EmailProviderAdapter {
     subject?: string | undefined;
     body?: string | undefined;
   }): Promise<NormalizedDraft> {
-    const existing = await this.request<GmailDraft>(
-      `/drafts/${encodeURIComponent(draftId)}?format=full`,
-    );
-    const existingMessage = normalizeGmailMessage(existing.message);
+    const existingDraft = await this.getDraft(draftId);
     const merged = {
-      to: input.to ?? existingMessage.to,
-      cc: input.cc ?? existingMessage.cc,
-      subject: input.subject ?? existingMessage.subject,
-      body: input.body ?? existingMessage.bodyPreview,
+      to: input.to ?? existingDraft.to,
+      cc: input.cc ?? existingDraft.cc,
+      subject: input.subject ?? existingDraft.subject,
+      body: input.body ?? existingDraft.body,
     };
 
     const response = await this.request<GmailDraft>(`/drafts/${encodeURIComponent(draftId)}`, 0, {
@@ -181,6 +179,27 @@ export class GmailAdapter implements EmailProviderAdapter {
       subject: merged.subject,
       bodyPreview: merged.body.slice(0, 500),
       updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async getDraft(draftId: string): Promise<NormalizedDraftDetail> {
+    const response = await this.request<GmailDraft>(
+      `/drafts/${encodeURIComponent(draftId)}?format=full`,
+    );
+    const normalizedMessage = normalizeGmailMessage(response.message);
+    const updatedAt = Number.isFinite(Number(response.message.internalDate))
+      ? new Date(parseInt(response.message.internalDate, 10)).toISOString()
+      : new Date().toISOString();
+
+    return {
+      draftId: response.id,
+      messageId: response.message.id,
+      to: normalizedMessage.to,
+      cc: normalizedMessage.cc,
+      subject: normalizedMessage.subject,
+      bodyPreview: normalizedMessage.bodyPreview,
+      body: extractBodyText(response.message.payload),
+      updatedAt,
     };
   }
 

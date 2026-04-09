@@ -1039,7 +1039,7 @@ struct DTODecodingTests {
         #expect(dto.first?.writeAllowed == true)
     }
 
-    @Test("Decode EmailDraftDTO from inline JSON")
+    @Test("Decode EmailDraftDTO and EmailDraftDetailDTO from inline JSON")
     func decodeEmailDraft() throws {
         let dto = try decoder.decode(
             EmailDraftDTO.self,
@@ -1064,5 +1064,28 @@ struct DTODecodingTests {
         #expect(dto.to == ["annie@example.com"])
         #expect(dto.cc == ["ben@example.com"])
         #expect(dto.bodyPreview == "Draft the launch note.")
+
+        let detail = try decoder.decode(
+            EmailDraftDetailDTO.self,
+            from: Data(
+                """
+                {
+                  "id": "email-draft-1",
+                  "accountId": "email-acct-1",
+                  "connectionId": "conn-email-1",
+                  "providerDraftId": "draft-1",
+                  "providerMessageId": null,
+                  "to": ["annie@example.com"],
+                  "cc": ["ben@example.com"],
+                  "subject": "Launch plan",
+                  "bodyPreview": "Draft the launch note.",
+                  "updatedAt": "2026-04-09T09:00:00Z",
+                  "body": "Hello Annie,\\n\\nDraft the launch note."
+                }
+                """.utf8)
+        )
+
+        #expect(detail.providerDraftId == "draft-1")
+        #expect(detail.body == "Hello Annie,\n\nDraft the launch note.")
     }
 }

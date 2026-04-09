@@ -16,6 +16,7 @@ import {
   ContextReleasePreviewRequestSchema,
   EmailAccountRegistrationInputSchema,
   EmailDraftCreateInputSchema,
+  EmailDraftListQuerySchema,
   EmailDraftUpdateInputSchema,
   CalendarAccountRegistrationInputSchema,
   CalendarEventCreateInputSchema,
@@ -3258,6 +3259,35 @@ export async function createControlApi(
     } catch (error) {
       if (error instanceof RuntimeValidationError) {
         return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/email/drafts', async (request, reply) => {
+    const query = EmailDraftListQuerySchema.parse(request.query);
+    const accounts = dependencies.runtime.listEmailAccounts();
+    if (accounts.length === 0) return [];
+    const accountId = query.accountId ?? accounts[0]!.id;
+    try {
+      return dependencies.runtime.listEmailDrafts(accountId, { limit: query.limit });
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_account', details: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.get('/v1/email/drafts/:id', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    try {
+      const draft = await dependencies.runtime.getEmailDraft(id);
+      if (!draft) return reply.code(404).send({ error: 'draft not found' });
+      return draft;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return reply.code(400).send({ error: 'invalid_email_draft', details: error.message });
       }
       throw error;
     }

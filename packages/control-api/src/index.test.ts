@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import Database from 'better-sqlite3';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AUTH_COOKIE_NAME, initAuthStore, issueCsrfToken, readAuthStore, createRuntimeService } from '../../runtime-core/src/index.ts';
+import { EmailService } from '../../cap-email/src/email-service.ts';
 
 import { createControlApi } from './index.ts';
 
@@ -1368,6 +1370,101 @@ describe('control api', () => {
         }),
       ]),
     );
+
+    await runtime.close();
+    await app.close();
+  });
+
+  it('lists local email drafts and returns provider-backed draft detail', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-email-drafts-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const connection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const account = runtime.registerEmailAccount({
+      connectionId: connection.id,
+      emailAddress: 'operator@example.com',
+      displayName: 'Operator Mail',
+    });
+
+    const emailDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'email.db'));
+    const emailService = new EmailService(emailDb as never);
+    const draft = emailService.upsertDraft({
+      accountId: account.id,
+      connectionId: connection.id,
+      providerDraftId: 'provider-draft-1',
+      providerMessageId: 'provider-message-1',
+      to: ['reader@example.com'],
+      cc: [],
+      subject: 'Stored draft',
+      bodyPreview: 'Stored preview',
+    });
+    emailDb.close();
+
+    (runtime as any).resolveEmailAdapterForConnection = async (connectionId: string) => ({
+      adapter: {
+        getDraft: async (draftId: string) => ({
+          draftId,
+          messageId: 'provider-message-1',
+          to: ['reader@example.com'],
+          cc: [],
+          subject: 'Stored draft',
+          bodyPreview: 'Stored preview',
+          body: 'Full draft body from provider',
+          updatedAt: '2026-03-21T12:00:00.000Z',
+        }),
+      },
+      account: {
+        id: account.id,
+        connectionId,
+        emailAddress: 'operator@example.com',
+      },
+    });
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/email/drafts?accountId=${encodeURIComponent(account.id)}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual([
+      expect.objectContaining({
+        id: draft.id,
+        providerDraftId: 'provider-draft-1',
+        subject: 'Stored draft',
+      }),
+    ]);
+
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/email/drafts/${encodeURIComponent(draft.id)}`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      id: draft.id,
+      providerDraftId: 'provider-draft-1',
+      body: 'Full draft body from provider',
+    });
 
     await runtime.close();
     await app.close();

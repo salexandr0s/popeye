@@ -773,6 +773,14 @@ public actor ControlAPIClient {
         try await post(.generateEmailDigest, body: EmailDigestRequest(accountId: accountId))
     }
 
+    public func listEmailDrafts(accountId: String, limit: Int = 20) async throws -> [EmailDraftDTO] {
+        try await get(.emailDrafts(accountId: accountId, limit: limit))
+    }
+
+    public func getEmailDraft(id: String) async throws -> EmailDraftDetailDTO {
+        try await get(.emailDraft(id: id))
+    }
+
     public func createEmailDraft(input: EmailDraftCreateInput) async throws -> EmailDraftDTO {
         try await post(.createEmailDraft, body: input)
     }

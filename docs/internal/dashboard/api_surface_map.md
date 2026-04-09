@@ -234,7 +234,7 @@ These surfaces now have a meaningful native foothold. Email, Calendar, and Todos
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/providers` | Native Mail split view with account picker, inbox/search modes, unread-only filtering, digest, draft summary, and thread detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a daily-use native mail surface with explicit search + filter controls; provider-side send/reply and durable draft retrieval still stay out of scope | `DomainDigestService` |
+| `GET /v1/email/accounts`, `GET /v1/email/threads`, `GET /v1/email/threads/:id`, `GET /v1/email/messages/:id`, `GET /v1/email/search`, `GET /v1/email/digest`, `GET /v1/email/drafts`, `GET /v1/email/drafts/:id`, `GET /v1/email/providers` | Native Mail split view with account picker, inbox/search modes, unread-only filtering, digest, draft list/reopen flow, and thread detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a daily-use native mail surface with explicit search + filter controls plus persistent Popeye-managed draft retrieval; provider-side send/reply still stays out of scope | `DomainDigestService` |
 | `POST /v1/email/sync`, `POST /v1/email/digest`, `POST /v1/email/drafts`, `PATCH /v1/email/drafts/:id` | Native Mail toolbar, digest controls, and draft editor sheet actions | Write | `operator` | Refetch after success | Ready with wrapper | Shipped as targeted native mailbox sync, digest generation, and Popeye-managed draft create/edit | `DomainDigestService` |
 | `POST /v1/email/accounts` | Later email administration | Write | `operator` | Refetch after success | Defer | Account registration remains web/CLI-first | `DomainDigestService` |
 
@@ -321,7 +321,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | Automation Grants | Usage & Security | **Shipped, targeted mutations** | Native now supports filter/create/revoke governance flow |
 | Connections | Connections | **Shipped, admin parity** | Native now owns OAuth/remediation/resource-rule admin flows |
 | Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
-| Email | Mail | **Shipped, search + targeted mutations** | Native now covers account-scoped search, unread filtering, mailbox sync, digest generation, and Popeye-managed draft create/edit in addition to the split view |
+| Email | Mail | **Shipped, search + targeted mutations** | Native now covers account-scoped search, unread filtering, mailbox sync, digest generation, and Popeye-managed draft list/reopen/create/edit in addition to the split view |
 | Calendar | Calendar | **Shipped, targeted mutations** | Native now supports sync plus targeted create/edit event workflows |
 | GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
 | Playbooks / Proposals | Playbooks | **Shipped, authoring + review** | Native now covers canonical records, stale signals, proposal draft/patch authoring, suggested-patch seeding, review, apply, activate, and retire |

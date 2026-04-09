@@ -10,6 +10,7 @@ import type {
   EmailAccountRegistrationInput,
   EmailDigestRecord,
   EmailDraftCreateInput,
+  EmailDraftDetailRecord,
   EmailDraftRecord,
   EmailDraftUpdateInput,
   EmailMessageRecord,
@@ -189,6 +190,48 @@ export class EmailFacade {
     if (!svc) return null;
     this.requireEmailAccountForOperation(svc, accountId, 'email_digest_read');
     return svc.getLatestDigest(accountId);
+  }
+
+  listEmailDrafts(accountId: string, options?: { limit?: number | undefined }): EmailDraftRecord[] {
+    const svc = this.emailFacade.getService();
+    if (!svc) return [];
+    this.requireEmailAccountForOperation(svc, accountId, 'email_draft_list');
+    return svc.listDrafts(accountId, options);
+  }
+
+  async getEmailDraft(id: string): Promise<EmailDraftDetailRecord | null> {
+    const svc = this.emailFacade.getService();
+    if (!svc) return null;
+
+    const draft = svc.getDraftByProviderDraftId(id) ?? svc.getDraft(id);
+    if (!draft) return null;
+
+    let connection: ConnectionRecord;
+    try {
+      connection = this.requireEmailAccountForOperation(svc, draft.accountId, 'email_draft_read').connection;
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
+
+    const resolved = await this.resolveEmailAdapterForConnection(connection.id);
+    if (!resolved?.adapter.getDraft) {
+      throw new RuntimeValidationError(`Connection ${connection.id} does not support draft retrieval`);
+    }
+
+    const detail = await resolved.adapter.getDraft(draft.providerDraftId);
+    return {
+      ...draft,
+      providerMessageId: detail.messageId ?? draft.providerMessageId,
+      to: detail.to,
+      cc: detail.cc,
+      subject: detail.subject,
+      bodyPreview: detail.bodyPreview,
+      updatedAt: detail.updatedAt,
+      body: detail.body,
+    };
   }
 
   getEmailMessage(id: string): EmailMessageRecord | null {

@@ -532,6 +532,13 @@ public extension Endpoint {
         return Endpoint(path: "/v1/email/digest", queryItems: items)
     }
     static let generateEmailDigest = Endpoint(path: "/v1/email/digest", method: .post)
+    static func emailDrafts(accountId: String? = nil, limit: Int? = nil) -> Endpoint {
+        var items: [URLQueryItem] = []
+        if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }
+        if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+        return Endpoint(path: "/v1/email/drafts", queryItems: items)
+    }
+    static func emailDraft(id: String) -> Endpoint { Endpoint(path: "/v1/email/drafts/\(id)") }
     static let createEmailDraft = Endpoint(path: "/v1/email/drafts", method: .post)
     static func updateEmailDraft(id: String) -> Endpoint { Endpoint(path: "/v1/email/drafts/\(id)", method: .patch) }
 

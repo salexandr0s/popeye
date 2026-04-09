@@ -54,6 +54,10 @@ export interface NormalizedDraft {
   updatedAt: string;
 }
 
+export interface NormalizedDraftDetail extends NormalizedDraft {
+  body: string;
+}
+
 // --- Adapter interface ---
 
 export interface EmailProviderAdapter {
@@ -94,4 +98,7 @@ export interface EmailProviderAdapter {
     subject?: string | undefined;
     body?: string | undefined;
   }): Promise<NormalizedDraft>;
+
+  /** Load an existing provider draft with full body content. */
+  getDraft?(draftId: string): Promise<NormalizedDraftDetail>;
 }

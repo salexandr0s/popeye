@@ -43,9 +43,17 @@ struct EmailStoreTests {
         #expect(store.mutationState == .succeeded("Email digest generated"))
     }
 
-    @Test("Creating a draft caches it locally and preserves thread selection")
+    @Test("Creating a draft refreshes the visible draft list and preserves thread selection")
     func createDraftPreservesSelection() async {
-        let store = EmailStore(dependencies: .stub())
+        let state = EmailDraftStateBox()
+        let store = EmailStore(dependencies: .stub(
+            loadDrafts: { accountId, _ in
+                await state.loadDrafts(accountId: accountId)
+            },
+            createDraft: { input in
+                await state.createDraft(input: input)
+            }
+        ))
 
         await store.load()
         let threadID = store.selectedThreadID
@@ -56,34 +64,87 @@ struct EmailStoreTests {
         store.editor?.body = "Draft the launch note."
         await store.saveDraft()
 
-        #expect(store.visibleDraft?.subject == "Launch plan")
-        #expect(store.visibleDraft?.to == ["annie@example.com"])
+        #expect(store.visibleDrafts.map(\.subject) == ["Launch plan"])
+        #expect(store.visibleDrafts.first?.to == ["annie@example.com"])
         #expect(store.selectedThreadID == threadID)
         #expect(store.editor == nil)
-        #expect(store.canEditVisibleDraft == true)
         #expect(store.mutationState == .succeeded("Email draft created"))
     }
 
-    @Test("Editing a cached draft updates local full-body state")
-    func editDraftUsesLocalCachedBody() async {
-        let store = EmailStore(dependencies: .stub())
+    @Test("Editing a persisted draft fetches full detail and updates local draft state")
+    func editDraftLoadsDetailAndUpdatesDraft() async {
+        let state = EmailDraftStateBox(
+            draftsByAccountID: [
+                "email-acct-1": [
+                    sampleEmailDraft(
+                        id: "email-draft-1",
+                        accountId: "email-acct-1",
+                        providerDraftId: "draft-1",
+                        to: ["annie@example.com"],
+                        subject: "Launch plan",
+                        bodyPreview: "First version"
+                    )
+                ]
+            ],
+            draftDetailsByID: [
+                "email-draft-1": sampleEmailDraftDetail(
+                    id: "email-draft-1",
+                    providerDraftId: "draft-1",
+                    to: ["annie@example.com"],
+                    subject: "Launch plan",
+                    bodyPreview: "First version",
+                    body: "First version"
+                )
+            ]
+        )
+        let store = EmailStore(dependencies: .stub(
+            loadDrafts: { accountId, _ in
+                await state.loadDrafts(accountId: accountId)
+            },
+            loadDraft: { id in
+                try await state.loadDraft(id: id)
+            },
+            updateDraft: { id, input in
+                await state.updateDraft(id: id, input: input)
+            }
+        ))
 
         await store.load()
-        store.beginCreateDraft()
-        store.editor?.toText = "annie@example.com"
-        store.editor?.subject = "Launch plan"
-        store.editor?.body = "First version"
-        await store.saveDraft()
+        guard let draft = store.visibleDrafts.first else {
+            Issue.record("Expected a visible draft")
+            return
+        }
 
-        store.beginEditVisibleDraft()
+        await store.beginEditDraft(draft)
         #expect(store.editor?.body == "First version")
         store.editor?.subject = "Launch plan v2"
         store.editor?.body = "Expanded second version"
         await store.saveDraft()
 
-        #expect(store.visibleDraft?.subject == "Launch plan v2")
+        #expect(store.visibleDrafts.first?.subject == "Launch plan v2")
         #expect(store.draftBodiesByProviderDraftID["draft-1"] == "Expanded second version")
         #expect(store.mutationState == .succeeded("Email draft updated"))
+    }
+
+    @Test("Draft detail load failure stays local and preserves the draft list")
+    func draftDetailFailurePreservesDraftList() async {
+        let store = EmailStore(dependencies: .stub(
+            loadDrafts: { _, _ in
+                [sampleEmailDraft(id: "email-draft-1", providerDraftId: "draft-1", subject: "Launch plan", bodyPreview: "Preview")]
+            },
+            loadDraft: { _ in
+                throw APIError.transportUnavailable
+            }
+        ))
+
+        await store.load()
+        let visibleDrafts = store.visibleDrafts
+
+        await store.beginEditDraft(visibleDrafts[0])
+
+        #expect(store.draftDetailError == .transportUnavailable)
+        #expect(store.visibleDrafts == visibleDrafts)
+        #expect(store.editor == nil)
     }
 
     @Test("Draft validation blocks empty subjects and invalid recipients")
@@ -207,6 +268,12 @@ extension EmailStore.Dependencies {
         loadDigest: @escaping @Sendable (_ accountId: String) async throws -> EmailDigestDTO? = { accountId in
             sampleEmailDigest(accountId: accountId)
         },
+        loadDrafts: @escaping @Sendable (_ accountId: String, _ limit: Int) async throws -> [EmailDraftDTO] = { _, _ in
+            []
+        },
+        loadDraft: @escaping @Sendable (_ id: String) async throws -> EmailDraftDetailDTO = { id in
+            sampleEmailDraftDetail(id: id, providerDraftId: id)
+        },
         search: @escaping @Sendable (_ query: String, _ accountId: String, _ limit: Int) async throws -> EmailSearchResponseDTO = { query, _, _ in
             sampleEmailSearchResponse(query: query)
         },
@@ -237,6 +304,8 @@ extension EmailStore.Dependencies {
             loadThreads: loadThreads,
             loadThread: loadThread,
             loadDigest: loadDigest,
+            loadDrafts: loadDrafts,
+            loadDraft: loadDraft,
             search: search,
             syncAccount: syncAccount,
             generateDigest: generateDigest,
@@ -268,6 +337,81 @@ private actor EmailStateBox {
         )
         digest = next
         return next
+    }
+}
+
+private actor EmailDraftStateBox {
+    private var draftsByAccountID: [String: [EmailDraftDTO]]
+    private var draftDetailsByID: [String: EmailDraftDetailDTO]
+
+    init(
+        draftsByAccountID: [String: [EmailDraftDTO]] = [:],
+        draftDetailsByID: [String: EmailDraftDetailDTO] = [:]
+    ) {
+        self.draftsByAccountID = draftsByAccountID
+        self.draftDetailsByID = draftDetailsByID
+    }
+
+    func loadDrafts(accountId: String) -> [EmailDraftDTO] {
+        draftsByAccountID[accountId] ?? []
+    }
+
+    func loadDraft(id: String) throws -> EmailDraftDetailDTO {
+        guard let detail = draftDetailsByID[id] else {
+            throw APIError.transportUnavailable
+        }
+        return detail
+    }
+
+    func createDraft(input: EmailDraftCreateInput) -> EmailDraftDTO {
+        let providerDraftId = "draft-\((draftsByAccountID[input.accountId]?.count ?? 0) + 1)"
+        let draft = sampleEmailDraft(
+            id: "email-\(providerDraftId)",
+            accountId: input.accountId,
+            providerDraftId: providerDraftId,
+            to: input.to,
+            cc: input.cc,
+            subject: input.subject,
+            bodyPreview: input.body
+        )
+        draftsByAccountID[input.accountId, default: []].insert(draft, at: 0)
+        draftDetailsByID[draft.id] = sampleEmailDraftDetail(
+            id: draft.id,
+            accountId: draft.accountId,
+            providerDraftId: providerDraftId,
+            to: input.to,
+            cc: input.cc,
+            subject: input.subject,
+            bodyPreview: input.body,
+            body: input.body
+        )
+        return draft
+    }
+
+    func updateDraft(id: String, input: EmailDraftUpdateInput) -> EmailDraftDTO {
+        let accountId = input.accountId ?? "email-acct-1"
+        let detail = sampleEmailDraftDetail(
+            id: "email-draft-1",
+            accountId: accountId,
+            providerDraftId: id,
+            to: input.to ?? ["annie@example.com"],
+            cc: input.cc ?? [],
+            subject: input.subject ?? "Launch plan",
+            bodyPreview: input.body ?? "",
+            body: input.body ?? ""
+        )
+        let draft = sampleEmailDraft(
+            id: detail.id,
+            accountId: detail.accountId,
+            providerDraftId: detail.providerDraftId,
+            to: detail.to,
+            cc: detail.cc,
+            subject: detail.subject,
+            bodyPreview: detail.bodyPreview
+        )
+        draftsByAccountID[accountId] = [draft]
+        draftDetailsByID[detail.id] = detail
+        return draft
     }
 }
 
@@ -373,5 +517,30 @@ private func sampleEmailDraft(
         subject: subject,
         bodyPreview: bodyPreview,
         updatedAt: "2026-04-09T09:00:00Z"
+    )
+}
+
+private func sampleEmailDraftDetail(
+    id: String = "email-draft-1",
+    accountId: String = "email-acct-1",
+    providerDraftId: String = "draft-1",
+    to: [String] = [],
+    cc: [String] = [],
+    subject: String = "Launch plan",
+    bodyPreview: String = "Draft the launch note.",
+    body: String = "Draft the launch note."
+) -> EmailDraftDetailDTO {
+    EmailDraftDetailDTO(
+        id: id,
+        accountId: accountId,
+        connectionId: "conn-email-1",
+        providerDraftId: providerDraftId,
+        providerMessageId: nil,
+        to: to,
+        cc: cc,
+        subject: subject,
+        bodyPreview: bodyPreview,
+        updatedAt: "2026-04-09T09:00:00Z",
+        body: body
     )
 }

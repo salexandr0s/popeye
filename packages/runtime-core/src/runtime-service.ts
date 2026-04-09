@@ -159,6 +159,7 @@ import type {
   EmailSearchResult,
   EmailAccountRegistrationInput,
   EmailDraftCreateInput,
+  EmailDraftDetailRecord,
   EmailDraftRecord,
   EmailDraftUpdateInput,
   EmailSyncResult,
@@ -3973,6 +3974,14 @@ export class PopeyeRuntimeService {
 
   getEmailDigest(accountId: string): EmailDigestRecord | null {
     return this.emailOps.getEmailDigest(accountId);
+  }
+
+  listEmailDrafts(accountId: string, options?: { limit?: number | undefined }): EmailDraftRecord[] {
+    return this.emailOps.listEmailDrafts(accountId, options);
+  }
+
+  async getEmailDraft(id: string): Promise<EmailDraftDetailRecord | null> {
+    return this.emailOps.getEmailDraft(id);
   }
 
   getEmailMessage(id: string): EmailMessageRecord | null {
