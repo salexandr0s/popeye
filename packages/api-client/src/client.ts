@@ -1477,6 +1477,10 @@ export class PopeyeApiClient {
     return this.get(`/v1/email/threads/${encodeURIComponent(id)}`, EmailThreadRecordSchema);
   }
 
+  async listEmailThreadMessages(threadId: string): Promise<EmailMessageRecord[]> {
+    return this.getArray(`/v1/email/threads/${encodeURIComponent(threadId)}/messages`, EmailMessageRecordSchema);
+  }
+
   async getEmailMessage(id: string): Promise<EmailMessageRecord> {
     return this.get(`/v1/email/messages/${encodeURIComponent(id)}`, EmailMessageRecordSchema);
   }

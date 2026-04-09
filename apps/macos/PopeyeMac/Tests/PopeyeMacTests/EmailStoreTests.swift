@@ -126,6 +126,110 @@ struct EmailStoreTests {
         #expect(store.mutationState == .succeeded("Email draft updated"))
     }
 
+    @Test("Reply-all seeds a compose draft from the newest non-self message and preserves selection on save")
+    func replyAllSeedsComposeAndCreatesDraft() async {
+        let state = EmailDraftStateBox()
+        let store = EmailStore(dependencies: .stub(
+            loadThreadMessages: { _ in
+                [
+                    sampleEmailMessage(
+                        id: "msg-client",
+                        from: "Client <client@example.com>",
+                        to: ["operator@example.com", "manager@example.com"],
+                        cc: ["legal@example.com"],
+                        subject: "Launch plan",
+                        bodyPreview: "Need approval from the manager.",
+                        receivedAt: "2026-04-09T08:00:00Z"
+                    ),
+                    sampleEmailMessage(
+                        id: "msg-self",
+                        from: "Operator <operator@example.com>",
+                        to: ["client@example.com"],
+                        cc: ["manager@example.com"],
+                        subject: "Re: Launch plan",
+                        bodyPreview: "I'm on it.",
+                        receivedAt: "2026-04-09T09:00:00Z"
+                    ),
+                ]
+            },
+            loadDrafts: { accountId, _ in
+                await state.loadDrafts(accountId: accountId)
+            },
+            createDraft: { input in
+                await state.createDraft(input: input)
+            }
+        ))
+
+        await store.load()
+        let originalSelection = store.selectedThreadID
+
+        await store.beginReplyAll()
+
+        #expect(store.editor?.composeContext?.kind == .replyAll)
+        #expect(store.editor?.toText == "client@example.com, manager@example.com")
+        #expect(store.editor?.ccText == "legal@example.com")
+        #expect(store.editor?.subject == "Re: Launch plan")
+        #expect(store.editor?.body.contains("On 2026-04-09T08:00:00Z, Client <client@example.com> wrote:") == true)
+        #expect(store.editor?.body.contains("> Need approval from the manager.") == true)
+
+        await store.saveDraft()
+
+        #expect(store.visibleDrafts.first?.to == ["client@example.com", "manager@example.com"])
+        #expect(store.visibleDrafts.first?.cc == ["legal@example.com"])
+        #expect(store.selectedThreadID == originalSelection)
+        #expect(store.mutationState == .succeeded("Email draft created"))
+    }
+
+    @Test("Forward seeds an empty-recipient compose draft with forwarded context")
+    func forwardSeedsComposeDraft() async {
+        let store = EmailStore(dependencies: .stub(
+            loadThreadMessages: { _ in
+                [
+                    sampleEmailMessage(
+                        id: "msg-forward",
+                        from: "Founder <founder@example.com>",
+                        to: ["operator@example.com"],
+                        cc: ["board@example.com"],
+                        subject: "Board update",
+                        bodyPreview: "Please circulate this update.",
+                        receivedAt: "2026-04-09T10:00:00Z"
+                    )
+                ]
+            }
+        ))
+
+        await store.load()
+        await store.beginForward()
+
+        #expect(store.editor?.composeContext?.kind == .forward)
+        #expect(store.editor?.toText.isEmpty == true)
+        #expect(store.editor?.ccText.isEmpty == true)
+        #expect(store.editor?.subject == "Fwd: Board update")
+        #expect(store.editor?.body.contains("---------- Forwarded message ---------") == true)
+        #expect(store.editor?.body.contains("From: Founder <founder@example.com>") == true)
+        #expect(store.editor?.body.contains("Cc: board@example.com") == true)
+        #expect(store.editor?.body.contains("Please circulate this update.") == true)
+    }
+
+    @Test("Thread-context compose failure stays local and preserves selected thread")
+    func threadComposeFailureStaysLocal() async {
+        let store = EmailStore(dependencies: .stub(
+            loadThreadMessages: { _ in
+                throw APIError.transportUnavailable
+            }
+        ))
+
+        await store.load()
+        let selectedThreadID = store.selectedThreadID
+
+        await store.beginReply()
+
+        #expect(store.editor == nil)
+        #expect(store.threadMessageError == .transportUnavailable)
+        #expect(store.selectedThreadID == selectedThreadID)
+        #expect(store.selectedThread?.id == selectedThreadID)
+    }
+
     @Test("Draft detail load failure stays local and preserves the draft list")
     func draftDetailFailurePreservesDraftList() async {
         let store = EmailStore(dependencies: .stub(
@@ -209,6 +313,39 @@ struct EmailStoreTests {
         #expect(store.searchError == nil)
     }
 
+    @Test("Reply works from search results mode")
+    func replyWorksFromSearchMode() async {
+        let store = EmailStore(dependencies: .stub(
+            loadThread: { id in sampleEmailThread(id: id, subject: "Approvals needed") },
+            loadThreadMessages: { _ in
+                [
+                    sampleEmailMessage(
+                        id: "msg-search",
+                        from: "Founder <founder@example.com>",
+                        to: ["operator@example.com"],
+                        subject: "Approvals needed",
+                        bodyPreview: "Can you approve this today?",
+                        receivedAt: "2026-04-09T11:00:00Z"
+                    )
+                ]
+            },
+            search: { query, _, _ in
+                sampleEmailSearchResponse(query: query, threadId: "thread-search", from: "founder@example.com")
+            }
+        ))
+
+        await store.load()
+        store.searchQuery = "approvals"
+        await store.performSearch()
+        await store.beginReply()
+
+        #expect(store.isSearchMode == true)
+        #expect(store.selectedThreadID == "thread-search")
+        #expect(store.editor?.composeContext?.kind == .reply)
+        #expect(store.editor?.toText == "founder@example.com")
+        #expect(store.editor?.subject == "Re: Approvals needed")
+    }
+
     @Test("Clear search restores inbox browsing selection")
     func clearSearchRestoresInboxMode() async {
         let store = EmailStore(dependencies: .stub(
@@ -265,6 +402,9 @@ extension EmailStore.Dependencies {
         loadThread: @escaping @Sendable (_ id: String) async throws -> EmailThreadDTO = { id in
             sampleEmailThread(id: id)
         },
+        loadThreadMessages: @escaping @Sendable (_ id: String) async throws -> [EmailMessageDTO] = { _ in
+            [sampleEmailMessage()]
+        },
         loadDigest: @escaping @Sendable (_ accountId: String) async throws -> EmailDigestDTO? = { accountId in
             sampleEmailDigest(accountId: accountId)
         },
@@ -303,6 +443,7 @@ extension EmailStore.Dependencies {
             loadAccounts: loadAccounts,
             loadThreads: loadThreads,
             loadThread: loadThread,
+            loadThreadMessages: loadThreadMessages,
             loadDigest: loadDigest,
             loadDrafts: loadDrafts,
             loadDraft: loadDraft,
@@ -440,13 +581,14 @@ private func sampleEmailAccount() -> EmailAccountDTO {
 
 private func sampleEmailThread(
     id: String = "thread-1",
-    accountId: String = "email-acct-1"
+    accountId: String = "email-acct-1",
+    subject: String = "Launch plan"
 ) -> EmailThreadDTO {
     EmailThreadDTO(
         id: id,
         accountId: accountId,
         gmailThreadId: "gmail-\(id)",
-        subject: "Launch plan",
+        subject: subject,
         snippet: "Draft the launch note and gather approvals.",
         lastMessageAt: "2026-04-09T09:00:00Z",
         messageCount: 2,
@@ -542,5 +684,36 @@ private func sampleEmailDraftDetail(
         bodyPreview: bodyPreview,
         updatedAt: "2026-04-09T09:00:00Z",
         body: body
+    )
+}
+
+private func sampleEmailMessage(
+    id: String = "msg-1",
+    threadId: String = "thread-1",
+    accountId: String = "email-acct-1",
+    from: String = "Annie <annie@example.com>",
+    to: [String] = ["operator@example.com"],
+    cc: [String] = [],
+    subject: String = "Launch plan",
+    snippet: String = "Draft the launch note.",
+    bodyPreview: String = "Draft the launch note.",
+    receivedAt: String = "2026-04-09T09:00:00Z"
+) -> EmailMessageDTO {
+    EmailMessageDTO(
+        id: id,
+        threadId: threadId,
+        accountId: accountId,
+        gmailMessageId: "gmail-\(id)",
+        from: from,
+        to: to,
+        cc: cc,
+        subject: subject,
+        snippet: snippet,
+        bodyPreview: bodyPreview,
+        receivedAt: receivedAt,
+        sizeEstimate: 512,
+        labelIds: ["INBOX"],
+        createdAt: receivedAt,
+        updatedAt: receivedAt
     )
 }

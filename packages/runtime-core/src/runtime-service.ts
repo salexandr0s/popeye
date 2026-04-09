@@ -3968,6 +3968,10 @@ export class PopeyeRuntimeService {
     return this.emailOps.getEmailThread(id);
   }
 
+  listEmailThreadMessages(threadId: string): EmailMessageRecord[] | null {
+    return this.emailOps.listEmailThreadMessages(threadId);
+  }
+
   searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
     return this.emailOps.searchEmail(query);
   }

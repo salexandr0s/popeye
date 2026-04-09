@@ -177,6 +177,22 @@ export class EmailFacade {
     }
   }
 
+  listEmailThreadMessages(threadId: string): EmailMessageRecord[] | null {
+    const svc = this.emailFacade.getService();
+    if (!svc) return null;
+    const thread = svc.getThread(threadId);
+    if (!thread) return null;
+    try {
+      this.requireEmailAccountForOperation(svc, thread.accountId, 'email_thread_read');
+      return svc.listMessages(threadId);
+    } catch (error) {
+      if (error instanceof RuntimeValidationError) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   searchEmail(query: EmailSearchQuery): { query: string; results: EmailSearchResult[] } {
     const svc = this.emailFacade.getService();
     if (query.accountId && svc) {

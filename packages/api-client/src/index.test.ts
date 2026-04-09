@@ -207,6 +207,44 @@ describe('PopeyeApiClient', () => {
     await expect(client.getRunReceipt('run-1')).resolves.toMatchObject({ id: 'receipt-1', runId: 'run-1' });
   });
 
+  it('lists email thread messages through the typed client', async () => {
+    const client = new PopeyeApiClient({
+      baseUrl: 'http://127.0.0.1:3210',
+      token: 'test-token',
+    });
+    mockFetch(200, [
+      {
+        id: 'message-1',
+        threadId: 'thread-1',
+        accountId: 'email-acct-1',
+        gmailMessageId: 'gmail-message-1',
+        from: 'Annie <annie@example.com>',
+        to: ['operator@example.com'],
+        cc: [],
+        subject: 'Launch plan',
+        snippet: 'Need approval from the manager.',
+        bodyPreview: 'Need approval from the manager.',
+        receivedAt: '2026-04-09T09:00:00Z',
+        sizeEstimate: 512,
+        labelIds: ['INBOX'],
+        createdAt: '2026-04-01T08:00:00Z',
+        updatedAt: '2026-04-09T09:00:00Z',
+      },
+    ]);
+
+    await expect(client.listEmailThreadMessages('thread-1')).resolves.toEqual([
+      expect.objectContaining({
+        gmailMessageId: 'gmail-message-1',
+        from: 'Annie <annie@example.com>',
+      }),
+    ]);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210/v1/email/threads/thread-1/messages',
+      expect.anything(),
+    );
+  });
+
   it('decodes knowledge revision apply results with receipt wrapper', async () => {
     const client = new PopeyeApiClient({
       baseUrl: 'http://127.0.0.1:3210',

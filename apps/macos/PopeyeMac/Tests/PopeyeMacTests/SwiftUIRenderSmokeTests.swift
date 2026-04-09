@@ -325,6 +325,27 @@ struct SwiftUIRenderSmokeTests {
                         updatedAt: "2026-04-09T09:00:00Z"
                     )
                 },
+                loadThreadMessages: { _ in
+                    [
+                        EmailMessageDTO(
+                            id: "message-1",
+                            threadId: "thread-1",
+                            accountId: "email-acct-1",
+                            gmailMessageId: "gmail-message-1",
+                            from: "Annie <annie@example.com>",
+                            to: ["operator@example.com"],
+                            cc: [],
+                            subject: "Launch plan",
+                            snippet: "Draft the launch note and gather approvals.",
+                            bodyPreview: "Draft the launch note and gather approvals.",
+                            receivedAt: "2026-04-09T09:00:00Z",
+                            sizeEstimate: 512,
+                            labelIds: ["INBOX"],
+                            createdAt: "2026-04-01T08:00:00Z",
+                            updatedAt: "2026-04-09T09:00:00Z"
+                        )
+                    ]
+                },
                 loadDigest: { _ in
                     EmailDigestDTO(
                         id: "email-digest-1",

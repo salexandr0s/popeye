@@ -521,6 +521,9 @@ public extension Endpoint {
         return Endpoint(path: "/v1/email/threads", queryItems: items)
     }
     static func emailThread(id: String) -> Endpoint { Endpoint(path: "/v1/email/threads/\(id)") }
+    static func emailThreadMessages(id: String) -> Endpoint {
+        Endpoint(path: "/v1/email/threads/\(id)/messages")
+    }
     static func emailSearch(query: String, accountId: String? = nil, limit: Int? = nil) -> Endpoint {
         var items: [URLQueryItem] = [URLQueryItem(name: "query", value: query)]
         if let accountId { items.append(URLQueryItem(name: "accountId", value: accountId)) }

@@ -946,6 +946,75 @@ describe('PopeyeRuntimeService', () => {
     await runtime.close();
   });
 
+  it('lists thread messages in oldest-to-newest order for readable email threads', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-runtime-email-thread-messages-'));
+    chmodSync(dir, 0o700);
+    const runtime = createRuntimeService(makeConfig(dir));
+    await (runtime as any).capabilityInitPromise;
+
+    const connection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Thread Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+
+    const account = runtime.registerEmailAccount({
+      connectionId: connection.id,
+      emailAddress: 'threads@example.com',
+      displayName: 'Threads',
+    });
+
+    const emailDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'email.db'));
+    const emailService = new EmailService(emailDb as never);
+    const thread = emailService.upsertThread(account.id, {
+      gmailThreadId: 'gmail-thread-1',
+      subject: 'Launch plan',
+      snippet: 'Need approval from the manager.',
+      lastMessageAt: '2026-03-21T12:00:00.000Z',
+      messageCount: 2,
+      labelIds: ['INBOX'],
+      isUnread: true,
+      isStarred: false,
+    });
+    emailService.upsertMessage(account.id, thread.id, {
+      gmailMessageId: 'gmail-message-1',
+      from: 'Client <client@example.com>',
+      to: ['threads@example.com'],
+      cc: [],
+      subject: 'Launch plan',
+      snippet: 'Need approval from the manager.',
+      bodyPreview: 'Need approval from the manager.',
+      receivedAt: '2026-03-21T11:00:00.000Z',
+      sizeEstimate: 256,
+      labelIds: ['INBOX'],
+    });
+    emailService.upsertMessage(account.id, thread.id, {
+      gmailMessageId: 'gmail-message-2',
+      from: 'Operator <threads@example.com>',
+      to: ['client@example.com'],
+      cc: ['manager@example.com'],
+      subject: 'Re: Launch plan',
+      snippet: 'I am on it.',
+      bodyPreview: 'I am on it.',
+      receivedAt: '2026-03-21T12:00:00.000Z',
+      sizeEstimate: 320,
+      labelIds: ['INBOX'],
+    });
+    emailDb.close();
+
+    expect(runtime.listEmailThreadMessages(thread.id)?.map((message) => message.gmailMessageId)).toEqual([
+      'gmail-message-1',
+      'gmail-message-2',
+    ]);
+    expect(runtime.listEmailThreadMessages('missing-thread')).toBeNull();
+
+    await runtime.close();
+  });
+
   it('passes structured engine run requests with runtime metadata', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-engine-request-'));
     chmodSync(dir, 0o700);

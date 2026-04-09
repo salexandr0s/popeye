@@ -19,6 +19,10 @@ public struct EmailDomainService: Sendable {
         try await client.getEmailThread(id: id)
     }
 
+    public func loadThreadMessages(id: String) async throws -> [EmailMessageDTO] {
+        try await client.listEmailThreadMessages(id: id)
+    }
+
     public func loadDigest(accountId: String) async throws -> EmailDigestDTO? {
         try await client.emailDigest(accountId: accountId)
     }

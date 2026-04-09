@@ -285,6 +285,7 @@ Connection rollups are additive read models:
 | GET | `/v1/email/accounts` | List registered email accounts. |
 | GET | `/v1/email/threads` | List threads for one account. Optional query: `accountId`, `limit`, `unreadOnly=true`. |
 | GET | `/v1/email/threads/:id` | Read one thread record. Returns 404 if not found. |
+| GET | `/v1/email/threads/:id/messages` | List messages for one synced thread in oldest → newest order. Returns 404 if the thread does not exist. |
 | GET | `/v1/email/messages/:id` | Read one message record. Returns 404 if not found. |
 | GET | `/v1/email/digest` | Read the latest digest for one account. Optional query: `accountId`. |
 | GET | `/v1/email/drafts` | List Popeye-tracked drafts for one account. Optional query: `accountId`, `limit`. |
@@ -305,6 +306,11 @@ Draft ownership is now persisted locally. Popeye records `draftId -> accountId -
 connectionId` so updates resolve deterministically across multiple Gmail
 accounts instead of assuming a single mailbox, while full draft bodies are
 fetched from the provider on demand rather than persisted in the local draft DB.
+
+Native Mail now uses `GET /v1/email/threads/:id/messages` to seed reply,
+reply-all, and forward drafts from synced thread previews before the operator
+saves the resulting Popeye-managed draft through the existing draft
+create/update routes.
 
 ### GitHub
 

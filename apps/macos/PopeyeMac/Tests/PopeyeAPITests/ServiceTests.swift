@@ -245,6 +245,7 @@ struct ServiceTests {
     let calendarSync = Endpoint.syncCalendar
     let todoSync = Endpoint.syncTodos
     let emailThreads = Endpoint.emailThreads(accountId: "acct-email-1", limit: 25, unreadOnly: true)
+    let emailThreadMessages = Endpoint.emailThreadMessages(id: "thread-1")
     let emailDigest = Endpoint.emailDigest(accountId: "acct-email-1")
     let emailSearch = Endpoint.emailSearch(query: "launch", accountId: "acct-email-1", limit: 15)
     let generateEmailDigest = Endpoint.generateEmailDigest
@@ -277,6 +278,8 @@ struct ServiceTests {
       emailThreads.queryItems.contains(URLQueryItem(name: "accountId", value: "acct-email-1")))
     #expect(emailThreads.queryItems.contains(URLQueryItem(name: "limit", value: "25")))
     #expect(emailThreads.queryItems.contains(URLQueryItem(name: "unreadOnly", value: "true")))
+    #expect(emailThreadMessages.path == "/v1/email/threads/thread-1/messages")
+    #expect(emailThreadMessages.method == .get)
     #expect(emailDigest.path == "/v1/email/digest")
     #expect(emailSearch.path == "/v1/email/search")
     #expect(emailSearch.queryItems.contains(URLQueryItem(name: "query", value: "launch")))

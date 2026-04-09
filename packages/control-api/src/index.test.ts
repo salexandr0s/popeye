@@ -1470,6 +1470,104 @@ describe('control api', () => {
     await app.close();
   });
 
+  it('lists thread messages for an email thread and returns 404 for unknown threads', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'popeye-api-email-thread-messages-'));
+    chmodSync(dir, 0o700);
+    const authFile = join(dir, 'auth.json');
+    const store = initAuthStore(authFile);
+    const runtime = createRuntimeService({
+      runtimeDataDir: dir,
+      authFile,
+      security: { bindHost: '127.0.0.1', bindPort: 3210, redactionPatterns: [] },
+      telegram: { enabled: false, allowedUserId: '42', maxMessagesPerMinute: 10, globalMaxMessagesPerMinute: 30, rateLimitWindowSeconds: 60 },
+      embeddings: { provider: 'disabled', allowedClassifications: ['embeddable'], model: 'text-embedding-3-small', dimensions: 1536 },
+      memory: { confidenceHalfLifeDays: 30, archiveThreshold: 0.1, dailySummaryHour: 23, consolidationEnabled: false, compactionFlushConfidence: 0.7 },
+      engine: { kind: 'fake', command: 'node', args: [] },
+      workspaces: [{ id: 'default', name: 'Default workspace', heartbeatEnabled: true, heartbeatIntervalSeconds: 3600 }],
+    });
+    const app = await createControlApi({ runtime });
+    const connection = runtime.createConnection({
+      domain: 'email',
+      providerKind: 'gmail',
+      label: 'Gmail',
+      mode: 'read_write',
+      syncIntervalSeconds: 900,
+      allowedScopes: [],
+      allowedResources: [],
+    });
+    const account = runtime.registerEmailAccount({
+      connectionId: connection.id,
+      emailAddress: 'operator@example.com',
+      displayName: 'Operator Mail',
+    });
+
+    const emailDb = new Database(join(runtime.databases.paths.capabilityStoresDir, 'email.db'));
+    const emailService = new EmailService(emailDb as never);
+    const thread = emailService.upsertThread(account.id, {
+      gmailThreadId: 'gmail-thread-1',
+      subject: 'Launch plan',
+      snippet: 'Need approval from the manager.',
+      lastMessageAt: '2026-03-21T12:00:00.000Z',
+      messageCount: 2,
+      labelIds: ['INBOX'],
+      isUnread: true,
+      isStarred: false,
+    });
+    emailService.upsertMessage(account.id, thread.id, {
+      gmailMessageId: 'gmail-message-1',
+      from: 'Client <client@example.com>',
+      to: ['operator@example.com'],
+      cc: [],
+      subject: 'Launch plan',
+      snippet: 'Need approval from the manager.',
+      bodyPreview: 'Need approval from the manager.',
+      receivedAt: '2026-03-21T11:00:00.000Z',
+      sizeEstimate: 256,
+      labelIds: ['INBOX'],
+    });
+    emailService.upsertMessage(account.id, thread.id, {
+      gmailMessageId: 'gmail-message-2',
+      from: 'Operator <operator@example.com>',
+      to: ['client@example.com'],
+      cc: ['manager@example.com'],
+      subject: 'Re: Launch plan',
+      snippet: 'I am on it.',
+      bodyPreview: 'I am on it.',
+      receivedAt: '2026-03-21T12:00:00.000Z',
+      sizeEstimate: 320,
+      labelIds: ['INBOX'],
+    });
+    emailDb.close();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/email/threads/${encodeURIComponent(thread.id)}/messages`,
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([
+      expect.objectContaining({
+        gmailMessageId: 'gmail-message-1',
+        from: 'Client <client@example.com>',
+      }),
+      expect.objectContaining({
+        gmailMessageId: 'gmail-message-2',
+        from: 'Operator <operator@example.com>',
+      }),
+    ]);
+
+    const missing = await app.inject({
+      method: 'GET',
+      url: '/v1/email/threads/missing-thread/messages',
+      headers: { authorization: `Bearer ${store.current.token}` },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toEqual({ error: 'thread not found' });
+
+    await runtime.close();
+    await app.close();
+  });
+
   it('applies per-item memory location filters on read and promotion routes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'popeye-api-memory-scope-'));
     chmodSync(dir, 0o700);

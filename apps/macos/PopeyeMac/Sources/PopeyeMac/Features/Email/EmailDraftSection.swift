@@ -11,7 +11,7 @@ struct EmailDraftSection: View {
     var body: some View {
         InspectorSection(title: "Drafts") {
             if drafts.isEmpty {
-                Text("Create a draft to keep a reusable Popeye-managed draft in this mailbox. Drafts can now be reopened later for editing; send remains intentionally out of scope.")
+                Text("Create a draft to keep a reusable Popeye-managed draft in this mailbox, or seed one from Reply, Reply All, or Forward in a selected thread. Send remains intentionally out of scope.")
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 16) {

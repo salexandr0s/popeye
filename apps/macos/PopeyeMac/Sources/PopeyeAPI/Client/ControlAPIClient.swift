@@ -757,6 +757,10 @@ public actor ControlAPIClient {
         try await get(.emailThread(id: id))
     }
 
+    public func listEmailThreadMessages(id: String) async throws -> [EmailMessageDTO] {
+        try await get(.emailThreadMessages(id: id))
+    }
+
     public func searchEmail(query: String, accountId: String, limit: Int = 20) async throws -> EmailSearchResponseDTO {
         try await get(.emailSearch(query: query, accountId: accountId, limit: limit))
     }

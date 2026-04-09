@@ -144,7 +144,21 @@ struct EmailView: View {
                 }
 
                 if let thread = store.selectedThread {
-                    EmailThreadDetailSection(thread: thread)
+                    EmailThreadDetailSection(
+                        thread: thread,
+                        isLoadingMessages: store.isLoadingThreadMessages,
+                        messageError: store.threadMessageError,
+                        canCompose: store.canComposeSelectedThread,
+                        reply: {
+                            Task { await store.beginReply() }
+                        },
+                        replyAll: {
+                            Task { await store.beginReplyAll() }
+                        },
+                        forward: {
+                            Task { await store.beginForward() }
+                        }
+                    )
                 } else {
                     ContentUnavailableView("Select a thread", systemImage: "envelope.open")
                         .frame(maxWidth: .infinity, minHeight: 320)

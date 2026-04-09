@@ -88,6 +88,7 @@ Current control API routes with response schema references (all schemas from `@p
 | GET | `/v1/email/accounts` | `EmailAccountRecordSchema[]` |
 | GET | `/v1/email/threads` | `EmailThreadRecordSchema[]` |
 | GET | `/v1/email/threads/:id` | `EmailThreadRecordSchema` |
+| GET | `/v1/email/threads/:id/messages` | `EmailMessageRecordSchema[]` |
 | GET | `/v1/email/messages/:id` | `EmailMessageRecordSchema` |
 | GET | `/v1/email/digest` | `EmailDigestRecordSchema \| null` |
 | GET | `/v1/email/drafts` | `EmailDraftRecordSchema[]` |

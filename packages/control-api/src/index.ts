@@ -3242,6 +3242,13 @@ export async function createControlApi(
     return thread;
   });
 
+  app.get('/v1/email/threads/:id/messages', async (request, reply) => {
+    const id = parseIdParam(request.params);
+    const messages = dependencies.runtime.listEmailThreadMessages(id);
+    if (!messages) return reply.code(404).send({ error: 'thread not found' });
+    return messages;
+  });
+
   app.get('/v1/email/messages/:id', async (request, reply) => {
     const id = parseIdParam(request.params);
     const message = dependencies.runtime.getEmailMessage(id);

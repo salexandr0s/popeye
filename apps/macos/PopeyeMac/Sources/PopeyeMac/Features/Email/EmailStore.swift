@@ -11,6 +11,21 @@ final class EmailStore {
             case edit
         }
 
+        enum ComposeKind: String, Sendable {
+            case reply
+            case replyAll
+            case forward
+        }
+
+        struct ComposeContext: Equatable, Sendable {
+            var kind: ComposeKind
+            var sourceThreadID: String
+            var sourceMessageID: String
+            var sourceSender: String
+            var sourceSubject: String
+            var sourceReceivedAt: String
+        }
+
         var mode: Mode
         var draftProviderDraftId: String?
         var accountId: String
@@ -18,12 +33,14 @@ final class EmailStore {
         var ccText: String
         var subject: String
         var body: String
+        var composeContext: ComposeContext?
     }
 
     struct Dependencies: Sendable {
         var loadAccounts: @Sendable () async throws -> [EmailAccountDTO]
         var loadThreads: @Sendable (_ accountId: String, _ limit: Int, _ unreadOnly: Bool) async throws -> [EmailThreadDTO]
         var loadThread: @Sendable (_ id: String) async throws -> EmailThreadDTO
+        var loadThreadMessages: @Sendable (_ id: String) async throws -> [EmailMessageDTO]
         var loadDigest: @Sendable (_ accountId: String) async throws -> EmailDigestDTO?
         var loadDrafts: @Sendable (_ accountId: String, _ limit: Int) async throws -> [EmailDraftDTO]
         var loadDraft: @Sendable (_ id: String) async throws -> EmailDraftDetailDTO
@@ -42,6 +59,7 @@ final class EmailStore {
                     try await service.loadThreads(accountId: accountId, limit: limit, unreadOnly: unreadOnly)
                 },
                 loadThread: { id in try await service.loadThread(id: id) },
+                loadThreadMessages: { id in try await service.loadThreadMessages(id: id) },
                 loadDigest: { accountId in try await service.loadDigest(accountId: accountId) },
                 loadDrafts: { accountId, limit in try await service.loadDrafts(accountId: accountId, limit: limit) },
                 loadDraft: { id in try await service.loadDraft(id: id) },
@@ -92,6 +110,8 @@ final class EmailStore {
             draftsByAccountID = [:]
             draftBodiesByProviderDraftID = [:]
             draftDetailPhase = .idle
+            threadMessagesByThreadID = [:]
+            threadMessagePhase = .idle
             isLoading = false
             error = nil
             mutations.dismiss()
@@ -103,6 +123,8 @@ final class EmailStore {
     var draftsByAccountID: [String: [EmailDraftDTO]] = [:]
     var draftBodiesByProviderDraftID: [String: String] = [:]
     var draftDetailPhase: ScreenOperationPhase = .idle
+    var threadMessagesByThreadID: [String: [EmailMessageDTO]] = [:]
+    var threadMessagePhase: ScreenOperationPhase = .idle
 
     let mutations = MutationExecutor()
     var mutationState: MutationState { mutations.state }
@@ -126,6 +148,11 @@ final class EmailStore {
     var visibleDrafts: [EmailDraftDTO] {
         guard let activeAccount else { return [] }
         return draftsByAccountID[activeAccount.id] ?? []
+    }
+
+    var visibleThreadMessages: [EmailMessageDTO] {
+        guard let selectedThreadID else { return [] }
+        return threadMessagesByThreadID[selectedThreadID] ?? []
     }
 
     var visibleSyncResult: EmailSyncResultDTO? {
@@ -158,6 +185,14 @@ final class EmailStore {
         draftDetailPhase.isLoading
     }
 
+    var threadMessageError: APIError? {
+        threadMessagePhase.error
+    }
+
+    var isLoadingThreadMessages: Bool {
+        threadMessagePhase.isLoading
+    }
+
     var canSyncSelectedAccount: Bool {
         activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
     }
@@ -172,6 +207,14 @@ final class EmailStore {
 
     var canBeginDraftEdit: Bool {
         activeAccount != nil && mutationState != .executing && isSearching == false && isLoadingDraftDetail == false
+    }
+
+    var canComposeSelectedThread: Bool {
+        activeAccount != nil
+            && selectedThread != nil
+            && mutationState != .executing
+            && isLoadingDraftDetail == false
+            && isLoadingThreadMessages == false
     }
 
     var canSearch: Bool {
@@ -213,6 +256,8 @@ final class EmailStore {
         isLoading = true
         error = nil
         searchPhase = .idle
+        threadMessagesByThreadID = [:]
+        threadMessagePhase = .idle
         defer { isLoading = false }
 
         do {
@@ -229,6 +274,8 @@ final class EmailStore {
                 clearSearchState(resetQuery: true)
                 inboxSelectedThreadID = nil
                 draftDetailPhase = .idle
+                threadMessagesByThreadID = [:]
+                threadMessagePhase = .idle
                 return
             }
 
@@ -250,6 +297,8 @@ final class EmailStore {
         guard oldValue != nil else { return }
         clearSearchState(resetQuery: true)
         draftDetailPhase = .idle
+        threadMessagesByThreadID = [:]
+        threadMessagePhase = .idle
         editor = nil
         inboxSelectedThreadID = nil
         selectedThreadID = nil
@@ -263,10 +312,11 @@ final class EmailStore {
         }
         guard let id else {
             selectedThread = nil
+            threadMessagePhase = .idle
             return
         }
         guard selectedThread?.id != id else { return }
-        await loadThread(id: id)
+        await loadThreadContext(id: id)
     }
 
     func didChangeUnreadOnly() async {
@@ -297,14 +347,6 @@ final class EmailStore {
     func clearSearch() async {
         clearSearchState(resetQuery: true)
         await reloadMailbox()
-    }
-
-    func loadThread(id: String) async {
-        do {
-            selectedThread = try await dependencies.loadThread(id)
-        } catch {
-            PopeyeLogger.refresh.error("Email thread load failed: \(error)")
-        }
     }
 
     func syncSelectedAccount() async {
@@ -347,8 +389,21 @@ final class EmailStore {
             toText: "",
             ccText: "",
             subject: "",
-            body: ""
+            body: "",
+            composeContext: nil
         )
+    }
+
+    func beginReply() async {
+        await beginThreadCompose(kind: .reply)
+    }
+
+    func beginReplyAll() async {
+        await beginThreadCompose(kind: .replyAll)
+    }
+
+    func beginForward() async {
+        await beginThreadCompose(kind: .forward)
     }
 
     func beginEditDraft(_ draft: EmailDraftDTO) async {
@@ -363,7 +418,8 @@ final class EmailStore {
                 toText: draft.to.joined(separator: ", "),
                 ccText: draft.cc.joined(separator: ", "),
                 subject: draft.subject,
-                body: cachedBody
+                body: cachedBody,
+                composeContext: nil
             )
             return
         }
@@ -380,7 +436,8 @@ final class EmailStore {
                 toText: detail.to.joined(separator: ", "),
                 ccText: detail.cc.joined(separator: ", "),
                 subject: detail.subject,
-                body: detail.body
+                body: detail.body,
+                composeContext: nil
             )
         } catch {
             draftDetailPhase = .failed(Self.map(error))
@@ -503,9 +560,10 @@ final class EmailStore {
         }
 
         if let selectedThreadID {
-            selectedThread = try await dependencies.loadThread(selectedThreadID)
+            await loadThreadContext(id: selectedThreadID)
         } else {
             selectedThread = nil
+            threadMessagePhase = .idle
         }
     }
 
@@ -518,10 +576,81 @@ final class EmailStore {
         }
 
         if let selectedThreadID {
-            selectedThread = try await dependencies.loadThread(selectedThreadID)
+            await loadThreadContext(id: selectedThreadID)
         } else {
             selectedThread = nil
+            threadMessagePhase = .idle
         }
+    }
+
+    private func loadThreadContext(id: String) async {
+        threadMessagePhase = .loading
+        do {
+            selectedThread = try await dependencies.loadThread(id)
+        } catch {
+            selectedThread = nil
+            threadMessagePhase = .failed(Self.map(error))
+            PopeyeLogger.refresh.error("Email thread load failed: \(error)")
+            return
+        }
+
+        do {
+            threadMessagesByThreadID[id] = try await dependencies.loadThreadMessages(id)
+            threadMessagePhase = .idle
+        } catch {
+            threadMessagePhase = .failed(Self.map(error))
+            PopeyeLogger.refresh.error("Email thread messages load failed: \(error)")
+        }
+    }
+
+    @discardableResult
+    private func ensureThreadMessages(threadID: String) async -> [EmailMessageDTO]? {
+        if let cached = threadMessagesByThreadID[threadID] {
+            threadMessagePhase = .idle
+            return cached
+        }
+        await loadThreadContext(id: threadID)
+        return threadMessagesByThreadID[threadID]
+    }
+
+    private func beginThreadCompose(kind: DraftEditor.ComposeKind) async {
+        guard canComposeSelectedThread, let account = activeAccount, let thread = selectedThread else { return }
+        guard let messages = await ensureThreadMessages(threadID: thread.id), messages.isEmpty == false else {
+            if threadMessageError == nil {
+                threadMessagePhase = .failed(.apiFailure(statusCode: -1, message: "No messages are available for this thread yet."))
+            }
+            return
+        }
+
+        guard let targetMessage = Self.composeTargetMessage(kind: kind, messages: messages, accountEmail: account.emailAddress) else {
+            threadMessagePhase = .failed(.apiFailure(statusCode: -1, message: "Couldn't derive a compose target from this thread."))
+            return
+        }
+
+        let seed = Self.composeSeed(
+            kind: kind,
+            account: account,
+            thread: thread,
+            targetMessage: targetMessage
+        )
+        draftDetailPhase = .idle
+        editor = DraftEditor(
+            mode: .create,
+            draftProviderDraftId: nil,
+            accountId: account.id,
+            toText: seed.to.joined(separator: ", "),
+            ccText: seed.cc.joined(separator: ", "),
+            subject: seed.subject,
+            body: seed.body,
+            composeContext: .init(
+                kind: kind,
+                sourceThreadID: thread.id,
+                sourceMessageID: targetMessage.id,
+                sourceSender: targetMessage.from,
+                sourceSubject: targetMessage.subject.isEmpty ? thread.subject : targetMessage.subject,
+                sourceReceivedAt: targetMessage.receivedAt
+            )
+        )
     }
 
     private func clearSearchState(resetQuery: Bool) {
@@ -571,6 +700,131 @@ final class EmailStore {
             .split(whereSeparator: { $0 == "," || $0 == "\n" })
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    fileprivate static func extractMailbox(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+        if let start = trimmed.firstIndex(of: "<"), let end = trimmed[start...].firstIndex(of: ">"), start < end {
+            let mailbox = trimmed[trimmed.index(after: start)..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            return mailbox.isEmpty ? nil : mailbox
+        }
+        return trimmed
+    }
+
+    fileprivate static func composeTargetMessage(
+        kind: DraftEditor.ComposeKind,
+        messages: [EmailMessageDTO],
+        accountEmail: String
+    ) -> EmailMessageDTO? {
+        switch kind {
+        case .forward:
+            return messages.last
+        case .reply, .replyAll:
+            let selfMailbox = accountEmail.lowercased()
+            return messages.last(where: {
+                extractMailbox($0.from)?.lowercased() != selfMailbox
+            }) ?? messages.last
+        }
+    }
+
+    fileprivate static func composeSeed(
+        kind: DraftEditor.ComposeKind,
+        account: EmailAccountDTO,
+        thread: EmailThreadDTO,
+        targetMessage: EmailMessageDTO
+    ) -> (to: [String], cc: [String], subject: String, body: String) {
+        let accountMailbox = account.emailAddress.lowercased()
+        let sender = extractMailbox(targetMessage.from)
+        let targetSubject = targetMessage.subject.isEmpty ? thread.subject : targetMessage.subject
+        let sourceText = (targetMessage.bodyPreview.isEmpty ? targetMessage.snippet : targetMessage.bodyPreview)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        func uniqueAddresses(_ candidates: [String]) -> [String] {
+            var seen = Set<String>()
+            var result: [String] = []
+            for candidate in candidates {
+                guard let mailbox = extractMailbox(candidate) else { continue }
+                let key = mailbox.lowercased()
+                guard key != accountMailbox, seen.contains(key) == false else { continue }
+                seen.insert(key)
+                result.append(mailbox)
+            }
+            return result
+        }
+
+        let subject: String
+        let to: [String]
+        let cc: [String]
+
+        switch kind {
+        case .reply:
+            subject = prefixedSubject(targetSubject, prefix: "Re:")
+            to = uniqueAddresses(sender.map { [$0] } ?? [])
+            cc = []
+        case .replyAll:
+            subject = prefixedSubject(targetSubject, prefix: "Re:")
+            let senderAddresses = sender.map { [$0] } ?? []
+            to = uniqueAddresses(senderAddresses + targetMessage.to)
+            let toSet = Set(to.map { $0.lowercased() })
+            cc = uniqueAddresses(targetMessage.cc).filter { toSet.contains($0.lowercased()) == false }
+        case .forward:
+            subject = prefixedForwardSubject(targetSubject)
+            to = []
+            cc = []
+        }
+
+        return (to, cc, subject, composeBody(kind: kind, message: targetMessage, sourceText: sourceText))
+    }
+
+    fileprivate static func prefixedSubject(_ subject: String, prefix: String) -> String {
+        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return prefix }
+        if trimmed.lowercased().hasPrefix(prefix.lowercased()) {
+            return trimmed
+        }
+        return "\(prefix) \(trimmed)"
+    }
+
+    fileprivate static func prefixedForwardSubject(_ subject: String) -> String {
+        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return "Fwd:" }
+        let lowercased = trimmed.lowercased()
+        if lowercased.hasPrefix("fwd:") || lowercased.hasPrefix("fw:") {
+            return trimmed
+        }
+        return "Fwd: \(trimmed)"
+    }
+
+    fileprivate static func composeBody(
+        kind: DraftEditor.ComposeKind,
+        message: EmailMessageDTO,
+        sourceText: String
+    ) -> String {
+        switch kind {
+        case .reply, .replyAll:
+            let quoted = sourceText
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { "> \($0)" }
+                .joined(separator: "\n")
+            return "\n\nOn \(message.receivedAt), \(message.from) wrote:\n\(quoted)"
+        case .forward:
+            var forwardedLines = [
+                "",
+                "",
+                "---------- Forwarded message ---------",
+                "From: \(message.from)",
+                "Date: \(message.receivedAt)",
+                "Subject: \(message.subject)",
+                "To: \(message.to.joined(separator: ", "))",
+            ]
+            if message.cc.isEmpty == false {
+                forwardedLines.append("Cc: \(message.cc.joined(separator: ", "))")
+            }
+            forwardedLines.append("")
+            forwardedLines.append(sourceText)
+            return forwardedLines.joined(separator: "\n")
+        }
     }
 
     fileprivate static func isValidEmailAddress(_ value: String) -> Bool {

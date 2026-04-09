@@ -1,4 +1,5 @@
 import SwiftUI
+import PopeyeAPI
 
 struct EmailDraftSheet: View {
     @Bindable var store: EmailStore
@@ -10,6 +11,12 @@ struct EmailDraftSheet: View {
             Text(sheetTitle)
                 .font(.title3.bold())
                 .padding(20)
+
+            if let composeContext = store.editor?.composeContext {
+                composeContextCard(composeContext)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+            }
 
             Form {
                 TextField("To (comma or newline separated)", text: toBinding, axis: .vertical)
@@ -65,7 +72,17 @@ struct EmailDraftSheet: View {
     }
 
     private var sheetTitle: String {
-        store.editor?.mode == .edit ? "Edit Draft" : "New Draft"
+        if let kind = store.editor?.composeContext?.kind {
+            switch kind {
+            case .reply:
+                return "Reply Draft"
+            case .replyAll:
+                return "Reply All Draft"
+            case .forward:
+                return "Forward Draft"
+            }
+        }
+        return store.editor?.mode == .edit ? "Edit Draft" : "New Draft"
     }
 
     private var primaryActionTitle: String {
@@ -98,5 +115,32 @@ struct EmailDraftSheet: View {
             get: { store.editor?.body ?? "" },
             set: { store.editor?.body = $0 }
         )
+    }
+
+    @ViewBuilder
+    private func composeContextCard(_ context: EmailStore.DraftEditor.ComposeContext) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(composeContextTitle(context.kind))
+                .font(.subheadline.weight(.semibold))
+            Text(context.sourceSubject.isEmpty ? "No subject" : context.sourceSubject)
+                .font(.subheadline)
+            Text("From \(context.sourceSender) · \(DateFormatting.formatAbsoluteTime(context.sourceReceivedAt))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func composeContextTitle(_ kind: EmailStore.DraftEditor.ComposeKind) -> String {
+        switch kind {
+        case .reply:
+            return "Replying to thread"
+        case .replyAll:
+            return "Replying to everyone in thread"
+        case .forward:
+            return "Forwarding thread context"
+        }
     }
 }

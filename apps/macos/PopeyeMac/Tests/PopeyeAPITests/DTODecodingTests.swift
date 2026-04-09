@@ -426,9 +426,30 @@ struct DTODecodingTests {
         let accountData = try loadFixture("email_account")
         let threadData = try loadFixture("email_thread")
         let digestData = try loadFixture("email_digest")
+        let messageData = Data(
+            """
+            {
+              "id": "message-1",
+              "threadId": "thread-1",
+              "accountId": "email-acct-1",
+              "gmailMessageId": "gmail-message-1",
+              "from": "Annie <annie@example.com>",
+              "to": ["operator@example.com", "manager@example.com"],
+              "cc": ["legal@example.com"],
+              "subject": "Launch plan",
+              "snippet": "Draft the launch note and gather approvals.",
+              "bodyPreview": "Draft the launch note and gather approvals.",
+              "receivedAt": "2026-04-09T09:00:00Z",
+              "sizeEstimate": 512,
+              "labelIds": ["INBOX"],
+              "createdAt": "2026-04-01T08:00:00Z",
+              "updatedAt": "2026-04-09T09:00:00Z"
+            }
+            """.utf8)
 
         let account = try decoder.decode(EmailAccountDTO.self, from: accountData)
         let thread = try decoder.decode(EmailThreadDTO.self, from: threadData)
+        let message = try decoder.decode(EmailMessageDTO.self, from: messageData)
         let digest = try decoder.decode(EmailDigestDTO.self, from: digestData)
         let search = try decoder.decode(
             EmailSearchResponseDTO.self,
@@ -455,6 +476,9 @@ struct DTODecodingTests {
         #expect(thread.id == "thread-1")
         #expect(thread.isUnread == true)
         #expect(thread.labelIds.contains("INBOX"))
+        #expect(message.gmailMessageId == "gmail-message-1")
+        #expect(message.from == "Annie <annie@example.com>")
+        #expect(message.cc == ["legal@example.com"])
         #expect(digest.accountId == "email-acct-1")
         #expect(digest.unreadCount == 12)
         #expect(search.query == "launch")
