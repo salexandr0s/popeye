@@ -215,7 +215,7 @@ v1 should use Setup + Connections together:
 
 ## Domain vertical endpoints
 
-These surfaces now have an initial native foothold. Email and Calendar remain read-first, while Todos, People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
+These surfaces now have an initial native foothold. Email remains read-first, while Calendar, Todos, People, Files, Finance, and Medical now expose narrow operator-safe mutations through the control API.
 
 ### Home
 
@@ -241,8 +241,9 @@ These surfaces now have an initial native foothold. Email and Calendar remain re
 
 | Endpoint(s) | Native view / use | Read/Write | Min role | Live update | Readiness | Notes / gaps | Service |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability` | Native Calendar split view with agenda, digest, and event detail | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a read-first life surface; event editing stays out of scope | `DomainDigestService` |
-| `POST /v1/calendar/accounts`, `POST /v1/calendar/sync`, `POST /v1/calendar/events`, `PATCH /v1/calendar/events/:id` | Later calendar tooling | Write | `operator` | Refetch after success | Defer | Leave web-first initially | `DomainDigestService` |
+| `GET /v1/calendar/accounts`, `GET /v1/calendar/events`, `GET /v1/calendar/events/:id`, `GET /v1/calendar/search`, `GET /v1/calendar/digest`, `GET /v1/calendar/availability` | Native Calendar split view with agenda, digest, event detail, and editor context | Read | `operator` | Poll on screen | Ready with wrapper | Shipped as a native planning surface with selected-event editing context | `DomainDigestService` |
+| `POST /v1/calendar/sync`, `POST /v1/calendar/events`, `PATCH /v1/calendar/events/:id` | Native Calendar toolbar and event editor actions | Write | `operator` | Refetch after success | Ready with wrapper | Shipped as targeted native mutations for sync plus create/edit on allowlisted calendars | `DomainDigestService` |
+| `POST /v1/calendar/accounts` | Later calendar administration | Write | `operator` | Refetch after success | Defer | Account registration remains web/CLI-first | `DomainDigestService` |
 
 ### GitHub
 
@@ -296,7 +297,7 @@ These surfaces now have an initial native foothold. Email and Calendar remain re
 
 ### Native recommendation
 
-These domain surfaces now exist as native complements to the operator-console core. Email and Calendar remain read-first, while Todos, People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
+These domain surfaces now exist as native complements to the operator-console core. Email remains read-first, while Calendar, Todos, People, Files, Finance, and Medical now expose narrow operator-safe actions and curated markdown editing is available for instruction and curated-memory documents.
 
 ---
 
@@ -320,7 +321,7 @@ These domain surfaces now exist as native complements to the operator-console co
 | Connections | Connections | **Shipped, admin parity** | Native now owns OAuth/remediation/resource-rule admin flows |
 | Automations | Automations | **Shipped, native-first** | Product-facing scheduler overview with inline controls |
 | Email | Mail | **Shipped, read-first** | Daily-use native split view on current read APIs |
-| Calendar | Calendar | **Shipped, read-first** | Same |
+| Calendar | Calendar | **Shipped, targeted mutations** | Native now supports sync plus targeted create/edit event workflows |
 | GitHub | GitHub | **Shipped, read + low-risk actions** | Native now covers digest/search/review plus sync, comment, and mark-read |
 | Playbooks / Proposals | Playbooks | **Shipped, authoring + review** | Native now covers canonical records, stale signals, proposal draft/patch authoring, suggested-patch seeding, review, apply, activate, and retire |
 | People | People | **Shipped, targeted mutations** | Relationship browsing, suggestions, activity, merge, split, and identity repair now fit the native split view |

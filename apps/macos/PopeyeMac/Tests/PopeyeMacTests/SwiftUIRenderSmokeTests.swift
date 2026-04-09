@@ -173,6 +173,102 @@ struct SwiftUIRenderSmokeTests {
         )
     }
 
+    @Test("Calendar view renders with editable event detail")
+    func rendersCalendarView() async {
+        let appModel = FeaturePreviewFixtures.previewAppModel()
+        appModel.connectionState = .connected
+        appModel.sseConnected = true
+
+        let store = CalendarStore(
+            dependencies: .init(
+                loadAccounts: {
+                    [CalendarAccountDTO(
+                        id: "calendar-acct-1",
+                        connectionId: "conn-cal-1",
+                        calendarEmail: "operator@example.com",
+                        displayName: "Work",
+                        timeZone: "Europe/Vienna",
+                        syncCursorSyncToken: nil,
+                        lastSyncAt: "2026-04-09T09:00:00Z",
+                        eventCount: 2,
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )]
+                },
+                loadEvents: { _, _, _, _ in
+                    [CalendarEventDTO(
+                        id: "event-1",
+                        accountId: "calendar-acct-1",
+                        googleEventId: "google-event-1",
+                        title: "Team standup",
+                        description: "Daily planning",
+                        location: "Zoom",
+                        startTime: "2026-04-10T09:00:00.000Z",
+                        endTime: "2026-04-10T10:00:00.000Z",
+                        isAllDay: false,
+                        status: "confirmed",
+                        organizer: "operator@example.com",
+                        attendees: ["annie@example.com"],
+                        recurrenceRule: nil,
+                        htmlLink: nil,
+                        createdAtGoogle: "2026-04-01T08:00:00Z",
+                        updatedAtGoogle: "2026-04-09T09:00:00Z",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )]
+                },
+                loadEvent: { _ in
+                    CalendarEventDTO(
+                        id: "event-1",
+                        accountId: "calendar-acct-1",
+                        googleEventId: "google-event-1",
+                        title: "Team standup",
+                        description: "Daily planning",
+                        location: "Zoom",
+                        startTime: "2026-04-10T09:00:00.000Z",
+                        endTime: "2026-04-10T10:00:00.000Z",
+                        isAllDay: false,
+                        status: "confirmed",
+                        organizer: "operator@example.com",
+                        attendees: ["annie@example.com"],
+                        recurrenceRule: nil,
+                        htmlLink: nil,
+                        createdAtGoogle: "2026-04-01T08:00:00Z",
+                        updatedAtGoogle: "2026-04-09T09:00:00Z",
+                        createdAt: "2026-04-01T08:00:00Z",
+                        updatedAt: "2026-04-09T09:00:00Z"
+                    )
+                },
+                loadDigest: { _ in
+                    CalendarDigestDTO(
+                        id: "calendar-digest-1",
+                        accountId: "calendar-acct-1",
+                        workspaceId: "default",
+                        date: "2026-04-09",
+                        todayEventCount: 2,
+                        upcomingCount: 4,
+                        summaryMarkdown: "Two meetings today and four upcoming events this week.",
+                        generatedAt: "2026-04-09T09:00:00Z"
+                    )
+                },
+                syncAccount: { accountId in
+                    CalendarSyncResultDTO(accountId: accountId, eventsSynced: 2, eventsUpdated: 1, errors: [])
+                },
+                createEvent: { _ in fatalError("unused in render smoke") },
+                updateEvent: { _, _ in fatalError("unused in render smoke") },
+                emitInvalidation: { _ in }
+            )
+        )
+        await store.load()
+
+        assertRenders(
+            NavigationStack {
+                CalendarView(store: store)
+            }
+            .environment(appModel)
+        )
+    }
+
     private func assertRenders<Content: View>(_ view: Content) {
         let hostingView = NSHostingView(rootView: view)
         hostingView.frame = NSRect(x: 0, y: 0, width: 900, height: 700)

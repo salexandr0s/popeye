@@ -535,7 +535,9 @@ public extension Endpoint {
         if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
         return Endpoint(path: "/v1/calendar/events", queryItems: items)
     }
+    static let createCalendarEvent = Endpoint(path: "/v1/calendar/events", method: .post)
     static func calendarEvent(id: String) -> Endpoint { Endpoint(path: "/v1/calendar/events/\(id)") }
+    static func updateCalendarEvent(id: String) -> Endpoint { Endpoint(path: "/v1/calendar/events/\(id)", method: .patch) }
     static func calendarDigest(accountId: String? = nil) -> Endpoint {
         let items = accountId.map { [URLQueryItem(name: "accountId", value: $0)] } ?? []
         return Endpoint(path: "/v1/calendar/digest", queryItems: items)

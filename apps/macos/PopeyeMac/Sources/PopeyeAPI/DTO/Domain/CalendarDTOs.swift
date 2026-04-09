@@ -51,3 +51,59 @@ public struct CalendarSyncResultDTO: Codable, Sendable, Equatable {
     public let eventsUpdated: Int
     public let errors: [String]
 }
+
+public struct CalendarEventCreateInput: Encodable, Sendable, Equatable {
+    public let accountId: String
+    public let title: String
+    public let description: String
+    public let location: String
+    public let startTime: String
+    public let endTime: String
+    public let attendees: [String]
+
+    public init(
+        accountId: String,
+        title: String,
+        description: String = "",
+        location: String = "",
+        startTime: String,
+        endTime: String,
+        attendees: [String] = []
+    ) {
+        self.accountId = accountId
+        self.title = title
+        self.description = description
+        self.location = location
+        self.startTime = startTime
+        self.endTime = endTime
+        self.attendees = attendees
+    }
+}
+
+public struct CalendarEventUpdateInput: Encodable, Sendable, Equatable {
+    public let title: String?
+    public let description: String?
+    public let location: String?
+    public let startTime: String?
+    public let endTime: String?
+    public let attendees: [String]?
+    public let status: String?
+
+    public init(
+        title: String? = nil,
+        description: String? = nil,
+        location: String? = nil,
+        startTime: String? = nil,
+        endTime: String? = nil,
+        attendees: [String]? = nil,
+        status: String? = nil
+    ) {
+        self.title = title
+        self.description = description
+        self.location = location
+        self.startTime = startTime
+        self.endTime = endTime
+        self.attendees = attendees
+        self.status = status
+    }
+}

@@ -785,6 +785,14 @@ public actor ControlAPIClient {
         try await post(.syncCalendar, body: ["accountId": accountId])
     }
 
+    public func createCalendarEvent(input: CalendarEventCreateInput) async throws -> CalendarEventDTO {
+        try await post(.createCalendarEvent, body: input)
+    }
+
+    public func updateCalendarEvent(id: String, input: CalendarEventUpdateInput) async throws -> CalendarEventDTO {
+        try await patch(.updateCalendarEvent(id: id), body: input)
+    }
+
     public func listTodoAccounts() async throws -> [TodoAccountDTO] {
         try await get(.todoAccounts)
     }

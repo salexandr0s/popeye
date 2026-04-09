@@ -15,6 +15,10 @@ struct CalendarEventDetailSection: View {
                 DetailRow(label: "Location", value: event.location)
             }
 
+            if event.attendees.isEmpty == false {
+                DetailRow(label: "Attendees", value: event.attendees.joined(separator: ", "))
+            }
+
             if event.description.isEmpty == false {
                 Text(event.description)
                     .foregroundStyle(.secondary)

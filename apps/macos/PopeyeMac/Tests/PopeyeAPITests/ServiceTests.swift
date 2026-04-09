@@ -252,6 +252,8 @@ struct ServiceTests {
       dateTo: "2026-04-08T00:00:00Z",
       limit: 40
     )
+    let createCalendarEvent = Endpoint.createCalendarEvent
+    let updateCalendarEvent = Endpoint.updateCalendarEvent(id: "event-1")
     let calendarDigest = Endpoint.calendarDigest(accountId: "acct-cal-1")
     let todoItems = Endpoint.todoItems(accountId: "acct-todo-1", project: "Inbox", limit: 75)
     let todoProjects = Endpoint.todoProjects(accountId: "acct-todo-1")
@@ -283,6 +285,10 @@ struct ServiceTests {
       calendarEvents.queryItems.contains(
         URLQueryItem(name: "dateTo", value: "2026-04-08T00:00:00Z")))
     #expect(calendarEvents.queryItems.contains(URLQueryItem(name: "limit", value: "40")))
+    #expect(createCalendarEvent.path == "/v1/calendar/events")
+    #expect(createCalendarEvent.method == .post)
+    #expect(updateCalendarEvent.path == "/v1/calendar/events/event-1")
+    #expect(updateCalendarEvent.method == .patch)
     #expect(calendarDigest.path == "/v1/calendar/digest")
 
     #expect(todoItems.path == "/v1/todos/items")
